@@ -90,6 +90,10 @@ pub enum BlockKind {
     CodeBlock {
         lang: String,
     },
+    /// A `> [!private]` callout: the block-level privacy zone. Fully visible
+    /// in the UI, nonexistent to the agent — and its tags, links and fields
+    /// are never indexed, for anyone.
+    Private,
 }
 
 /// An inline field `key:: value` found in a block — written as a whole line,

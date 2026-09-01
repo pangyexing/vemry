@@ -212,9 +212,14 @@ pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
                 content.push_str(stripped);
             }
             let span = span_start..span_end;
-            let (links, tags) = scan_inline(&raw[span.clone()], span.start);
-            let fields = scan_fields(&raw[span.clone()], span.start);
+            // A private block contributes nothing to the tag table, the link
+            // graph or the field index: what is invisible to the agent must not
+            // leak through aggregates either
+            let private = ctype == "private";
+            let (links, tags) = if private { (vec![], vec![]) } else { scan_inline(&raw[span.clone()], span.start) };
+            let fields = if private { vec![] } else { scan_fields(&raw[span.clone()], span.start) };
             let kind = match ctype.as_str() {
+                "private" => BlockKind::Private,
                 "claim" => BlockKind::Claim,
                 "evidence" => {
                     let supports = match raw[span.clone()].find("supports:") {
@@ -836,6 +841,23 @@ mod tests {
         assert_eq!(got[0].1, "v");
         let got = fields_of("- [x] done [k:: v] [k:: w]\n");
         assert_eq!(got.iter().map(|f| f.1.as_str()).collect::<Vec<_>>(), vec!["v", "w"]);
+    }
+
+    #[test]
+    fn private_callout_kind() {
+        let src = "> [!Private]- secret #tag [[Link]] k:: v\n> more\nlazy\n\n- item\n  > [!private] nested\n- > [!private] not one\n";
+        let blocks = parse_note(src).blocks;
+        assert!(matches!(blocks[0].kind, BlockKind::Private));
+        assert_eq!(blocks[0].content, "secret #tag [[Link]] k:: v\nmore");
+        assert!(blocks[0].tags.is_empty() && blocks[0].links.is_empty() && blocks[0].fields.is_empty());
+        // a lazy line without `>` is outside the block
+        assert!(matches!(blocks[1].kind, BlockKind::Paragraph));
+        assert_eq!(blocks[1].content, "lazy");
+        // inside a list item: the item ends and the callout is its own block
+        assert!(matches!(blocks[2].kind, BlockKind::ListItem { .. }));
+        assert!(matches!(blocks[3].kind, BlockKind::Private));
+        // on a marker line it is a list item, not a callout
+        assert!(matches!(blocks[4].kind, BlockKind::ListItem { .. }));
     }
 
     #[test]

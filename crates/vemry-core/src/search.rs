@@ -58,40 +58,59 @@ impl SearchProvider for InMemorySearch {
     }
 
     fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
-        let terms: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).filter(|t| !t.is_empty()).collect();
+        let terms = query_terms(query);
         if terms.is_empty() {
             return vec![];
         }
         let mut hits = Vec::new();
         for (id, doc) in &self.docs {
-            let mut score = 0f32;
-            let mut first_pos: Option<usize> = None;
-            let mut all_match = true;
-            for term in &terms {
-                let in_title = doc.title_lower.contains(term.as_str());
-                let pos = doc.lower.find(term.as_str());
-                if !in_title && pos.is_none() {
-                    all_match = false;
-                    break;
-                }
-                if in_title {
-                    score += 5.0;
-                }
-                if let Some(p) = pos {
-                    score += doc.lower.matches(term.as_str()).count() as f32;
-                    first_pos = Some(first_pos.map_or(p, |f| f.min(p)));
-                }
+            if let Some((score, snippet, line)) = score_doc(&doc.title_lower, &doc.lower, &doc.content, &terms) {
+                hits.push(SearchHit { note: id.clone(), title: doc.title.clone(), snippet, line, score });
             }
-            if !all_match {
-                continue;
-            }
-            let (snippet, line) = make_snippet(&doc.content, first_pos.unwrap_or(0));
-            hits.push(SearchHit { note: id.clone(), title: doc.title.clone(), snippet, line, score });
         }
-        hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then(a.note.cmp(&b.note)));
+        sort_hits(&mut hits);
         hits.truncate(limit);
         hits
     }
+}
+
+/// The query's terms, lowercased (empty = nothing to search for).
+pub fn query_terms(query: &str) -> Vec<String> {
+    query.split_whitespace().map(|t| t.to_lowercase()).filter(|t| !t.is_empty()).collect()
+}
+
+/// Score one document against the terms the way `InMemorySearch` does —
+/// (score, snippet, line) when every term matches, else `None`. Exposed so
+/// a caller can re-match a document over an altered text (the agent's
+/// search re-checks notes with private blocks against a blanked copy).
+pub fn match_doc(title: &str, content: &str, terms: &[String]) -> Option<(f32, String, usize)> {
+    score_doc(&title.to_lowercase(), &content.to_lowercase(), content, terms)
+}
+
+/// Score order, ties by note id — the one ordering every search result uses.
+pub fn sort_hits(hits: &mut [SearchHit]) {
+    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then(a.note.cmp(&b.note)));
+}
+
+fn score_doc(title_lower: &str, lower: &str, content: &str, terms: &[String]) -> Option<(f32, String, usize)> {
+    let mut score = 0f32;
+    let mut first_pos: Option<usize> = None;
+    for term in terms {
+        let in_title = title_lower.contains(term.as_str());
+        let pos = lower.find(term.as_str());
+        if !in_title && pos.is_none() {
+            return None;
+        }
+        if in_title {
+            score += 5.0;
+        }
+        if let Some(p) = pos {
+            score += lower.matches(term.as_str()).count() as f32;
+            first_pos = Some(first_pos.map_or(p, |f| f.min(p)));
+        }
+    }
+    let (snippet, line) = make_snippet(content, first_pos.unwrap_or(0));
+    Some((score, snippet, line))
 }
 
 /// The line containing `pos`, trimmed to ~160 chars around the hit.

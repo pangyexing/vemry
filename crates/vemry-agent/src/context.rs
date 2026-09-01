@@ -218,9 +218,12 @@ pub fn resolve_context_refs(
             // non-folder kinds any increase in filtered can only come from this
             // one hitting the gate; for a folder the increase means private
             // children, and the folder itself is judged separately
+            // A selection that was delivered with private lines cut still keeps
+            // its audit path (the count went up, the body is Ok) — only a
+            // reference that failed the gate outright is private here
             let private = match r {
                 ContextRef::Folder { path } => vault.is_private_rel(path.trim().trim_matches('/'), true),
-                _ => filtered > before,
+                _ => body.is_err() && filtered > before,
             };
             ResolvedRef { kind: r.kind(), path: r.path().to_string(), lines: r.lines(), body, private }
         })
@@ -339,11 +342,54 @@ fn collapse_blank_lines(s: &str) -> String {
 /// a frontmatter `private` go through `is_private_rel`, the same function that
 /// filters the current note).
 fn gate_selection(vault: &Vault, path: &str, text: &str, filtered: &mut usize) -> Result<String, String> {
-    gate_private(vault, path, filtered)?;
-    match truncate_ctx(text) {
+    let rel = gate_private(vault, path, filtered)?;
+    // Block-level privacy, two layers. (1) Lines equal to a line of one of the
+    // note's private blocks on disk are dropped — by line content, not line
+    // number, so an unsaved edit above the selection cannot shift the cut, and
+    // a selection that starts in the middle of a private callout (no head line
+    // to parse) is still caught. (2) The text is segmented like a note and its
+    // private blocks removed. The residual gap — a never-saved private block
+    // selected from its middle — is closed by the editor, which refuses such a
+    // selection; this stays the real gate.
+    let mut body = text.to_string();
+    let mut dropped = false;
+    if let Ok(id) = vault.note_id(rel) {
+        if let Ok(raw) = vault.read_note(&id) {
+            let blocks = vemry_core::parser::parse_note(&raw).blocks;
+            let private_lines: std::collections::HashSet<&str> = blocks
+                .iter()
+                .filter(|b| matches!(b.kind, vemry_core::BlockKind::Private))
+                .flat_map(|b| raw[b.span.clone()].lines())
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+            if !private_lines.is_empty() {
+                let kept: Vec<&str> = body
+                    .lines()
+                    .filter(|l| {
+                        let hit = !l.trim().is_empty() && private_lines.contains(l.trim());
+                        dropped |= hit;
+                        !hit
+                    })
+                    .collect();
+                if dropped {
+                    body = kept.join("\n");
+                }
+            }
+        }
+    }
+    let blocks = vemry_core::parser::parse_blocks(&body, 0);
+    if vemry_core::has_private_blocks(&blocks) {
+        body = vemry_core::redact_private_blocks(&body, &blocks).text;
+        dropped = true;
+    }
+    if dropped {
+        *filtered += 1;
+    }
+    match truncate_ctx(&body) {
         Some(t) => Ok(t),
-        None if text.trim().is_empty() => Ok("(empty selection)".into()),
-        None => Ok(text.to_string()),
+        None if body.trim().is_empty() => Ok("(empty selection)".into()),
+        None => Ok(body),
     }
 }
 
@@ -540,6 +586,8 @@ pub fn scrub_private_refs(vault: &Vault, messages: &mut [ChatMessage]) {
             let rep = match replace.iter().find(|(k, a, _)| *k == kind && *a == b.attr) {
                 Some((.., r)) => Some(r.clone()),
                 None if kind == RefKind::Folder => filter_folder_block(vault, &text[b.start..b.end], &b.attr),
+                None if kind == RefKind::Note => rebuild_note_block(vault, &b.attr),
+                None if kind == RefKind::Selection => scrub_selection_block(vault, &text[b.start..b.end], &b.attr),
                 None => None,
             };
             if let Some(rep) = rep {
@@ -638,6 +686,45 @@ fn filter_folder_block(vault: &Vault, block: &str, attr: &str) -> Option<String>
     }
     let body = if kept.is_empty() { crate::prompt::NO_NOTES.to_string() } else { kept.join("\n") };
     Some(crate::prompt::ref_envelope(RefKind::Folder.tag(), attr, "", crate::prompt::FOLDER_INTRO, &body))
+}
+
+/// A note envelope whose note now holds private blocks is rebuilt from the
+/// same read the resolution used (`read_note` through the redacting gate),
+/// so a block that turned private after the note was attached leaves the
+/// request from the next turn on. Deterministic for an unchanged disk; a
+/// note without private blocks is left byte for byte as it was.
+fn rebuild_note_block(vault: &Vault, attr: &str) -> Option<String> {
+    let id = vault.note_id(attr).ok()?;
+    if !vault.has_private_blocks(&id) {
+        return None;
+    }
+    let mut ignored = 0;
+    let body = run_read(vault, "read_note", json!({ "path": attr }), &mut ignored).ok()?;
+    let tag = RefKind::Note.tag();
+    Some(crate::prompt::ref_envelope(tag, attr, "", crate::prompt::NOTE_INTRO, &crate::prompt::fence_body(&body, tag)))
+}
+
+/// A frozen selection envelope has no disk source to rebuild from: when the
+/// note now holds a private block and any body line equals one of that
+/// block's lines, the whole envelope becomes the one-line "unavailable" —
+/// a passage edited *and* wrapped after it was attached is not detected
+/// (the same class of limitation as summaries not being re-scrubbed).
+fn scrub_selection_block(vault: &Vault, block: &str, attr: &str) -> Option<String> {
+    let id = vault.note_id(attr).ok()?;
+    if !vault.has_private_blocks(&id) {
+        return None;
+    }
+    let raw = vault.read_note(&id).ok()?;
+    let blocks = vemry_core::parser::parse_note(&raw).blocks;
+    let private_lines: std::collections::HashSet<&str> = blocks
+        .iter()
+        .filter(|b| matches!(b.kind, vemry_core::BlockKind::Private))
+        .flat_map(|b| raw[b.span.clone()].lines().chain(b.content.lines()))
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let hit = block.lines().any(|l| !l.trim().is_empty() && private_lines.contains(l.trim()));
+    hit.then(|| crate::prompt::ref_unavailable_line(attr, "selection no longer available"))
 }
 
 /// The "Currently open note: P" item of the turn tail: when P is private now, the
@@ -1085,6 +1172,76 @@ mod tests {
             .map(|r| crate::types::StoredRef { kind: r.kind.as_str().into(), path: r.path.clone() })
             .collect();
         msg
+    }
+
+    #[test]
+    fn selection_drops_private_lines_by_disk_and_by_structure() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("Mix.md"), "public line\n\n> [!private] head SECRET1\n> body SECRET2\n\nafter\n").unwrap();
+        let vault = Vault::open(root).unwrap();
+        // (1) a selection starting in the middle of the callout: lines equal to
+        // the block's lines on disk are dropped, and the ref keeps its audit path
+        let (r, filtered) = one(
+            &vault,
+            ContextRef::Selection { path: "Mix.md".into(), from_line: 4, to_line: 6, text: "> body SECRET2\n\nafter".into() },
+        );
+        let body = r.body.unwrap();
+        assert!(!body.contains("SECRET") && body.contains("after"), "{body:?}");
+        assert_eq!(filtered, 1);
+        assert!(!r.private);
+        // (2) a private block typed into the selection text itself (not on disk yet)
+        let (r, filtered) = one(
+            &vault,
+            ContextRef::Selection { path: "Mix.md".into(), from_line: 1, to_line: 5, text: "x\n\n> [!private] typed SECRET3\n\ny".into() },
+        );
+        assert_eq!(r.body.unwrap(), "x\n\ny");
+        assert_eq!(filtered, 1);
+        // (3) a public selection passes untouched and counts nothing
+        let (r, filtered) =
+            one(&vault, ContextRef::Selection { path: "Mix.md".into(), from_line: 1, to_line: 1, text: "public line".into() });
+        assert_eq!(r.body.unwrap(), "public line");
+        assert_eq!(filtered, 0);
+        // (4) entirely private: the same empty-selection wording, still delivered
+        let (r, _) =
+            one(&vault, ContextRef::Selection { path: "Mix.md".into(), from_line: 3, to_line: 4, text: "> [!private] head SECRET1\n> body SECRET2".into() });
+        assert_eq!(r.body.unwrap(), "(empty selection)");
+    }
+
+    #[test]
+    fn scrub_rebuilds_note_and_drops_selection_when_a_block_turns_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("Doc.md"), "# Doc\n\nkeep\n\nSOON-PRIVATE\n").unwrap();
+        let mut vault = Vault::open(root).unwrap();
+        let refs = [
+            ContextRef::Note { path: "Doc.md".into() },
+            ContextRef::Selection { path: "Doc.md".into(), from_line: 5, to_line: 5, text: "SOON-PRIVATE".into() },
+        ];
+        let ctx = crate::prompt::TurnContext::default();
+        let mut msgs = vec![envelope_msg(&vault, &refs, &ctx)];
+        assert!(msgs[0].text().unwrap().contains("SOON-PRIVATE"));
+        // nothing private yet: the bytes stay untouched
+        let before = msgs[0].text().unwrap().to_string();
+        scrub_private_refs(&vault, &mut msgs);
+        assert_eq!(msgs[0].text().unwrap(), before);
+        // the user wraps the line into a private block
+        vault.write_note(&vemry_core::NoteId::new("Doc.md"), "# Doc\n\nkeep\n\n> [!private] SOON-PRIVATE\n").unwrap();
+        scrub_private_refs(&vault, &mut msgs);
+        let text = msgs[0].text().unwrap().to_string();
+        assert!(!text.contains("SOON-PRIVATE") && text.contains("keep"), "{text}");
+        assert!(text.contains("(attachment Doc.md unavailable: selection no longer available)"));
+        // the rebuilt note envelope equals a fresh resolution byte for byte
+        let fresh = envelope_msg(&vault, &refs[..1], &ctx).text().unwrap().to_string();
+        let env = |t: &str| {
+            let a = t.find("<note-context").unwrap();
+            let b = t.find("</note-context>").unwrap() + "</note-context>".len();
+            t[a..b].to_string()
+        };
+        assert_eq!(env(&text), env(&fresh));
+        // idempotent
+        scrub_private_refs(&vault, &mut msgs);
+        assert_eq!(msgs[0].text().unwrap(), text);
     }
 
     /// A scrubbed message is equal byte for byte to what compose produces when the

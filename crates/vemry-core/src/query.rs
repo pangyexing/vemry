@@ -20,6 +20,9 @@ pub enum BlockKindFilter {
     Claim,
     Evidence,
     CodeBlock,
+    /// UI, query blocks and scripts only: the agent's `query_blocks` drops
+    /// private blocks unconditionally.
+    Private,
 }
 
 impl BlockKindFilter {
@@ -33,6 +36,7 @@ impl BlockKindFilter {
                 | (BlockKindFilter::Claim, BlockKind::Claim)
                 | (BlockKindFilter::Evidence, BlockKind::Evidence { .. })
                 | (BlockKindFilter::CodeBlock, BlockKind::CodeBlock { .. })
+                | (BlockKindFilter::Private, BlockKind::Private)
         )
     }
 }

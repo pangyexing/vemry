@@ -831,6 +831,73 @@ impl Vault {
         self.search.search(query, limit)
     }
 
+    // ---- the agent's reads: every one of these strips `> [!private]`
+    // blocks (see privacy.rs). Named rather than flagged so the choke points
+    // can be grepped, and so the raw `read_note` its many UI callers use can
+    // never be handed to the agent by a wrong default. ----
+
+    /// Whether the note holds a private block (index state; a cheap trigger).
+    pub fn has_private_blocks(&self, id: &NoteId) -> bool {
+        self.index.blocks(id).is_some_and(crate::privacy::has_private_blocks)
+    }
+
+    /// The note as the agent may read it: disk-fresh, re-parsed on this
+    /// call (index spans can lag the watcher), private blocks removed.
+    pub fn read_note_for_agent(&self, id: &NoteId) -> Result<crate::privacy::Redacted> {
+        let raw = self.read_note(id)?;
+        let blocks = parse_note(&raw).blocks;
+        Ok(crate::privacy::redact_private_blocks(&raw, &blocks))
+    }
+
+    /// Full-text search as the agent may see it. A hit in a note that holds
+    /// private blocks is re-matched over a blanked copy of the note: the
+    /// snippet can never come from a private line, and a query whose terms
+    /// are only satisfied together with private text drops out — otherwise
+    /// the AND matcher would confirm private words one at a time.
+    pub fn search_for_agent(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+        let terms = crate::search::query_terms(query);
+        let mut hits: Vec<SearchHit> = self
+            .search(query, limit)
+            .into_iter()
+            .filter_map(|h| {
+                if !self.has_private_blocks(&h.note) {
+                    return Some(h);
+                }
+                let raw = self.read_note(&h.note).ok()?;
+                let blocks = parse_note(&raw).blocks;
+                let blanked = crate::privacy::blank_private_blocks(&raw, &blocks);
+                let (score, snippet, line) = crate::search::match_doc(&h.title, &blanked, &terms)?;
+                Some(SearchHit { note: h.note, title: h.title, snippet, line, score })
+            })
+            .collect();
+        crate::search::sort_hits(&mut hits);
+        hits
+    }
+
+    /// VEMRY.md as the agent may read it (private blocks removed).
+    pub fn memory_file_for_agent(&self) -> Option<String> {
+        let raw = self.memory_file()?;
+        let blocks = parse_note(&raw).blocks;
+        Some(crate::privacy::redact_private_blocks(&raw, &blocks).text)
+    }
+
+    /// `resolve_ref` as the agent may use it: a private block is an anchor
+    /// that does not exist, and a section or subtree is handed over with its
+    /// private blocks removed.
+    pub fn resolve_ref_for_agent(&self, target: &str, from: Option<&NoteId>) -> Result<RefResolution> {
+        match self.resolve_ref(target, from)? {
+            RefResolution::Resolved(hit) => {
+                if matches!(hit.target, RefTarget::Block { block_kind: BlockKind::Private, .. }) {
+                    return Ok(RefResolution::AnchorMissing { note: hit.note, note_title: hit.note_title });
+                }
+                let blocks = crate::parser::parse_blocks(&hit.content, 0);
+                let content = crate::privacy::redact_private_blocks(&hit.content, &blocks).text;
+                Ok(RefResolution::Resolved(RefHit { content, ..hit }))
+            }
+            other => Ok(other),
+        }
+    }
+
     /// Backlinks with a context snippet from the linking block.
     pub fn backlinks(&self, id: &NoteId) -> Vec<BacklinkEntry> {
         self.index
@@ -1310,6 +1377,64 @@ mod tests {
         assert!(matches!(res("Sleep#^b1", None), RefResolution::AnchorMissing { .. }));
         assert!(matches!(res("Sleep#没有", None), RefResolution::AnchorMissing { .. }));
         assert!(matches!(res("Nowhere#^c1", None), RefResolution::NoteMissing));
+    }
+
+    #[test]
+    fn private_block_tags_links_excluded_everywhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("A.md"), "public #pub [[B]]\n\n> [!private] secret #hid [[B]] [[C]]\n").unwrap();
+        fs::write(root.join("B.md"), "b\n").unwrap();
+        fs::write(root.join("C.md"), "c\n").unwrap();
+        let vault = Vault::open(root).unwrap();
+        let a = NoteId::new("A.md");
+        assert_eq!(vault.index().summary(&a).unwrap().tags, vec!["pub"]);
+        assert_eq!(vault.index().links_out(&a).len(), 1);
+        assert!(vault.index().backlinks_of(&NoteId::new("C.md")).is_empty());
+        assert_eq!(vault.index().graph().edges.len(), 1);
+        let bl = vault.backlinks(&NoteId::new("B.md"));
+        assert_eq!(bl.len(), 1);
+        assert!(!bl[0].snippet.contains("secret"));
+        assert!(vault.has_private_blocks(&a));
+        assert!(!vault.has_private_blocks(&NoteId::new("B.md")));
+    }
+
+    #[test]
+    fn agent_reads_never_see_private_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("N.md"),
+            "# Head\n\npublic apple\n\n> [!private] secret banana apple\n\n## Sub\n- item ^i1\n  > [!private] hidden\n  - child\n\n> [!private] gone ^p1\n",
+        )
+        .unwrap();
+        fs::write(root.join("VEMRY.md"), "rule\n\n> [!private] memory secret\n").unwrap();
+        let vault = Vault::open(root).unwrap();
+        let n = NoteId::new("N.md");
+        let red = vault.read_note_for_agent(&n).unwrap();
+        assert!(!red.text.contains("secret") && !red.text.contains("hidden") && !red.text.contains("gone"));
+        assert_eq!(red.count(), 3);
+        assert!(red.text.contains("public apple") && red.text.contains("- child"));
+        // search: a private-only word finds nothing; the AND oracle is closed; a public hit keeps its raw line number
+        assert!(vault.search_for_agent("banana", 10).is_empty());
+        assert!(!vault.search("banana", 10).is_empty(), "the UI still finds it");
+        assert!(vault.search_for_agent("apple banana", 10).is_empty());
+        let hits = vault.search_for_agent("apple", 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!((hits[0].line, hits[0].snippet.as_str()), (3, "public apple"));
+        // memory injection
+        assert_eq!(vault.memory_file_for_agent().unwrap(), "rule\n");
+        // references: a private target is a missing anchor; a subtree is redacted
+        assert!(matches!(vault.resolve_ref_for_agent("N#^p1", None).unwrap(), RefResolution::AnchorMissing { .. }));
+        assert!(matches!(vault.resolve_ref("N#^p1", None).unwrap(), RefResolution::Resolved(_)), "the UI resolves it");
+        match vault.resolve_ref_for_agent("N#^i1", None).unwrap() {
+            RefResolution::Resolved(h) => assert_eq!(h.content, "- item ^i1\n  - child"),
+            other => panic!("{other:?}"),
+        }
+        match vault.resolve_ref_for_agent("N#Sub", None).unwrap() {
+            RefResolution::Resolved(h) => assert!(!h.content.contains("hidden") && !h.content.contains("gone")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

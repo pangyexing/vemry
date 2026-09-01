@@ -76,6 +76,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
             json!({
                 "type": "object",
                 "properties": {
+                    // `private` is deliberately absent: the agent's query never returns private blocks
                     "kind": {"type": "string", "enum": ["paragraph", "heading", "list_item", "task", "claim", "evidence", "code_block"]},
                     "note": {"type": "string", "description": "Restrict to one note path"},
                     "tag": {"type": "string"},
@@ -238,7 +239,10 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             if !vault.index().contains(&id) {
                 return Err(ToolError::Other(format!("note not found: {id}")));
             }
-            let content = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
+            // The agent's read: private blocks removed (privacy.rs), counted as filtered
+            let red = vault.read_note_for_agent(&id).map_err(|e| ToolError::Other(e.to_string()))?;
+            let filtered = red.count();
+            let content = red.text;
             // The truncation note points at a way to read on: the block index is
             // exactly the "read a part on demand" API
             let text = match crate::truncate_chars(
@@ -252,15 +256,17 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
                 None if content.is_empty() => "(empty note)".into(),
                 None => content,
             };
-            Ok(ReadOutcome { text, filtered: 0 })
+            Ok(ReadOutcome { text, filtered })
         }
         "search_notes" => {
             let query = arg_str(args, "query")?;
             let limit = arg_usize(args, "limit", 20).min(SEARCH_MAX_LIMIT);
             // overfetch so privacy filtering still fills the window; partition
             // before take so `filtered` counts every private hit in the fetch
+            // search_for_agent re-matches notes with private blocks over a
+            // blanked copy, so no snippet and no AND-match comes from a private line
             let (hits, hidden): (Vec<_>, Vec<_>) = vault
-                .search(query, limit * 4 + 20)
+                .search_for_agent(query, limit * 4 + 20)
                 .into_iter()
                 .partition(|h| !vault.is_private(&h.note));
             let filtered = hidden.len();
@@ -333,7 +339,12 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             q.limit = Some(q.limit.unwrap_or(QUERY_BLOCKS_MAX_LIMIT).min(QUERY_BLOCKS_MAX_LIMIT));
             let mut hits = vault.index().query(&q);
             let before = hits.len();
-            hits.retain(|h| !vault.is_private(&h.note));
+            // Whole private notes, then private blocks: both are nonexistent to
+            // the agent (a `kind: private` query therefore finds nothing).
+            // Positional ids are not renumbered around a removed block — one id
+            // space for the UI, the editor and id minting matters more than a
+            // gapless sequence
+            hits.retain(|h| !vault.is_private(&h.note) && !matches!(h.block.kind, vemry_core::BlockKind::Private));
             let filtered = before - hits.len();
             if hits.is_empty() {
                 return Ok(ReadOutcome { text: "(no matching blocks)".into(), filtered });
@@ -420,6 +431,16 @@ pub fn prepare_write(vault: &Vault, request_id: String, name: &str, args: &Value
                 vault.check_portable_rel(id.as_str()).map_err(|e| ToolError::Other(e.to_string()))?;
             }
             let old = if is_new { String::new() } else { vault.read_note(&id).unwrap_or_default() };
+            // A note holding private blocks cannot be overwritten whole: the model
+            // never saw those blocks, so its "full content" would delete them. The
+            // refusal is a detectable difference (the model learns something is
+            // hidden, never what) — the same class as a private path erroring
+            // where a public one opens a dialog.
+            if !is_new && vemry_core::has_private_blocks(&vemry_core::parser::parse_note(&old).blocks) {
+                return Err(ToolError::Privacy(format!(
+                    "write_note is not available for {path}; use edit_note for changes to this note"
+                )));
+            }
             let new_content = if is_new { with_agent_provenance(content) } else { content.to_string() };
             let diff = unified_diff(&old, &new_content, id.as_str());
             let kind = if is_new { WriteKind::Create } else { WriteKind::Overwrite };
@@ -434,7 +455,14 @@ pub fn prepare_write(vault: &Vault, request_id: String, name: &str, args: &Value
             // the agent)
             let id = existing_note_id(vault, path)?;
             let content = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
-            let count = content.matches(old_str).count();
+            // old_str must match exactly once in what the model could see: an
+            // occurrence inside (or straddling) a private block does not count,
+            // and the same "not found" wording covers it. The replacement is
+            // applied to the raw text; the diff the user sees is over the raw text.
+            let blocks = vemry_core::parser::parse_note(&content).blocks;
+            let redacted = vemry_core::redact_private_blocks(&content, &blocks);
+            let occurrences = vemry_core::public_occurrences(&content, old_str, &redacted.removed);
+            let count = occurrences.len();
             if count == 0 {
                 return Err(ToolError::Other(
                     "old_str not found in note — read the note again and copy the exact text".into(),
@@ -445,7 +473,8 @@ pub fn prepare_write(vault: &Vault, request_id: String, name: &str, args: &Value
                     "old_str matches {count} times — include more surrounding context to make it unique"
                 )));
             }
-            let new_content = content.replacen(old_str, new_str, 1);
+            let at = occurrences[0];
+            let new_content = format!("{}{}{}", &content[..at], new_str, &content[at + old_str.len()..]);
             let diff = unified_diff(&content, &new_content, id.as_str());
             Ok(WriteRequest {
                 id: request_id,
@@ -514,6 +543,18 @@ pub fn execute_write(vault: &mut Vault, req: &WriteRequest, content_override: Op
     // The error echoes req.path, never the canonical casing.
     if vault.is_private(&id) {
         return Err(format!("note not found: {}", req.path));
+    }
+    // The same re-check for a private block that appeared during the gate:
+    // an overwrite would delete it
+    if req.tool == "write_note" {
+        if let Ok(old) = vault.read_note(&id) {
+            if vemry_core::has_private_blocks(&vemry_core::parser::parse_note(&old).blocks) {
+                return Err(format!(
+                    "write_note is not available for {}; use edit_note for changes to this note",
+                    req.path
+                ));
+            }
+        }
     }
     let content = content_override.unwrap_or(&req.new_content);
     vault.write_note(&id, content).map_err(|e| e.to_string())?;
@@ -696,6 +737,107 @@ mod tests {
         let err = read(&vault, "get_links", json!({"path": "Diary.md"})).unwrap_err();
         assert!(matches!(err, ToolError::Privacy(_)));
         assert_eq!(err.to_string(), "note not found: Diary.md");
+    }
+
+    /// A public note holding a `> [!private]` block (sentinel BLOCKSECRET) next
+    /// to a plain one: the agent's reads never show the block.
+    fn fixture_with_private_block() -> (tempfile::TempDir, Vault) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("Mixed.md"),
+            "# Mixed\n\npublic apple\n\n> [!private] BLOCKSECRET banana apple\n\ntail apple\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("Plain.md"), "plain\n").unwrap();
+        let vault = Vault::open(root).unwrap();
+        (dir, vault)
+    }
+
+    #[test]
+    fn read_note_redacts_private_blocks() {
+        let (_d, vault) = fixture_with_private_block();
+        let out = read(&vault, "read_note", json!({"path": "Mixed.md"})).unwrap();
+        assert_eq!(out.text, "# Mixed\n\npublic apple\n\ntail apple\n");
+        assert_eq!(out.filtered, 1);
+    }
+
+    #[test]
+    fn search_notes_never_snippets_private_blocks() {
+        let (_d, vault) = fixture_with_private_block();
+        let out = read(&vault, "search_notes", json!({"query": "banana"})).unwrap();
+        assert_eq!(out.text, "no results for 'banana'");
+        // the AND oracle is closed: a public term plus a private-only term finds nothing
+        let out = read(&vault, "search_notes", json!({"query": "apple banana"})).unwrap();
+        assert!(out.text.starts_with("no results"));
+        let out = read(&vault, "search_notes", json!({"query": "apple"})).unwrap();
+        assert_eq!(out.text, "Mixed.md:3: public apple");
+    }
+
+    #[test]
+    fn query_blocks_drops_private_blocks() {
+        let (_d, vault) = fixture_with_private_block();
+        let out = read(&vault, "query_blocks", json!({"text": "BLOCKSECRET"})).unwrap();
+        assert_eq!(out.text, "(no matching blocks)");
+        assert_eq!(out.filtered, 1);
+        let out = read(&vault, "query_blocks", json!({"kind": "private"})).unwrap();
+        assert_eq!(out.text, "(no matching blocks)");
+        // positional ids keep their raw numbering around the gap
+        let out = read(&vault, "query_blocks", json!({"note": "Mixed.md"})).unwrap();
+        assert!(out.text.contains("\"block\": \"b1\"") && out.text.contains("\"block\": \"b3\""), "{}", out.text);
+        assert!(!out.text.contains("\"block\": \"b2\"") && !out.text.contains("BLOCKSECRET"));
+    }
+
+    #[test]
+    fn write_note_refused_when_private_blocks_but_create_and_edit_work() {
+        let (_d, mut vault) = fixture_with_private_block();
+        let err =
+            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Mixed.md", "content": "x"})).unwrap_err();
+        assert!(matches!(err, ToolError::Privacy(_)));
+        assert_eq!(err.to_string(), "write_note is not available for Mixed.md; use edit_note for changes to this note");
+        assert!(prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Plain.md", "content": "x"})).is_ok());
+        assert!(prepare_write(&vault, "r".into(), "write_note", &json!({"path": "New.md", "content": "x"})).is_ok());
+        // execute re-checks: a private block that appeared during the gate blocks the overwrite
+        let req =
+            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Plain.md", "content": "new"})).unwrap();
+        vault.write_note(&NoteId::new("Plain.md"), "plain\n\n> [!private] late\n").unwrap();
+        let err = execute_write(&mut vault, &req, None).unwrap_err();
+        assert!(err.starts_with("write_note is not available for Plain.md"), "{err}");
+        assert!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap().contains("late"));
+    }
+
+    #[test]
+    fn edit_note_matches_public_text_and_applies_to_raw() {
+        let (_d, vault) = fixture_with_private_block();
+        // "apple" occurs three times in the raw text, twice where the model can see
+        let err = prepare_write(
+            &vault,
+            "r".into(),
+            "edit_note",
+            &json!({"path": "Mixed.md", "old_str": "apple", "new_str": "pear"}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().starts_with("old_str matches 2 times"), "{err}");
+        let req = prepare_write(
+            &vault,
+            "r".into(),
+            "edit_note",
+            &json!({"path": "Mixed.md", "old_str": "tail apple", "new_str": "tail pear"}),
+        )
+        .unwrap();
+        assert!(req.new_content.contains("BLOCKSECRET"), "the raw text keeps the private block");
+        assert!(req.new_content.contains("tail pear") && req.diff.contains("tail pear"));
+        // a match only inside the private block, or straddling its boundary, is "not found"
+        for old in ["banana", "apple\n\n> [!private]", "> [!private] BLOCKSECRET"] {
+            let err = prepare_write(
+                &vault,
+                "r".into(),
+                "edit_note",
+                &json!({"path": "Mixed.md", "old_str": old, "new_str": "x"}),
+            )
+            .unwrap_err();
+            assert!(err.to_string().starts_with("old_str not found"), "{old:?}: {err}");
+        }
     }
 
     #[test]

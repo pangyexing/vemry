@@ -134,7 +134,8 @@ author:: Ursula K. Le Guin
 
 - `[!类型]` 大小写不敏感、类型内不能有空白；后面可跟 `+`/`-` 折叠记号
 - 识别的类型：`note`/`info`/`todo`/`abstract`/`summary`/`tldr`、`tip`/`hint`/`important`、`success`/`check`/`done`、`question`/`help`/`faq`、`warning`/`caution`/`attention`、`danger`/`error`/`failure`/`fail`/`missing`/`bug`、`example`、`quote`/`cite`，以及 vemry 自有的 `claim`/`evidence`
-- 只有 `claim` 与 `evidence` 进块索引成为独立块类型，其余按段落索引
+- `claim`、`evidence`、`private` 进块索引成为独立块类型，其余按段落索引
+- `private` 是块级隐私区（见[隐私标记](#隐私标记)）：必须从行首（缩进之后）开始，所以在列表项里要另起一个续行；不带 `>` 的懒续行不在块内
 - `evidence` 用 `supports:` 声明它支撑哪些断言：**写了 `supports:` 就只取其后的链接**，没写则整块的链接都算
 
 **降级**：标准 blockquote，`[!warning]` 作为首行文字照常可见。这是本方言里降级最干净的一条。
@@ -171,7 +172,7 @@ YAML 体，**八个平铺标量**，全部可选（`field` 可重复）：
 
 | 字段 | 取值 |
 |---|---|
-| `kind` | `paragraph` / `heading` / `list_item` / `task` / `claim` / `evidence` / `code_block` |
+| `kind` | `paragraph` / `heading` / `list_item` / `task` / `claim` / `evidence` / `code_block` / `private`（最后一个只供查询块、视图与脚本使用：agent 永远看不到私密块） |
 | `note` | 一篇笔记的准确相对路径，如 `projects/Alpha.md` |
 | `tag` | 标签名（前导 `#` 会被去掉） |
 | `text` | 正文子串 |
@@ -194,13 +195,14 @@ YAML 体，**八个平铺标量**，全部可选（`field` 可重复）：
 
 ## 隐私标记
 
-三条独立入口，任一命中即进隐私区（对 AI 不读、不写、不进 prompt）：
+四个彼此独立的入口。前三个把整个路径划进隐私区（永不读取、永不写入、永不进入提示词）；第四个对单个块做同样的事：
 
-- 笔记 frontmatter `private: true`
-- `.vemry/privacy` 里的 glob 规则（gitignore 语法，大小写不敏感）
+- 笔记 frontmatter 里的 `private: true`
+- `.vemry/privacy` 里的一条 glob 规则（gitignore 语法，不分大小写）
 - 任何以 `.` 开头的路径段（内置，无需配置）
+- 一个 `> [!private]` callout——这个块会从 AI 读到的一切里被移除（笔记正文、搜索、块查询、引用、附上的选区），没有占位符；它所在的笔记也不能再被 AI 整篇覆盖（只能编辑）。它里面的 `#标签`、`[[链接]]` 与 `key:: value` 字段对任何人都不索引，所以不会经由标签统计、反链或图谱泄露。
 
-**降级**：`private: true` 是一个普通 frontmatter 键；`.vemry/privacy` 是一个普通文本文件。隐私隔离是 vemry 运行时的行为，不改变文件本身。
+**降级**：`private: true` 是普通的 frontmatter 键，`.vemry/privacy` 是普通文本文件。`> [!private]` 块是首行写着 `[!private]` 的普通引用块——**别的工具会显示它的内容**。隐私隔离是 vemry 的运行时行为，不改变文件本身。
 
 ## 新增语法的门槛
 

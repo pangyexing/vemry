@@ -52,6 +52,15 @@ pub(crate) fn broadcast(app: &AppHandle, event: &VaultEvent) {
             _ => {}
         }
     }
+    // VEMRY.md is snapshotted into the system prompt per session; a change to
+    // it (a private block added, a convention edited) applies from the next
+    // turn instead of the next session
+    if let VaultEvent::NoteAdded { id } | VaultEvent::NoteModified { id } = event {
+        if id.as_str() == "VEMRY.md" {
+            let state: State<'_, AppState> = app.state();
+            state.agent.invalidate_prompt_snapshot();
+        }
+    }
     let _ = app.emit("vault://event", event);
 }
 

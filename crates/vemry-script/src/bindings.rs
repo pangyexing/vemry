@@ -183,7 +183,7 @@ fn call_query(env: &BindEnv, p: Value) -> String {
     match with_vault(env, |v| {
         let mut hits = v.index().query(&q);
         if hide {
-            hits.retain(|h| !v.is_private(&h.note));
+            hits.retain(|h| !v.is_private(&h.note) && !matches!(h.block.kind, vemry_core::BlockKind::Private));
         }
         serde_json::to_value(hits).map_err(|e| e.to_string())
     }) {
@@ -203,6 +203,10 @@ fn call_read(env: &BindEnv, p: Value) -> String {
             if hide && v.is_private(&id) {
                 // indistinguishable from a missing note, verbatim
                 return Err(VemryError::NoteNotFound(id.to_string()).to_string());
+            }
+            if hide {
+                // the agent's read: private blocks removed
+                return v.read_note_for_agent(&id).map(|r| r.text).map_err(|e| e.to_string());
             }
             v.read_note(&id).map_err(|e| e.to_string())
         } else {
@@ -244,7 +248,7 @@ fn call_search(env: &BindEnv, p: Value) -> String {
     let limit = p["limit"].as_u64().map(|n| n as usize).unwrap_or(30);
     let hide = env.perspective.hide_private;
     match with_vault(env, |v| {
-        let mut hits = v.search(&query, limit);
+        let mut hits = if hide { v.search_for_agent(&query, limit) } else { v.search(&query, limit) };
         if hide {
             hits.retain(|h| !v.is_private(&h.note));
         }

@@ -35,7 +35,8 @@ Three constraints follow:
 
 | Module | Responsibility |
 |---|---|
-| `parser.rs` | Line-level scanner: frontmatter, headings, list items, tasks, callouts (claim/evidence), code fences, `[[wikilink]]` (with the `![[…]]` embed flag), `#tag`, `^blockId`. Everything is a line-level or inline construct, which is why no full Markdown AST is needed |
+| `privacy.rs` | The privacy zone: the glob half of path privacy (`PrivacyScope`), and the block half — removing, blanking and matching around `> [!private]` blocks, the functions every agent-visible read goes through |
+| `parser.rs` | Line-level scanner: frontmatter, headings, list items, tasks, callouts (claim/evidence/private), code fences, `[[wikilink]]` (with the `![[…]]` embed flag), `#tag`, `^blockId`. Everything is a line-level or inline construct, which is why no full Markdown AST is needed |
 | `block.rs` | The `Block` / `BlockKind` types: the atom every projection is built from |
 | `locate.rs` | One definition of "which block / which section": heading lookup (exact, then case-insensitive; a trailing ` ^id` is not part of a title), section spans, block by local id (explicit beats positional), block by offset, a list item's subtree. The insert landing rule, reference resolution and id minting all go through it |
 | `blockid.rs` | Block ids: the validity rule the parser applies, which blocks may carry one (not fences, table rows or rules), and minting — a random `a–z0–9` id unique within the note, written only on demand |
@@ -818,9 +819,10 @@ the pinned clip target) goes through the bucketed table in `persist.ts`, describ
 under Layers.
 ## Privacy isolation (v0.2, implemented)
 
-Any folder or note can be marked a "privacy zone": the AI never reads it, never
-writes to it, and it never appears in the system prompt — as far as the model is
-concerned that content **does not exist**. You keep seeing all of it in the UI.
+Any folder, note or single block can be marked a "privacy zone": the AI never
+reads it, never writes to it, and it never appears in the system prompt — as far
+as the model is concerned that content **does not exist**. You keep seeing all of
+it in the UI.
 
 The principle: **privacy is a property of the vault, not of a session**. Rules live
 in `.vemry/privacy` (a gitignore-syntax glob list, compiled by
@@ -831,10 +833,12 @@ model endpoint. Per-note marking with frontmatter `private: true` is also suppor
 (surfaced as `NoteSummary.private`). `Vault::is_private()` is the union of glob
 matches and frontmatter markings, and any path segment starting with `.` is private
 by construction (which covers `.vemry/privacy` itself, the session logs, and
-`.obsidian`).
+`.obsidian`). The fourth marker is a block: a `> [!private]` callout is
+`BlockKind::Private`, and the parser indexes none of its tags, links or fields
+(so no aggregate — tag counts, backlinks, the graph — can carry a trace of it).
 
 Enforcement points (all in Rust; the agent reaches the vault only along these
-three paths):
+paths):
 
 1. **The read-level semantics are "it does not exist", not "you may not"**: in
    `execute_read_tool`, list/search/query_blocks filter out private notes and their
@@ -904,6 +908,27 @@ three paths):
    output bytes do not change, and the prefix cache still hits. Retry replays of the
    original envelope, switching to an old session, and forking all pass this gate.
 
+6. **Private blocks are cut out of every read, by one set of functions**
+   (`privacy.rs`: `redact_private_blocks`, `blank_private_blocks`,
+   `public_occurrences`; the vault names the agent's reads `read_note_for_agent`,
+   `search_for_agent`, `memory_file_for_agent`, `resolve_ref_for_agent` so the
+   choke points can be grepped, and the raw `read_note` its many UI callers use is
+   never handed to the agent by a wrong default). The table:
+
+   | Agent-visible path | Function | What is removed |
+   |---|---|---|
+   | `read_note`, an `@note` reference | `read_note_for_agent` (disk-fresh, re-parsed; no placeholder; one adjacent blank line goes with the block) | the private blocks, counted as filtered |
+   | `search_notes` | `search_for_agent` | a hit in a note with private blocks is re-matched over a blanked copy: the snippet cannot come from a private line, and a query satisfied only together with private text drops out (the AND matcher would otherwise confirm private words one term at a time) |
+   | `query_blocks` | the tool's `retain` | private blocks (a `kind: private` query finds nothing); positional ids are **not** renumbered around the gap — one id space for the UI, the editor and id minting |
+   | `get_links` | the index | nothing to do: a private block's links were never indexed |
+   | an `@selection` | `gate_selection`, two layers | lines equal to a line of one of the note's private blocks on disk (by content, not line number, so an unsaved edit above cannot shift the cut and a selection starting mid-callout is caught), then the private blocks the selection text itself contains |
+   | history envelopes, every turn | `scrub_private_refs` | a note envelope whose note now holds private blocks is rebuilt from the same read; a selection envelope with a line equal to a private line becomes "unavailable" |
+   | the system prompt | `memory_file_for_agent` | VEMRY.md's private blocks; a VEMRY.md write also invalidates the prompt snapshot, so the change applies from the next turn |
+   | a block reference or embed for the agent (seam) | `resolve_ref_for_agent` | a private target is a missing anchor; a section or subtree is handed over redacted |
+   | scripts under `hide_private` | the same three vault functions | the same |
+   | `write_note` | `prepare_write`, re-checked in `execute_write` | refused outright for a note holding a private block ("use edit_note"): the model never saw the block, so its "full content" would delete it |
+   | `edit_note` | `public_occurrences` | `old_str` must occur exactly once in what the model could see; an occurrence inside or straddling a private block does not count, with the same "not found" wording; the replacement lands in the raw text and the diff the user approves is over the raw text |
+
 Auditing: when filtering happens the runner writes
 `{"kind":"privacy","tool":…,"filtered":N}` into the session JSONL — a count only, no
 paths; an `@` reference the privacy gate filtered out does not even get its kind and
@@ -971,7 +996,27 @@ Known limitations (deliberate):
 - After a rename the frontmatter marking follows the file; a glob rule does not.
 - Writing to a private path errors while writing to a public one opens a dialog,
   which is a detectable behavioural difference — the error tool result is a design
-  requirement, and this is accepted.
+  requirement, and this is accepted. The `write_note` refusal for a note holding a
+  private block is the same class: the model learns that something is hidden,
+  never what. So is a gap in positional block ids, and the "selection no longer
+  available" line of a re-gated selection.
+- A private block in a never-saved note, selected from its middle: Rust cannot
+  see the block on disk and the selection has no `[!private]` head line to parse,
+  so the editor refuses that selection itself. Rust stays the real gate; the
+  editor's refusal covers this one gap.
+- `search_notes` line numbers stay those of the raw text (frontmatter included)
+  and match what `read_note` shows only when no private block precedes the hit;
+  the model edits by text, not by line, so this is accepted.
+- The search index keeps the raw text of every note in memory; what the agent
+  receives is re-matched over a blanked copy, but the index itself is unfiltered.
+- The audit log's `write_prepared` diff is over the raw text: the user sees the
+  private block in the permission dialog and the replay, the model never does.
+- A `> [!private]` block's tags and links are absent from the graph, backlinks
+  and tag counts for the user too — the price of not indexing them anywhere.
+- A private block typed into a note between `edit_note`'s prepare and execute is
+  the general concurrent-edit hazard, unchanged.
+- The UI does not filter: an embed of a private block (`![[Note#^id]]`) renders in
+  the editor, and the status bar names the block when the cursor is inside it.
 - `.vemry/skills/` is a deliberate exception the agent can read (the `read_skill`
   tool only, and only `.md` directly under that directory — see "Programmability");
   user scripts read and write the vault from the user's perspective, privacy zones

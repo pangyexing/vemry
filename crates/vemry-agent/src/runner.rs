@@ -1205,6 +1205,8 @@ mod tests {
             std::fs::write(vault.root().join(".vemry/privacy"), "secret/\n").unwrap();
             std::fs::create_dir_all(vault.root().join("secret")).unwrap();
             std::fs::write(vault.root().join("secret/Plan.md"), "TOPSECRET\n").unwrap();
+            // a private block inside the public note: the block-level zone
+            std::fs::write(vault.root().join("Hello.md"), "# Hello\n\nworld content\n\n> [!private] BLOCKSECRET\n").unwrap();
             *vault = Vault::open(vault.root()).unwrap();
         }
         let transport = Arc::new(MockTransport::new(vec![vec![text_chunk("好"), finish_chunk("stop")]]));
@@ -1238,6 +1240,7 @@ mod tests {
         // The envelope: a public note's body enters the user message; a private reference shows up as "unavailable, worded like a miss"
         let envelope = history[0].text().unwrap();
         assert!(envelope.contains("<note-context path=\"Hello.md\">"));
+        assert!(!envelope.contains("BLOCKSECRET"), "a private block never enters an envelope");
         assert!(envelope.contains("world content"));
         assert!(envelope.contains("(attachment secret/Plan.md unavailable: note not found: secret/Plan.md)"));
         assert!(!envelope.contains("TOPSECRET"), "the body of a selection inside a private note does not enter the envelope either");
@@ -1246,6 +1249,7 @@ mod tests {
         // The request side carries the same envelope (it is what goes to the model)
         let reqs = transport.requests.lock().unwrap();
         assert!(reqs[0].messages[1].text().unwrap().contains("world content"));
+        assert!(!reqs[0].messages[1].text().unwrap().contains("BLOCKSECRET"));
         // The audit: the user line records the kind/path of public references only —
         // a filtered reference has not even its path recorded (the ledger lives in
         // the vault), and the count is the privacy line's job
@@ -1262,7 +1266,10 @@ mod tests {
         assert!(!user_line.contains("划选正文") && !user_line.contains("TOPSECRET"), "the audit log holds no selection body");
         let privacy_line = jsonl.lines().find(|l| l.contains(r#""kind":"privacy""#)).expect("a privacy line");
         assert!(privacy_line.contains(r#""tool":"context_ref""#));
-        assert!(privacy_line.contains(r#""filtered":2"#), "the private note and the selection inside it count once each: {privacy_line}");
+        assert!(
+            privacy_line.contains(r#""filtered":3"#),
+            "the private note, the selection inside it and the private block cut from Hello.md count once each: {privacy_line}"
+        );
     }
 
     #[tokio::test]

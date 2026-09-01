@@ -24,6 +24,7 @@ three months later, and each translation drifts on its own. A new user-visible t
 | 证据 | evidence | citation, source |
 | 权限门 | permission gate | approval flow, confirmation |
 | 隐私区 | privacy zone | private folder, locked folder, vault (already taken) |
+| 私密块 | private block | hidden block, redacted block |
 | 记忆文件（VEMRY.md） | vault memory | config, rules, instructions |
 | 技能 | skill | plugin, extension (`extension` is reserved for the future extension mechanism) |
 | 用户脚本 | user script | macro, plugin |

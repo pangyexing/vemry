@@ -933,6 +933,34 @@ mod tests {
     }
 
     #[test]
+    fn hide_private_redacts_private_blocks() {
+        let probe = r#"
+            const text = vemry.read("Mixed.md");
+            const hits = vemry.search("BLOCKSECRET");
+            const q = vemry.query({ text: "BLOCKSECRET" });
+            vemry.commands.register(
+              { id: "p", title: `t:${text.includes("BLOCKSECRET") ? "leak" : "clean"} h${hits.length} q${q.length}` },
+              () => {}
+            );
+            "#;
+        let (_d, vault) = fixture(&[("probe", probe)]);
+        vault
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .write_note(&vemry_core::NoteId::new("Mixed.md"), "public\n\n> [!private] BLOCKSECRET\n")
+            .unwrap();
+        let bridge = TestBridge::new(false);
+        let hidden = spawn_host(&vault, &bridge, true);
+        assert_eq!(info(&hidden.list(), "probe").commands[0].title, "t:clean h0 q0");
+        drop(hidden);
+        // the user's own perspective still sees everything
+        let open = spawn_host(&vault, &bridge, false);
+        assert_eq!(info(&open.list(), "probe").commands[0].title, "t:leak h1 q1");
+    }
+
+    #[test]
     fn hide_private_perspective_filters_everything() {
         let (_d, vault) = fixture(&[(
             "probe",

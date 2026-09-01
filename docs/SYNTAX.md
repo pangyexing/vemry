@@ -181,8 +181,11 @@ parenthesis. Nothing is swallowed and no list is broken.
   `warning`/`caution`/`attention`,
   `danger`/`error`/`failure`/`fail`/`missing`/`bug`, `example`, `quote`/`cite`,
   plus vemry's own `claim` and `evidence`
-- Only `claim` and `evidence` become their own block types in the index; the rest
-  are indexed as paragraphs
+- `claim`, `evidence` and `private` become their own block types in the index;
+  the rest are indexed as paragraphs
+- `private` is the block-level privacy zone (see [Privacy markers](#privacy-markers)):
+  it must start its line (after indentation), so inside a list item it goes on a
+  continuation line of its own; a lazy line without `>` is outside the block
 - `evidence` declares what it supports with `supports:`. **If `supports:` is
   present, only the links after it count**; if it is absent, every link in the
   block counts.
@@ -233,7 +236,7 @@ A YAML body with **eight flat scalars**, all optional (`field` may repeat):
 
 | Field | Values |
 |---|---|
-| `kind` | `paragraph` / `heading` / `list_item` / `task` / `claim` / `evidence` / `code_block` |
+| `kind` | `paragraph` / `heading` / `list_item` / `task` / `claim` / `evidence` / `code_block` / `private` (the last is for query blocks, views and scripts only: the agent never sees a private block) |
 | `note` | the exact vault-relative path of one note, e.g. `projects/Alpha.md` |
 | `tag` | tag name (a leading `#` is stripped) |
 | `text` | substring of the body |
@@ -262,16 +265,24 @@ entry point in the whole chain, and the AI has no tool that can run code either.
 
 ## Privacy markers
 
-Three independent entry points; matching any one puts a path in a privacy zone
-(never read, never written, never in a prompt):
+Four independent entry points. The first three put a whole path in a privacy zone
+(never read, never written, never in a prompt); the fourth does the same for a
+single block:
 
 - `private: true` in a note's frontmatter
 - a glob rule in `.vemry/privacy` (gitignore syntax, case-insensitive)
 - any path segment beginning with `.` (built in, needs no configuration)
+- a `> [!private]` callout — the block is removed from everything the AI reads
+  (the note's text, search, block queries, references, attached selections) with
+  no placeholder, and the note it lives in can no longer be overwritten whole by
+  the AI (only edited). Its `#tags`, `[[links]]` and `key:: value` fields are not
+  indexed for anyone, so they cannot leak through tag counts, backlinks or the
+  graph.
 
 **Fallback**: `private: true` is an ordinary frontmatter key and `.vemry/privacy` is
-an ordinary text file. Privacy isolation is vemry runtime behaviour; it does not
-change the files.
+an ordinary text file. A `> [!private]` block is an ordinary blockquote whose
+first line reads `[!private]` — **another tool shows its content**. Privacy
+isolation is vemry runtime behaviour; it does not change the files.
 
 ## Adding to the dialect
 

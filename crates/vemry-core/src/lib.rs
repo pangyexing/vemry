@@ -26,7 +26,10 @@ pub use blockid::{plan_block_id, BlockIdInsert, BlockIdPlan, BlockSelector, Plan
 pub use event::VaultEvent;
 pub use index::{BlockIndex, GraphData, GraphEdge, GraphNode, NoteSummary, ResolvedLink};
 pub use note::{Frontmatter, Note, NoteId, VemryMeta};
-pub use privacy::PrivacyScope;
+pub use privacy::{
+    blank_private_blocks, has_private_blocks, private_spans, public_occurrences, redact_private_blocks, PrivacyScope,
+    Redacted,
+};
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
 pub use vault::{sanitize_filename, BacklinkEntry, InsertLanded, RefHit, RefResolution, RefTarget, Vault};
