@@ -446,7 +446,10 @@ export type ContextRef =
    *  handed over by the frontend — what is selected are the characters in the buffer
    *  (possibly unsaved). Rust still puts the path through the privacy gate.
    *  The line numbers are 1-based and inclusive. */
-  | ({ kind: "selection" } & EditorSelection);
+  | ({ kind: "selection" } & EditorSelection)
+  /** One block of a note (the composer's `@Note#` stage): local_id is `^id` or `bN` without
+   *  the caret; label is the chip's preview text and is stripped before sending. */
+  | { kind: "block"; path: string; local_id: string; label?: string };
 
 /** The image extensions that can be sent to the model as an image reference (mirroring
  *  `image_mime` in vemry-agent's context.rs; the two change together). Every other
@@ -516,6 +519,8 @@ export interface RefTag {
   kind: ContextRef["kind"];
   path: string;
   lines?: [number, number];
+  /** A block reference's handle (`^id` / `bN`), as the audit log records it. */
+  block?: string;
 }
 
 // ---- the reading projection (v0.5 P2) ----

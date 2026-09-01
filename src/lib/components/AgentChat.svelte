@@ -9,7 +9,7 @@
   // through host.ts.
   import { api, AGENT_IMAGE_EXTS, EFFORT_OPTIONS, type EffortValue, isAgentImage, type WebSearchResult } from "$lib/api";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { agent, type ComposerHandle, type DraftRef, type TimelineItem } from "$lib/stores/agent.svelte";
+  import { agent, blockHandle, type ComposerHandle, type DraftRef, type TimelineItem } from "$lib/stores/agent.svelte";
   import HoverCard, { type HoverCardData } from "./HoverCard.svelte";
   import { POSITIONAL_RE, TRANSIENT_CITE_RE, blocksOf, findBlock, materializeCitations, parseRefTarget } from "$lib/citation";
   import AtPicker, { linesLabel } from "./AtPicker.svelte";
@@ -1047,6 +1047,7 @@
    *  it could not be told apart from the same-named "current note" chip. */
   function refLabel(d: DraftRef): string {
     if (d.kind === "page") return d.page.title || d.page.url;
+    if (d.kind === "block") return baseOf(d.path);
     const name = baseOf(d.path);
     return d.kind === "folder" ? `${name}/` : name;
   }
@@ -1055,6 +1056,7 @@
     if (d.kind === "page") return d.page.url;
     // The image chip's permanent hint: no table of model capabilities is attempted (it cannot be judged reliably), and a text-only model will error on one
     if (d.kind === "image") return t("chat.needsMultimodal", { path: d.path });
+    if (d.kind === "block") return `${d.path} ¶${blockHandle(d.local_id)}${d.label ? `\n\n${d.label}` : ""}`;
     if (d.kind !== "selection") return d.path;
     const head = d.text.length > 300 ? `${d.text.slice(0, 300)}…` : d.text;
     return `${d.path} ${linesLabel(d)}\n\n${head}`;
@@ -1063,6 +1065,7 @@
   function refKey(d: DraftRef): string {
     if (d.kind === "page") return `page:${d.page.url}`;
     if (d.kind === "selection") return `selection:${selKey(d)}`;
+    if (d.kind === "block") return `block:${d.path}#${d.local_id}`;
     return `${d.kind}:${d.path}`;
   }
   /** One chip on the context row. The three sources — the current note, the current selection and
@@ -1122,7 +1125,7 @@
         cur: false,
         title: refTitle(d),
         label: refLabel(d),
-        lines: d.kind === "selection" ? linesLabel(d) : null,
+        lines: d.kind === "selection" ? linesLabel(d) : d.kind === "block" ? `¶${blockHandle(d.local_id)}` : null,
         tag: d.kind === "page" && d.page.truncated ? t("chat.tagTruncated") : null,
         removeLabel: t("chat.removeContext"),
         remove: () => agent.contextDraft.splice(di, 1),
@@ -1450,7 +1453,7 @@
             <span class="user-page" title={item.page.url}><RefIcon kind="page" size={12} /> {item.page.title}</span>
           {/if}
           {#if item.refs?.length}
-            {#each item.refs as r (`${r.kind}:${r.path}:${r.lines?.join("-") ?? ""}`)}
+            {#each item.refs as r (`${r.kind}:${r.path}:${r.lines?.join("-") ?? ""}:${r.block ?? ""}`)}
               <!-- A reference marked private afterwards: its path is no longer shown (a placeholder
                    rather than hiding it — it really was sent at the time, and disappearing entirely
                    would distort the record the other way; a privacy change takes effect reactively
@@ -1459,7 +1462,7 @@
                 <span class="user-page" title={t("chat.privateRefHint")}><PrivacyIcon size={12} /> {t("chat.privateRef")}</span>
               {:else}
                 <span class="user-page" title={r.path}
-                  ><RefIcon kind={r.kind} size={12} /> {r.path}{r.lines ? ` ${linesLabel({ from_line: r.lines[0], to_line: r.lines[1] })}` : ""}</span
+                  ><RefIcon kind={r.kind} size={12} /> {r.path}{r.lines ? ` ${linesLabel({ from_line: r.lines[0], to_line: r.lines[1] })}` : ""}{r.block ? ` ¶${r.block}` : ""}</span
                 >
               {/if}
             {/each}

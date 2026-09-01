@@ -108,9 +108,15 @@ function findSourcesIn(items: TimelineItem[], from: number) {
 
 /** A reference at send time → the tag the timeline and the audit log share (a selection keeps its line range alone and the body is dropped). */
 function refTag(r: ContextRef): RefTag {
-  return r.kind === "selection"
-    ? { kind: r.kind, path: r.path, lines: [r.from_line, r.to_line] }
-    : { kind: r.kind, path: r.path };
+  if (r.kind === "selection") return { kind: r.kind, path: r.path, lines: [r.from_line, r.to_line] };
+  if (r.kind === "block") return { kind: r.kind, path: r.path, block: blockHandle(r.local_id) };
+  return { kind: r.kind, path: r.path };
+}
+
+/** A block's handle as the audit and the bubble show it: `bN` stays, anything else gets its caret. */
+export function blockHandle(localId: string): string {
+  const id = localId.replace(/^\^/, "");
+  return /^b\d+$/.test(id) ? id : `^${id}`;
 }
 
 /** The index of the last user item (-1 = there is none). */
@@ -351,7 +357,10 @@ class AgentStore {
   async send(message: string, currentNote: string | null, draft: DraftRef[] = []) {
     if (this.running || !message.trim()) return;
     const page = draft.find((d): d is Extract<DraftRef, { kind: "page" }> => d.kind === "page")?.page ?? null;
-    const refs: ContextRef[] = draft.flatMap((d) => (d.kind === "page" ? [] : [d]));
+    // A block's label is presentation only and stays out of the request
+    const refs: ContextRef[] = draft.flatMap((d): ContextRef[] =>
+      d.kind === "page" ? [] : d.kind === "block" ? [{ kind: "block", path: d.path, local_id: d.local_id }] : [d],
+    );
     this.liveTurnStart = this.timeline.length;
     this.timeline.push({
       kind: "user",
@@ -401,7 +410,13 @@ class AgentStore {
     if (idx < 0) return null;
     const item = this.timeline[idx];
     if (item.kind !== "user") return null;
-    const refs = item.refs?.flatMap((r): ContextRef[] => (r.kind === "selection" ? [] : [{ kind: r.kind, path: r.path }]));
+    const refs = item.refs?.flatMap((r): ContextRef[] =>
+      r.kind === "selection"
+        ? []
+        : r.kind === "block"
+          ? [{ kind: "block", path: r.path, local_id: (r.block ?? "").replace(/^\^/, "") }]
+          : [{ kind: r.kind, path: r.path }],
+    );
     const restored = { text: item.text, refs: refs?.length ? refs : undefined };
     await api.agentHistoryTruncate();
     this.timeline.splice(idx);

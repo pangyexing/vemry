@@ -747,6 +747,8 @@ add("atPicker.", {
     "fromDisk": ("Add a file from your computer…", "从电脑添加文件…"),
     "fromDiskSub": ("Image / PDF / text", "图片 / PDF / 文本"),
     "selectionSub": ("Current selection", "当前选区"),
+    "wholeNote": ("Whole note", "整篇笔记"),
+    "blocksOf": ("Blocks of {note}", "{note} 的块"),
     "pageBrowserSub": ("Current web page", "当前网页"),
     "pageReadingSub": ("Current reader page", "当前阅读页"),
     "heading": ("Add context", "添加上下文"),

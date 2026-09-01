@@ -78,6 +78,10 @@ pub enum ContextRef {
     /// only the envelope annotation and the audit log — nothing is read back off
     /// disk from them.
     Selection { path: String, from_line: usize, to_line: usize, text: String },
+    /// One block of a note, chosen in the composer's `@Note#` stage: the block's
+    /// local id (`^id` explicit, `bN` positional), resolved against the note at
+    /// send time — a heading hands over its section, a list item its subtree.
+    Block { path: String, local_id: String },
 }
 
 /// The kind of a reference. A `ResolvedRef` carries it into envelope assembly
@@ -91,6 +95,7 @@ pub enum RefKind {
     File,
     Image,
     Selection,
+    Block,
 }
 
 impl RefKind {
@@ -101,6 +106,7 @@ impl RefKind {
             RefKind::File => "file",
             RefKind::Image => "image",
             RefKind::Selection => "selection",
+            RefKind::Block => "block",
         }
     }
     /// The envelope tag (always `{as_str()}-context`): assembly, scrub's locator
@@ -113,6 +119,7 @@ impl RefKind {
             RefKind::File => "file-context",
             RefKind::Image => "image-context",
             RefKind::Selection => "selection-context",
+            RefKind::Block => "block-context",
         }
     }
     /// The inverse of `as_str()`: used when reading a `StoredRef.kind` string back
@@ -125,6 +132,7 @@ impl RefKind {
             "file" => RefKind::File,
             "image" => RefKind::Image,
             "selection" => RefKind::Selection,
+            "block" => RefKind::Block,
             _ => return None,
         })
     }
@@ -138,6 +146,7 @@ impl ContextRef {
             ContextRef::File { .. } => RefKind::File,
             ContextRef::Image { .. } => RefKind::Image,
             ContextRef::Selection { .. } => RefKind::Selection,
+            ContextRef::Block { .. } => RefKind::Block,
         }
     }
     pub fn path(&self) -> &str {
@@ -146,7 +155,19 @@ impl ContextRef {
             | ContextRef::Folder { path }
             | ContextRef::File { path }
             | ContextRef::Image { path }
-            | ContextRef::Selection { path, .. } => path,
+            | ContextRef::Selection { path, .. }
+            | ContextRef::Block { path, .. } => path,
+        }
+    }
+    /// A block reference's handle as the envelope shows it: `^id` for an explicit
+    /// id, `bN` for a positional one (None for every other kind).
+    pub fn block(&self) -> Option<String> {
+        match self {
+            ContextRef::Block { local_id, .. } => {
+                let clean = local_id.trim().trim_start_matches('^');
+                Some(if is_positional(clean) { clean.to_string() } else { format!("^{clean}") })
+            }
+            _ => None,
         }
     }
     /// A selection's line range (None for every other kind).
@@ -168,6 +189,9 @@ pub struct ResolvedRef {
     /// A selection's line range (1-based, inclusive); it goes into the envelope
     /// attribute and the audit log's `lines` field.
     pub lines: Option<(usize, usize)>,
+    /// A block reference's handle (`^id` / `bN`); it goes into the envelope's
+    /// `block` attribute and the audit log's `block` field.
+    pub block: Option<String>,
     /// When `kind == RefKind::Image`, Ok holds the mime type (the proof it passed
     /// the gate) and the content is not here — the image bytes are filled in by
     /// `inflate_images` by path when the request is assembled.
@@ -213,6 +237,7 @@ pub fn resolve_context_refs(
                 ContextRef::File { path } => read_text_file(vault, path, &mut filtered),
                 ContextRef::Image { path } => resolve_image(vault, path, &mut filtered, image_cache),
                 ContextRef::Selection { path, text, .. } => gate_selection(vault, path, text, &mut filtered),
+                ContextRef::Block { path, local_id } => resolve_block(vault, path, local_id, &mut filtered),
             };
             // Whether the reference itself was filtered by the gate: for the
             // non-folder kinds any increase in filtered can only come from this
@@ -225,7 +250,7 @@ pub fn resolve_context_refs(
                 ContextRef::Folder { path } => vault.is_private_rel(path.trim().trim_matches('/'), true),
                 _ => body.is_err() && filtered > before,
             };
-            ResolvedRef { kind: r.kind(), path: r.path().to_string(), lines: r.lines(), body, private }
+            ResolvedRef { kind: r.kind(), path: r.path().to_string(), lines: r.lines(), block: r.block(), body, private }
         })
         .collect();
     (out, filtered)
@@ -265,6 +290,34 @@ fn gate_private<'a>(vault: &Vault, path: &'a str, filtered: &mut usize) -> Resul
         return Err(vemry_core::reject(vemry_core::PathReject::NotFound, rel).to_string());
     }
     Ok(rel)
+}
+
+/// `bN`: the index's positional id (never written to disk; valid until the note changes).
+fn is_positional(id: &str) -> bool {
+    id.len() > 1 && id.starts_with('b') && id[1..].chars().all(|c| c.is_ascii_digit())
+}
+
+/// A block reference: the privacy verdict first (worded like a missing note, by
+/// the same constructor as every other gated read), then the block by its local
+/// id through `Vault::block_for_agent` (a heading = its section, a list item = its
+/// subtree, private blocks removed from the slice, a private block nonexistent).
+/// A missing block is an ordinary miss, not a privacy filter: the id came from
+/// the UI's index a moment ago, and its wording names the id so the user sees
+/// what went stale. An id with characters outside a block id's alphabet is a
+/// miss too (it can never be in a note, and it must not reach an attribute).
+fn resolve_block(vault: &Vault, path: &str, local_id: &str, filtered: &mut usize) -> Result<String, String> {
+    let rel = gate_private(vault, path, filtered)?;
+    let id = vault.note_id(rel).map_err(|e| e.to_string())?;
+    let clean = local_id.trim().trim_start_matches('^');
+    if clean.is_empty() || !clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(format!("block not found: {id}#{clean}"));
+    }
+    match vault.block_for_agent(&id, clean) {
+        Ok(Some(hit)) => Ok(hit.content),
+        Ok(None) => Err(format!("block not found: {id}#{clean}")),
+        // a note that cannot be read is worded exactly like a gated one
+        Err(_) => Err(vemry_core::reject(vemry_core::PathReject::NotFound, rel).to_string()),
+    }
 }
 
 /// Truncation for what is injected into an envelope: the limit and the marker are
@@ -550,7 +603,7 @@ pub fn scrub_private_refs(vault: &Vault, messages: &mut [ChatMessage]) {
                     replace.push((*kind, attr, line));
                 }
                 // The gate and the wording reuse the ones from resolution time (equal byte for byte)
-                RefKind::File | RefKind::Selection => {
+                RefKind::File | RefKind::Selection | RefKind::Block => {
                     let mut ignored = 0;
                     let Err(err) = gate_private(vault, path, &mut ignored) else { continue };
                     let attr = crate::prompt::fence_attr(path);
@@ -624,7 +677,8 @@ struct EnvBlock {
 /// body all the way to the outer envelope's real closer — deleting public content
 /// and leaving an unpaired open tag in the request.
 fn scan_blocks(text: &str) -> Vec<EnvBlock> {
-    let opens: Vec<(Option<RefKind>, String)> = [RefKind::Note, RefKind::Folder, RefKind::File, RefKind::Selection]
+    let opens: Vec<(Option<RefKind>, String)> =
+        [RefKind::Note, RefKind::Folder, RefKind::File, RefKind::Selection, RefKind::Block]
         .into_iter()
         .map(|k| (Some(k), format!("<{} path=\"", k.tag())))
         .chain([(None, "<web-page-context ".to_string())])
@@ -803,6 +857,61 @@ mod tests {
     fn one(vault: &Vault, r: ContextRef) -> (ResolvedRef, usize) {
         let (mut v, filtered) = resolve_context_refs(vault, &[r], &mut HashMap::new());
         (v.remove(0), filtered)
+    }
+
+    #[test]
+    fn block_ref_hands_over_block_section_or_subtree() {
+        let (_d, vault) = fixture();
+        // Hello.md: b0 = the heading, b1 = the paragraph (positional ids count from 0)
+        let (para, f) = one(&vault, ContextRef::Block { path: "Hello.md".into(), local_id: "b1".into() });
+        assert_eq!(para.kind, RefKind::Block);
+        assert_eq!(para.block.as_deref(), Some("b1"));
+        assert_eq!(f, 0);
+        let para_body = para.body.unwrap();
+        assert!(!para_body.is_empty() && !para_body.starts_with('#'), "{para_body}");
+        // the heading hands over its whole section, the paragraph included
+        let (section, _) = one(&vault, ContextRef::Block { path: "Hello.md".into(), local_id: "b0".into() });
+        let body = section.body.unwrap();
+        assert!(body.starts_with("# ") && body.contains(&para_body), "{body}");
+        // an explicit id is echoed with its caret in the handle
+        std::fs::write(vault.root().join("Ids.md"), "first ^k1\n\n- parent ^k2\n  - child\n").unwrap();
+        let (first, _) = one(&vault, ContextRef::Block { path: "Ids.md".into(), local_id: "^k1".into() });
+        assert_eq!(first.block.as_deref(), Some("^k1"));
+        assert_eq!(first.body.as_deref().unwrap(), "first ^k1");
+        let (item, _) = one(&vault, ContextRef::Block { path: "Ids.md".into(), local_id: "k2".into() });
+        assert!(item.body.as_deref().unwrap().contains("child"));
+    }
+
+    #[test]
+    fn block_ref_private_note_worded_like_missing_and_stale_id_is_a_plain_miss() {
+        let (_d, vault) = fixture();
+        let (private_note, f1) = one(&vault, ContextRef::Block { path: "Diary.md".into(), local_id: "b0".into() });
+        let (missing_note, f2) = one(&vault, ContextRef::Block { path: "Nope.md".into(), local_id: "b0".into() });
+        assert!(private_note.private && f1 == 1);
+        // the same sentence a missing note gets (privacy and missing are indistinguishable)
+        assert_eq!(
+            private_note.body.unwrap_err().replace("Diary.md", "X"),
+            missing_note.body.unwrap_err().replace("Nope.md", "X")
+        );
+        assert!(!missing_note.private && f2 == 0);
+        let (stale, f3) = one(&vault, ContextRef::Block { path: "Hello.md".into(), local_id: "b9".into() });
+        assert_eq!(stale.body.unwrap_err(), "block not found: Hello.md#b9");
+        assert!(!stale.private && f3 == 0);
+        let (bad, _) = one(&vault, ContextRef::Block { path: "Hello.md".into(), local_id: "x\"y".into() });
+        assert!(bad.body.unwrap_err().starts_with("block not found"));
+    }
+
+    #[test]
+    fn block_ref_redacts_private_blocks_and_hides_a_private_block_itself() {
+        let (_d, vault) = fixture();
+        std::fs::write(vault.root().join("Sec.md"), "# H\n\n> [!private] SECRET\n\npublic\n").unwrap();
+        // b0 = the heading, b1 = the private block, b2 = the paragraph
+        let (section, _) = one(&vault, ContextRef::Block { path: "Sec.md".into(), local_id: "b0".into() });
+        let body = section.body.unwrap();
+        assert!(body.contains("public") && !body.contains("SECRET"), "{body}");
+        let (hidden, f) = one(&vault, ContextRef::Block { path: "Sec.md".into(), local_id: "b1".into() });
+        assert_eq!(hidden.body.unwrap_err(), "block not found: Sec.md#b1");
+        assert_eq!(f, 0);
     }
 
     #[test]

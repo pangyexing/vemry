@@ -29,6 +29,10 @@
   import { reading } from "$lib/stores/reading.svelte";
   import { fuzzyFilter } from "$lib/commands/registry";
   import { isImeKeydown } from "$lib/ime";
+  import { blocksOf } from "$lib/citation";
+  import { blockLabel, isAnchorableHit } from "$lib/editor/blockref";
+  import { blockHandle } from "$lib/stores/agent.svelte";
+  import type { BlockHit } from "$lib/api";
 
   let {
     query,
@@ -84,7 +88,10 @@
     | { kind: "selection"; title: string; sub: string; sel: EditorSelection }
     | { kind: "page-browser"; title: string; sub: string }
     | { kind: "page-reading"; title: string; sub: string }
-    | { kind: "note" | "folder" | "file" | "image"; title: string; sub: string; path: string };
+    | { kind: "note" | "folder" | "file" | "image"; title: string; sub: string; path: string }
+    /** The `@Note#` stage: the whole note, then its headings and anchorable blocks. */
+    | { kind: "whole"; title: string; sub: string; path: string }
+    | { kind: "block"; title: string; sub: string; path: string; local_id: string; heading: boolean };
 
   /** The string fuzzy filtering matches against: a path-like candidate goes by path plus
    *  title, and the current page or selection by label plus title (a selection also carries
@@ -143,7 +150,62 @@
     }
     return out.map((c) => ({ c, key: keyOf(c) }));
   });
-  const cands = $derived(fuzzyFilter([...head, ...base], query, (e) => e.key).slice(0, MAX_SHOW).map((e) => e.c));
+  // ---- the `@Note#` stage: a `#` in the query switches to the blocks of one note ----
+  type PathCand = Extract<Cand, { path: string }>;
+  const hashAt = $derived(query.indexOf("#"));
+  /** The note the stage is about: an exact stem or title match, else the best fuzzy one;
+   *  an empty note part (`@#`) means the current note. null = no such note. */
+  const stageNote = $derived.by(() => {
+    if (hashAt < 0) return null;
+    const q = query.slice(0, hashAt).trim().toLowerCase();
+    if (!q) return vault.currentPath && !vault.privatePaths.has(vault.currentPath) ? vault.currentPath : null;
+    const notes = base.filter((e) => e.c.kind === "note");
+    const exact = notes.find((e) => {
+      const c = e.c as PathCand;
+      const stem = baseOf(c.path).replace(/\.md$/i, "").toLowerCase();
+      return stem === q || c.title.toLowerCase() === q || c.path.toLowerCase() === q;
+    });
+    const hit = exact ?? fuzzyFilter(notes, q, (e) => e.key)[0];
+    return hit ? (hit.c as PathCand).path : null;
+  });
+  let stageBlocks = $state<BlockHit[]>([]);
+  $effect(() => {
+    const path = stageNote;
+    const version = vault.indexVersion;
+    if (!path) {
+      stageBlocks = [];
+      return;
+    }
+    let live = true;
+    void blocksOf(path, version).then((hits) => {
+      if (live) stageBlocks = hits;
+    });
+    return () => {
+      live = false;
+    };
+  });
+  const stageCands = $derived.by((): Cand[] | null => {
+    const path = stageNote;
+    if (hashAt < 0) return null;
+    if (!path) return [];
+    const q = query.slice(hashAt + 1).trim();
+    const out: { c: Cand; key: string }[] = [
+      { c: { kind: "whole", title: t("atPicker.wholeNote"), sub: baseOf(path), path }, key: t("atPicker.wholeNote") },
+    ];
+    for (const h of stageBlocks) {
+      if (!isAnchorableHit(h)) continue;
+      const heading = h.block.kind.type === "heading";
+      const title = blockLabel(h.block.content);
+      out.push({
+        c: { kind: "block", title, sub: heading ? "›" : `¶${blockHandle(h.block.local_id)}`, path, local_id: h.block.local_id, heading },
+        key: title,
+      });
+    }
+    // the whole-note row always stays on top
+    const [whole, ...rest] = out;
+    return [whole.c, ...fuzzyFilter(rest, q, (e) => e.key).map((e) => e.c)].slice(0, MAX_SHOW);
+  });
+  const cands = $derived(stageCands ?? fuzzyFilter([...head, ...base], query, (e) => e.key).slice(0, MAX_SHOW).map((e) => e.c));
 
   let sel = $state(0);
   $effect(() => {
@@ -181,6 +243,14 @@
       else onClose();
       return;
     }
+    if (c.kind === "whole") {
+      onPick({ kind: "note", path: c.path });
+      return;
+    }
+    if (c.kind === "block") {
+      onPick({ kind: "block", path: c.path, local_id: c.local_id, label: c.title });
+      return;
+    }
     onPick({ kind: c.kind, path: c.path });
   }
 
@@ -188,6 +258,7 @@
     if (c.kind === "disk") return "file";
     if (c.kind === "page-browser") return "page";
     if (c.kind === "page-reading") return "reading";
+    if (c.kind === "whole") return "note";
     return c.kind;
   }
 
@@ -235,14 +306,20 @@
   onmousedown={(e) => e.preventDefault()}
 >
   <div class="at-head">
-    <span>{query ? t("atPicker.headingWithQuery", { query }) : t("atPicker.heading")}</span>
+    <span
+      >{stageNote
+        ? t("atPicker.blocksOf", { note: baseOf(stageNote) })
+        : query
+          ? t("atPicker.headingWithQuery", { query })
+          : t("atPicker.heading")}</span
+    >
     <span class="at-keys">{t("atPicker.keys")}</span>
   </div>
   <div class="at-list" bind:this={listEl}>
     {#if cands.length === 0}
       <div class="at-empty">{t("atPicker.empty")}</div>
     {/if}
-    {#each cands as c, i ("path" in c ? `${c.kind}:${c.path}` : c.kind)}
+    {#each cands as c, i (c.kind === "block" ? `block:${c.path}#${c.local_id}` : "path" in c ? `${c.kind}:${c.path}` : c.kind)}
       <button
         class="at-row"
         class:sel={i === selIdx}
@@ -255,7 +332,7 @@
         {:else}
           <span class="at-icon" class:page={!("path" in c)}><RefIcon kind={iconKind(c)} size={14} /></span>
         {/if}
-        <span class="at-title">{agent.grabbingPage && c.kind === "page-browser" ? t("atPicker.extracting") : c.title}{c.kind === "folder" ? "/" : ""}</span>
+        <span class="at-title" class:heading={c.kind === "block" && c.heading}>{agent.grabbingPage && c.kind === "page-browser" ? t("atPicker.extracting") : c.title}{c.kind === "folder" ? "/" : ""}</span>
         {#if c.sub}<span class="at-sub" class:tag={!("path" in c)}>{c.sub}</span>{/if}
       </button>
     {/each}
@@ -354,6 +431,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .at-title.heading {
+    font-weight: 600;
   }
   .at-sub.tag {
     flex: none;

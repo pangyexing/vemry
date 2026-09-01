@@ -299,6 +299,10 @@ impl AgentRunner {
                     if let Some((a, b)) = r.lines {
                         o["lines"] = json!([a, b]);
                     }
+                    // A block records its handle (an id is not content)
+                    if let Some(handle) = &r.block {
+                        o["block"] = json!(handle);
+                    }
                     o
                 })
                 .collect();

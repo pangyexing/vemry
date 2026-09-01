@@ -994,6 +994,38 @@ impl Vault {
         }
     }
 
+    /// One block of a note by its local id (`^id` explicit or `bN` positional —
+    /// explicit wins a clash), as the agent may see it: a heading hands over its
+    /// section, a list item or task its subtree, anything else the block alone,
+    /// with private blocks removed from the slice; a private block itself does
+    /// not exist. None = no such block.
+    pub fn block_for_agent(&self, id: &NoteId, local_id: &str) -> Result<Option<RefHit>> {
+        let raw = self.read_note(id)?;
+        let parsed = parse_note(&raw);
+        let Some(b) = crate::locate::find_block(&parsed.blocks, local_id) else {
+            return Ok(None);
+        };
+        let Some(i) = parsed.blocks.iter().position(|x| std::ptr::eq(x, b)) else {
+            return Ok(None);
+        };
+        let (target, span) = match b.kind {
+            BlockKind::Private => return Ok(None),
+            BlockKind::Heading { level } => (
+                RefTarget::Heading { text: crate::locate::heading_text(b).to_string(), level },
+                crate::locate::section_span_at(&parsed.blocks, &raw, i),
+            ),
+            _ => (
+                RefTarget::Block { local_id: b.local_id.clone(), block_kind: b.kind.clone() },
+                crate::locate::item_subtree_span(&parsed.blocks, &raw, i),
+            ),
+        };
+        let slice = &raw[span.clone()];
+        let blocks = crate::parser::parse_blocks(slice, 0);
+        let content = crate::privacy::redact_private_blocks(slice, &blocks).text;
+        let note_title = self.index.summary(id).map(|s| s.title).unwrap_or_else(|| id.stem().to_string());
+        Ok(Some(RefHit { note: id.clone(), note_title, target, content, span }))
+    }
+
     /// Backlinks with a context snippet from the linking block.
     pub fn backlinks(&self, id: &NoteId) -> Vec<BacklinkEntry> {
         self.index

@@ -2,7 +2,7 @@
   /** The one definition of the seven icon names: AgentChat's Chip.kind and AtPicker's
    *  iconKind both take their type from here, and an eighth changes this one place
    *  (and the template below). */
-  export type RefIconKind = "note" | "folder" | "file" | "image" | "page" | "reading" | "selection";
+  export type RefIconKind = "note" | "folder" | "file" | "image" | "page" | "reading" | "selection" | "block";
 </script>
 
 <script lang="ts">
@@ -45,6 +45,9 @@
   {:else if kind === "selection"}
     <path d="M4 4.5 V15.5" />
     <path d="M8 6.5 H16 M8 10 H16 M8 13.5 H12.5" />
+  {:else if kind === "block"}
+    <path d="M4 5 H16 M4 9 H16 M4 13 H11" />
+    <path d="M13.5 12 L16.5 15 L13.5 18" />
   {:else if kind === "page"}
     <circle cx="10" cy="10" r="7" />
     <path d="M3 10 H17 M10 3 C7.4 5.6 7.4 14.4 10 17 M10 3 C12.6 5.6 12.6 14.4 10 17" />

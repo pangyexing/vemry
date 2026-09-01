@@ -1498,6 +1498,17 @@ captures each positional citation's content when the turn ends and passes it
 as a guard: a mismatch falls back to the one block that still has that text.
 The guard lives in `src/lib/citation.ts` next to the shared block cache.
 
+The other direction — the user handing one block to the model — is the
+composer's `@Note#` stage: typing `#` after a note name lists the whole note,
+its headings and its anchorable blocks, and a pick becomes
+`ContextRef::Block { path, local_id }`. Rust resolves it at send time through
+`Vault::block_for_agent` (a heading hands over its section, a list item its
+subtree, private blocks removed from the slice, a private block nonexistent;
+the path goes through the same privacy gate as every attachment, worded like
+a missing note), and the envelope is `<block-context path="…" block="^id">`
+whose intro tells the model how to cite it. The audit records the handle, not
+the text. This is the seam an in-editor agent will use.
+
 ### AI web search (the DeepSeek Responses API)
 
 Search uses the **provider's server-side** `web_search` built-in tool (the DeepSeek
