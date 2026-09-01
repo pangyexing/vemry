@@ -589,6 +589,7 @@
   "queryBlock.cannotParse": "Cannot parse: {line}",
   "queryBlock.dueBeforeFormat": "due_before must be YYYY-MM-DD or today",
   "queryBlock.fieldEmpty": "{key} cannot be empty",
+  "queryBlock.fieldFormat": "field must be `key`, `key = value`, `key != value`, `key < value`, `key > value` or `key ~ text`",
   "queryBlock.hits": "vemry-query · {n} hits",
   "queryBlock.kindMustBe": "kind must be one of {list}",
   "queryBlock.limitPositive": "limit must be a positive integer",

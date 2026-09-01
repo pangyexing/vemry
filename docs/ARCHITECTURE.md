@@ -40,7 +40,7 @@ Three constraints follow:
 | `locate.rs` | One definition of "which block / which section": heading lookup (exact, then case-insensitive; a trailing ` ^id` is not part of a title), section spans, block by local id (explicit beats positional), block by offset, a list item's subtree. The insert landing rule, reference resolution and id minting all go through it |
 | `blockid.rs` | Block ids: the validity rule the parser applies, which blocks may carry one (not fences, table rows or rules), and minting — a random `a–z0–9` id unique within the note, written only on demand |
 | `index.rs` | `BlockIndex`: note table, block table, link graph (backlinks derived), name resolution table (stem/alias, shortest path wins), tag table. Incremental update: reparse one file, then reparse links wholesale (O(total links), milliseconds at ten-thousand-note scale) |
-| `query.rs` | `BlockQuery` → `Vec<BlockHit>`: the one query entry point |
+| `query.rs` | `BlockQuery` → `Vec<BlockHit>`: the one query entry point. Inline-field conditions (`FieldFilter`, parsed from the flat `key = v` grammar shared by query blocks, the agent tool and scripts) consult a block's own fields first, then the note's frontmatter scalars |
 | `search.rs` | The `SearchProvider` trait plus an in-memory multi-term AND substring match (no tokenisation, so CJK works by construction). tantivy or semantic retrieval would be another implementation of the same trait |
 | `vault.rs` | Orchestrates disk ↔ parse ↔ index ↔ search; path validation (rejects `../` escapes); self-write suppression (watcher loop protection) |
 | `watcher.rs` | notify + 500 ms debounce → a batch of paths → `handle_fs_change` |
@@ -440,7 +440,7 @@ skipped rather than replayed, leaving one `schedule_missed` line.
 
 ### Query blocks and runnable js blocks (the editor side)
 
-- A ` ```vemry-query ` fence with a YAML body (seven flat scalars —
+- A ` ```vemry-query ` fence with a YAML body (eight flat scalars —
   `kind/note/tag/text/task_state/due_before/limit` — with `due_before: today` as
   sugar; a 20-line parser, no js-yaml dependency). When the cursor is outside the
   block, the whole fence is replaced by a live-results widget (`queryblock.ts`,

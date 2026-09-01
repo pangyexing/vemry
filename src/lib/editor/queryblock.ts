@@ -4,7 +4,7 @@
 // With the cursor outside the block the whole fence renders as a live query result
 // (the same block-level replace semantics as table.ts, which has to come from a
 // StateField); clicking a result row jumps to the note it came from. The YAML body is
-// seven flat scalars (all the fields of BlockQuery), for which a 20-line parser is
+// eight flat scalars (all the fields of BlockQuery), for which a 20-line parser is
 // enough and js-yaml is not pulled in. An index update triggers a requery through the
 // queryRefresh effect — sharing the refresh signal (indexVersion) with the projection
 // views.
@@ -30,7 +30,9 @@ export const queryRefresh = StateEffect.define<number>();
 // The types come from api.ts's BlockQuery mirror: when the Rust side adds a kind or a state, tsc catches the drift
 const KINDS: NonNullable<BlockQuery["kind"]>[] = ["paragraph", "heading", "list_item", "task", "claim", "evidence", "code_block"];
 const STATES: NonNullable<BlockQuery["task_state"]>[] = ["todo", "doing", "done"];
-const FIELDS = "kind/note/tag/text/task_state/due_before/limit";
+const FIELDS = "kind/note/tag/text/task_state/due_before/field/limit";
+// Mirrors vemry-core's parse_field_filter grammar for a localized error only; Rust is the authority
+const FIELD_FLAT_RE = /^[\p{L}\p{N}_-]+\s*(?:(?:!=|=|<|>|~)\s*\S.*)?$/u;
 
 /** Flat `key: value` lines → BlockQuery fields, validated field by field (exported for testing) */
 export function parseQuerySource(src: string): { query?: BlockQuery; error?: string } {
@@ -77,6 +79,12 @@ export function parseQuerySource(src: string): { query?: BlockQuery; error?: str
         if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { error: t("queryBlock.dueBeforeFormat") };
         q.due_before = value;
         break;
+      case "field": {
+        if (!FIELD_FLAT_RE.test(value)) return { error: t("queryBlock.fieldFormat") };
+        const prev = q.field == null ? [] : Array.isArray(q.field) ? q.field : [q.field];
+        q.field = [...prev, value];
+        break;
+      }
       case "limit": {
         const n = Number(value);
         if (!Number.isInteger(n) || n <= 0) return { error: t("queryBlock.limitPositive") };

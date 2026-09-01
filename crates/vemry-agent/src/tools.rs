@@ -72,7 +72,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         f(
             "query_blocks",
-            "Query typed blocks across the vault: tasks, list items, claims, evidence, code blocks, headings. The same projection API the UI uses.",
+            "Query typed blocks across the vault: tasks, list items, claims, evidence, code blocks, headings. Blocks carry inline `key:: value` fields you can filter on. The same projection API the UI uses.",
             json!({
                 "type": "object",
                 "properties": {
@@ -81,6 +81,8 @@ pub fn tool_defs() -> Vec<ToolDef> {
                     "tag": {"type": "string"},
                     "text": {"type": "string", "description": "Substring filter on block content"},
                     "task_state": {"type": "string", "enum": ["todo", "doing", "done"]},
+                    "due_before": {"type": "string", "description": "YYYY-MM-DD: tasks due on or before this date"},
+                    "field": {"type": "string", "description": "Inline-field filter: `key` (present), `key = v`, `key != v`, `key < v`, `key > v`, `key ~ v` (contains); YYYY-MM-DD values compare as dates, numbers as numbers"},
                     "limit": {"type": "integer"}
                 }
             }),

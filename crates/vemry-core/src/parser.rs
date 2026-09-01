@@ -8,7 +8,7 @@
 
 use chrono::NaiveDate;
 
-use crate::block::{Block, BlockKind, TaskState, WikiLink};
+use crate::block::{Block, BlockKind, Field, TaskState, WikiLink};
 use crate::blockid::is_valid_block_id;
 use crate::note::Frontmatter;
 
@@ -154,6 +154,7 @@ pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
                 span: span_start..span_end,
                 tags: vec![],
                 links: vec![],
+                fields: vec![],
                 explicit_id: false,
             };
             assign_id(&mut b, blocks.len());
@@ -212,6 +213,7 @@ pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
             }
             let span = span_start..span_end;
             let (links, tags) = scan_inline(&raw[span.clone()], span.start);
+            let fields = scan_fields(&raw[span.clone()], span.start);
             let kind = match ctype.as_str() {
                 "claim" => BlockKind::Claim,
                 "evidence" => {
@@ -237,6 +239,7 @@ pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
                 span,
                 tags,
                 links,
+                fields,
                 explicit_id: false,
             };
             assign_id(&mut b, blocks.len());
@@ -291,6 +294,7 @@ pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
 
 fn make_block(raw: &str, kind: BlockKind, span: std::ops::Range<usize>) -> Block {
     let (links, tags) = scan_inline(&raw[span.clone()], span.start);
+    let fields = scan_fields(&raw[span.clone()], span.start);
     Block {
         local_id: String::new(),
         kind,
@@ -298,6 +302,7 @@ fn make_block(raw: &str, kind: BlockKind, span: std::ops::Range<usize>) -> Block
         span,
         tags,
         links,
+        fields,
         explicit_id: false,
     }
 }
@@ -534,6 +539,150 @@ pub fn scan_inline(slice: &str, base: usize) -> (Vec<WikiLink>, Vec<String>) {
     (links, tags)
 }
 
+/// A field key: letters, digits, `_`, `-`; not all digits (so `12::30` is a
+/// time, not a field).
+pub fn is_field_key(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().all(is_key_char)
+        && !s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn is_key_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '-')
+}
+
+/// Scan a raw slice for inline fields. Three forms, one boundary rule (the
+/// `::` must be followed by whitespace, a digit or the end of the line):
+/// a whole line `key:: value` (after the block prefix — indent, `>`, list
+/// marker, checkbox); `[key:: value]` / `(key:: value)` anywhere in a
+/// line; a bare `key:: token` inside a line, whose value is one token.
+/// Not scanned inside backtick code spans or `[[wikilinks]]`. Spans are
+/// absolute (offset by `base`).
+pub fn scan_fields(slice: &str, base: usize) -> Vec<Field> {
+    let mut fields = Vec::new();
+    if !slice.contains("::") {
+        return fields;
+    }
+    let mut in_code = false;
+    for (line_start, line) in LineIter::new(slice) {
+        let bytes = line.as_bytes();
+        let content_start = block_content_start(line);
+        let mut i = 0;
+        while i < bytes.len() {
+            let ch = match line[i..].chars().next() {
+                Some(c) => c,
+                None => break,
+            };
+            if ch == '`' {
+                in_code = !in_code;
+                i += 1;
+                continue;
+            }
+            if in_code {
+                i += ch.len_utf8();
+                continue;
+            }
+            if line[i..].starts_with("[[") {
+                match line[i + 2..].find("]]") {
+                    Some(end) => {
+                        i += end + 4;
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+            if !line[i..].starts_with("::") {
+                i += ch.len_utf8();
+                continue;
+            }
+            let after = &line[i + 2..];
+            let after_ok =
+                after.is_empty() || after.starts_with(|c: char| c.is_whitespace() || c.is_ascii_digit());
+            let key_start = line[..i]
+                .char_indices()
+                .rev()
+                .take_while(|(_, c)| is_key_char(*c))
+                .last()
+                .map(|(p, _)| p)
+                .unwrap_or(i);
+            let key = &line[key_start..i];
+            if !after_ok || !is_field_key(key) {
+                i += 2;
+                continue;
+            }
+            let before = line[..key_start].chars().next_back();
+            let found = match before {
+                Some(open @ ('[' | '(')) => {
+                    let close = if open == '[' { ']' } else { ')' };
+                    let rest = after.trim_start();
+                    match rest.find(close) {
+                        Some(c) if !rest[..c].contains(open) => {
+                            let close_at = i + 2 + (after.len() - rest.len()) + c;
+                            Some((key_start - 1, close_at + 1, rest[..c].trim().to_string()))
+                        }
+                        _ => None,
+                    }
+                }
+                _ if key_start == content_start => {
+                    let mut value = after.trim();
+                    if let Some(p) = value.rfind(" ^") {
+                        if is_valid_block_id(&value[p + 2..]) {
+                            value = value[..p].trim_end();
+                        }
+                    }
+                    Some((key_start, line.trim_end().len(), value.to_string()))
+                }
+                Some(c) if c.is_whitespace() => {
+                    let rest = after.trim_start();
+                    let token_len = rest.find(char::is_whitespace).unwrap_or(rest.len());
+                    let value_end = i + 2 + (after.len() - rest.len()) + token_len;
+                    Some((key_start, value_end, rest[..token_len].to_string()))
+                }
+                _ => None,
+            };
+            match found {
+                Some((from, to, value)) if !value.is_empty() => {
+                    fields.push(Field {
+                        key: key.to_string(),
+                        value,
+                        span: base + line_start + from..base + line_start + to,
+                    });
+                    i = to.max(i + 2);
+                }
+                _ => i += 2,
+            }
+        }
+    }
+    fields
+}
+
+/// Byte offset where a line's own text starts: past indentation, quote
+/// markers, a list marker and a checkbox.
+fn block_content_start(line: &str) -> usize {
+    let mut i = leading_ws(line);
+    loop {
+        let rest = &line[i..];
+        if let Some(r) = rest.strip_prefix('>') {
+            i += 1 + leading_ws(r);
+            continue;
+        }
+        if let Some((_, _, off)) = parse_list_marker(rest) {
+            i += off;
+            let after = &line[i..];
+            let mut chars = after.chars();
+            if chars.next() == Some('[') {
+                chars.next();
+                if chars.next() == Some(']') {
+                    let box_len = after.len() - chars.as_str().len();
+                    i += box_len + leading_ws(&after[box_len..]);
+                }
+            }
+            continue;
+        }
+        return i;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,6 +778,64 @@ mod tests {
         assert_eq!(links[0].target, "img.png");
         assert_eq!(links[0].span, 5..16);
         assert!(!links[1].embed);
+    }
+
+    fn fields_of(src: &str) -> Vec<(String, String, String)> {
+        parse_note(src)
+            .blocks
+            .iter()
+            .flat_map(|b| b.fields.iter().map(|f| (f.key.clone(), f.value.clone(), src[f.span.clone()].to_string())))
+            .collect()
+    }
+
+    #[test]
+    fn fields_three_forms_with_exact_spans() {
+        let src = "author:: Ursula K. Le Guin\n- 再读 [rating:: 5] (status:: done)\n- [ ] 写规格 due::2026-08-10 #work\n> 引用\n> status:: reading\n";
+        let got = fields_of(src);
+        assert_eq!(
+            got,
+            vec![
+                ("author".into(), "Ursula K. Le Guin".into(), "author:: Ursula K. Le Guin".into()),
+                ("rating".into(), "5".into(), "[rating:: 5]".into()),
+                ("status".into(), "done".into(), "(status:: done)".into()),
+                ("due".into(), "2026-08-10".into(), "due::2026-08-10".into()),
+                ("status".into(), "reading".into(), "status:: reading".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn task_due_is_both_a_date_and_a_field() {
+        let blocks = parse_note("- [ ] x due::2026-08-20\n").blocks;
+        assert!(matches!(blocks[0].kind, BlockKind::Task { due: Some(_), .. }));
+        assert_eq!(blocks[0].fields[0].key, "due");
+    }
+
+    #[test]
+    fn field_boundary_rule_and_exclusions() {
+        for (src, expect) in [
+            ("std::vector\n", 0),
+            ("C++::foo\n", 0),
+            ("12::30\n", 0),
+            ("see http://x\n", 0),
+            ("a::1\n", 1),
+            ("作者:: 勒古恩\n", 1),
+            ("std:: vector\n", 1),
+            ("author::\n", 0),
+            ("`k:: v`\n", 0),
+            ("[[k:: v]]\n", 0),
+            ("```\nk:: v\n```\n", 0),
+            ("---\nk:: v\n---\nbody\n", 0),
+            ("**bold**:: x\n", 0),
+            ("[k:: [nested]]\n", 0),
+            ("title ^abc\n\nk:: v ^id1\n", 1),
+        ] {
+            assert_eq!(fields_of(src).len(), expect, "{src:?}");
+        }
+        let got = fields_of("k:: v ^id1\n");
+        assert_eq!(got[0].1, "v");
+        let got = fields_of("- [x] done [k:: v] [k:: w]\n");
+        assert_eq!(got.iter().map(|f| f.1.as_str()).collect::<Vec<_>>(), vec!["v", "w"]);
     }
 
     #[test]

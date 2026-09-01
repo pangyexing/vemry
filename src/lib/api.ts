@@ -57,13 +57,30 @@ export type BlockKind =
   | { type: "evidence"; supports: string[] }
   | { type: "code_block"; lang: string };
 
+/** An inline `key:: value` field (mirrors vemry-core's `Field`); `span` covers the whole occurrence in bytes. */
+export interface Field {
+  key: string;
+  value: string;
+  span: { start: number; end: number };
+}
+
 export interface Block {
   local_id: string;
   kind: BlockKind;
   content: string;
   span: { start: number; end: number };
   tags?: string[];
+  fields?: Field[];
   explicit_id?: boolean;
+}
+
+export type FieldOp = "eq" | "ne" | "has" | "lt" | "gt" | "contains";
+
+/** One inline-field condition; the flat string form (`author = X`, `due < 2026-09-10`, `rating`) is parsed in Rust. */
+export interface FieldFilter {
+  key: string;
+  op: FieldOp;
+  value?: string;
 }
 
 /** The attachment-bucket migration report (mirroring vemry-core's attach_migrate::MigrationReport). */
@@ -94,6 +111,8 @@ export interface BlockQuery {
   task_state?: "todo" | "doing" | "done";
   /** `YYYY-MM-DD` — tasks due on or before this date (mirrors Rust `NaiveDate`). */
   due_before?: string;
+  /** Field conditions (all must hold): flat strings, typed objects, or a list of either. */
+  field?: string | FieldFilter | (string | FieldFilter)[];
   limit?: number;
 }
 

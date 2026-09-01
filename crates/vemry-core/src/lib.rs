@@ -21,12 +21,12 @@ pub mod vault;
 pub mod watcher;
 
 pub use attach_migrate::MigrationReport;
-pub use block::{Block, BlockKind, TaskState, WikiLink};
+pub use block::{Block, BlockKind, Field, TaskState, WikiLink};
 pub use event::VaultEvent;
 pub use index::{BlockIndex, GraphData, GraphEdge, GraphNode, NoteSummary, ResolvedLink};
 pub use note::{Frontmatter, Note, NoteId, VemryMeta};
 pub use privacy::PrivacyScope;
-pub use query::{BlockHit, BlockKindFilter, BlockQuery};
+pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
 pub use vault::{sanitize_filename, BacklinkEntry, InsertLanded, Vault};
 

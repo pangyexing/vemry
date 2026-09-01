@@ -1066,6 +1066,42 @@ mod tests {
     }
 
     #[test]
+    fn query_field_filters_use_block_fields_then_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("book.md"),
+            "---\nauthor: Le Guin\nrating: 4\ncreated: 2026-08-01\ntags: [x]\n---\nintro\n\n- 再读 [rating:: 5] [status:: done]\n- [ ] 写笔记 due::2026-09-01\n",
+        )
+        .unwrap();
+        fs::write(root.join("other.md"), "Author:: Someone\n").unwrap();
+        let vault = Vault::open(root).unwrap();
+        let q = |f: &str| {
+            vault
+                .index()
+                .query(&BlockQuery { field: vec![crate::query::parse_field_filter(f).unwrap()], ..Default::default() })
+        };
+        // block field wins over the note's frontmatter
+        assert_eq!(q("rating = 5").len(), 1);
+        // blocks without the key fall back to frontmatter (intro, task + the two of book.md… and other.md has none)
+        assert_eq!(q("rating = 4").len(), 2);
+        assert_eq!(q("author").len(), 4, "3 blocks of book.md via frontmatter + other.md's own field");
+        assert_eq!(q("AUTHOR ~ guin").len(), 3);
+        assert_eq!(q("due < 2026-09-10").len(), 1);
+        assert_eq!(q("created > 2026-07-31").len(), 3);
+        assert_eq!(q("status != done").len(), 0);
+        let both = vault.index().query(&BlockQuery {
+            field: vec![
+                crate::query::parse_field_filter("author ~ guin").unwrap(),
+                crate::query::parse_field_filter("rating > 4").unwrap(),
+            ],
+            ..Default::default()
+        });
+        assert_eq!(both.len(), 1);
+        assert_eq!(vault.index().frontmatter_field(&NoteId::new("book.md"), "Rating").collect::<Vec<_>>(), vec!["4"]);
+    }
+
+    #[test]
     fn open_scans_and_indexes() {
         let (_d, vault) = fixture_vault();
         assert_eq!(vault.index().note_count(), 2);

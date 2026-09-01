@@ -128,6 +128,40 @@ becomes a paragraph. `- - -` and `* * *` are thematic breaks, not items.
 **Fallback**: standard Markdown lists. This is indexing granularity, not
 syntax — nothing is written differently.
 
+## Inline fields
+
+```markdown
+author:: Ursula K. Le Guin
+- Read it again [rating:: 5] [status:: done]
+- [ ] Write the spec due::2026-08-10 #work
+> status:: reading
+```
+
+A field is `key:: value`. The key is letters, digits, `_` and `-` (Chinese
+keys work: `作者:: 勒古恩`) and is not all digits; the `::` must be followed by
+whitespace, a digit or the end of the line — so `std::vector`, `C++::foo`,
+`12::30` and `http://x` are never fields. Three forms:
+
+| Form | Where | Value |
+|---|---|---|
+| `key:: value` as the whole line | after the block prefix (indent, `>`, list marker, checkbox) | the rest of the line, minus a trailing ` ^id` |
+| `[key:: value]` / `(key:: value)` | anywhere in a line, not nested, not across lines | up to the matching bracket |
+| `key:: token` inside a line | after whitespace | one token, up to the next whitespace |
+
+- Every block keeps its fields (key, value as written, position); values are
+  interpreted by whoever reads them — a date, a number, a `[[link]]`, a list
+  `a, b` — not by the parser
+- A task's `due::` / `scheduled::` are ordinary fields as well as task dates;
+  the `📅` / `⏳` spellings are task dates only
+- Not scanned inside inline code, `[[wikilinks]]`, fenced code or frontmatter
+- Frontmatter scalars (and `created`) are the note's fields: a field filter
+  falls back to them when a block has no field of that key (`title`, `tags`,
+  `aliases`, `private` and `vemry` are metadata, not fields)
+
+**Fallback**: `key:: value` is readable plain text; `[key:: value]` shows as a
+bracketed span (it is not a link, having no `(url)`); `(key:: value)` is a
+parenthesis. Nothing is swallowed and no list is broken.
+
 ## Callouts, claims and evidence
 
 ```markdown
@@ -195,7 +229,7 @@ limit: 20
 ```
 ````
 
-A YAML body with **seven flat scalars**, all optional:
+A YAML body with **eight flat scalars**, all optional (`field` may repeat):
 
 | Field | Values |
 |---|---|
@@ -205,6 +239,7 @@ A YAML body with **seven flat scalars**, all optional:
 | `text` | substring of the body |
 | `task_state` | `todo` / `doing` / `done` |
 | `due_before` | `YYYY-MM-DD` or `today` (evaluated in local time) |
+| `field` | `key` (present) / `key = v` / `key != v` / `key < v` / `key > v` / `key ~ text`; dates and numbers compare as such; several `field` lines all have to hold |
 | `limit` | positive integer |
 
 No nesting, no expressions — deliberately a safe subset: a query block is read-only,

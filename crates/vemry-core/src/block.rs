@@ -92,6 +92,18 @@ pub enum BlockKind {
     },
 }
 
+/// An inline field `key:: value` found in a block — written as a whole line,
+/// as `[key:: value]` / `(key:: value)` anywhere in a line, or as a bare
+/// `key:: token` inside a line. The value is kept as written; consumers
+/// interpret it (date, number, link, list).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Field {
+    pub key: String,
+    pub value: String,
+    /// Byte range of the whole occurrence (brackets included) in the raw text.
+    pub span: Range<usize>,
+}
+
 /// A typed block extracted from a note. The unit of every projection.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
@@ -107,6 +119,8 @@ pub struct Block {
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub links: Vec<WikiLink>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub fields: Vec<Field>,
     /// True when the id came from an explicit `^id` marker.
     #[serde(default)]
     pub explicit_id: bool,

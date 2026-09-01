@@ -589,6 +589,7 @@
   "queryBlock.cannotParse": "无法解析: {line}",
   "queryBlock.dueBeforeFormat": "due_before 须为 YYYY-MM-DD 或 today",
   "queryBlock.fieldEmpty": "{key} 不能为空",
+  "queryBlock.fieldFormat": "field 须为 `key`、`key = 值`、`key != 值`、`key < 值`、`key > 值` 或 `key ~ 文本`",
   "queryBlock.hits": "vemry-query · {n} 条",
   "queryBlock.kindMustBe": "kind 须为 {list}",
   "queryBlock.limitPositive": "limit 须为正整数",

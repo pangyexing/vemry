@@ -18,6 +18,7 @@ three months later, and each translation drifts on its own. A new user-visible t
 | 引用（指向块或小节） | reference | citation (taken by evidence), pointer |
 | 嵌入 | embed | transclusion, include, import |
 | 小节 | section | chapter, part, heading (that is the line itself) |
+| 字段 | field | property, attribute, metadata |
 | 投影视图 | projection | dashboard, module, widget |
 | 断言 | claim | assertion, statement |
 | 证据 | evidence | citation, source |

@@ -1335,6 +1335,7 @@ add("queryBlock.", {
     "dueBeforeFormat": ("due_before must be YYYY-MM-DD or today", "due_before 须为 YYYY-MM-DD 或 today"),
     "limitPositive": ("limit must be a positive integer", "limit 须为正整数"),
     "unknownField": ("Unknown field: {key} (available: {fields})", "未知字段: {key}(可用: {fields})"),
+    "fieldFormat": ("field must be `key`, `key = value`, `key != value`, `key < value`, `key > value` or `key ~ text`", "field 须为 `key`、`key = 值`、`key != 值`、`key < 值`、`key > 值` 或 `key ~ 文本`"),
     "querying": ("Querying…", "查询中…"),
     "hits": ("vemry-query · {n} hits", "vemry-query · {n} 条"),
     "noHits": ("No matches", "无匹配"),

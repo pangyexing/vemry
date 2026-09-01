@@ -60,10 +60,49 @@ pub struct LinkEdge {
     pub from_block: String,
 }
 
-struct NoteEntry {
-    summary: NoteSummary,
-    blocks: Vec<Block>,
-    edges: Vec<LinkEdge>,
+pub(crate) struct NoteEntry {
+    pub(crate) summary: NoteSummary,
+    pub(crate) blocks: Vec<Block>,
+    pub(crate) edges: Vec<LinkEdge>,
+    /// Frontmatter scalars (plus `created`) as note-level fields: the
+    /// fallback a field filter consults when a block has no field of that key.
+    pub(crate) fm_fields: Vec<(String, String)>,
+}
+
+/// Flatten frontmatter into (key, value) strings: scalars as written,
+/// scalar sequences joined with ", "; mappings and nulls are skipped.
+/// `title`/`tags`/`aliases`/`private`/`vemry` are metadata, not fields.
+fn frontmatter_fields(note: &Note) -> Vec<(String, String)> {
+    fn scalar(v: &serde_yaml::Value) -> Option<String> {
+        match v {
+            serde_yaml::Value::String(s) => Some(s.clone()),
+            serde_yaml::Value::Number(n) => Some(n.to_string()),
+            serde_yaml::Value::Bool(b) => Some(b.to_string()),
+            _ => None,
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(c) = &note.frontmatter.created {
+        out.push(("created".to_string(), c.clone()));
+    }
+    for (k, v) in &note.frontmatter.extra {
+        let Some(key) = k.as_str() else { continue };
+        let value = match v {
+            serde_yaml::Value::Sequence(items) => {
+                let parts: Vec<String> = items.iter().filter_map(scalar).collect();
+                if parts.is_empty() {
+                    continue;
+                }
+                parts.join(", ")
+            }
+            other => match scalar(other) {
+                Some(s) => s,
+                None => continue,
+            },
+        };
+        out.push((key.to_string(), value));
+    }
+    out
 }
 
 #[derive(Default)]
@@ -136,7 +175,7 @@ impl BlockIndex {
 
         self.notes.insert(
             note.id.clone(),
-            NoteEntry { summary, blocks: note.blocks.clone(), edges },
+            NoteEntry { summary, blocks: note.blocks.clone(), edges, fm_fields: frontmatter_fields(note) },
         );
         self.resolve_all();
     }
@@ -330,16 +369,24 @@ impl BlockIndex {
         v
     }
 
-    pub(crate) fn entries(&self) -> impl Iterator<Item = (&NoteId, &NoteSummary, &[Block])> {
-        self.notes.iter().map(|(id, e)| (id, &e.summary, e.blocks.as_slice()))
-    }
-
-    /// `entries()` in note-id order, so a query that stops at its limit
+    /// Note entries in note-id order, so a query that stops at its limit
     /// returns a deterministic prefix instead of whatever the hash map yields.
-    pub(crate) fn entries_sorted(&self) -> Vec<(&NoteId, &NoteSummary, &[Block])> {
-        let mut v: Vec<_> = self.entries().collect();
+    pub(crate) fn entries_sorted(&self) -> Vec<(&NoteId, &NoteEntry)> {
+        let mut v: Vec<_> = self.notes.iter().collect();
         v.sort_by(|a, b| a.0.cmp(b.0));
         v
+    }
+
+    /// Values of a note-level field (frontmatter scalar or `created`), key
+    /// compared case-insensitively.
+    pub fn frontmatter_field<'a>(&'a self, id: &NoteId, key: &str) -> impl Iterator<Item = &'a str> + 'a {
+        let key = key.to_lowercase();
+        self.notes
+            .get(id)
+            .into_iter()
+            .flat_map(|e| e.fm_fields.iter())
+            .filter(move |(k, _)| k.to_lowercase() == key)
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn mtime_of(&self, id: &NoteId) -> Option<u64> {
