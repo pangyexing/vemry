@@ -1128,7 +1128,10 @@ mod tests {
     }
 
     /// fence_attr is lossy (`"` → `'`): the attribute scan misses the real path, and
-    /// the metadata catches it.
+    /// the metadata catches it. Every character fence_attr rewrites (`"`, `<`, `>`,
+    /// newline) is illegal in a Windows file name, so the file cannot exist there and
+    /// the case is skipped, like the other legacy-name tests.
+    #[cfg(not(windows))]
     #[test]
     fn scrub_handles_pathological_filename_via_metadata() {
         let dir = tempfile::tempdir().unwrap();
