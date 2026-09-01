@@ -28,7 +28,7 @@ export interface QueryHost {
 export const queryRefresh = StateEffect.define<number>();
 
 // The types come from api.ts's BlockQuery mirror: when the Rust side adds a kind or a state, tsc catches the drift
-const KINDS: NonNullable<BlockQuery["kind"]>[] = ["paragraph", "heading", "list_item", "task", "claim", "evidence", "code_block"];
+const KINDS: NonNullable<BlockQuery["kind"]>[] = ["paragraph", "heading", "list_item", "task", "claim", "evidence", "code_block", "private"];
 const STATES: NonNullable<BlockQuery["task_state"]>[] = ["todo", "doing", "done"];
 const FIELDS = "kind/note/tag/text/task_state/due_before/field/limit";
 // Mirrors vemry-core's parse_field_filter grammar for a localized error only; Rust is the authority

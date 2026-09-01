@@ -295,6 +295,8 @@ add("activityBar.", {
 
 # ---------------------------------------------------------------- status bar
 add("statusBar.", {
+    "privateBlock": ("Private block", "私密块"),
+    "privateBlockHint": ("Private block — invisible to the AI", "私密块——对 AI 不可见"),
     "privacyZone": ("Privacy zone", "隐私区"),
     "privacyZoneHint": ("Privacy zone — invisible to the AI", "隐私区 — 对 AI 不可见"),
     "cursor": ("Ln {line}, Col {col}", "行 {line}, 列 {col}"),
@@ -1297,6 +1299,7 @@ add("vaultStore.", {
 
 # ---------------------------------------------------------------- editor
 add("editor.", {
+    "privateBlockHint": ("Private block — invisible to the AI", "私密块——对 AI 不可见"),
     "clipboardEmpty": ("Nothing to paste from the clipboard", "剪贴板没有可粘贴的内容"),
     "openLinkNamed": ("Open link {target}", "打开链接 {target}"),
     "openLink": ("Open link", "打开链接"),

@@ -5,6 +5,7 @@
   import { EditorView } from "@codemirror/view";
   import type { EditorState } from "@codemirror/state";
   import { createEditor, resetDoc, languageFor } from "$lib/editor/setup";
+  import { privateRangeAt, selectionTouchesPrivate } from "$lib/editor/privateblock";
   import { queryRefresh } from "$lib/editor/queryblock";
   import { suppressReveal } from "$lib/editor/reveal";
   import { ensureSyntaxTree } from "@codemirror/language";
@@ -271,9 +272,23 @@
     // The same selection keeps the same object: downstream deriveds (the chips, the @
     // candidates) track it by object identity, and handing them a new snapshot on every update
     // would have them recompute for nothing (all the more during a drag)
+    // A selection touching a private block never becomes a chip: Rust cuts private
+    // lines it can see on disk, but a block that only exists in this buffer is
+    // invisible to it — the editor closes that gap (see privateblock.ts)
+    const priv = selectionTouchesPrivate(doc, from, to);
     const cur = vault.editorSelection;
-    if (cur && cur.path === docPath && cur.from_line === a.number && cur.to_line === b.number && cur.text === text) return;
-    vault.editorSelection = { path: docPath, from_line: a.number, to_line: b.number, text };
+    if (
+      cur &&
+      cur.path === docPath &&
+      cur.from_line === a.number &&
+      cur.to_line === b.number &&
+      cur.text === text &&
+      (cur.private === true) === priv
+    )
+      return;
+    vault.editorSelection = priv
+      ? { path: docPath, from_line: a.number, to_line: b.number, text, private: true }
+      : { path: docPath, from_line: a.number, to_line: b.number, text };
   }
 
   /** The buffer sync for a clip's image localisation (clip://localized). The rewrite happens on
@@ -565,6 +580,7 @@
     vault.editorCursor = head;
     const ln = v.state.doc.lineAt(head);
     vault.editorLoc = { line: ln.number, col: head - ln.from + 1 };
+    vault.editorBlockPrivate = privateRangeAt(v.state.doc, head) != null;
     // The onSelection resetDoc fires still carries the previous note's docPath, so it is zeroed here against the new document
     vault.editorSelection = null;
     vault.editorSelStats = null;
@@ -576,6 +592,7 @@
     vault.outline = null;
     vault.docWords = null;
     vault.editorLoc = null;
+    vault.editorBlockPrivate = false;
     vault.editorSelection = null;
     vault.editorSelStats = null;
   }
@@ -654,6 +671,8 @@
       onCursor: (h: number, line: number, col: number) => {
         vault.editorCursor = h;
         vault.editorLoc = { line, col };
+        const inPrivate = view != null && privateRangeAt(view.state.doc, h) != null;
+        if (inPrivate !== vault.editorBlockPrivate) vault.editorBlockPrivate = inPrivate;
       },
       onSelection: syncSelection,
     };

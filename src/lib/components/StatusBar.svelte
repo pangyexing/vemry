@@ -19,6 +19,11 @@
       <PrivacyIcon />
       <span>{t("statusBar.privacyZone")}</span>
     </span>
+  {:else if vault.editorBlockPrivate}
+    <span class="zone" title={t("statusBar.privateBlockHint")}>
+      <PrivacyIcon />
+      <span>{t("statusBar.privateBlock")}</span>
+    </span>
   {/if}
   <span class="right">
     {#if vault.editorLoc}

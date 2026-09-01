@@ -76,7 +76,7 @@
   let lastSel: { path: string; from_line: number; to_line: number; text: string } | null = null;
   const selForSend = $derived.by(() => {
     const s = curSel;
-    if (!s || vault.privatePaths.has(s.path) || selKey(s) === agent.dismissedSelection) return null;
+    if (!s || s.private || vault.privatePaths.has(s.path) || selKey(s) === agent.dismissedSelection) return null;
     const explicit = agent.contextDraft.filter((d) => d.kind !== "page");
     if (explicit.length >= MAX_REFS) return null;
     if (explicit.some((d) => d.kind === "selection" && selKey(d) === selKey(s))) return null;

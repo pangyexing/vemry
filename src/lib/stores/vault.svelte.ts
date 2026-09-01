@@ -320,6 +320,9 @@ class VaultStore {
   editorCursor = $state(0);
   /** The cursor's 1-based line:column (for the status line). null = there is no text editor right now (an image, a PDF). */
   editorLoc = $state<{ line: number; col: number } | null>(null);
+  /** The cursor sits inside a `> [!private]` block (the editor's own judgement of the
+   *  buffer; the status bar shows the block-level privacy badge). */
+  editorBlockPrivate = $state(false);
   /** The selection's statistics (for the status line). chars is computed from the doc
    *  (in UTF-16 units) — editorSelection.text is truncated at SELECTION_MAX_CHARS and
    *  cannot be counted. */

@@ -55,7 +55,8 @@ export type BlockKind =
   | { type: "task"; state: "todo" | "doing" | "done"; due?: string; scheduled?: string }
   | { type: "claim" }
   | { type: "evidence"; supports: string[] }
-  | { type: "code_block"; lang: string };
+  | { type: "code_block"; lang: string }
+  | { type: "private" };
 
 /** An inline `key:: value` field (mirrors vemry-core's `Field`); `span` covers the whole occurrence in bytes. */
 export interface Field {
@@ -103,7 +104,7 @@ export interface BlockHit {
 }
 
 export interface BlockQuery {
-  kind?: "paragraph" | "heading" | "list_item" | "task" | "claim" | "evidence" | "code_block";
+  kind?: "paragraph" | "heading" | "list_item" | "task" | "claim" | "evidence" | "code_block" | "private";
   /** Exact vault-relative path of one note (e.g. `projects/Alpha.md`), not a substring. */
   note?: string;
   tag?: string;
@@ -479,6 +480,8 @@ export interface EditorSelection {
   from_line: number;
   to_line: number;
   text: string;
+  /** Touches a `> [!private]` block in the buffer: never offered as a context chip. */
+  private?: true;
 }
 
 /** A reference tag in the audit log or the timeline: kind/path alone (plus the line

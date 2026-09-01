@@ -842,6 +842,10 @@ button:focus-visible,
 .cm-lp-co-evidence {
   --co-color: var(--co-evidence);
 }
+/* the block-level privacy zone wears the privacy accent, like every other privacy badge */
+.cm-lp-co-private {
+  --co-color: var(--accent);
+}
 /* ---- The body typography of the assistant's Markdown bubbles (the class-name contract
    markdown.ts's renderAssistantMarkdown* produces). Attaching .md-body gives the whole
    set: content injected with {@html} would otherwise have to be written out with

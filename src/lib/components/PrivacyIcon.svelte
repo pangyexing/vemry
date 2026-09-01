@@ -11,10 +11,13 @@
   // the file tree, a note badge in the projection views, a private reference chip in the
   // chat, the privacy row of the session replay — instead of each reaching for an emoji
   // (which every platform's fonts render differently).
+  // The path data lives in privacyGlyph.ts so the editor's private-callout icon (plain
+  // DOM inside CodeMirror) draws the identical mark.
+  import { PRIVACY_GLYPH_SLASH, PRIVACY_GLYPH_STAR, PRIVACY_GLYPH_VIEWBOX } from "$lib/privacyGlyph";
   let { size = 14 }: { size?: number } = $props();
 </script>
 
-<svg width={size} height={size} viewBox="0 0 20 20" aria-hidden="true">
-  <path d="M10 2.5 Q12.6 7.4 17.5 10 Q12.6 12.6 10 17.5 Q7.4 12.6 2.5 10 Q7.4 7.4 10 2.5 Z" fill="currentColor" />
-  <path d="M3.5 3.5 L16.5 16.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+<svg width={size} height={size} viewBox={PRIVACY_GLYPH_VIEWBOX} aria-hidden="true">
+  <path d={PRIVACY_GLYPH_STAR} fill="currentColor" />
+  <path d={PRIVACY_GLYPH_SLASH} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
 </svg>

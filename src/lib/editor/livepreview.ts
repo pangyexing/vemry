@@ -10,6 +10,7 @@
 // the cursor or selection touches shows its source (block-level markers such as
 // headings and quotes reveal by whole line).
 import { t } from "$lib/i18n/i18n.svelte";
+import { privacyGlyphSvg } from "$lib/privacyGlyph";
 import { syntaxTree } from "@codemirror/language";
 import {
   Decoration,
@@ -80,6 +81,8 @@ export const CALLOUT_GROUP: Record<string, string> = {
   example: "example",
   quote: "quote", cite: "quote",
   claim: "claim", evidence: "evidence",
+  // the block-level privacy zone: its own colour and the privacy badge for an icon
+  private: "private",
 };
 
 // lucide-style stroke icons (a 24 viewBox)
@@ -139,7 +142,13 @@ class CalloutIconWidget extends WidgetType {
   toDOM() {
     const el = document.createElement("span");
     el.className = "cm-lp-co-icon";
-    el.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CALLOUT_ICONS[this.group] ?? CALLOUT_ICONS.info}</svg>`;
+    if (this.group === "private") {
+      // the same struck-out sparkle as every other privacy badge (privacyGlyph.ts)
+      el.innerHTML = privacyGlyphSvg(15);
+      el.title = t("editor.privateBlockHint");
+    } else {
+      el.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CALLOUT_ICONS[this.group] ?? CALLOUT_ICONS.info}</svg>`;
+    }
     if (this.label) el.append(this.label);
     return el;
   }
@@ -660,12 +669,26 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
             const group = CALLOUT_GROUP[co[3].toLowerCase()] ?? "info";
             const title = first.text.slice(co[0].length).trim();
             const from = Math.max(n.from, range.from);
-            const to = Math.min(n.to, range.to);
+            // A private block's tint stops where the index's block stops: at the last
+            // `>` line. Lezer folds a lazy continuation line into the quote, but the
+            // parser (and so the agent's redaction) does not — an untinted lazy line
+            // is visibly public
+            let end = n.to;
+            if (group === "private") {
+              let last = first;
+              while (last.to < n.to) {
+                const next = doc.lineAt(last.to + 1);
+                if (!next.text.trimStart().startsWith(">")) break;
+                last = next;
+              }
+              end = last.to;
+            }
+            const to = Math.min(end, range.to);
             for (let pos = doc.lineAt(from).from; pos <= to; ) {
               const line = doc.lineAt(pos);
               let cls = `cm-lp-callout cm-lp-co-${group}`;
               if (line.from === first.from) cls += " cm-lp-co-head cm-lp-co-first";
-              if (line.to >= n.to) cls += " cm-lp-co-last";
+              if (line.to >= end) cls += " cm-lp-co-last";
               addLine(line.from, Decoration.line({ class: cls }), "co");
               if (line.to >= to) break;
               pos = line.to + 1;

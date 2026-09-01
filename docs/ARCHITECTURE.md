@@ -936,7 +936,11 @@ path into the audit's user row `refs` (the ledger lives inside the vault, so
 recording the path would write the private path back to disk). The session-replay
 view lets you watch the rules working.
 
-UI: the file tree's context menu and the palette's "mark as private"; a private
+UI: a `> [!private]` block wears the privacy accent in the editor with the same
+struck-out sparkle for its icon (the tint stops at the last `>` line, so a lazy
+continuation line is visibly public), the status bar shows "private block" while
+the cursor is inside one, and a selection touching one is never offered as a chat
+chip. The file tree's context menu and the palette's "mark as private"; a private
 path shows a badge — the AI's four-point sparkle struck out, "no agent here"
 (visible to you, invisible to the AI). One drawing, `PrivacyIcon.svelte`, serves every site — the tree, the projection views, the
 status bar, a private reference chip in the chat and the privacy row of the

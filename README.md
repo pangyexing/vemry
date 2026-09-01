@@ -70,10 +70,11 @@ run code at all.
 
 ### What you mark private does not exist
 
-Mark a folder or a note private and the agent never reads it, never writes to it,
-and never sees it in a prompt. This is enforced at three choke points in Rust, and
-a private file returns byte-for-byte the same error as a file that was never there —
-so the model cannot even infer that something is being withheld.
+Mark a folder, a note or a single `> [!private]` block private and the agent never
+reads it, never writes to it, and never sees it in a prompt. This is enforced at
+every read and write choke point in Rust, and a private file returns byte-for-byte
+the same error as a file that was never there — so the model cannot even infer that
+something is being withheld.
 
 The AI's writes stop at a diff you allow, deny, or edit and then apply. Every
 session — each read, each write, each permission decision, each privacy filter — is
