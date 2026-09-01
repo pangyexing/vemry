@@ -7,6 +7,7 @@
   import Chevron from "../Chevron.svelte";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
+  import PrivacyIcon from "../PrivacyIcon.svelte";
 
   let query = $state("");
 
@@ -116,7 +117,7 @@
         would only repeat the same word at the end of every row; only the exception,
         "created", is marked -->
       {#if r.source === "created"}<span class="source">{t("timeline.created")}</span>{/if}
-      {#if vault.privatePaths.has(r.note.id)}<span class="lock" title={t("statusBar.privacyZoneHint")}>🔒</span>{/if}
+      {#if vault.privatePaths.has(r.note.id)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
     </div>
   </li>
 {/snippet}
@@ -306,6 +307,8 @@
     color: var(--fg-faint);
   }
   .lock {
-    font-size: var(--fs-xs);
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--accent);
   }
 </style>

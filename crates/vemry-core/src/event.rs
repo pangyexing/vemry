@@ -15,7 +15,7 @@ pub enum VaultEvent {
     /// Non-note files/folders changed on disk (added, removed, or renamed) —
     /// the file tree should refresh. At most one per watcher batch.
     FilesChanged,
-    /// Privacy rules or marks changed — 🔒 badges and the agent-visible set
+    /// Privacy rules or marks changed — the tree badges and the agent-visible set
     /// must refresh.
     PrivacyChanged,
     /// A file under `.vemry/scripts/` changed on disk — the script host must

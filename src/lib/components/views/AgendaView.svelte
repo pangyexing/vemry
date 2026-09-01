@@ -9,6 +9,7 @@
   import TaskDateMenu from "./TaskDateMenu.svelte";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
+  import PrivacyIcon from "../PrivacyIcon.svelte";
 
   let hits = $state<BlockHit[]>([]);
   // With events firing in quick succession several loads run at once and an older response may arrive later: only the newest one lands
@@ -152,7 +153,7 @@
       </span>
       <span class="meta">
         <span class="chip note-chip">{r.hit.note_title}</span>
-        {#if vault.privatePaths.has(r.hit.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}>🔒</span>{/if}
+        {#if vault.privatePaths.has(r.hit.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
       </span>
     </div>
   </li>
@@ -397,6 +398,8 @@
     white-space: nowrap;
   }
   .lock {
-    font-size: var(--fs-xs);
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--accent);
   }
 </style>

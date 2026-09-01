@@ -1395,8 +1395,8 @@ pub fn skill_set_enabled(state: State<'_, AppState>, file: String, enabled: bool
     std::fs::write(&path, new).map_err(|e| e.to_string())
 }
 
-/// Vault-relative paths currently in the privacy zone — drives the 🔒 badges
-/// in the file tree. Human-only: the agent never sees this list.
+/// Vault-relative paths currently in the privacy zone — drives the badges in the
+/// file tree. Human-only: the agent never sees this list.
 #[tauri::command]
 pub fn privacy_list(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     with_vault(&state, |v| {

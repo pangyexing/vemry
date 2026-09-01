@@ -29,6 +29,9 @@ export interface Tab {
   pinned: boolean;
 }
 
+/** How a path stands to the privacy zone (see VaultStore.privacyStatus). */
+export type PrivacyStatus = { kind: "none" } | { kind: "root" } | { kind: "inherited"; zone: string };
+
 /** The snapshot of a suspended Editor. state is opaque to the store (a CodeMirror
  *  EditorState — the store does not import CM, to keep the dependency out; and it must
  *  never enter $state, since the deep proxy would break CM's internal identity
@@ -150,7 +153,7 @@ class VaultStore {
    *  race or a failed IPC must not be read as "no other vault exists" (which would
    *  wrongly delete the stale buckets). */
   recentLoaded = false;
-  /** privacy-zone paths (notes, files, folders) — 🔒 badges in the tree */
+  /** privacy-zone paths (notes, files, folders) — the badges in the tree */
   privatePaths = $state<Set<string>>(new Set());
   /** The file tree's expanded set (empty = all collapsed, which is the state on first open), persisted per vault to vemry-tree */
   expanded = $state<Record<string, true>>({});
@@ -737,6 +740,30 @@ class VaultStore {
     }
   }
 
+  /** The outermost private ancestor folder of a path — the folder that carries the badge
+   *  in the file tree — or null when no folder above it is in the set. Walks from the
+   *  root down, so for nested zones (`a/` and `a/b/` both private) `a/b/c.md` reports `a`. */
+  privacyZoneOf(path: string): string | null {
+    for (let i = path.indexOf("/"); i !== -1; i = path.indexOf("/", i + 1)) {
+      const ancestor = path.slice(0, i);
+      if (this.privatePaths.has(ancestor)) return ancestor;
+    }
+    return null;
+  }
+
+  /** "root": private with no private ancestor folder — the row that shows the badge and
+   *  the one whose unmark means something. "inherited": private because a folder above it
+   *  is; Rust removes only the exact rule line, so unmarking it would be a silent no-op.
+   *  "none": not private — an exempted path (`!diary/Public.md`) inside a zone lands here
+   *  on purpose and renders as an ordinary row, which is what makes it visibly public.
+   *  Known degradation: a rule that names contents rather than the folder (`diary/**`)
+   *  leaves `diary` itself out of the set, so each direct child is a root of its own. */
+  privacyStatus(path: string): PrivacyStatus {
+    if (!this.privatePaths.has(path)) return { kind: "none" };
+    const zone = this.privacyZoneOf(path);
+    return zone === null ? { kind: "root" } : { kind: "inherited", zone };
+  }
+
   async markPrivate(path: string, kind: "note" | "folder" | "file") {
     if (this.refusePrivacyToggleWhileDirty(path, kind)) return;
     try {
@@ -750,6 +777,12 @@ class VaultStore {
     if (this.refusePrivacyToggleWhileDirty(path, kind)) return;
     try {
       await api.privacyUnmark(path, kind);
+      // Rust removes only the exact rule line / the frontmatter flag: a path also covered
+      // by a broader glob stays private, and the broadcast would merely redraw the same
+      // badge. Refetch here rather than waiting for privacy_changed, so the verdict reads
+      // the new state and not a race with handleEvent.
+      await this.refreshNotes();
+      if (this.privatePaths.has(path)) toast.push(t("vaultStore.stillPrivate"));
     } catch (e) {
       this.error = String(e);
     }

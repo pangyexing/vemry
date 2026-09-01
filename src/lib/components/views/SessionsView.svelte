@@ -21,6 +21,7 @@
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
+  import PrivacyIcon from "../PrivacyIcon.svelte";
 
   let sessions = $state<SessionMeta[]>([]);
   let query = $state("");
@@ -310,6 +311,7 @@
           <div class="row">
             <span class="ts">{hhmmss(e.ts)}</span>
             <div class="privacy">
+              <PrivacyIcon size={12} />
               {t("sessionsView.privacyFiltered", { n: e.filtered, tool: toolLabel(e.tool) })}
             </div>
           </div>
@@ -621,6 +623,12 @@
     border-left: 2px solid var(--accent);
     border-radius: 4px;
     padding: 5px 10px;
+  }
+  /* .privacy is also the wording box of the retry/edit/compact/fork rows, so it stays a
+     plain block and the badge aligns as inline text */
+  .privacy :global(svg) {
+    vertical-align: -2px;
+    margin-right: 4px;
   }
   /* The web search audit — the list of result links is indented under the ledger row, the same structure as a tool_result's expanded output */
   .websearch {

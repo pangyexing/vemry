@@ -719,7 +719,15 @@
     id: "unmark-private", group: "note",
     run: async () => {
       const path = vault.currentPath;
-      if (path) await vault.unmarkPrivate(path, path.endsWith(".md") ? "note" : "file");
+      if (!path) return;
+      // The registry has no enable predicate: an inherited path explains itself here instead
+      // of a silent no-op (Rust removes only the exact rule line)
+      const st = vault.privacyStatus(path);
+      if (st.kind === "inherited") {
+        toast.push(t("fileTree.privacyCovered", { zone: `${st.zone}/` }));
+        return;
+      }
+      await vault.unmarkPrivate(path, path.endsWith(".md") ? "note" : "file");
     },
   });
   // The projection views: different presentations of the same index data (a view is a query),

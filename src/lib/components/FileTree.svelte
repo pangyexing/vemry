@@ -3,7 +3,8 @@
   import { tick } from "svelte";
   import { api } from "$lib/api";
   import { executeCommand } from "$lib/commands/registry";
-  import { vault, type FileOp, baseOf, vaultName } from "$lib/stores/vault.svelte";
+  import { vault, type FileOp, type PrivacyStatus, baseOf, vaultName } from "$lib/stores/vault.svelte";
+  import { privacyMenuItem } from "$lib/privacyMenu";
   import { isImeKeydown } from "$lib/ime";
   import { isMac, k } from "$lib/shortcut";
   import type { NoteSummary } from "$lib/api";
@@ -11,6 +12,7 @@
   import { toast } from "$lib/stores/toast.svelte";
   import { copyText } from "$lib/copytext";
   import Chevron from "./Chevron.svelte";
+  import PrivacyIcon from "./PrivacyIcon.svelte";
 
   interface TreeNode {
     name: string;
@@ -176,7 +178,7 @@
         { label: t("fileTree.cut"), hint: k("Mod+X"), action: () => { cut = { path: r.path, kind: r.kind }; } },
         { label: t("fileTree.copyPath"), action: () => void copyPath(r.path) },
         { label: t("fileTree.copyFullPath"), action: () => void copyPath(r.path, true) },
-        { label: vault.privatePaths.has(r.path) ? t("fileTree.unmarkPrivate") : t("fileTree.markPrivate"), action: () => togglePrivacy(r) },
+        privacyMenuItem(r.path, (op) => void (op === "mark" ? vault.markPrivate(r.path, r.kind) : vault.unmarkPrivate(r.path, r.kind))),
       );
       if (r.kind === "file") {
         entries.push({ label: t("fileTree.openWithSystemApp"), action: () => void api.fileOpenSystem(r.path).catch((err) => (vault.error = String(err))) });
@@ -331,10 +333,14 @@
     suppressClick = false;
   }
 
-  /** Mark or unmark a privacy zone: visible to a person (the 🔒 badge), nonexistent to the AI */
-  function togglePrivacy(target: { path: string; kind: "note" | "file" | "folder" }) {
-    const marked = vault.privatePaths.has(target.path);
-    void (marked ? vault.unmarkPrivate(target.path, target.kind) : vault.markPrivate(target.path, target.kind));
+  /** The tooltip line of a row inside a privacy zone: which folder above it carries the badge */
+  function zoneHint(priv: PrivacyStatus): string | undefined {
+    return priv.kind === "inherited" ? t("fileTree.privacyInherited", { zone: `${priv.zone}/` }) : undefined;
+  }
+  /** A file row's tooltip: the path, plus the zone line when the row is inside one (native tooltips honour the newline) */
+  function rowTitle(path: string, priv: PrivacyStatus): string {
+    const hint = zoneHint(priv);
+    return hint ? `${path}\n${hint}` : path;
   }
 
   /** Keys on a focused tree row: ⌘⌫/Delete deletes, F2 renames, ⌘X cuts. */
@@ -502,11 +508,14 @@
     {#if editing?.mode === "rename" && editing.target === child.path}
       {@render editRow(depth - 1 < 0 ? 0 : depth)}
     {:else}
+      {@const priv = vault.privacyStatus(child.path)}
       <button
         class="row folder-row"
+        class:inherited={priv.kind === "inherited"}
         class:cut={cut?.path === child.path}
         class:drop-into={dropTarget === child.path}
         data-drop={child.path}
+        title={zoneHint(priv)}
         onpointerdown={(e) => pressRow(e, child.path, "folder")}
         onclick={(e) => {
           focusRow(e);
@@ -520,7 +529,7 @@
         {@render indent(depth)}
         <span class="gutter chevron" class:open={!!vault.expanded[child.path]}><Chevron /></span>
         <span class="name">{child.name}</span>
-        {#if vault.privatePaths.has(child.path)}<span class="lock" title={t("statusBar.privacyZoneHint")}>🔒</span>{/if}
+        {#if priv.kind === "root"}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
       </button>
     {/if}
     {#if vault.expanded[child.path]}
@@ -531,14 +540,16 @@
     {#if editing?.mode === "rename" && editing.target === note.id}
       {@render editRow(depth)}
     {:else}
+      {@const priv = vault.privacyStatus(note.id)}
       <button
         class="row file-row"
         class:active={vault.currentPath === note.id}
         class:open={vault.isOpen(note.id)}
+        class:inherited={priv.kind === "inherited"}
         class:cut={cut?.path === note.id}
         data-path={note.id}
         data-drop={parentOf(note.id) ?? ""}
-        title={note.id}
+        title={rowTitle(note.id, priv)}
         onpointerdown={(e) => pressRow(e, note.id, "note")}
         onclick={(e) => {
           focusRow(e);
@@ -555,7 +566,7 @@
         {@render indent(depth)}
         <span class="gutter"></span>
         <span class="name">{stemOf(note.id)}</span>
-        {#if vault.privatePaths.has(note.id)}<span class="lock" title={t("statusBar.privacyZoneHint")}>🔒</span>{/if}
+        {#if priv.kind === "root"}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
       </button>
     {/if}
   {/each}
@@ -563,14 +574,16 @@
     {#if editing?.mode === "rename" && editing.target === file}
       {@render editRow(depth)}
     {:else}
+      {@const priv = vault.privacyStatus(file)}
       <button
         class="row file-row other"
         class:active={vault.currentPath === file}
         class:open={vault.isOpen(file)}
+        class:inherited={priv.kind === "inherited"}
         class:cut={cut?.path === file}
         data-path={file}
         data-drop={parentOf(file) ?? ""}
-        title={file}
+        title={rowTitle(file, priv)}
         onpointerdown={(e) => pressRow(e, file, "file")}
         onclick={(e) => {
           focusRow(e);
@@ -586,7 +599,7 @@
         {@render indent(depth)}
         <span class="gutter"></span>
         <span class="name">{stemNoExt(file)}</span>
-        {#if vault.privatePaths.has(file)}<span class="lock" title={t("statusBar.privacyZoneHint")}>🔒</span>{/if}
+        {#if priv.kind === "root"}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
         {#if extOf(file)}<span class="ext">{extOf(file)}</span>{/if}
       </button>
     {/if}
@@ -715,7 +728,7 @@
         </svg>
       </span>
       <span class="name">VEMRY.md</span>
-      {#if vault.privatePaths.has(MEMORY_ID)}<span class="lock" title={t("statusBar.privacyZoneHint")}>🔒</span>{/if}
+      {#if vault.privatePaths.has(MEMORY_ID)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
       <span class="ext agent">AGENT</span>
     </button>
   </div>
@@ -940,13 +953,18 @@
     color: var(--accent);
     border-color: currentColor;
   }
-  /* The privacy zone badge: visible to a person, invisible to the AI */
+  /* The privacy-zone badge (the struck-out AI sparkle) sits on the zone root only: visible to a person, invisible to the AI */
   .lock {
+    display: inline-flex;
     flex-shrink: 0;
     margin-left: 6px;
-    font-size: 9px;
-    line-height: 1;
-    opacity: 0.75;
+    color: var(--accent);
+  }
+  /* Inside a zone (a folder above carries the badge) the name is dimmed rather than badged
+     again. Opacity, not colour, so it composes with .file-row.open/.active's colours,
+     .folder-row's weight and .row.cut's own opacity */
+  .row.inherited .name {
+    opacity: 0.6;
   }
   .file-row.active .ext {
     color: var(--accent);

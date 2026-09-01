@@ -12,6 +12,7 @@
   import { agent, type ComposerHandle, type DraftRef, type TimelineItem } from "$lib/stores/agent.svelte";
   import AtPicker, { linesLabel } from "./AtPicker.svelte";
   import RefIcon, { type RefIconKind } from "./RefIcon.svelte";
+  import PrivacyIcon from "./PrivacyIcon.svelte";
   import { tick } from "svelte";
   import { hostDispatch } from "$lib/host";
   import { isAgentWindow } from "$lib/window";
@@ -1328,7 +1329,7 @@
                    would distort the record the other way; a privacy change takes effect reactively
                    through privatePaths) -->
               {#if vault.privatePaths.has(r.path)}
-                <span class="user-page" title={t("chat.privateRefHint")}>{t("chat.privateRef")}</span>
+                <span class="user-page" title={t("chat.privateRefHint")}><PrivacyIcon size={12} /> {t("chat.privateRef")}</span>
               {:else}
                 <span class="user-page" title={r.path}
                   ><RefIcon kind={r.kind} size={12} /> {r.path}{r.lines ? ` ${linesLabel({ from_line: r.lines[0], to_line: r.lines[1] })}` : ""}</span

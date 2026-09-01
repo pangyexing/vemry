@@ -524,7 +524,8 @@ forward/back history. Components live in `src/lib/components/views/`, pure logic
 | Session replay | `sessions_list` / `session_read` (no new IPC) | Replays seven JSONL row kinds: user, assistant, tool_call, tool_result, write_prepared (diff colouring reuses `views/diff.ts`), a permission badge and a highlighted privacy row; a bad row falls back to raw rather than crashing. The one refresh path that does not use `indexVersion`: the agent store's `activity` counter counts discrete events (tool start and end, permissions, turns — not per-token deltas) and the view re-reads after a 300 ms trailing debounce, so a replay grows along with a running session (Rust appends line by line), keeps expansion state across re-reads (the log only appends, so indices are stable), and follows the newest session unless the user picked an older one. A title can be renamed by hand (the audit appends a title override row, last one wins), and a forked session carries a ⑂ marker in the list (it shares the source's first user message, so derived titles are necessarily identical) |
 
 Views **do not filter** private notes — you see everything, as you do in the file
-tree, with the same 🔒 badge.
+tree, with the privacy badge on every private note (a view is a flat list, so each
+note carries its own; the tree badges only the zone root and dims the rows inside).
 
 ## The app shell (activity bar, menu bar, context menus — implemented)
 
@@ -906,9 +907,23 @@ recording the path would write the private path back to disk). The session-repla
 view lets you watch the rules working.
 
 UI: the file tree's context menu and the palette's "mark as private"; a private
-path shows a 🔒 badge (visible to you, invisible to the AI); the settings panel can
-view, add and remove the raw rule lines in `.vemry/privacy` (including `!` negations
-and comments). Marking a `.md` note writes frontmatter (so it travels with the
+path shows a badge — the AI's four-point sparkle struck out, "no agent here"
+(visible to you, invisible to the AI). One drawing, `PrivacyIcon.svelte`, serves every site — the tree, the projection views, the
+status bar, a private reference chip in the chat and the privacy row of the
+session replay. In the tree the badge sits on the *zone root* only (a private path
+with no private ancestor folder); the rows inside a private folder are dimmed
+instead, and their tooltip names the folder that carries the badge. The zone root
+is derived in the frontend from the flat `privacy_list` set (walk the ancestors),
+which has one known degradation: a rule that names contents rather than the
+folder (`diary/**`) leaves `diary` itself out of the set, so each direct child is a
+root of its own — write `diary/` for one badge. Because `privacy_unmark` removes
+only the exact rule line, the context menu offers "unmark" on a zone root only and
+shows a disabled "inherited from …" item on a row inside one (the palette command
+says the same in a toast); an unmark that leaves the path private (a broader glob
+still covers it) also ends in a toast. The settings panel's "Privacy zones" page
+lists the raw rule lines in `.vemry/privacy` (add / remove, `!` negations and
+comments included) and the notes marked one by one through frontmatter (open /
+unmark). Marking a `.md` note writes frontmatter (so it travels with the
 file); marking a directory or a non-md file writes a rule line into
 `.vemry/privacy`. IPC: `privacy_list` / `privacy_mark` / `privacy_unmark` /
 `privacy_rules` / `privacy_rule_add` / `privacy_rule_remove`; editing
@@ -1543,7 +1558,7 @@ tab that was alive all session would vanish on the next launch.
 
 Rendered in the main window only (not on the welcome page, not in the standalone
 chat window). The content is deliberately restrained: on the left, the vault name
-plus the privacy shield; on the right, the cursor's line and column, selection
+plus the privacy badge; on the right, the cursor's line and column, selection
 statistics and the document's word count. All of it comes from pushes the vault
 store already makes — the Editor is the sole producer and the status bar only
 projects, never computing anything itself. Its height is `--statusbar-h`, and every

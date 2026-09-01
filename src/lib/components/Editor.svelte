@@ -19,6 +19,7 @@
   import { countWords } from "$lib/stats";
   import { k } from "$lib/shortcut";
   import { executeCommand } from "$lib/commands/registry";
+  import { privacyMenuItem } from "$lib/privacyMenu";
   import FilePreview from "./FilePreview.svelte";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import { clearImageDims } from "$lib/editor/livepreview";
@@ -526,17 +527,13 @@
     // selection), and everything else goes through the command registry — the menu does not grow
     // a second set of semantics (editorMenu has already ensured docPath === vault.currentPath at
     // the top, the same scope those commands read)
-    const priv = vault.privatePaths.has(path);
     entries.push(
       { label: t("editor.cut"), hint: k("Mod+X"), disabled: !hasSel, action: cutSelection },
       { label: t("editor.copy"), hint: k("Mod+C"), disabled: !hasSel, action: () => void copySelection() },
       { label: t("editor.paste"), hint: k("Mod+V"), action: () => void pasteFromMenu() },
       { separator: true },
       { label: t("tabBar.revealInTree"), action: () => void executeCommand("reveal-in-tree") },
-      {
-        label: t(priv ? "fileTree.unmarkPrivate" : "fileTree.markPrivate"),
-        action: () => void executeCommand(priv ? "unmark-private" : "mark-private"),
-      },
+      privacyMenuItem(path, (op) => void executeCommand(op === "mark" ? "mark-private" : "unmark-private")),
       { separator: true },
       {
         label: t(isNote ? "editor.deleteNote" : "editor.deleteFile"),

@@ -29,6 +29,7 @@
   import TaskDateMenu from "./TaskDateMenu.svelte";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
+  import PrivacyIcon from "../PrivacyIcon.svelte";
 
   let hits = $state<BlockHit[]>([]);
   let query = $state("");
@@ -444,7 +445,7 @@
                         (three rounds of screenshots proved both) -->
                       {@render dateChip(card, activeField(card), t("task.setDate", { field: dateFieldLabel(activeField(card)) }), "", "add-date")}
                     {/if}
-                    {#if vault.privatePaths.has(card.hit.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}>🔒</span>{/if}
+                    {#if vault.privatePaths.has(card.hit.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
                   </div>
                 </div>
               </li>
@@ -844,7 +845,9 @@
     display: inline-block;
   }
   .lock {
-    font-size: var(--fs-xs);
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--accent);
   }
   /* An empty column is normally a quiet dashed placeholder (it does not say "no tasks"), and while armed for a drag it lights up with accent and a hint */
   .col-empty {

@@ -211,7 +211,7 @@
       ctx.fillStyle = n === hovered ? p.nodeHot : isPrivate ? p.faint : p.node;
       ctx.fill();
       if (isPrivate) {
-        // A private node: a dashed outline, echoing the file tree's 🔒
+        // A private node: a dashed outline, echoing the file tree's privacy badge
         ctx.setLineDash([2, 2]);
         ctx.strokeStyle = p.label;
         ctx.lineWidth = 1;

@@ -5,6 +5,7 @@
   import { fuzzyKeep } from "$lib/commands/registry";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
+  import PrivacyIcon from "../PrivacyIcon.svelte";
 
   let claims = $state<ClaimWithEvidence[]>([]);
   let query = $state("");
@@ -52,7 +53,7 @@
         <h3>
           <button class="note-link" onclick={() => vault.openNote(group.note)}>{group.title}</button>
           <span class="path">{group.note}</span>
-          {#if vault.privatePaths.has(group.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}>🔒</span>{/if}
+          {#if vault.privatePaths.has(group.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
         </h3>
         <!-- A user may write the same explicit ^id twice, so it cannot be a keyed-each key (production throws too) -->
         {#each group.items as c, i (i)}
@@ -222,6 +223,8 @@
     color: var(--fg-faint);
   }
   .lock {
-    font-size: var(--fs-xs);
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--accent);
   }
 </style>

@@ -16,6 +16,7 @@
   import { isImeKeydown } from "$lib/ime";
   import { k } from "$lib/shortcut";
   import { untrack } from "svelte";
+  import PrivacyIcon from "./PrivacyIcon.svelte";
 
   let { open = $bindable(false), tab = $bindable<SettingsTab>("general") }: { open: boolean; tab?: SettingsTab } =
     $props();
@@ -57,6 +58,9 @@
   let skills = $state<SkillEntry[]>([]);
   let newRule = $state("");
   let ruleError = $state<string | null>(null);
+  /** Notes marked one by one: the frontmatter flag is what NoteSummary.private carries, and the
+   *  list follows refreshNotes on its own — an unmark here needs no local bookkeeping */
+  const markedNotes = $derived(vault.notes.filter((n) => n.private).sort((a, b) => a.id.localeCompare(b.id, "zh")));
   /** There are unsaved changes: a stray click on the overlay should not evaporate a half-pasted key */
   let dirty = $state(false);
   /** Whether the mouse was pressed on the overlay. A click's target is the common ancestor
@@ -108,6 +112,16 @@
       api.vaultWritePolicyGet().then((p) => (writePolicy = p)).catch(() => (writePolicy = "ask"));
       api.skillsList().then((s) => (skills = s)).catch(() => (skills = []));
     }
+  });
+
+  /** The rule lines are local state fetched on open; a change made elsewhere while the dialog
+   *  is up (a folder marked from the tree, an external edit of .vemry/privacy) arrives as a new
+   *  privatePaths Set, which is the refetch signal. untrack keeps this independent of the open
+   *  effect's dirty/draft semantics. */
+  $effect(() => {
+    void vault.privatePaths;
+    if (!untrack(() => open && vault.root)) return;
+    api.privacyRules().then((r) => (rules = r)).catch(() => {});
   });
 
   /** Revoke "always allow for this vault": back to approving each write (a running session's grant is withdrawn with it). */
@@ -173,6 +187,28 @@
     } catch (e) {
       ruleError = String(e);
     }
+  }
+
+  /** Open a note from the marked list: the dialog is modal, so it closes first (with the same
+   *  unsaved-changes nudge as a click outside), then the note opens and the tree reveals it */
+  async function openMarked(id: string) {
+    if (dirty) {
+      nudge = true;
+      setTimeout(() => (nudge = false), 300);
+      return;
+    }
+    open = false;
+    await vault.openNote(id);
+    vault.revealInTree();
+  }
+
+  /** The store's dirty guard writes vault.error, which the overlay may cover — say it here as a toast */
+  function unmarkNote(id: string) {
+    if (id === vault.currentPath && vault.dirty) {
+      toast.push(t("vaultStore.dirtyBeforePrivacy", { key: k("Mod+S") }), "error");
+      return;
+    }
+    void vault.unmarkPrivate(id, "note");
   }
 
   /** Only "pressed and released on the overlay" really counts as clicking outside; with
@@ -524,10 +560,11 @@
             </section>
           {:else if tab === "vault"}
             <section class="privacy">
-              <h3>{t("settings.privacyRules")}</h3>
+              <h3>{t("settings.privacyZones")}</h3>
+              <small>{t("settings.privacyZonesHint")}</small>
+              <h4>{t("settings.privacyRules")}</h4>
               <small>
-                {t("settings.privacyRulesHint1")}<code>secret/</code>{t("app.listSep")}<code>diary/**</code>{t("app.listSep")}<code>!diary/Public.md</code
-                >{t("settings.privacyRulesHint2")}
+                {t("settings.privacyRulesHint")} <code>secret/</code>{t("app.listSep")}<code>diary/**</code>{t("app.listSep")}<code>!diary/Public.md</code>
               </small>
               {#if rules.length}
                 <ul class="rules">
@@ -552,6 +589,20 @@
                 <button class="btn" onclick={addRule}>{t("settings.addRule")}</button>
               </div>
               {#if ruleError}<small class="err">{ruleError}</small>{/if}
+              <h4>{t("settings.privacyMarkedNotes")}</h4>
+              {#if markedNotes.length}
+                <ul class="rules marked">
+                  {#each markedNotes as n (n.id)}
+                    <li>
+                      <span class="lock"><PrivacyIcon size={12} /></span>
+                      <button class="rule-text note-open" title={t("settings.openNote")} onclick={() => void openMarked(n.id)}>{n.id}</button>
+                      <button class="rule-del" title={t("cmd.unmark-private.desc")} onclick={() => unmarkNote(n.id)}>{t("settings.unmarkNote")}</button>
+                    </li>
+                  {/each}
+                </ul>
+              {:else}
+                <small class="empty">{t("settings.noMarkedNotes")}</small>
+              {/if}
             </section>
             <section class="scripts">
               <h3>{t("settings.skills")}</h3>
@@ -789,6 +840,12 @@
     font-size: var(--fs-sm);
     font-weight: 600;
   }
+  .privacy h4 {
+    margin-top: 8px;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--fg-muted);
+  }
   .privacy code {
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
@@ -834,6 +891,21 @@
   .rule-del:hover {
     color: var(--danger);
     background: var(--bg-hover);
+  }
+  .rules .lock {
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--accent);
+  }
+  .note-open {
+    text-align: left;
+  }
+  .note-open:hover {
+    color: var(--accent);
+  }
+  /* Unlike a rule's ✕, the unmark is always visible: it is the action this list exists for */
+  .rules.marked .rule-del {
+    visibility: visible;
   }
   .update-row {
     display: flex;
