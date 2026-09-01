@@ -72,11 +72,11 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         f(
             "query_blocks",
-            "Query typed blocks across the vault: tasks, claims, evidence, code blocks, headings. The same projection API the UI uses.",
+            "Query typed blocks across the vault: tasks, list items, claims, evidence, code blocks, headings. The same projection API the UI uses.",
             json!({
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["paragraph", "heading", "task", "claim", "evidence", "code_block"]},
+                    "kind": {"type": "string", "enum": ["paragraph", "heading", "list_item", "task", "claim", "evidence", "code_block"]},
                     "note": {"type": "string", "description": "Restrict to one note path"},
                     "tag": {"type": "string"},
                     "text": {"type": "string", "description": "Substring filter on block content"},

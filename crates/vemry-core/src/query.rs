@@ -14,6 +14,7 @@ use crate::note::NoteId;
 pub enum BlockKindFilter {
     Paragraph,
     Heading,
+    ListItem,
     Task,
     Claim,
     Evidence,
@@ -26,6 +27,7 @@ impl BlockKindFilter {
             (self, kind),
             (BlockKindFilter::Paragraph, BlockKind::Paragraph)
                 | (BlockKindFilter::Heading, BlockKind::Heading { .. })
+                | (BlockKindFilter::ListItem, BlockKind::ListItem { .. })
                 | (BlockKindFilter::Task, BlockKind::Task { .. })
                 | (BlockKindFilter::Claim, BlockKind::Claim)
                 | (BlockKindFilter::Evidence, BlockKind::Evidence { .. })
@@ -68,7 +70,9 @@ impl BlockIndex {
         let note_filter = q.note.as_ref().map(|n| NoteId::new(n));
         let mut hits = Vec::new();
 
-        'outer: for (id, summary, blocks) in self.entries() {
+        // Note order is deterministic so `limit` cuts a stable prefix;
+        // blocks are already in document order within a note.
+        'outer: for (id, summary, blocks) in self.entries_sorted() {
             if let Some(nf) = &note_filter {
                 if id != nf {
                     continue;

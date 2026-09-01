@@ -51,6 +51,7 @@ export interface SearchHit {
 export type BlockKind =
   | { type: "paragraph" }
   | { type: "heading"; level: number }
+  | { type: "list_item"; indent: number; ordered: boolean }
   | { type: "task"; state: "todo" | "doing" | "done"; due?: string; scheduled?: string }
   | { type: "claim" }
   | { type: "evidence"; supports: string[] }
@@ -85,12 +86,13 @@ export interface BlockHit {
 }
 
 export interface BlockQuery {
-  kind?: "paragraph" | "heading" | "task" | "claim" | "evidence" | "code_block";
+  kind?: "paragraph" | "heading" | "list_item" | "task" | "claim" | "evidence" | "code_block";
+  /** Exact vault-relative path of one note (e.g. `projects/Alpha.md`), not a substring. */
   note?: string;
   tag?: string;
   text?: string;
   task_state?: "todo" | "doing" | "done";
-  /** `YYYY-MM-DD` — tasks due strictly before this date (mirrors Rust `NaiveDate`). */
+  /** `YYYY-MM-DD` — tasks due on or before this date (mirrors Rust `NaiveDate`). */
   due_before?: string;
   limit?: number;
 }

@@ -22,8 +22,13 @@ pub struct WikiLink {
     pub heading: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_ref: Option<String>,
-    /// Byte range in the note's raw text.
+    /// Byte range in the note's raw text (the `[[…]]` itself; a leading `!` is
+    /// not included).
     pub span: Range<usize>,
+    /// True when the link was written as `![[…]]` — an embed. The link graph
+    /// treats it like any other link; only rendering differs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub embed: bool,
 }
 
 impl WikiLink {
@@ -50,6 +55,7 @@ impl WikiLink {
             heading,
             block_ref,
             span,
+            embed: false,
         }
     }
 }
@@ -60,6 +66,14 @@ pub enum BlockKind {
     Paragraph,
     Heading {
         level: u8,
+    },
+    /// One list item (`- `, `* `, `+ `, `1. `, `1) `) at any indentation; a
+    /// nested item is its own block, so an id on an item covers that item
+    /// only, not its children. Checkbox items are `Task`, not `ListItem`.
+    ListItem {
+        /// Leading whitespace characters before the marker (a tab counts as one).
+        indent: usize,
+        ordered: bool,
     },
     Task {
         state: TaskState,

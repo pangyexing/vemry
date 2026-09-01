@@ -101,6 +101,33 @@ checkboxes. `[/]` is not a GFM marker (GFM accepts only a space or `x`/`X`), so 
 degrades to an ordinary list item with the literal text `[/]` — still readable.
 Dates are inline plain text.
 
+## Lists
+
+```markdown
+- one item
+  a continuation line, indented deeper than the marker
+  - a nested item is its own block
+1. ordered items too
+2) with either `.` or `)`
+```
+
+Every list item is a block of its own — the marker line plus the following
+lines indented deeper than the marker. A new marker at any depth starts the
+next block, so a nested item is a separate block and **an id on an item covers
+that item only, not its children** (a reference or embed of the item does
+include them). A blank line, a heading, a fence, a callout or a checkbox item
+ends the item. A lazy continuation line (not indented) is not recognised: it
+becomes a paragraph. `- - -` and `* * *` are thematic breaks, not items.
+
+- Markers: `-`, `*`, `+`, or one to nine digits followed by `.` or `)`, then a
+  space; any indentation (a tab counts as one character of indent)
+- The index records the indent and whether the list is ordered
+- Checkbox items are [tasks](#tasks), not list items; `1. [ ] x` is a list item
+- Tables, plain quotes and thematic breaks stay paragraphs
+
+**Fallback**: standard Markdown lists. This is indexing granularity, not
+syntax — nothing is written differently.
+
 ## Callouts, claims and evidence
 
 ```markdown
@@ -135,6 +162,19 @@ A trailing ` ^id` (space, `^`, identifier) gives a block a stable anchor for
 `[[Note#^id]]` to point at. Blocks without an explicit id get a positional
 temporary id from the index, which is **never written back to disk**.
 
+- Identifier characters: `A–Z`, `a–z`, `0–9`, `-` (no `_`, no spaces, must run
+  to the end of the line)
+- It sits on the block's last line: the end of a paragraph or list item, after
+  a heading's title (`# Title ^h1` — the id is not part of the title, so
+  `[[Note#Title]]` still resolves), the last `>` line of a callout. A table row
+  or a fenced code block cannot carry one (it would break the construct).
+- **Minting**: vemry writes an id only when you reference, embed or copy a
+  link to a block that has none, and only for that block — six random
+  characters from `a–z0–9`, unique within the note. Nothing is written
+  proactively; positional ids never reach disk.
+- An id on a list item names that item alone; the item's children are not
+  part of the id's block, though a reference to the item shows them.
+
 **Fallback**: ordinary text at the end of the line.
 
 ## Inline highlight
@@ -159,8 +199,8 @@ A YAML body with **seven flat scalars**, all optional:
 
 | Field | Values |
 |---|---|
-| `kind` | `paragraph` / `heading` / `task` / `claim` / `evidence` / `code_block` |
-| `note` | substring of a note path or name |
+| `kind` | `paragraph` / `heading` / `list_item` / `task` / `claim` / `evidence` / `code_block` |
+| `note` | the exact vault-relative path of one note, e.g. `projects/Alpha.md` |
 | `tag` | tag name (a leading `#` is stripped) |
 | `text` | substring of the body |
 | `task_state` | `todo` / `doing` / `done` |

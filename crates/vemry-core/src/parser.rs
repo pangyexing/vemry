@@ -1,14 +1,15 @@
 //! Block-level note parser.
 //!
 //! A deliberate line-based scanner instead of a full Markdown AST: everything
-//! vemry extracts (frontmatter, headings, checkbox tasks, callouts, code
-//! fences, `[[wikilinks]]`, `#tags`, `^block-ids`) is a line-level or inline
-//! construct, and none of it is CommonMark — an AST parser would still need
-//! all of this custom code on top.
+//! vemry extracts (frontmatter, headings, list items, checkbox tasks, callouts,
+//! code fences, `[[wikilinks]]`, `#tags`, `^block-ids`) is a line-level or
+//! inline construct, and none of it is CommonMark — an AST parser would still
+//! need all of this custom code on top.
 
 use chrono::NaiveDate;
 
 use crate::block::{Block, BlockKind, TaskState, WikiLink};
+use crate::blockid::is_valid_block_id;
 use crate::note::Frontmatter;
 
 pub struct ParsedNote {
@@ -96,7 +97,10 @@ impl<'a> Iterator for LineIter<'a> {
     }
 }
 
-fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
+/// Split the body (from `body_offset`) into blocks. Public so that callers
+/// holding a standalone slice of Markdown (a selection, a pasted block) can
+/// segment it with the same rules as a whole note.
+pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
     let mut blocks: Vec<Block> = Vec::new();
     let lines: Vec<(usize, &str)> = LineIter { raw, pos: body_offset }.collect();
 
@@ -241,6 +245,33 @@ fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
             continue;
         }
 
+        // List item: the marker line plus continuation lines indented deeper
+        // than the marker. A new marker at any depth starts the next block;
+        // a lazy continuation (not indented) is left to the paragraph rule.
+        if let Some((indent, ordered, text_off)) = parse_list_marker(line) {
+            flush_para!(i);
+            let mut content = line[text_off..].trim().to_string();
+            let mut end_line = i;
+            let mut j = i + 1;
+            while j < n {
+                let l = lines[j].1;
+                if l.trim().is_empty() || leading_ws(l) <= indent || starts_new_block(l) {
+                    break;
+                }
+                content.push('\n');
+                content.push_str(l.trim());
+                end_line = j;
+                j += 1;
+            }
+            let span = start..lines[end_line].0 + lines[end_line].1.len();
+            let mut b = make_block(raw, BlockKind::ListItem { indent, ordered }, span);
+            b.content = content;
+            assign_id(&mut b, blocks.len());
+            blocks.push(b);
+            i = end_line + 1;
+            continue;
+        }
+
         // Blank line: paragraph boundary
         if trimmed.is_empty() {
             flush_para!(i);
@@ -283,9 +314,7 @@ fn assign_id(b: &mut Block, index: usize) {
     let last_line = b.content.lines().last().unwrap_or("");
     if let Some(pos) = last_line.rfind(" ^") {
         let candidate = &last_line[pos + 2..];
-        if !candidate.is_empty()
-            && candidate.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-        {
+        if is_valid_block_id(candidate) {
             b.local_id = candidate.to_string();
             b.explicit_id = true;
             return;
@@ -357,6 +386,65 @@ fn parse_task_line(line: &str) -> Option<(TaskState, &str)> {
     Some((state, after.trim_start()))
 }
 
+/// `- item` / `* item` / `+ item` / `12. item` / `12) item` at any indentation.
+/// Returns (indent, ordered, byte offset of the item text within `line`).
+/// A thematic break spelled with spaced markers (`- - -`, `* * *`) is not an
+/// item. Checkbox items match here too; the task rule runs first and wins.
+pub(crate) fn parse_list_marker(line: &str) -> Option<(usize, bool, usize)> {
+    let indent = leading_ws(line);
+    let rest = &line[indent..];
+    if rest.starts_with("- ") || rest.starts_with("* ") || rest.starts_with("+ ") {
+        if is_thematic_break(rest) {
+            return None;
+        }
+        return Some((indent, false, indent + 2));
+    }
+    let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+    if (1..=9).contains(&digits) {
+        let after = &rest[digits..];
+        if after.starts_with(". ") || after.starts_with(") ") {
+            return Some((indent, true, indent + digits + 2));
+        }
+    }
+    None
+}
+
+/// Number of leading space/tab characters (a tab counts as one).
+pub(crate) fn leading_ws(line: &str) -> usize {
+    line.chars().take_while(|c| matches!(c, ' ' | '\t')).count()
+}
+
+/// `---`, `***`, `- - -`: three or more of one marker with only spaces between.
+fn is_thematic_break(trimmed: &str) -> bool {
+    let mut marker = None;
+    let mut n = 0;
+    for c in trimmed.chars() {
+        if matches!(c, ' ' | '\t') {
+            continue;
+        }
+        match marker {
+            None if matches!(c, '-' | '*' | '_') => {
+                marker = Some(c);
+                n += 1;
+            }
+            Some(m) if c == m => n += 1,
+            _ => return false,
+        }
+    }
+    n >= 3
+}
+
+/// A line that opens a block of its own and therefore ends a list item's
+/// continuation: fence, heading, task, callout or another list marker.
+fn starts_new_block(line: &str) -> bool {
+    let t = line.trim_start();
+    parse_fence_open(t).is_some()
+        || parse_heading(t).is_some()
+        || parse_task_line(line).is_some()
+        || parse_callout_open(t).is_some()
+        || parse_list_marker(line).is_some()
+}
+
 /// `> [!claim] optional title` — returns (lowercased type, rest of line).
 fn parse_callout_open(trimmed: &str) -> Option<(String, &str)> {
     let after_quote = trimmed.strip_prefix('>')?.trim_start();
@@ -410,7 +498,9 @@ pub fn scan_inline(slice: &str, base: usize) -> (Vec<WikiLink>, Vec<String>) {
             if let Some(end) = slice[i + 2..].find("]]") {
                 let inner = &slice[i + 2..i + 2 + end];
                 if !inner.contains('\n') && !inner.is_empty() {
-                    links.push(WikiLink::parse(inner, base + i..base + i + end + 4));
+                    let mut link = WikiLink::parse(inner, base + i..base + i + end + 4);
+                    link.embed = i > 0 && bytes[i - 1] == b'!';
+                    links.push(link);
                     prev_char = Some(']');
                     i += end + 4;
                     continue;
@@ -447,6 +537,99 @@ pub fn scan_inline(slice: &str, base: usize) -> (Vec<WikiLink>, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_items_are_blocks() {
+        let src = "- a\n* b\n+ c\n1. d\n2) e\n";
+        let blocks = parse_note(src).blocks;
+        assert_eq!(blocks.len(), 5);
+        let ordered: Vec<bool> = blocks
+            .iter()
+            .map(|b| match b.kind {
+                BlockKind::ListItem { ordered, .. } => ordered,
+                _ => panic!("not a list item: {:?}", b.kind),
+            })
+            .collect();
+        assert_eq!(ordered, vec![false, false, false, true, true]);
+        assert_eq!(blocks[3].content, "d");
+        assert_eq!(&src[blocks[4].span.clone()], "2) e");
+    }
+
+    #[test]
+    fn nested_items_keep_indent_with_spaces_and_tabs() {
+        let src = "- a\n  - a1\n\t- a2\n- b\n";
+        let blocks = parse_note(src).blocks;
+        let indents: Vec<usize> = blocks
+            .iter()
+            .map(|b| match b.kind {
+                BlockKind::ListItem { indent, .. } => indent,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(indents, vec![0, 2, 1, 0]);
+    }
+
+    #[test]
+    fn item_continuation_lines_join_and_lazy_lines_do_not() {
+        let src = "- a\n  more\n  still\nlazy\n";
+        let blocks = parse_note(src).blocks;
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].content, "a\nmore\nstill");
+        assert_eq!(&src[blocks[0].span.clone()], "- a\n  more\n  still");
+        assert!(matches!(blocks[1].kind, BlockKind::Paragraph));
+        assert_eq!(blocks[1].content, "lazy");
+    }
+
+    #[test]
+    fn item_ends_at_marker_task_heading_and_fence() {
+        let src = "- a\n  - [ ] t\n- b\n  # not a heading? it is\n- c\n  ```\n  code\n  ```\n";
+        let blocks = parse_note(src).blocks;
+        let kinds: Vec<&str> = blocks
+            .iter()
+            .map(|b| match b.kind {
+                BlockKind::ListItem { .. } => "item",
+                BlockKind::Task { .. } => "task",
+                BlockKind::Heading { .. } => "heading",
+                BlockKind::CodeBlock { .. } => "code",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, vec!["item", "task", "item", "heading", "item", "code"]);
+    }
+
+    #[test]
+    fn ordered_checkbox_is_a_list_item_and_tasks_stay_tasks() {
+        let blocks = parse_note("1. [ ] x\n- [ ] y\n").blocks;
+        assert!(matches!(blocks[0].kind, BlockKind::ListItem { ordered: true, .. }));
+        assert_eq!(blocks[0].content, "[ ] x");
+        assert!(matches!(blocks[1].kind, BlockKind::Task { .. }));
+    }
+
+    #[test]
+    fn list_item_block_id_on_its_last_line() {
+        let blocks = parse_note("- a ^one\n- b\n  cont ^two\n- c ^three\n  tail\n").blocks;
+        assert_eq!((blocks[0].local_id.as_str(), blocks[0].explicit_id), ("one", true));
+        assert_eq!((blocks[1].local_id.as_str(), blocks[1].explicit_id), ("two", true));
+        // an id that is not on the item's last line stays positional
+        assert_eq!((blocks[2].local_id.as_str(), blocks[2].explicit_id), ("b2", false));
+    }
+
+    #[test]
+    fn spaced_thematic_break_is_not_an_item() {
+        let blocks = parse_note("- - -\n\n* * *\n\n---\n").blocks;
+        assert_eq!(blocks.len(), 3);
+        assert!(blocks.iter().all(|b| matches!(b.kind, BlockKind::Paragraph)));
+    }
+
+    #[test]
+    fn embed_flag_set_by_bang_and_ignored_in_code() {
+        let (links, _) = scan_inline("see ![[img.png]] and [[Note]] `![[x]]`", 0);
+        assert_eq!(links.len(), 2);
+        assert!(links[0].embed);
+        assert_eq!(links[0].target, "img.png");
+        assert_eq!(links[0].span, 5..16);
+        assert!(!links[1].embed);
+    }
 
     #[test]
     fn frontmatter_roundtrip_preserves_unknown_fields() {

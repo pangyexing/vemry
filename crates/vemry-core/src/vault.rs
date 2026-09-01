@@ -1044,6 +1044,28 @@ mod tests {
     }
 
     #[test]
+    fn query_list_items_and_stable_limit_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for (name, body) in [("b.md", "- b1\n- b2\n"), ("a.md", "- a1\n  - a1a\n\npara\n"), ("c.md", "- c1\n")] {
+            fs::write(root.join(name), body).unwrap();
+        }
+        let vault = Vault::open(root).unwrap();
+        let items = vault.index().query(&BlockQuery { kind: Some(BlockKindFilter::ListItem), ..Default::default() });
+        assert_eq!(items.len(), 5);
+        assert!(items.iter().all(|h| matches!(h.block.kind, BlockKind::ListItem { .. })));
+        let paras = vault.index().query(&BlockQuery { kind: Some(BlockKindFilter::Paragraph), ..Default::default() });
+        assert_eq!(paras.len(), 1, "a bullet list is no longer one paragraph");
+        // A limit cuts the note-id-ordered prefix, run after run
+        for _ in 0..5 {
+            let two = vault.index().query(&BlockQuery { limit: Some(2), ..Default::default() });
+            let got: Vec<(String, String)> =
+                two.iter().map(|h| (h.note.as_str().to_string(), h.block.content.clone())).collect();
+            assert_eq!(got, vec![("a.md".into(), "a1".into()), ("a.md".into(), "a1a".into())]);
+        }
+    }
+
+    #[test]
     fn open_scans_and_indexes() {
         let (_d, vault) = fixture_vault();
         assert_eq!(vault.index().note_count(), 2);

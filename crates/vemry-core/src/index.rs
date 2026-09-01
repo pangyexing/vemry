@@ -281,6 +281,12 @@ impl BlockIndex {
         self.notes.get(id).map(|e| e.blocks.as_slice())
     }
 
+    /// One block of one note by local id (`locate::find_block` rules: an
+    /// explicit `^id` beats a positional `bN` of the same spelling).
+    pub fn find_block(&self, id: &NoteId, local_id: &str) -> Option<&Block> {
+        crate::locate::find_block(self.blocks(id)?, local_id)
+    }
+
     pub fn links_out(&self, id: &NoteId) -> Vec<(LinkEdge, ResolvedLink)> {
         match self.notes.get(id) {
             Some(e) => e
@@ -326,6 +332,14 @@ impl BlockIndex {
 
     pub(crate) fn entries(&self) -> impl Iterator<Item = (&NoteId, &NoteSummary, &[Block])> {
         self.notes.iter().map(|(id, e)| (id, &e.summary, e.blocks.as_slice()))
+    }
+
+    /// `entries()` in note-id order, so a query that stops at its limit
+    /// returns a deterministic prefix instead of whatever the hash map yields.
+    pub(crate) fn entries_sorted(&self) -> Vec<(&NoteId, &NoteSummary, &[Block])> {
+        let mut v: Vec<_> = self.entries().collect();
+        v.sort_by(|a, b| a.0.cmp(b.0));
+        v
     }
 
     pub fn mtime_of(&self, id: &NoteId) -> Option<u64> {

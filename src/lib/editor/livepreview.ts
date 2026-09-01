@@ -45,7 +45,8 @@ export function inCode(state: EditorState, pos: number): boolean {
   return false;
 }
 const TAG_RE = /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
-const ANCHOR_RE = /[ \t]\^([\w-]+)$/gm;
+// The character class mirrors Rust's block-id rule (blockid.rs::is_valid_block_id): a badge must never claim an id the parser rejects
+const ANCHOR_RE = /[ \t]\^([A-Za-z0-9-]+)$/gm;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|tiff?)$/i;
 const CALLOUT_RE = /^(\s{0,3}>\s*)(\[!([\w-]+)\][+-]?)(\s*)/;
 

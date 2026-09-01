@@ -12,27 +12,18 @@
 //! open-note buffer path (a disk write there would be clobbered by the
 //! stale buffer's autosave) — change the rules in both places together.
 
-use crate::block::{Block, BlockKind};
-use crate::parser::parse_heading;
+use crate::block::Block;
+use crate::locate::section_span;
+use crate::parser::{parse_heading, parse_list_marker};
 
 /// Byte offset where content lands inside `heading`'s section: right after
 /// the section's last non-blank character. `None` = heading not present
 /// (the caller falls back to [`content_end_offset`] and reports it).
-/// Duplicate headings resolve to the first in document order.
+/// Which heading and where its section ends is `locate::section_span`'s
+/// definition (exact match first, then case-insensitive; the first in
+/// document order wins).
 pub fn section_insert_offset(blocks: &[Block], src: &str, heading: &str) -> Option<usize> {
-    let want = heading.trim();
-    let (idx, level) = blocks.iter().enumerate().find_map(|(i, b)| match &b.kind {
-        BlockKind::Heading { level } if b.content.trim() == want => Some((i, *level)),
-        _ => None,
-    })?;
-    let section_end = blocks[idx + 1..]
-        .iter()
-        .find_map(|b| match &b.kind {
-            BlockKind::Heading { level: l } if *l <= level => Some(b.span.start),
-            _ => None,
-        })
-        .unwrap_or(src.len());
-    Some(src[..section_end].trim_end().len())
+    section_span(blocks, src, heading).map(|r| r.end)
 }
 
 /// Byte offset after the last non-blank character of the whole note.
@@ -79,12 +70,7 @@ fn packs_tight(prev_line: &str, payload: &str) -> bool {
 }
 
 fn is_list_line(line: &str) -> bool {
-    let t = line.trim_start();
-    if t.starts_with("- ") || t.starts_with("* ") || t.starts_with("+ ") {
-        return true;
-    }
-    let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
-    digits > 0 && (t[digits..].starts_with(". ") || t[digits..].starts_with(") "))
+    parse_list_marker(line).is_some()
 }
 
 /// Length of the leading run of blank lines (`rest` starts right after a
@@ -161,6 +147,14 @@ mod tests {
     #[test]
     fn missing_heading_is_none() {
         assert_eq!(offset("# a\n", "b"), None);
+    }
+
+    #[test]
+    fn heading_matches_case_insensitively_and_without_its_anchor() {
+        assert_eq!(insert("## Inbox ^h1\n- a\n", "inbox", "- b"), "## Inbox ^h1\n- a\n- b\n");
+        // An exact match beats a case-insensitive one earlier in the note
+        let src = "## inbox\n一\n\n## Inbox\n二\n";
+        assert_eq!(insert(src, "Inbox", "- x"), "## inbox\n一\n\n## Inbox\n二\n\n- x\n");
     }
 
     #[test]

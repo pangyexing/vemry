@@ -7,9 +7,11 @@
 
 pub mod attach_migrate;
 pub mod block;
+pub mod blockid;
 pub mod event;
 pub mod index;
 pub mod insert;
+pub mod locate;
 pub mod note;
 pub mod parser;
 pub mod privacy;

@@ -35,8 +35,10 @@ Three constraints follow:
 
 | Module | Responsibility |
 |---|---|
-| `parser.rs` | Line-level scanner: frontmatter, headings, tasks, callouts (claim/evidence), code fences, `[[wikilink]]`, `#tag`, `^blockId`. Everything is a line-level or inline construct, which is why no full Markdown AST is needed |
+| `parser.rs` | Line-level scanner: frontmatter, headings, list items, tasks, callouts (claim/evidence), code fences, `[[wikilink]]` (with the `![[…]]` embed flag), `#tag`, `^blockId`. Everything is a line-level or inline construct, which is why no full Markdown AST is needed |
 | `block.rs` | The `Block` / `BlockKind` types: the atom every projection is built from |
+| `locate.rs` | One definition of "which block / which section": heading lookup (exact, then case-insensitive; a trailing ` ^id` is not part of a title), section spans, block by local id (explicit beats positional), block by offset, a list item's subtree. The insert landing rule, reference resolution and id minting all go through it |
+| `blockid.rs` | Block ids: the validity rule the parser applies, which blocks may carry one (not fences, table rows or rules), and minting — a random `a–z0–9` id unique within the note, written only on demand |
 | `index.rs` | `BlockIndex`: note table, block table, link graph (backlinks derived), name resolution table (stem/alias, shortest path wins), tag table. Incremental update: reparse one file, then reparse links wholesale (O(total links), milliseconds at ten-thousand-note scale) |
 | `query.rs` | `BlockQuery` → `Vec<BlockHit>`: the one query entry point |
 | `search.rs` | The `SearchProvider` trait plus an in-memory multi-term AND substring match (no tokenisation, so CJK works by construction). tantivy or semantic retrieval would be another implementation of the same trait |

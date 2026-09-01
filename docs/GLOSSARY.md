@@ -14,6 +14,10 @@ three months later, and each translation drifts on its own. A new user-visible t
 |---|---|---|
 | 知识库 | vault | repository, workspace, library |
 | 块 / 块索引 | block / block index | database, record |
+| 块 ID | block id | anchor, uid, block reference id |
+| 引用（指向块或小节） | reference | citation (taken by evidence), pointer |
+| 嵌入 | embed | transclusion, include, import |
+| 小节 | section | chapter, part, heading (that is the line itself) |
 | 投影视图 | projection | dashboard, module, widget |
 | 断言 | claim | assertion, statement |
 | 证据 | evidence | citation, source |
@@ -37,6 +41,10 @@ three months later, and each translation drifts on its own. A new user-visible t
 | 速记 | quick capture | memo, scratch, inbox |
 | 研究面板 | research panel | chat, assistant |
 | 阅读投影 | Reader (interface) / reading projection (architecture prose) | reader mode, article view |
+| 块把手 | block handle | drag handle, gripper, grabber |
+| 转换为 | turn into | convert, change type |
+| 块选择 | block selection | multi-select, block mode |
+| 折叠 | fold | collapse |
 
 The interface uses the word that reads best (**Reader**); architecture prose uses the concept word (**reading projection**). That is a division of labour, not an inconsistency.
 
