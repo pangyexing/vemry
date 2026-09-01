@@ -7,6 +7,7 @@
   // only producer, and this merely projects it.
   import { t, tn } from "$lib/i18n/i18n.svelte";
   import { vault, vaultName } from "$lib/stores/vault.svelte";
+  import { originLabel } from "$lib/editor/provenance";
   import PrivacyIcon from "./PrivacyIcon.svelte";
 
   const inPrivate = $derived(vault.currentPath !== null && vault.privatePaths.has(vault.currentPath));
@@ -24,6 +25,12 @@
       <PrivacyIcon />
       <span>{t("statusBar.privateBlock")}</span>
     </span>
+  {/if}
+  {#if vault.editorOrigin && vault.editorOrigin.origin !== "you"}
+    <span class="origin origin-{vault.editorOrigin.origin}" title={originLabel(vault.editorOrigin)}>{originLabel(vault.editorOrigin)}</span>
+  {/if}
+  {#if vault.pendingCount > 0}
+    <button class="pending" title={t("prov.pendingHint")} onclick={() => vault.nextPending?.()}>{t("prov.pendingCount", { n: vault.pendingCount })}</button>
   {/if}
   <span class="right">
     {#if vault.editorLoc}
@@ -70,6 +77,34 @@
   }
   .zone :global(svg) {
     display: block;
+  }
+  .origin {
+    max-width: 40vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+  }
+  .origin-agent {
+    color: var(--prov-agent);
+  }
+  .origin-clip {
+    color: var(--prov-clip);
+  }
+  .origin-capture {
+    color: var(--prov-capture);
+  }
+  .pending {
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid var(--prov-agent);
+    color: var(--prov-agent);
+    background: none;
+    font-size: var(--fs-xs);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .pending:hover {
+    background: color-mix(in srgb, var(--prov-agent) 14%, transparent);
   }
   .right {
     margin-left: auto;

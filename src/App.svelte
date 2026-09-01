@@ -723,6 +723,41 @@
       },
     });
   }
+  // Provenance review (the ledger is post-write review; the permission gate is pre-write consent)
+  registerCommand({
+    id: "toggle-provenance", group: "note",
+    run: () => {
+      vault.provenanceOverlay = !vault.provenanceOverlay;
+      toast.push(t(vault.provenanceOverlay ? "prov.overlayOn" : "prov.overlayOff"));
+    },
+  });
+  registerCommand({
+    id: "provenance-accept", group: "note",
+    run: () => {
+      const id = vault.pendingAtCursor?.();
+      if (!id) {
+        toast.push(t("prov.noPendingHere"), "error");
+        return;
+      }
+      vault.acceptProvenance(id).then(() => toast.push(t("prov.accepted"))).catch((e) => toast.push(String(e), "error"));
+    },
+  });
+  registerCommand({
+    id: "provenance-accept-all", group: "note",
+    run: () => {
+      if (!vault.pendingCount) {
+        toast.push(t("prov.noPending"), "error");
+        return;
+      }
+      vault.acceptProvenance(null).then((n) => toast.push(t("prov.acceptedAll", { n }))).catch((e) => toast.push(String(e), "error"));
+    },
+  });
+  registerCommand({
+    id: "provenance-next-pending", group: "note",
+    run: () => {
+      if (!vault.nextPending?.()) toast.push(t("prov.noPending"), "error");
+    },
+  });
   registerCommand({
     id: "delete-current-note", group: "note",
     run: async () => {

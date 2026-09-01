@@ -38,6 +38,7 @@
   let adblockEnabled = $state(true);
   let webSearchEnabled = $state(false);
   let planConfirm = $state(true);
+  let provenanceMarks = $state(true);
   let reasoningEffort = $state("high");
   let reasoningActive = $state(false);
   let openLinksIn = $state<LinkOpenMode>("reading");
@@ -91,6 +92,7 @@
       adblockEnabled = s.adblock_enabled;
       webSearchEnabled = s.web_search_enabled;
       planConfirm = s.plan_confirm;
+      provenanceMarks = s.provenance_marks;
       reasoningEffort = s.reasoning_effort;
       reasoningActive = s.reasoning_effort_active;
       openLinksIn = s.open_links_in;
@@ -234,6 +236,7 @@
       adblock_enabled: adblockEnabled,
       web_search_enabled: webSearchEnabled,
       plan_confirm: planConfirm,
+      provenance_marks: provenanceMarks,
       reasoning_effort: reasoningEffort,
       open_links_in: openLinksIn,
       click_opens_links: clickOpensLinks,
@@ -434,6 +437,15 @@
               </label>
               <small>
                 {t("settings.planConfirmHint")}
+              </small>
+            </div>
+            <div class="field">
+              <label class="inline-toggle">
+                <input type="checkbox" bind:checked={provenanceMarks} onchange={() => (dirty = true)} />
+                <span>{t("settings.provenanceMarks")}</span>
+              </label>
+              <small>
+                {t("settings.provenanceMarksHint")}
               </small>
             </div>
             <div class="field">

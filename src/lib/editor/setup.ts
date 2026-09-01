@@ -17,6 +17,7 @@ import { tagCompletions, calloutCompletions, atCompletions } from "./completions
 import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
 import { embedAt, embedExtension, openEmbedSource, type EmbedHost } from "./embed";
+import { provenanceExtension } from "./provenance";
 import { Highlight, highlightTag } from "./markdown-ext";
 import { queryBlockExtension, type QueryHost } from "./queryblock";
 import { runBlockExtension, type RunHost } from "./runblock";
@@ -234,6 +235,7 @@ function buildState(opts: EditorOptions): EditorState {
     if (opts.runHost) mode.push(runBlockExtension(opts.runHost));
     if (opts.blockHost) mode.push(blockHandle(opts.blockHost), dragSourceField);
     if (opts.embedHost) mode.push(embedExtension(opts.embedHost));
+    if (opts.blockHost) mode.push(provenanceExtension());
   } else {
     if (opts.language) mode.push(opts.language);
     mode.push(codeFont, syntaxHighlighting(codeHighlight));

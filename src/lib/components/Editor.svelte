@@ -7,7 +7,7 @@
   import { createEditor, resetDoc, languageFor } from "$lib/editor/setup";
   import { foldOnLoad } from "$lib/editor/fold";
   import { type EditorBlock, blockAt, blockContentStart, extentTo } from "$lib/editor/blocks";
-  import { blockMenuEntries } from "$lib/editor/blockmenu";
+  import { blockMenuEntries, type BlockMenuHost } from "$lib/editor/blockmenu";
   import { selectedBlocks } from "$lib/editor/blocksel";
   import { deleteBlocks, duplicateBlocks, moveBlocks } from "$lib/editor/blockops";
   import type { BlockHost } from "$lib/editor/blockhandle";
@@ -34,6 +34,15 @@
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import { clearImageDims } from "$lib/editor/livepreview";
   import { clearEmbedCaches, type EmbedHost } from "$lib/editor/embed";
+  import {
+    isPending,
+    nextPending,
+    originAt,
+    provenanceMarks as provMarksEffect,
+    provenanceOverlay as provOverlayEffect,
+    provenanceSet,
+  } from "$lib/editor/provenance";
+  import { byteSpansToChar } from "$lib/views/tasks";
   import "katex/dist/katex.min.css";
 
   let container = $state<HTMLDivElement | null>(null);
@@ -282,6 +291,19 @@
     return true;
   }
   vault.blockCommand = blockCommand;
+  vault.nextPending = () => {
+    if (!view) return false;
+    const pos = nextPending(view.state, view.state.selection.main.head);
+    if (pos == null) return false;
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+    view.focus();
+    return true;
+  };
+  vault.pendingAtCursor = () => {
+    if (!view) return null;
+    const row = originAt(view.state, view.state.selection.main.head);
+    return row && isPending(row.origin) ? row.local_id : null;
+  };
 
   /** The snapshot source of `@ current selection`: with a non-empty main selection it updates
    *  vault.editorSelection with the line numbers (1-based, inclusive) and the text, and an
@@ -408,12 +430,23 @@
     toast.push(t(ok ? "editor.copied" : "editor.copyFailed"), ok ? "info" : "error");
   }
 
-  const blockHost: BlockHost & { copyRef: (v: EditorView, b: EditorBlock, embed: boolean) => void; askAgent: (v: EditorView, b: EditorBlock) => void; isPrivate: () => boolean } = {
+  const blockHost: BlockHost & BlockMenuHost = {
     gripTip: () => t("block.handleTip"),
     openMenu: (v, b, e) => contextMenu.open(e, blockMenuEntries(v, b, blockHost, { compact: false })),
     onGripPointerDown: (v, b, e, grip, done) => startBlockDrag(v, b, e, grip, done),
     copyRef: (_v, b, embed) => void copyBlockRef(embed, b),
     isPrivate: () => !!docPath && vault.privatePaths.has(docPath),
+    pendingBlock: (v, b) => {
+      const row = originAt(v.state, b.from);
+      return row && isPending(row.origin) ? row.local_id : null;
+    },
+    pendingCount: () => vault.pendingCount,
+    acceptProvenance: (localId) => {
+      vault
+        .acceptProvenance(localId)
+        .then((n) => toast.push(localId ? t("prov.accepted") : t("prov.acceptedAll", { n })))
+        .catch((e) => toast.push(String(e), "error"));
+    },
     // Select the block's lines (the composer's automatic selection chip picks the
     // selection up through syncSelection → vault.editorSelection) and summon the agent
     askAgent: (v, b) => {
@@ -730,6 +763,8 @@
     const ln = v.state.doc.lineAt(head);
     vault.editorLoc = { line: ln.number, col: head - ln.from + 1 };
     vault.editorBlockPrivate = privateRangeAt(v.state.doc, head) != null;
+    vault.editorOrigin = null;
+    vault.pendingCount = 0;
     // The onSelection resetDoc fires still carries the previous note's docPath, so it is zeroed here against the new document
     vault.editorSelection = null;
     vault.editorSelStats = null;
@@ -742,8 +777,32 @@
     vault.docWords = null;
     vault.editorLoc = null;
     vault.editorBlockPrivate = false;
+    vault.editorOrigin = null;
+    vault.pendingCount = 0;
     vault.editorSelection = null;
     vault.editorSelStats = null;
+  }
+
+  /** Read the note's provenance from disk truth and hand it to the editor's field
+   *  (byte spans → character ranges in one pass). Guarded against a stale reply: the
+   *  note may have changed under the await. */
+  async function loadProvenance(path: string) {
+    let items;
+    try {
+      items = await api.provenanceGet(path);
+    } catch {
+      return;
+    }
+    if (!view || docPath !== path) return;
+    const text = view.state.doc.toString();
+    const ranges = byteSpansToChar(
+      text,
+      items.map((p) => p.span),
+    );
+    const rows = items.map((p, i) => ({ ...ranges[i], local_id: p.local_id, origin: p.origin }));
+    view.dispatch({ effects: provenanceSet.of(rows) });
+    vault.pendingCount = rows.filter((r) => isPending(r.origin)).length;
+    vault.editorOrigin = originAt(view.state, view.state.selection.main.head)?.origin ?? null;
   }
 
   async function loadDoc(counter: number, path: string, content: string) {
@@ -824,6 +883,8 @@
         vault.editorLoc = { line, col };
         const inPrivate = view != null && privateRangeAt(view.state.doc, h) != null;
         if (inPrivate !== vault.editorBlockPrivate) vault.editorBlockPrivate = inPrivate;
+        const origin = view ? (originAt(view.state, h)?.origin ?? null) : null;
+        if (origin !== vault.editorOrigin) vault.editorOrigin = origin;
       },
       onSelection: syncSelection,
     };
@@ -846,6 +907,23 @@
   $effect(() => {
     const version = vault.indexVersion;
     if (view && docPath?.endsWith(".md")) view.dispatch({ effects: queryRefresh.of(version) });
+  });
+
+  // Provenance is disk truth: re-read when the index moves or an accept lands, and only
+  // while the buffer is clean (a dirty buffer's blocks are not the ledger's blocks yet;
+  // the field keeps mapping the last rows through the edits meanwhile)
+  $effect(() => {
+    void vault.indexVersion;
+    void vault.provenanceEpoch;
+    const path = vault.currentPath;
+    const dirty = vault.dirty;
+    if (!view || dirty || !path?.endsWith(".md") || docPath !== path) return;
+    void loadProvenance(path);
+  });
+  $effect(() => {
+    const overlay = vault.provenanceOverlay;
+    const marks = prefs.provenanceMarks;
+    if (view && docPath?.endsWith(".md")) view.dispatch({ effects: [provOverlayEffect.of(overlay), provMarksEffect.of(marks)] });
   });
 
   // Changing the body font size or the readable line width in the settings (CM cannot notice a CSS variable change) → remeasure the line heights and coordinates
@@ -889,6 +967,8 @@
     if (vault.insertAtSection === insertAtSection) vault.insertAtSection = null;
     if (vault.revealPos === revealPos) vault.revealPos = null;
     vault.blockCommand = null;
+    vault.nextPending = null;
+    vault.pendingAtCursor = null;
     vault.locateText = null;
     vault.copyBlockRef = null;
     clearDocSignals();

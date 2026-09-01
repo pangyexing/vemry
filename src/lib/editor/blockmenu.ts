@@ -29,6 +29,12 @@ export interface BlockMenuHost {
   askAgent(view: EditorView, block: EditorBlock): void;
   /** Whether the whole note is in a privacy zone (the AI cannot be asked about it). */
   isPrivate(): boolean;
+  /** The block's local id when it is an AI block awaiting review, else null. */
+  pendingBlock(view: EditorView, block: EditorBlock): string | null;
+  /** How many blocks of this note await review. */
+  pendingCount(): number;
+  /** Accept one pending block (a local id) or, with null, every one in the note. */
+  acceptProvenance(localId: string | null): void;
 }
 
 export const TURN_TARGETS: TurnTarget[] = [
@@ -85,7 +91,13 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
   }));
   const turn: MenuItem = { label: t("block.turnInto"), disabled: ["table", "hr", "html", "other"].includes(b.kind), submenu: turnItems };
   const ask: MenuItem = { label: t("block.askAgent"), action: act(view, b, (now) => host.askAgent(view, now)) };
-  if (opts.compact) return [{ title: t("block.title") }, copyLink, copyEmbed, turn, ask];
+  // Provenance review: shown only when there is something to accept
+  const prov: MenuEntry[] = [];
+  const pend = host.pendingBlock(view, b);
+  if (pend) prov.push({ label: t("prov.acceptBlock"), action: () => host.acceptProvenance(pend) });
+  if (host.pendingCount() > 0) prov.push({ label: t("prov.acceptAll"), action: () => host.acceptProvenance(null) });
+  if (prov.length) prov.unshift({ separator: true });
+  if (opts.compact) return [{ title: t("block.title") }, copyLink, copyEmbed, turn, ask, ...prov];
   return [
     {
       label: t("block.insertBelow"),
@@ -173,6 +185,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
     },
     { separator: true },
     ask,
+    ...prov,
   ];
 }
 

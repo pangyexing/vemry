@@ -723,6 +723,7 @@ pub struct SettingsView {
     /// The agent's plan confirmation (propose_plan plus a blocking gate); frozen per
     /// session, so a change takes effect from the next session.
     pub plan_confirm: bool,
+    pub provenance_marks: bool,
     pub reading_images_enabled: bool,
     pub clip_localize_images: bool,
     pub updater_auto_check: bool,
@@ -752,6 +753,7 @@ pub struct SettingsUpdate {
     pub click_opens_links: Option<bool>,
     pub web_search_enabled: Option<bool>,
     pub plan_confirm: Option<bool>,
+    pub provenance_marks: Option<bool>,
     pub reading_images_enabled: Option<bool>,
     pub clip_localize_images: Option<bool>,
     pub updater_auto_check: Option<bool>,
@@ -789,6 +791,7 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         web_search_enabled: s.web_search_enabled,
         web_search_active,
         plan_confirm: s.plan_confirm,
+        provenance_marks: s.provenance_marks,
         reading_images_enabled: s.reading_images_enabled,
         clip_localize_images: s.clip_localize_images,
         updater_auto_check: s.updater_auto_check,
@@ -838,6 +841,9 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     }
     if let Some(v) = update.plan_confirm {
         s.plan_confirm = v;
+    }
+    if let Some(v) = update.provenance_marks {
+        s.provenance_marks = v;
     }
     if let Some(v) = update.reading_images_enabled {
         s.reading_images_enabled = v;

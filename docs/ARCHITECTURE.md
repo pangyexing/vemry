@@ -202,7 +202,10 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   cache, and `renderNoteMarkdown` in `markdown.ts` folds nested embeds into ⧉
   links so depth is one by construction; an embed of the note itself shows a
   marker, and heights are remembered per target so a widget mounts at its last
-  size instead of pushing the scroll position around.
+  size instead of pushing the scroll position around. `provenance.ts` holds the
+  block-provenance rows (byte spans mapped to positions once, then mapped
+  through edits by the field) and draws the pending bar and the origin overlay
+  as line decorations — see "Block provenance" below.
 - `components/`: the activity bar and the three-column layout (both side panels
   collapse, resize and swap sides as a unit, with UI state in localStorage; the
   right side's two panels stay mounted and switch by CSS, so changing tab loses
@@ -378,6 +381,23 @@ accepting is not a note event), `provenance_record` (the user-placed inserts),
 moved into another note keeps its state but escapes the per-note count; the
 overlay is disk truth with the autosave lag; similarity matching ("yours,
 edited") is a seam.
+
+In the UI (`src/lib/editor/provenance.ts`): the editor re-reads
+`provenance_get` whenever the index moves or an accept lands, but only while
+the buffer is clean — a dirty buffer's blocks are not the ledger's blocks yet,
+and the field keeps mapping the last rows through the edits meanwhile. Two
+independent layers: an amber bar beside every AI block still awaiting review
+(on by default, the `provenance_marks` setting) and a four-colour origin
+overlay that a command toggles. The status bar names the origin of the block
+under the cursor when it is not the user's, and shows "pending N" as a button
+that jumps to the next unreviewed block; the block menu offers "accept AI
+change" and "accept all in this note"; the sessions view's write rows open the
+note with the overlay on ("view the written blocks") and show the
+`applied_diff` of an edit-then-apply. The user-placed inserts are recorded at
+their landing points — a chat answer inserted or pinned (`host.ts`, with the
+session id), a selection clip (`clipTarget.deliver`, with the URL), a quick
+capture (`vault.capture`), and "save as note" (which now also writes
+`vemry.agent_session`) — all as accepted lines: the placing was the review.
 
 ## Seams left for later
 

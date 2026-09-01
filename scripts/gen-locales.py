@@ -219,6 +219,22 @@ CMD = {
         ("Delete block", "删除块"),
         ("Delete the selected blocks, or the block at the cursor (undo with ⌘Z)", "删除选中的块（或光标所在块），可用 ⌘Z 撤销"),
     ),
+    "toggle-provenance": (
+        ("Show block origins", "显示出处"),
+        ("Tint every block by who wrote it: you, the AI, a clip or a capture", "按写入者给每个块着色：你、AI、剪藏、速记"),
+    ),
+    "provenance-accept": (
+        ("Accept AI change", "接受 AI 修改"),
+        ("Mark the AI block at the cursor as reviewed", "把光标所在的 AI 块标为已确认"),
+    ),
+    "provenance-accept-all": (
+        ("Accept all AI changes in this note", "接受本篇全部 AI 修改"),
+        ("Mark every pending AI block of the current note as reviewed", "把当前笔记所有待确认的 AI 块标为已确认"),
+    ),
+    "provenance-next-pending": (
+        ("Next pending AI block", "下一个待确认块"),
+        ("Jump to the next AI block still awaiting review", "跳到下一个尚未确认的 AI 块"),
+    ),
     "delete-current-note": (
         ("Delete current note", "删除当前笔记"),
         ("Move to the system trash (recoverable)", "移入系统废纸篓(可恢复)"),
@@ -617,6 +633,8 @@ add("graph.", {
 
 # ---------------------------------------------------------------- session replay
 add("sessionsView.", {
+    "viewWrittenBlocks": ("View the written blocks", "查看写入的块"),
+    "appliedDiff": ("Applied with edits:", "编辑后应用的改动："),
     "rename": ("Rename…", "重命名…"),
     "delete": ("Delete session (with its audit log)", "删除会话(含审计记录)"),
     "deleteConfirm": ("Confirm delete", "确认删除"),
@@ -1082,6 +1100,8 @@ add("settings.", {
                       "built-in browser.",
                       "走 DeepSeek Responses API 的服务端 web_search,仅端点为 api.deepseek.com 时生效;"
                       "搜索由 provider 按次计费,与本地功能无关,默认关闭。来源引用会显示在 AI 时间线,可点开内置浏览器。"),
+    "provenanceMarks": ("Mark AI blocks awaiting review", "标记待确认的 AI 块"),
+    "provenanceMarksHint": ("An amber bar beside blocks the AI wrote until you accept them (the block menu or the status bar); the origin overlay is a separate command", "AI 写入的块旁显示琥珀色条，直到你接受（块菜单或状态栏）；出处着色是另一条命令"),
     "planConfirm": ("AI plan confirmation", "AI 计划确认"),
     "planConfirmHint": ("A multi-step task shows you a plan card first and waits for “run it / edit / "
                         "reject”; approving continues the same turn. Turned off, the AI recites the plan "
@@ -1381,6 +1401,26 @@ add("wikilink.", {
     "nextMonday": ("next Monday", "下周一"),
     "blockChanged": ("This block changed since it was indexed — save and try again", "块内容已变化，索引尚未更新，稍后再试"),
     "mintedNotInserted": ("Block id ^{id} was created but the cursor moved; the link was not inserted", "已创建块 id ^{id}，但光标已移动，未插入链接"),
+})
+
+add("prov.", {
+    "origin.you": ("You", "你"),
+    "origin.agent": ("AI", "AI"),
+    "origin.clip": ("Clip", "剪藏"),
+    "origin.capture": ("Capture", "速记"),
+    "session": ("session {id}", "会话 {id}"),
+    "sessionUnknown": ("session unknown", "会话未知"),
+    "pending": ("awaiting review", "待确认"),
+    "pendingCount": ("Pending {n}", "待确认 {n}"),
+    "pendingHint": ("AI blocks in this note not yet reviewed — click to jump to the next one", "本篇尚未确认的 AI 块——点击跳到下一个"),
+    "acceptBlock": ("Accept AI change", "接受 AI 修改"),
+    "acceptAll": ("Accept all in this note", "接受本篇全部"),
+    "accepted": ("Accepted", "已接受"),
+    "acceptedAll": ("Accepted {n} blocks", "已接受 {n} 个块"),
+    "noPending": ("No AI blocks awaiting review in this note", "本篇没有待确认的 AI 块"),
+    "noPendingHere": ("The block at the cursor is not awaiting review", "光标所在块不是待确认的 AI 块"),
+    "overlayOn": ("Origin overlay on", "已显示出处"),
+    "overlayOff": ("Origin overlay off", "已隐藏出处"),
 })
 
 add("embed.", {

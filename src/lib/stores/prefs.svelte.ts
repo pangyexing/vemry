@@ -20,6 +20,8 @@ class PrefsStore {
   noteFontSize = $state(16);
   /** The readable-line-width switch; Editor's effect uses it to trigger requestMeasure. */
   readableLineWidth = $state(true);
+  /** Whether AI blocks awaiting review show their amber bar in the editor. */
+  provenanceMarks = $state(true);
   /** The global default thinking level (none/low/high/max); the fallback value of the composer's quick-switch button. */
   reasoningEffort = $state("high");
   /** Whether the level really takes effect (the endpoint is DeepSeek) — derived on the Rust side, and the check is not reimplemented in the frontend. */
@@ -40,6 +42,7 @@ class PrefsStore {
       this.webSearchActive = s.web_search_active;
       this.applyNoteFontSize(s.note_font_size);
       this.applyReadableLineWidth(s.readable_line_width);
+      this.provenanceMarks = s.provenance_marks;
       this.reasoningEffort = s.reasoning_effort;
       this.reasoningEffortActive = s.reasoning_effort_active;
       this.providerDeepseek = s.provider_deepseek;

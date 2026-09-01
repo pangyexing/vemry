@@ -589,12 +589,12 @@
    *  — under a projection the editor is only hidden by CSS, and a bare insertAtCursor cannot tell
    *  a visible note from a hidden one. */
   function insertAnswer(text: string) {
-    void hostDispatch({ kind: "insert", payload: answerPayload(text) });
+    void hostDispatch({ kind: "insert", payload: answerPayload(text), session: agent.sessionId ?? undefined });
   }
 
   /** Send it to the pinned destination (sharing clipTarget.deliver's pipeline and destination contract with a clipped selection). */
   function sendToPinned(text: string) {
-    void hostDispatch({ kind: "pin", payload: answerPayload(text) });
+    void hostDispatch({ kind: "pin", payload: answerPayload(text), session: agent.sessionId ?? undefined });
   }
 
   /** This turn's context: look back to the most recent user question and forward to the next turn to collect the sources. */
@@ -637,6 +637,7 @@
       path = `research/${title} ${pad(it.getHours())}${pad(it.getMinutes())}${pad(it.getSeconds())}.md`;
     }
     const fm = ["---", "vemry:", "  origin: agent"];
+    if (agent.sessionId) fm.push(`  agent_session: ${agent.sessionId}`);
     if (question) fm.push(`question: ${JSON.stringify(question.split("\n")[0])}`);
     if (sources.length) {
       fm.push("sources:");
@@ -645,6 +646,8 @@
     fm.push("---", "");
     try {
       await api.noteWrite(path, `${fm.join("\n")}${text.trim()}\n`);
+      // Saved by the user's hand: the AI's blocks, accepted by the saving itself
+      void api.provenanceRecord(path, text, "agent", agent.sessionId ?? undefined).catch(() => undefined);
       await vault.refreshNotes();
       await hostDispatch({ kind: "open-note", path });
       toast.push(t("chat.savedAs", { path }));

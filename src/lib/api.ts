@@ -204,6 +204,8 @@ export interface SettingsView {
   web_search_active: boolean;
   /** The agent's plan confirmation (propose_plan plus a blocking gate); frozen per session, so a change takes effect from the next session. */
   plan_confirm: boolean;
+  /** AI blocks awaiting review show an amber bar in the editor. */
+  provenance_marks: boolean;
   reading_images_enabled: boolean;
   clip_localize_images: boolean;
   updater_auto_check: boolean;
@@ -229,6 +231,7 @@ export interface SettingsUpdate {
   click_opens_links?: boolean;
   web_search_enabled?: boolean;
   plan_confirm?: boolean;
+  provenance_marks?: boolean;
   reading_images_enabled?: boolean;
   clip_localize_images?: boolean;
   updater_auto_check?: boolean;
@@ -385,8 +388,9 @@ export interface PageContext {
 export type HostAction =
   | { kind: "open-note"; path: string }
   | { kind: "follow-link"; target: string }
-  | { kind: "insert"; payload: string }
-  | { kind: "pin"; payload: string }
+  /** session: the chat session the text came from (recorded as the blocks' provenance). */
+  | { kind: "insert"; payload: string; session?: string }
+  | { kind: "pin"; payload: string; session?: string }
   | { kind: "memo"; text: string }
   | { kind: "command"; id: string };
 /** An action from the clip toolbar (clipbar-N, batch D) to the main window (App.svelte

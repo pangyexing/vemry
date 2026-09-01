@@ -318,6 +318,25 @@ export function charToByte(content: string, ch: number): number {
   return new TextEncoder().encode(content.slice(0, Math.max(0, ch))).length;
 }
 
+/** Many byte spans → character ranges in one pass over the text (byteToChar per span
+ *  would re-encode the whole document for each block). Offsets past the end clamp. */
+export function byteSpansToChar(content: string, spans: { start: number; end: number }[]): { from: number; to: number }[] {
+  const wanted = Array.from(new Set(spans.flatMap((s) => [s.start, s.end]))).sort((a, b) => a - b);
+  const map = new Map<number, number>();
+  let byte = 0;
+  let wi = 0;
+  let i = 0;
+  while (wi < wanted.length && i <= content.length) {
+    while (wi < wanted.length && wanted[wi] <= byte) map.set(wanted[wi++], i);
+    if (i === content.length) break;
+    const cp = content.codePointAt(i)!;
+    byte += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    i += cp >= 0x10000 ? 2 : 1;
+  }
+  while (wi < wanted.length) map.set(wanted[wi++], content.length);
+  return spans.map((s) => ({ from: map.get(s.start) ?? content.length, to: map.get(s.end) ?? content.length }));
+}
+
 /** Task text for display: checkbox prefix, date markers, capture stamps and
  *  markdown ornaments stripped — Agenda is a projection, and cramming the source's
  *  markers into a single line would only be noise.

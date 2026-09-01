@@ -3,7 +3,7 @@ import { t } from "$lib/i18n/i18n.svelte";
 import { tick, untrack } from "svelte";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, onVaultEvent, type EditorSelection, type NoteSummary, type VaultEvent } from "$lib/api";
+import { api, onVaultEvent, type EditorSelection, type NoteSummary, type Origin, type VaultEvent } from "$lib/api";
 import { agent } from "$lib/stores/agent.svelte";
 import { clips } from "$lib/stores/clips.svelte";
 import { toast } from "$lib/stores/toast.svelte";
@@ -335,6 +335,18 @@ class VaultStore {
   /** The cursor sits inside a `> [!private]` block (the editor's own judgement of the
    *  buffer; the status bar shows the block-level privacy badge). */
   editorBlockPrivate = $state(false);
+  /** Provenance of the block under the cursor (null = no text editor, or nothing known yet). */
+  editorOrigin = $state<Origin | null>(null);
+  /** AI blocks of the current note still awaiting review (the status bar's "pending N"). */
+  pendingCount = $state(0);
+  /** The four-colour origin overlay (a command toggles it; per process, not persisted). */
+  provenanceOverlay = $state(false);
+  /** Bumped after an accept so the editor re-reads the ledger (accepting is not a note event and is not broadcast). */
+  provenanceEpoch = $state(0);
+  /** Editor hook: move the cursor to the next pending block; false when there is none. */
+  nextPending: (() => boolean) | null = null;
+  /** Editor hook: the pending block under the cursor (its local id), or null. */
+  pendingAtCursor: (() => string | null) | null = null;
   /** The selection's statistics (for the status line). chars is computed from the doc
    *  (in UTF-16 units) — editorSelection.text is truncated at SELECTION_MAX_CHARS and
    *  cannot be counted. */
@@ -1534,6 +1546,19 @@ class VaultStore {
   /** Capture one quick memo: a list item with a timestamp, inserted into target (inbox.md
    *  by default); the destination dispatch and the section-fallback message live in
    *  insertBlock. */
+  /** Accept one pending AI block (a local id) or, with null, every pending block of the
+   *  current note. The buffer flushes first: the ledger is flipped by the hash of the
+   *  block as it is on disk, and a stale disk copy would accept the wrong text. Returns
+   *  how many blocks were accepted. */
+  async acceptProvenance(localId: string | null): Promise<number> {
+    const path = this.currentPath;
+    if (!path) return 0;
+    if (this.dirty) await this.flushEditor?.();
+    const n = await api.provenanceAccept(path, localId ?? undefined);
+    this.provenanceEpoch++;
+    return n;
+  }
+
   async capture(text: string, target = "inbox.md", heading: string | null = null) {
     // Local time (toISOString is UTC, which is hours out east of Greenwich); the format has
     // to stay `YYYY-MM-DD HH:MM` — views/tasks.ts's STAMP_RE strips the signature by it
@@ -1541,6 +1566,8 @@ class VaultStore {
     const pad = (n: number) => String(n).padStart(2, "0");
     const line = `- ${text} *(${ymd(t)} ${pad(t.getHours())}:${pad(t.getMinutes())})*`;
     const r = await this.insertBlock(target, line, heading);
+    // The stamp alone would already name the origin; the ledger line adds the exact time and survives a stamp the user trims
+    void api.provenanceRecord(target, line, "capture").catch(() => undefined);
     if (!r.intoEditor) await this.refreshNotes();
     // landed is passed through to the caller: on a section fallback the success receipt must not still claim it landed in the section
     return r;

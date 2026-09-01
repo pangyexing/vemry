@@ -31,6 +31,14 @@ export async function hostDispatch(a: HostAction): Promise<void> {
   await runHostAction(a);
 }
 
+/** Text the user placed from the chat is the AI's, accepted by the placing itself:
+ *  the ledger line names the session and keeps the blocks out of "pending". Failing to
+ *  record must not undo an insert that already landed, so errors are swallowed. */
+function recordAgentText(path: string | null, text: string, session?: string) {
+  if (!path) return;
+  void api.provenanceRecord(path, text, "agent", session).catch(() => undefined);
+}
+
 /** The main-window side (App's listener for agent-window://action comes through here too). */
 export async function runHostAction(a: HostAction): Promise<void> {
   switch (a.kind) {
@@ -46,6 +54,7 @@ export async function runHostAction(a: HostAction): Promise<void> {
       // note from a hidden one
       if (vault.canInsertIntoVisibleNote && vault.insertAtCursor?.(a.payload, true)) {
         toast.push(t("app.insertedInto", { path: vault.currentPath ?? "" }));
+        recordAgentText(vault.currentPath, a.payload, a.session);
       } else {
         toast.push(t("app.noVisibleEditor"), "error");
       }
@@ -58,8 +67,12 @@ export async function runHostAction(a: HostAction): Promise<void> {
         toast.push(t("chat.pinFirst"));
         return;
       }
-      const ok = await clipTarget.deliver(clipTarget.path, a.payload, undefined, clipTarget.heading);
-      if (ok) await vault.refreshNotes();
+      const target = clipTarget.path;
+      const ok = await clipTarget.deliver(target, a.payload, undefined, clipTarget.heading);
+      if (ok) {
+        recordAgentText(target, a.payload, a.session);
+        await vault.refreshNotes();
+      }
       return;
     }
     case "memo":

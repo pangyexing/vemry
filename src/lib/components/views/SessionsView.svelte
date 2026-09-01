@@ -2,6 +2,7 @@
   import { api, type SessionMeta } from "$lib/api";
   import { agent } from "$lib/stores/agent.svelte";
   import { vault } from "$lib/stores/vault.svelte";
+  import { tick } from "svelte";
   import { classifyDiff } from "$lib/views/diff";
   import { handleCodeCopyClick, renderAssistantMarkdownBlocks } from "$lib/markdown";
   import "katex/dist/katex.min.css";
@@ -81,6 +82,16 @@
     e.preventDefault();
     if (el.dataset.url) api.urlOpen(el.dataset.url, e.metaKey || e.ctrlKey, false).catch((err) => (vault.error = String(err)));
     else if (el.dataset.wiki) void vault.followLink(el.dataset.wiki);
+  }
+
+  /** "View the written blocks": open the note with the origin overlay on, and land on
+   *  the first block still awaiting review (a note whose blocks were all accepted or
+   *  rewritten since just opens). */
+  async function openWritten(path: string) {
+    await vault.openNote(path);
+    vault.provenanceOverlay = true;
+    await tick();
+    vault.nextPending?.();
   }
 
   /** Reread the session's content while keeping the expansion state (the log only appends, so the indices of existing entries are stable) */
@@ -276,14 +287,24 @@
               {:else if !e.to}
                 <span class="faint">{t("permission.newFile")}</span>
               {/if}
+              {#if !e.to}
+                <button class="link" onclick={() => void openWritten(e.path)}>{t("sessionsView.viewWrittenBlocks")}</button>
+              {/if}
             </div>
           </div>
         {:else if e.kind === "permission"}
           <div class="row">
             <span class="ts">{hhmmss(e.ts)}</span>
-            <div class="permission">
-              <span class="badge" class:deny={e.decision === "deny"}>{decisionLabel(e.decision)}</span>
-              <span class="path-text">{e.path}</span>
+            <div class="write">
+              <div class="permission">
+                <span class="badge" class:deny={e.decision === "deny"}>{decisionLabel(e.decision)}</span>
+                <span class="path-text">{e.path}</span>
+              </div>
+              {#if e.applied_diff}
+                <span class="faint">{t("sessionsView.appliedDiff")}</span>
+                <pre class="diff">{#each classifyDiff(e.applied_diff) as line, j (j)}<span class={line.cls}>{line.text}
+</span>{/each}</pre>
+              {/if}
             </div>
           </div>
         {:else if e.kind === "plan"}
@@ -598,6 +619,18 @@
     align-items: baseline;
     gap: 8px;
     font-size: var(--fs-sm);
+  }
+  .link {
+    align-self: flex-start;
+    padding: 0;
+    font-size: var(--fs-xs);
+    color: var(--accent);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration: underline;
   }
   .badge {
     font-size: var(--fs-xs);

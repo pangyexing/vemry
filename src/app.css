@@ -870,6 +870,38 @@ button:focus-visible,
   caret-color: transparent;
 }
 
+/* ---- Block provenance (provenance.ts): the amber bar of an AI block awaiting review, and
+   the four-colour origin overlay. Line decorations need the three-level selector, like the
+   line padding; the colours are tokens so the status bar and the overlay agree ---- */
+:root {
+  --prov-you: #6b7f6b;
+  --prov-agent: #c7891a;
+  --prov-clip: #3b7bbf;
+  --prov-capture: #8a63c7;
+}
+:root[data-theme="dark"] {
+  --prov-you: #8fa88f;
+  --prov-agent: #e0a63a;
+  --prov-clip: #6ea3e0;
+  --prov-capture: #b08fe6;
+}
+.cm-editor .cm-scroller .cm-line.cm-prov-pending {
+  box-shadow: inset 3px 0 0 var(--prov-agent);
+  padding-left: 6px;
+}
+.cm-editor .cm-scroller .cm-line.cm-prov-you {
+  background: color-mix(in srgb, var(--prov-you) 9%, transparent);
+}
+.cm-editor .cm-scroller .cm-line.cm-prov-agent {
+  background: color-mix(in srgb, var(--prov-agent) 12%, transparent);
+}
+.cm-editor .cm-scroller .cm-line.cm-prov-clip {
+  background: color-mix(in srgb, var(--prov-clip) 10%, transparent);
+}
+.cm-editor .cm-scroller .cm-line.cm-prov-capture {
+  background: color-mix(in srgb, var(--prov-capture) 10%, transparent);
+}
+
 /* ---- Cross-note embeds (embed.ts): a block widget with a header row and a rendered
    body sharing the .md-body contract; a chip inside a line ---- */
 .cm-embed {

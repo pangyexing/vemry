@@ -78,6 +78,8 @@ class ClipTargetStore {
       intoEditor = r.intoEditor;
       if (!(heading && r.landed === "tail")) toast.push(t(intoEditor ? "app.insertedInto" : "app.clippedInto", intoEditor ? { path: spot } : { spot }));
       if (sourceUrl) {
+        // The credit line alone would already name the origin; the ledger adds the exact time and survives a trimmed credit
+        void api.provenanceRecord(path, quote, "clip", undefined, sourceUrl).catch(() => undefined);
         if (intoEditor) await vault.flushEditor?.();
         await api.clipLocalizeNote(path, sourceUrl);
       }

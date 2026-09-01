@@ -58,6 +58,10 @@ pub struct Settings {
     /// session — a change takes effect from the next session.
     #[serde(default = "default_true")]
     pub plan_confirm: bool,
+    /// AI blocks awaiting review show an amber bar in the editor (the origin overlay
+    /// is a command, not a setting).
+    #[serde(default = "default_true")]
+    pub provenance_marks: bool,
     /// Load images in the reading projection through the vemry-asset proxy (no
     /// cookies, with the page's Referer). It affects the projection alone; a note on
     /// disk always makes zero network requests (a tracking pixel cannot leak reading
@@ -184,6 +188,7 @@ impl Default for Settings {
             click_opens_links: true,
             web_search_enabled: false,
             plan_confirm: true,
+            provenance_marks: true,
             reading_images_enabled: true,
             clip_localize_images: true,
             updater_auto_check: false,
