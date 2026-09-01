@@ -754,7 +754,7 @@ impl AgentRunner {
         let write_req = {
             let guard = self.vault.lock().unwrap();
             let vault = guard.as_ref().ok_or("no vault open")?;
-            match prepare_write(vault, call.id.clone(), name, &args) {
+            match prepare_write(vault, call.id.clone(), name, &args, Some(&log.id)) {
                 Ok(req) => req,
                 Err(ToolError::Privacy(msg)) => {
                     // No diff, no permission dialog, no write_prepared line:
@@ -778,7 +778,15 @@ impl AgentRunner {
             on_event(AgentEvent::PermissionRequest { request: write_req.clone() });
             self.gate.request(&write_req).await
         };
-        log.append("permission", json!({ "path": &write_req.path, "decision": decision_label(&decision) }));
+        let mut permission = json!({ "path": &write_req.path, "decision": decision_label(&decision) });
+        // "Edit, then apply": the diff the user actually applied, next to the
+        // proposed one in write_prepared — the ledger would otherwise hold the
+        // proposal and never the bytes that landed
+        if let PermissionDecision::AllowEdited { content } = &decision {
+            permission["applied_diff"] =
+                json!(crate::tools::unified_diff(&write_req.new_content, content, &write_req.path));
+        }
+        log.append("permission", permission);
 
         let content_override = match &decision {
             PermissionDecision::Deny { reason } => {
@@ -798,7 +806,7 @@ impl AgentRunner {
 
         let mut guard = self.vault.lock().unwrap();
         let vault = guard.as_mut().ok_or("no vault open")?;
-        execute_write(vault, &write_req, content_override.as_deref())
+        execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id))
     }
 
     /// propose_plan: record the plan line → emit the event → suspend awaiting the
@@ -1443,8 +1451,14 @@ mod tests {
         let vault = guard.as_ref().unwrap();
         let content = vault.read_note(&vault.note_id("New.md").unwrap()).unwrap();
         assert!(content.contains("agent 写的"));
-        // provenance frontmatter stamped on agent-created notes
-        assert!(content.starts_with("---\nvemry:\n  origin: agent\n---\n"));
+        // provenance frontmatter stamped on agent-created notes, naming the session
+        assert!(content.starts_with("---\nvemry:\n  origin: agent\n  agent_session: "), "{content}");
+        let session = content.lines().nth(3).unwrap().trim().trim_start_matches("agent_session: ").to_string();
+        // and the ledger holds the new blocks under that session, pending review
+        let ledger = std::fs::read_to_string(vault.root().join(".vemry/provenance.jsonl")).unwrap();
+        assert!(ledger.contains(&format!("\"session\":\"{session}\"")), "{ledger}");
+        let prov = vault.provenance(&vault.note_id("New.md").unwrap()).unwrap();
+        assert!(prov.iter().all(|p| matches!(p.origin, vemry_core::Origin::Agent { pending: true, .. })));
     }
 
     /// The full move_note chain: through the permission gate, a write_prepared line

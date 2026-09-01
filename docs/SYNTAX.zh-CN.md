@@ -23,11 +23,11 @@ created: 2026-08-20
 private: true             # 进隐私区：对 AI 永远不可见
 vemry:                    # vemry 自己写的溯源信息，与用户字段隔离
   origin: agent           # agent | capture
-  agent_session: <id>
+  agent_session: <id>       # 创建这篇笔记的研究会话（.vemry/sessions/<id>.jsonl）
 ---
 ```
 
-未知字段原样保留（`Frontmatter.extra` 展平透传），往返读写不会吃掉你自己的元数据。
+未知字段原样保留（`Frontmatter.extra` 展平透传），往返读写不会吃掉你自己的元数据。块级出处（谁写了哪一块）不是语法：它记在 `.vemry/provenance.jsonl` 里，正文没有任何标记。
 
 **降级**：标准 YAML frontmatter，绝大多数 Markdown 工具原生识别；不识别的渲染器把它显示为顶部一段 `---` 包裹的文本，正文完整。
 

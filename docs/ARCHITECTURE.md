@@ -40,6 +40,7 @@ Three constraints follow:
 | `block.rs` | The `Block` / `BlockKind` types: the atom every projection is built from |
 | `locate.rs` | One definition of "which block / which section": heading lookup (exact, then case-insensitive; a trailing ` ^id` is not part of a title), section spans, block by local id (explicit beats positional), block by offset, a list item's subtree. The insert landing rule, reference resolution and id minting all go through it |
 | `blockid.rs` | Block ids: the validity rule the parser applies, which blocks may carry one (not fences, table rows or rules), and minting — a random `a–z0–9` id unique within the note, written only on demand |
+| `provenance.rs` | Who authored each block: a normalized-content hash as the block's identity, the `.vemry/provenance.jsonl` ledger (written when text lands, compacted on load), the multiset difference that names the blocks a write added, and the origin priority (ledger → capture stamp → clip credit line → frontmatter `vemry.origin` → the user) |
 | `index.rs` | `BlockIndex`: note table, block table, link graph (backlinks derived), name resolution table (stem/alias, shortest path wins), tag table. Incremental update: reparse one file, then reparse links wholesale (O(total links), milliseconds at ten-thousand-note scale) |
 | `query.rs` | `BlockQuery` → `Vec<BlockHit>`: the one query entry point. Inline-field conditions (`FieldFilter`, parsed from the flat `key = v` grammar shared by query blocks, the agent tool and scripts) consult a block's own fields first, then the note's frontmatter scalars |
 | `search.rs` | The `SearchProvider` trait plus an in-memory multi-term AND substring match (no tokenisation, so CJK works by construction). tantivy or semantic retrieval would be another implementation of the same trait |
@@ -205,6 +206,7 @@ the model streams a tool_call(edit_note)
     edit then apply / deny (with a reason)
   → a oneshot wakes the loop
   → allowed: vault.write_note() (registers self-write suppression → incremental reindex)
+    → vault.record_provenance(the blocks the applied bytes added, under the session id) — pending review
     denied: an error tool result goes back to the model, which adjusts
   → the audit log records permission + tool_result
 ```
@@ -307,6 +309,51 @@ a file paste, the clipboard's plain text is inserted manually instead.
   loosen the "no bash" principle on the AI side; a js code block runs only when a
   person clicks it, and is read-only (see "Programmability").
 
+## Block provenance (post-write review)
+
+The permission gate is consent *before* a write; provenance is review *after*
+it. "Allow for this session", a turn that writes five notes, an "edit, then
+apply" where one line of fifty was actually read — those land on disk without
+being read line by line. So every block can say who authored its current text,
+and an agent-written block stays visibly **pending** until the user accepts it.
+
+Nothing is added to the notes. `.vemry/provenance.jsonl` is an append-only
+ledger written at the moment text lands (`vemry-core/src/provenance.rs`):
+
+- `{"kind":"agent","ts","session","path","blocks":[{hash,kind}]}` — an agent
+  write that passed the gate (`execute_write` records the blocks the applied
+  bytes added, so an "edit, then apply" counts what the user applied, not what
+  the model proposed); these are pending.
+- `{"kind":"insert","origin":"agent|clip|capture",…}` — text the user placed
+  themselves (a chat answer inserted or pinned, a clip, a capture): accepted from
+  the start, since the user saw it going in.
+- `{"kind":"accept","hashes":[…]}` — flips pending blocks to accepted; a later
+  agent write of the same hash makes it pending again.
+
+A block's identity is a hash of its **normalized** text: markers, checkbox,
+callout head, trailing ` ^id` and capture stamps are stripped, whitespace folded
+(a fenced block keeps its lines and loses only the fences). Provenance therefore
+survives a block being moved, indented or turned into another kind, and is
+dropped the moment its words change — an edited AI block is the user's. Which
+blocks a write added is a multiset difference of hashes, so a block the model
+merely moved is not "new". The ledger never stores text (hashes and kinds only)
+and skips private paths; a damaged line is skipped on load, and above 5000 lines
+the file is compacted to the hashes that still exist.
+
+Origins that need no ledger: a `*(YYYY-MM-DD HH:MM)*` capture stamp, a
+selection clip's `> — [title](url) · date` credit line, a whole-page clip's
+`vemry.origin: clip` frontmatter, and a pre-ledger `vemry.origin: agent` note
+(reported as agent, session unknown, not pending — in a note the ledger knows,
+a block without a record is the user's). New agent-created notes now carry
+`vemry.agent_session`, and the audit's `permission` row records the
+`applied_diff` of an "edit, then apply". IPC: `provenance_get` (every block's
+origin), `provenance_accept` (one block or the whole note; not broadcast, since
+accepting is not a note event), `provenance_record` (the user-placed inserts),
+`provenance_pending` (notes with pending blocks). Known limits: a pending block
+moved into another note keeps its state but escapes the per-note count; the
+overlay is disk truth with the autosave lag; similarity matching ("yours,
+edited") is a seam.
+
 ## Seams left for later
 
 | Future capability | The seam today |
@@ -320,6 +367,8 @@ a file paste, the clipboard's plain text is inserted manually instead.
 | Block-level backlinks ("which blocks reference this block") | `LinkEdge` already records the source block; the target fragment (`heading` / `block_ref`) survives on `Block.links` and would move into the edge |
 | The agent reading one block or an embed's content (`read_block`, embed expansion) | `Vault::resolve_ref` is the primitive; a tool wraps it behind the read-level privacy gate like every other read |
 | Rewriting links when a note is renamed | `resolve_ref`'s note part is the only thing a rename changes — a minted `^id` never does |
+| Provenance by similarity ("yours, edited") and a per-session "what did it write" view | the ledger is keyed by hash and ordered by time; `pending_notes` is the entry point of the latter |
+| Git-blame-like block history | the ledger's lines are already timestamped and append-only |
 
 ## How PDF and image Q&A would evolve (a design note)
 

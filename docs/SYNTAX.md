@@ -32,12 +32,14 @@ created: 2026-08-20
 private: true                # a privacy zone: permanently invisible to the AI
 vemry:                       # provenance vemry writes itself, kept apart from your fields
   origin: agent              # agent | capture
-  agent_session: <id>
+  agent_session: <id>       # the research session that created the note (.vemry/sessions/<id>.jsonl)
 ---
 ```
 
 Unknown fields survive round-trips verbatim (flattened through `Frontmatter.extra`),
-so vemry never eats metadata that belongs to you or another tool.
+so vemry never eats metadata that belongs to you or another tool. Block-level
+provenance (who wrote which block) is not syntax: it lives in
+`.vemry/provenance.jsonl`, and the body carries no marker.
 
 **Fallback**: standard YAML frontmatter, which most Markdown tooling recognises
 natively. A renderer that does not shows it as a `---`-fenced block of text at the

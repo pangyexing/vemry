@@ -146,6 +146,26 @@ export interface BlockIdPlan {
   insert?: { offset: number; text: string };
 }
 
+/** Who authored a block's current text (mirrors vemry-core's provenance `Origin`). */
+export type Origin =
+  | { origin: "you" }
+  | { origin: "agent"; session?: string; ts?: string; pending: boolean }
+  | { origin: "clip"; url?: string; ts?: string }
+  | { origin: "capture"; ts?: string };
+
+export interface BlockProvenance {
+  local_id: string;
+  /** Byte range like `Block.span`. */
+  span: { start: number; end: number };
+  hash: string;
+  origin: Origin;
+}
+
+export interface PendingNote {
+  path: string;
+  count: number;
+}
+
 export interface BacklinkEntry {
   source: string;
   source_title: string;
@@ -709,6 +729,15 @@ export const api = {
    *  text, apply the one returned insert at `byteToChar(offset)`. Placement and id generation live
    *  only in Rust (`blockid.rs::plan_block_id`); the editor never computes where an id goes. */
   blockIdPlan: (source: string, selector: BlockSelector) => invoke<BlockIdPlan>("block_id_plan", { source, selector }),
+  /** Who authored each block of a note. */
+  provenanceGet: (path: string) => invoke<BlockProvenance[]>("provenance_get", { path }),
+  /** Accept pending agent blocks (one by local id, or all); resolves to the count still pending. */
+  provenanceAccept: (path: string, localId?: string) => invoke<number>("provenance_accept", { path, localId }),
+  /** Record text the user placed themselves (lands accepted); a private path or text without blocks records nothing. */
+  provenanceRecord: (path: string, text: string, origin: "agent" | "clip" | "capture", session?: string, url?: string) =>
+    invoke<void>("provenance_record", { path, text, origin, session, url }),
+  /** Every note with agent blocks awaiting review. */
+  provenancePending: () => invoke<PendingNote[]>("provenance_pending"),
   settingsGet: () => invoke<SettingsView>("settings_get"),
   settingsSet: (update: SettingsUpdate) => invoke<void>("settings_set", { update }),
   agentStart: (

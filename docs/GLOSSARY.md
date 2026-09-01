@@ -29,6 +29,8 @@ three months later, and each translation drifts on its own. A new user-visible t
 | 技能 | skill | plugin, extension (`extension` is reserved for the future extension mechanism) |
 | 用户脚本 | user script | macro, plugin |
 | 审计日志 | audit log | history, activity |
+| 出处 | provenance | origin (the frontmatter key only), source (taken by clipping), authorship |
+| 待确认 | pending review | unreviewed, draft |
 
 ## Interface elements
 

@@ -14,7 +14,7 @@ use vemry_agent::session::{
 };
 use vemry_agent::{HttpTransport, PermissionDecision};
 use vemry_core::{
-    BacklinkEntry, BlockHit, BlockIdPlan, BlockQuery, BlockSelector, GraphData, InsertLanded, MigrationReport, NoteSummary, RefResolution, SearchHit, Vault, VaultEvent,
+    BacklinkEntry, BlockHit, BlockIdPlan, BlockProvenance, BlockQuery, BlockSelector, GraphData, InsertLanded, InsertOrigin, MigrationReport, NoteSummary, ProvenanceEntry, RefResolution, SearchHit, Vault, VaultEvent,
 };
 
 use crate::agent_bridge::{resolve_permission, ChannelGate};
@@ -611,6 +611,78 @@ pub fn block_ensure_id(
 #[tauri::command]
 pub fn block_id_plan(source: String, selector: BlockSelector) -> Result<BlockIdPlan, String> {
     vemry_core::plan_block_id(&source, &selector).map_err(crate::i18n::err)
+}
+
+#[derive(Serialize)]
+pub struct PendingNote {
+    pub path: String,
+    pub count: usize,
+}
+
+/// Who authored each block of a note (see vemry-core's provenance.rs).
+#[tauri::command]
+pub fn provenance_get(state: State<'_, AppState>, path: String) -> Result<Vec<BlockProvenance>, String> {
+    with_vault(&state, |v| {
+        let id = v.note_id(&path).map_err(crate::i18n::err)?;
+        v.provenance(&id).map_err(crate::i18n::err)
+    })
+}
+
+/// Accept the pending agent blocks of a note (one by local id, or all); returns
+/// how many are still pending. Not broadcast: accepting is not a note event.
+#[tauri::command]
+pub fn provenance_accept(state: State<'_, AppState>, path: String, local_id: Option<String>) -> Result<usize, String> {
+    with_vault_mut(&state, |v| {
+        let id = v.note_id(&path).map_err(crate::i18n::err)?;
+        v.accept_provenance(&id, local_id.as_deref()).map_err(crate::i18n::err)
+    })
+}
+
+/// Record text the user placed themselves (a chat answer inserted, a clip, a
+/// capture) — it lands accepted. A private path records nothing (the ledger
+/// would name it); text without blocks records nothing.
+#[tauri::command]
+pub fn provenance_record(
+    state: State<'_, AppState>,
+    path: String,
+    text: String,
+    origin: String,
+    session: Option<String>,
+    url: Option<String>,
+) -> Result<(), String> {
+    let origin = match origin.as_str() {
+        "agent" => InsertOrigin::Agent,
+        "clip" => InsertOrigin::Clip,
+        "capture" => InsertOrigin::Capture,
+        other => return Err(format!("unknown origin: {other}")),
+    };
+    with_vault_mut(&state, |v| {
+        let id = v.note_id(&path).map_err(crate::i18n::err)?;
+        if v.is_private(&id) {
+            return Ok(());
+        }
+        let blocks = vemry_core::stamps_of(&text);
+        if blocks.is_empty() {
+            return Ok(());
+        }
+        v.record_provenance(ProvenanceEntry::Insert {
+            ts: vemry_core::provenance::now_ts(),
+            origin,
+            session,
+            url,
+            path: id.to_string(),
+            blocks,
+        });
+        Ok(())
+    })
+}
+
+/// Every note with agent blocks still awaiting review.
+#[tauri::command]
+pub fn provenance_pending(state: State<'_, AppState>) -> Result<Vec<PendingNote>, String> {
+    with_vault(&state, |v| {
+        Ok(v.pending_notes().into_iter().map(|(id, count)| PendingNote { path: id.to_string(), count }).collect())
+    })
 }
 
 /// Resolve a wikilink target to a note path, if it exists.

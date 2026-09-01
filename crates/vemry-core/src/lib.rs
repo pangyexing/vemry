@@ -15,6 +15,7 @@ pub mod locate;
 pub mod note;
 pub mod parser;
 pub mod privacy;
+pub mod provenance;
 pub mod query;
 pub mod search;
 pub mod vault;
@@ -29,6 +30,9 @@ pub use note::{Frontmatter, Note, NoteId, VemryMeta};
 pub use privacy::{
     blank_private_blocks, has_private_blocks, private_spans, public_occurrences, redact_private_blocks, PrivacyScope,
     Redacted,
+};
+pub use provenance::{
+    added_blocks, stamps_of, BlockProvenance, BlockStamp, InsertOrigin, Origin, ProvenanceEntry, ProvenanceLedger,
 };
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};

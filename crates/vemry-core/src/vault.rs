@@ -17,6 +17,7 @@ use crate::index::BlockIndex;
 use crate::note::{Note, NoteId};
 use crate::parser::{extract_frontmatter, parse_note};
 use crate::privacy::{PrivacyScope, PRIVACY_FILE};
+use crate::provenance::{self, BlockProvenance, NoteFacts, Origin, ProvenanceEntry, ProvenanceLedger};
 use crate::search::{InMemorySearch, SearchHit, SearchProvider};
 use crate::{Result, VemryError};
 
@@ -99,6 +100,8 @@ pub struct Vault {
     /// `FilesChanged` and re-trigger workflows.
     self_file_writes: HashMap<String, Instant>,
     privacy: PrivacyScope,
+    /// Who wrote which block (see provenance.rs); loaded at open, appended on writes.
+    provenance: ProvenanceLedger,
 }
 
 impl Vault {
@@ -128,6 +131,7 @@ impl Vault {
 
         let mut vault = Vault {
             privacy: PrivacyScope::load(&root),
+            provenance: ProvenanceLedger::empty(&root),
             root,
             index: BlockIndex::new(),
             search: Box::new(InMemorySearch::new()),
@@ -138,6 +142,10 @@ impl Vault {
             vault.index.upsert(note);
             vault.search.index_note(&note.id, note.effective_title(), &note.raw);
         }
+        // The live hash set is only computed when the ledger is large enough to compact
+        vault.provenance = ProvenanceLedger::load(&vault.root, || {
+            notes.iter().flat_map(|n| provenance::live_hashes(&n.raw, &n.blocks)).collect()
+        });
         Ok(vault)
     }
 
@@ -702,6 +710,94 @@ impl Vault {
             content: raw[span.clone()].to_string(),
             span,
         }))
+    }
+
+    // ---- provenance: who authored each block (provenance.rs) ----
+
+    /// The origin of every block of a note: the ledger first, then the marks
+    /// the text carries, then the note's frontmatter, else the user.
+    pub fn provenance(&self, id: &NoteId) -> Result<Vec<BlockProvenance>> {
+        let raw = self.read_note(id)?;
+        let parsed = parse_note(&raw);
+        let fm = &parsed.frontmatter;
+        let facts = NoteFacts {
+            origin: fm.vemry.as_ref().and_then(|v| v.origin.as_deref()),
+            agent_session: fm.vemry.as_ref().and_then(|v| v.agent_session.as_deref()),
+            source: fm.extra.get("source").and_then(|v| v.as_str()),
+            clipped: fm.extra.get("clipped").and_then(|v| v.as_str()),
+        };
+        let known = self.provenance.has_path(id.as_str());
+        Ok(parsed
+            .blocks
+            .iter()
+            .map(|b| {
+                let slice = &raw[b.span.clone()];
+                let hash = provenance::block_hash(slice, &b.kind);
+                let record = hash.as_deref().and_then(|h| self.provenance.lookup(h));
+                BlockProvenance {
+                    local_id: b.local_id.clone(),
+                    span: b.span.clone(),
+                    origin: provenance::derive_origin(slice, record, &facts, known),
+                    hash: hash.unwrap_or_default(),
+                }
+            })
+            .collect())
+    }
+
+    /// Agent-written blocks of a note still awaiting review.
+    pub fn pending_count(&self, id: &NoteId) -> usize {
+        self.provenance(id)
+            .map(|v| v.iter().filter(|p| matches!(p.origin, Origin::Agent { pending: true, .. })).count())
+            .unwrap_or(0)
+    }
+
+    /// Every note with pending blocks, with the count (only notes the ledger
+    /// ever recorded are candidates; a pending block moved into another note
+    /// keeps its state but escapes this count).
+    pub fn pending_notes(&self) -> Vec<(NoteId, usize)> {
+        let mut v: Vec<(NoteId, usize)> = self
+            .provenance
+            .paths()
+            .map(NoteId::new)
+            .filter(|id| self.index.contains(id))
+            .map(|id| {
+                let n = self.pending_count(&id);
+                (id, n)
+            })
+            .filter(|(_, n)| *n > 0)
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Append one ledger entry (an agent write, or text the user placed).
+    pub fn record_provenance(&mut self, entry: ProvenanceEntry) {
+        self.provenance.append(entry);
+    }
+
+    /// Accept the pending agent blocks of a note — one by local id, or all of
+    /// them — and return how many are still pending.
+    pub fn accept_provenance(&mut self, id: &NoteId, local_id: Option<&str>) -> Result<usize> {
+        let prov = self.provenance(id)?;
+        let pending = |p: &BlockProvenance| matches!(p.origin, Origin::Agent { pending: true, .. });
+        let hashes: Vec<String> = match local_id {
+            None => prov.iter().filter(|p| pending(p)).map(|p| p.hash.clone()).collect(),
+            Some(lid) => {
+                let p = prov
+                    .iter()
+                    .find(|p| p.local_id == lid)
+                    .ok_or_else(|| VemryError::BlockNotFound { local_id: lid.to_string() })?;
+                if pending(p) {
+                    vec![p.hash.clone()]
+                } else {
+                    vec![]
+                }
+            }
+        };
+        if !hashes.is_empty() {
+            self.provenance.append(ProvenanceEntry::Accept { ts: provenance::now_ts(), hashes });
+        }
+        Ok(self.pending_count(id))
     }
 
     /// Append text (with separating newline) — used by quick capture.
@@ -1435,6 +1531,47 @@ mod tests {
             RefResolution::Resolved(h) => assert!(!h.content.contains("hidden") && !h.content.contains("gone")),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn provenance_ledger_and_derived_origins() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("n.md"), "mine\n\n- memo *(2026-09-02 10:30)*\n\n> q\n> — [T](https://u) · 2026-09-02\n").unwrap();
+        fs::write(root.join("clip.md"), "---\nsource: https://s\nclipped: 2026-09-01T00:00:00Z\nvemry:\n  origin: clip\n---\nbody\n").unwrap();
+        fs::write(root.join("old.md"), "---\nvemry:\n  origin: agent\n---\nlegacy\n").unwrap();
+        let mut vault = Vault::open(root).unwrap();
+        let n = NoteId::new("n.md");
+        let origins = |v: &Vault, id: &NoteId| v.provenance(id).unwrap().into_iter().map(|p| p.origin).collect::<Vec<_>>();
+        assert!(matches!(origins(&vault, &n)[..], [Origin::You, Origin::Capture { ts: Some(_) }, Origin::Clip { url: Some(_), .. }]));
+        assert!(matches!(origins(&vault, &NoteId::new("clip.md"))[0], Origin::Clip { url: Some(_), ts: Some(_) }));
+        assert!(matches!(origins(&vault, &NoteId::new("old.md"))[0], Origin::Agent { pending: false, session: None, .. }));
+        // an agent write lands pending
+        let old = vault.read_note(&n).unwrap();
+        let new = format!("{old}\nagent added\n");
+        vault.write_note(&n, &new).unwrap();
+        let added = crate::provenance::added_blocks(&old, &new);
+        assert_eq!(added.len(), 1);
+        vault.record_provenance(ProvenanceEntry::Agent { ts: "t".into(), session: Some("s1".into()), path: "n.md".into(), blocks: added });
+        let prov = vault.provenance(&n).unwrap();
+        assert!(matches!(prov[3].origin, Origin::Agent { pending: true, session: Some(ref s), .. } if s == "s1"));
+        assert_eq!(vault.pending_count(&n), 1);
+        assert_eq!(vault.pending_notes(), vec![(n.clone(), 1)]);
+        // the same block, turned into a list item elsewhere in the note, keeps its record
+        vault.write_note(&n, &format!("- agent added\n\n{old}")).unwrap();
+        assert!(matches!(vault.provenance(&n).unwrap()[0].origin, Origin::Agent { pending: true, .. }));
+        // accepting one by local id, then reloading the vault keeps the state
+        let remaining = vault.accept_provenance(&n, Some("b0")).unwrap();
+        assert_eq!(remaining, 0);
+        assert!(matches!(vault.accept_provenance(&n, Some("b99")), Err(VemryError::BlockNotFound { .. })));
+        let reopened = Vault::open(root).unwrap();
+        assert!(matches!(reopened.provenance(&n).unwrap()[0].origin, Origin::Agent { pending: false, .. }));
+        assert!(reopened.pending_notes().is_empty());
+        // editing the words turns the block into the user's
+        let mut reopened = reopened;
+        reopened.write_note(&n, &format!("- agent edited\n\n{old}")).unwrap();
+        assert_eq!(reopened.provenance(&n).unwrap()[0].origin, Origin::You);
+        assert!(fs::read_to_string(root.join(".vemry/provenance.jsonl")).unwrap().lines().count() >= 2);
     }
 
     #[test]

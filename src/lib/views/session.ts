@@ -23,7 +23,8 @@ export type SessionEntry =
   | { kind: "tool_result"; ts: string; tool: string; ok: boolean; output: string }
   /** to: move_note's destination (since v0.9; the lines of every other tool have no such key). */
   | { kind: "write_prepared"; ts: string; tool: string; path: string; diff: string; to?: string }
-  | { kind: "permission"; ts: string; path: string; decision: string }
+  /** applied_diff (since v0.9): for "edit, then apply", the diff between the proposed content and what the user actually applied. */
+  | { kind: "permission"; ts: string; path: string; decision: string; applied_diff?: string }
   | { kind: "privacy"; ts: string; tool: string; filtered: number }
   | { kind: "web_search"; ts: string; queries?: string[]; count?: number; links?: { title: string; url: string }[] }
   /** The plan propose_plan raised (id = the tool call id, which the decision line pairs by). */
