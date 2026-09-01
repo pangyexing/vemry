@@ -11,6 +11,7 @@
 // headings and quotes reveal by whole line).
 import { t } from "$lib/i18n/i18n.svelte";
 import { privacyGlyphSvg } from "$lib/privacyGlyph";
+import { CALLOUT_RE } from "./blocks";
 import { syntaxTree } from "@codemirror/language";
 import {
   Decoration,
@@ -49,7 +50,7 @@ const TAG_RE = /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
 // The character class mirrors Rust's block-id rule (blockid.rs::is_valid_block_id): a badge must never claim an id the parser rejects
 const ANCHOR_RE = /[ \t]\^([A-Za-z0-9-]+)$/gm;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|tiff?)$/i;
-const CALLOUT_RE = /^(\s{0,3}>\s*)(\[!([\w-]+)\][+-]?)(\s*)/;
+// CALLOUT_RE lives in blocks.ts (the block model, fold.ts and this renderer share it)
 
 const hideDeco = Decoration.replace({});
 const bulletDeco = Decoration.mark({ class: "cm-lp-bullet" });
