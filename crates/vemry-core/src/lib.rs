@@ -22,13 +22,14 @@ pub mod watcher;
 
 pub use attach_migrate::MigrationReport;
 pub use block::{Block, BlockKind, Field, TaskState, WikiLink};
+pub use blockid::{plan_block_id, BlockIdInsert, BlockIdPlan, BlockSelector, PlanTarget};
 pub use event::VaultEvent;
 pub use index::{BlockIndex, GraphData, GraphEdge, GraphNode, NoteSummary, ResolvedLink};
 pub use note::{Frontmatter, Note, NoteId, VemryMeta};
 pub use privacy::PrivacyScope;
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
-pub use vault::{sanitize_filename, BacklinkEntry, InsertLanded, Vault};
+pub use vault::{sanitize_filename, BacklinkEntry, InsertLanded, RefHit, RefResolution, RefTarget, Vault};
 
 #[derive(thiserror::Error, Debug)]
 pub enum VemryError {
@@ -42,6 +43,12 @@ pub enum VemryError {
     Yaml(#[from] serde_yaml::Error),
     #[error("watch error: {0}")]
     Watch(String),
+    #[error("no block {local_id}")]
+    BlockNotFound { local_id: String },
+    #[error("block {local_id} changed since it was read")]
+    BlockChanged { local_id: String },
+    #[error("a code block, table or rule cannot carry a block id")]
+    BlockNotIdable,
 }
 
 /// Why a path was rejected. Typed rather than pre-formatted so the glue layer

@@ -316,6 +316,9 @@ a file paste, the clipboard's plain text is inserted manually instead.
 | PDF and image Q&A, side-by-side translation (below) | `read_file_bytes` / `file_read_binary`; the `currentPath` context channel is type-agnostic; `FilePreview` is parameterised by path with a replaceable rendering engine; `tool_defs()` is an incrementally extensible registry |
 | The built-in browser (v0.4, below) | Tauri 2 multi-webview; `FilePreview`'s split direction; the attachments and Markdown-link conventions already accept clipped material; a clip lands on disk and is indexed |
 | The agent triggering scripts (distant; needs fine-grained permissions first) | every script binding already takes a `Perspective{hide_private}` parameter, with the filtering implemented and tested; script-level skills could grow on top |
+| Block-level backlinks ("which blocks reference this block") | `LinkEdge` already records the source block; the target fragment (`heading` / `block_ref`) survives on `Block.links` and would move into the edge |
+| The agent reading one block or an embed's content (`read_block`, embed expansion) | `Vault::resolve_ref` is the primitive; a tool wraps it behind the read-level privacy gate like every other read |
+| Rewriting links when a note is renamed | `resolve_ref`'s note part is the only thing a rename changes — a minted `^id` never does |
 
 ## How PDF and image Q&A would evolve (a design note)
 
@@ -1006,7 +1009,8 @@ capability grants `core:default` plus `dialog:default`, with no assetProtocol an
 no `convertFileSrc`), so the list is closed — but it is **far more than the
 editor**:
 
-- Full text: `note_read`, `file_read`, `file_read_binary` (the preview's blob URL)
+- Full text: `note_read`, `file_read`, `file_read_binary` (the preview's blob URL),
+  `resolve_ref` (the raw slice a `[[…]]` target denotes)
 - Fragments: `search`'s snippets, `query_blocks`'s block content (the frontend does
   not consume it today; the v0.2 projections will)
 - **`links_get`'s backlink snippet is the least obvious one**: the fragment comes
@@ -1018,8 +1022,9 @@ editor**:
   candidate list is filtered for private notes in the frontend, but that is UI
   courtesy and not a security boundary: the data still enters the WebView intact,
   so as far as a password lock is concerned the exposure is unchanged
-- Existence confirmation and bypasses: `resolve_link` (confirms a private note
-  exists, and is the entry point from clicking a wikilink to its full text),
+- Existence confirmation and bypasses: `resolve_link` and `resolve_ref` (confirm a
+  private note exists, and are the entry points from clicking a wikilink to its
+  full text), `block_ensure_id` (writes an id into any note),
   `privacy_list` (enumerates private paths directly), `session_read` (the session
   JSONL — the tool side is filtered, but text the user pasted into the composer
   themselves is logged verbatim), and `file_open_system` ("open with the system

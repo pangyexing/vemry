@@ -1435,6 +1435,9 @@ add("err.", {
                      "{path}(文件名含 Windows 不允许的字符或保留名)"),
     "escapes": ("Path escapes the vault: {path}", "路径越出知识库: {path}"),
     "empty": ("Empty {path}", "{path} 为空"),
+    "blockNotFound": ("No block {id}", "找不到块 {id}"),
+    "blockChanged": ("Block {id} changed since it was read — try again", "块 {id} 已改动，请重试"),
+    "blockNotIdable": ("A code block, table or rule cannot carry a block id", "代码块、表格或分割线不能挂块 ID"),
 })
 
 # ---------------------------------------------------------------- native window titles and vault-facing clip copy

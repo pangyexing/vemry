@@ -116,6 +116,35 @@ export interface BlockQuery {
   limit?: number;
 }
 
+/** What a wikilink fragment points at (mirrors vemry-core's `RefTarget`). */
+export type RefTarget =
+  | { kind: "note" }
+  | { kind: "heading"; text: string; level: number }
+  | { kind: "block"; local_id: string; block_kind: BlockKind };
+
+/** A resolved reference: `span` is a byte range like `Block.span`; `content` is the raw slice it denotes. */
+export interface RefHit {
+  note: string;
+  note_title: string;
+  target: RefTarget;
+  span: { start: number; end: number };
+  content: string;
+}
+
+export type RefResolution =
+  | ({ state: "resolved" } & RefHit)
+  | { state: "note_missing" }
+  | { state: "anchor_missing"; note: string; note_title: string };
+
+/** Which block to give an id: a query hit's local id (with its content as a guard) or a byte offset. */
+export type BlockSelector = { by: "id"; local_id: string; guard?: string } | { by: "offset"; offset: number };
+
+/** The single insert that gives a block its id (`offset` in bytes); absent when nothing needs writing. */
+export interface BlockIdPlan {
+  target: { kind: "heading"; text: string } | { kind: "block"; id: string };
+  insert?: { offset: number; text: string };
+}
+
 export interface BacklinkEntry {
   source: string;
   source_title: string;
@@ -668,6 +697,15 @@ export const api = {
    *  network that cannot reach the subscription hosts. Resolves with the file count. */
   adblockImportRules: (paths: string[]) => invoke<number>("adblock_import_rules", { paths }),
   resolveLink: (target: string, from?: string) => invoke<string | null>("resolve_link", { target, from }),
+  /** `Note` / `Note#Heading` / `Note#^id` / `#^id` → the note and the raw slice it denotes. */
+  resolveRef: (target: string, from?: string) => invoke<RefResolution>("resolve_ref", { target, from }),
+  /** Disk path (the note is not open): mint or return the block's `^id`, writing the note when minting. */
+  blockEnsureId: (path: string, localId: string, guard?: string) =>
+    invoke<string>("block_ensure_id", { path, localId, guard }),
+  /** Buffer path (the note is open — a disk write would be clobbered by autosave): send the buffer
+   *  text, apply the one returned insert at `byteToChar(offset)`. Placement and id generation live
+   *  only in Rust (`blockid.rs::plan_block_id`); the editor never computes where an id goes. */
+  blockIdPlan: (source: string, selector: BlockSelector) => invoke<BlockIdPlan>("block_id_plan", { source, selector }),
   settingsGet: () => invoke<SettingsView>("settings_get"),
   settingsSet: (update: SettingsUpdate) => invoke<void>("settings_set", { update }),
   agentStart: (

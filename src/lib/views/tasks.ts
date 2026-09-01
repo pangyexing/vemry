@@ -312,6 +312,12 @@ export function byteToChar(content: string, byte: number): number {
   return new TextDecoder().decode(bytes.slice(0, Math.min(byte, bytes.length))).length;
 }
 
+/** The inverse: a UTF-16 character position → a UTF-8 byte offset (what `block_id_plan`'s
+ *  offset selector and `Block.span` count in). */
+export function charToByte(content: string, ch: number): number {
+  return new TextEncoder().encode(content.slice(0, Math.max(0, ch))).length;
+}
+
 /** Task text for display: checkbox prefix, date markers, capture stamps and
  *  markdown ornaments stripped — Agenda is a projection, and cramming the source's
  *  markers into a single line would only be noise.

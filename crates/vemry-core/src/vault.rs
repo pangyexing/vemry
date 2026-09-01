@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 use walkdir::WalkDir;
 
+use crate::block::{BlockKind, WikiLink};
+use crate::blockid::{BlockSelector, PlanTarget};
 use crate::event::VaultEvent;
 use crate::{reject, PathReject};
 use crate::index::BlockIndex;
@@ -44,6 +46,38 @@ pub struct BacklinkEntry {
     pub source: NoteId,
     pub source_title: String,
     pub snippet: String,
+}
+
+/// What a wikilink target points at inside a note.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RefTarget {
+    Note,
+    Heading { text: String, level: u8 },
+    Block { local_id: String, block_kind: BlockKind },
+}
+
+/// A resolved reference: the note, the target inside it, and the raw slice
+/// it denotes (the body for a note, the heading line through the end of its
+/// section, a block's own lines — or, for a list item, its subtree).
+#[derive(Clone, Debug, Serialize)]
+pub struct RefHit {
+    pub note: NoteId,
+    pub note_title: String,
+    pub target: RefTarget,
+    /// Byte range in the note's raw text (`Block.span` convention).
+    pub span: std::ops::Range<usize>,
+    pub content: String,
+}
+
+/// Outcome of [`Vault::resolve_ref`]. `AnchorMissing` = the note exists
+/// but the heading or `^id` does not (a positional `bN` never resolves).
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum RefResolution {
+    Resolved(RefHit),
+    NoteMissing,
+    AnchorMissing { note: NoteId, note_title: String },
 }
 
 /// Where [`Vault::insert_note`] actually landed the text. `Tail` with a
@@ -576,6 +610,100 @@ impl Vault {
         Ok((event, landed))
     }
 
+    /// Give a block a stable `^id` if it has none, and return the id. The
+    /// note is re-read and re-parsed on this call (never a stale span);
+    /// `local_id` comes from a query hit (explicit or positional) and
+    /// `guard` is that hit's content, so an edited note refuses instead of
+    /// tagging the wrong block. An explicit id is returned without a write.
+    pub fn ensure_block_id(
+        &mut self,
+        id: &NoteId,
+        local_id: &str,
+        guard: Option<&str>,
+    ) -> Result<(String, Option<VaultEvent>)> {
+        let raw = self.read_note(id)?;
+        let selector = BlockSelector::Id { local_id: local_id.to_string(), guard: guard.map(String::from) };
+        let plan = crate::blockid::plan_block_id(&raw, &selector)?;
+        let block_id = match plan.target {
+            PlanTarget::Block { id } => id,
+            PlanTarget::Heading { .. } => return Err(VemryError::BlockNotIdable),
+        };
+        match plan.insert {
+            None => Ok((block_id, None)),
+            Some(ins) => {
+                let mut content = raw;
+                content.insert_str(ins.offset, &ins.text);
+                let event = self.write_note(id, &content)?;
+                Ok((block_id, Some(event)))
+            }
+        }
+    }
+
+    /// Resolve the inside of a `[[…]]` (`Note`, `Note#Heading`, `Note#^id`,
+    /// `#^id`; an alias part is ignored) to the note and the slice it
+    /// denotes. The note part goes through the index's resolver; the
+    /// fragment is looked up in a fresh parse of the file. `from` supplies
+    /// the note for an empty target.
+    pub fn resolve_ref(&self, target: &str, from: Option<&NoteId>) -> Result<RefResolution> {
+        let link = WikiLink::parse(target, 0..0);
+        let note_id = if link.target.is_empty() {
+            match from {
+                Some(f) => f.clone(),
+                None => return Ok(RefResolution::NoteMissing),
+            }
+        } else {
+            let fallback = NoteId::new("_.md");
+            match self.index.resolve_target(&link.target, from.unwrap_or(&fallback)) {
+                Some(id) => id,
+                None => return Ok(RefResolution::NoteMissing),
+            }
+        };
+        let Ok(raw) = self.read_note(&note_id) else {
+            return Ok(RefResolution::NoteMissing);
+        };
+        let parsed = parse_note(&raw);
+        let note_title =
+            self.index.summary(&note_id).map(|s| s.title).unwrap_or_else(|| note_id.stem().to_string());
+        let missing = || RefResolution::AnchorMissing { note: note_id.clone(), note_title: note_title.clone() };
+        let (target, span) = if let Some(id) = &link.block_ref {
+            match parsed.blocks.iter().position(|b| b.explicit_id && b.local_id == *id) {
+                Some(i) => {
+                    let b = &parsed.blocks[i];
+                    (
+                        RefTarget::Block { local_id: b.local_id.clone(), block_kind: b.kind.clone() },
+                        crate::locate::item_subtree_span(&parsed.blocks, &raw, i),
+                    )
+                }
+                None => return Ok(missing()),
+            }
+        } else if let Some(h) = link.heading.as_deref().filter(|h| !h.trim().is_empty()) {
+            match crate::locate::find_heading(&parsed.blocks, h) {
+                Some(i) => {
+                    let b = &parsed.blocks[i];
+                    let level = match b.kind {
+                        BlockKind::Heading { level } => level,
+                        _ => 0,
+                    };
+                    (
+                        RefTarget::Heading { text: crate::locate::heading_text(b).to_string(), level },
+                        crate::locate::section_span_at(&parsed.blocks, &raw, i),
+                    )
+                }
+                None => return Ok(missing()),
+            }
+        } else {
+            let end = raw.trim_end().len().max(parsed.body_offset);
+            (RefTarget::Note, parsed.body_offset..end)
+        };
+        Ok(RefResolution::Resolved(RefHit {
+            note: note_id,
+            note_title,
+            target,
+            content: raw[span.clone()].to_string(),
+            span,
+        }))
+    }
+
     /// Append text (with separating newline) — used by quick capture.
     pub fn append_note(&mut self, id: &NoteId, text: &str) -> Result<VaultEvent> {
         let existing = self.read_note(id).unwrap_or_default();
@@ -1099,6 +1227,89 @@ mod tests {
         });
         assert_eq!(both.len(), 1);
         assert_eq!(vault.index().frontmatter_field(&NoteId::new("book.md"), "Rating").collect::<Vec<_>>(), vec!["4"]);
+    }
+
+    #[test]
+    fn ensure_block_id_mints_once_and_guards() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("n.md"), "first\n\nsecond para\n\n```\ncode\n```\n").unwrap();
+        let mut vault = Vault::open(root).unwrap();
+        let id = NoteId::new("n.md");
+        let (minted, ev) = vault.ensure_block_id(&id, "b1", Some("second para")).unwrap();
+        assert!(matches!(ev, Some(VaultEvent::NoteModified { .. })));
+        let on_disk = fs::read_to_string(root.join("n.md")).unwrap();
+        assert_eq!(on_disk, format!("first\n\nsecond para ^{minted}\n\n```\ncode\n```\n"));
+        // the index saw the write: the block now carries the explicit id
+        let b = vault.index().find_block(&id, &minted).unwrap();
+        assert!(b.explicit_id);
+        // asking again returns the same id and writes nothing
+        let (again, ev) = vault.ensure_block_id(&id, &minted, None).unwrap();
+        assert_eq!(again, minted);
+        assert!(ev.is_none());
+        // a guard that no longer matches refuses and leaves the file untouched
+        assert!(matches!(
+            vault.ensure_block_id(&id, "b0", Some("not first")),
+            Err(VemryError::BlockChanged { .. })
+        ));
+        assert_eq!(fs::read_to_string(root.join("n.md")).unwrap(), on_disk);
+        assert!(matches!(vault.ensure_block_id(&id, "b2", None), Err(VemryError::BlockNotIdable)));
+    }
+
+    #[test]
+    fn resolve_ref_shapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("Sleep.md"),
+            "---\ntitle: 睡眠研究\naliases: [sleep-research]\n---\n# 睡眠\n\n## 方法\n段落\n\n### 子标题\n更多\n\n## 结论\n- 项 ^i1\n  - 子项\n- 另一项\n\n> [!claim] 断言 ^c1\n",
+        )
+        .unwrap();
+        fs::write(root.join("Other.md"), "see [[Sleep]]\n").unwrap();
+        let vault = Vault::open(root).unwrap();
+        let other = NoteId::new("Other.md");
+        let res = |t: &str, from: Option<&NoteId>| vault.resolve_ref(t, from).unwrap();
+        // whole note: the body without frontmatter
+        match res("sleep-research", None) {
+            RefResolution::Resolved(h) => {
+                assert!(matches!(h.target, RefTarget::Note));
+                assert!(h.content.starts_with("# 睡眠"));
+                assert_eq!(h.note_title, "睡眠研究");
+            }
+            other => panic!("{other:?}"),
+        }
+        // a heading: its section, sub-headings inside, up to the next heading of the same level
+        match res("Sleep#方法", None) {
+            RefResolution::Resolved(h) => {
+                assert!(matches!(h.target, RefTarget::Heading { level: 2, .. }));
+                assert_eq!(h.content, "## 方法\n段落\n\n### 子标题\n更多");
+            }
+            other => panic!("{other:?}"),
+        }
+        // case-insensitive heading, an alias target, `Note#` = the note
+        assert!(matches!(res("Sleep#方法", None), RefResolution::Resolved(_)));
+        assert!(matches!(res("Sleep#", None), RefResolution::Resolved(RefHit { target: RefTarget::Note, .. })));
+        // a block: a list item resolves to its subtree
+        match res("Sleep#^i1", None) {
+            RefResolution::Resolved(h) => {
+                assert!(matches!(h.target, RefTarget::Block { .. }));
+                assert_eq!(h.content, "- 项 ^i1\n  - 子项");
+            }
+            other => panic!("{other:?}"),
+        }
+        match res("Sleep#^c1", None) {
+            RefResolution::Resolved(h) => assert_eq!(h.content, "> [!claim] 断言 ^c1"),
+            other => panic!("{other:?}"),
+        }
+        // `#^c1` needs a from note
+        assert!(matches!(res("#^c1", Some(&NoteId::new("Sleep.md"))), RefResolution::Resolved(_)));
+        assert!(matches!(res("#^c1", None), RefResolution::NoteMissing));
+        assert!(matches!(res("#^c1", Some(&other)), RefResolution::AnchorMissing { .. }));
+        // missing anchors: unknown id, positional id, unknown heading; missing note
+        assert!(matches!(res("Sleep#^nope", None), RefResolution::AnchorMissing { .. }));
+        assert!(matches!(res("Sleep#^b1", None), RefResolution::AnchorMissing { .. }));
+        assert!(matches!(res("Sleep#没有", None), RefResolution::AnchorMissing { .. }));
+        assert!(matches!(res("Nowhere#^c1", None), RefResolution::NoteMissing));
     }
 
     #[test]

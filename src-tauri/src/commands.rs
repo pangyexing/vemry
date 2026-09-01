@@ -14,8 +14,7 @@ use vemry_agent::session::{
 };
 use vemry_agent::{HttpTransport, PermissionDecision};
 use vemry_core::{
-    BacklinkEntry, BlockHit, BlockQuery, GraphData, InsertLanded, MigrationReport, NoteSummary, SearchHit, Vault,
-    VaultEvent,
+    BacklinkEntry, BlockHit, BlockIdPlan, BlockQuery, BlockSelector, GraphData, InsertLanded, MigrationReport, NoteSummary, RefResolution, SearchHit, Vault, VaultEvent,
 };
 
 use crate::agent_bridge::{resolve_permission, ChannelGate};
@@ -560,6 +559,49 @@ pub fn url_open_system(url: String) -> Result<(), String> {
         return Err(crate::i18n::tf(crate::i18n::current(), "ipc.httpOnly", &[("url", &url)]));
     }
     opener::open(url).map_err(|e| e.to_string())
+}
+
+/// Resolve the inside of a `[[…]]` — note, `Note#Heading`, `Note#^id` or
+/// `#^id` — to the note and the slice it denotes (see `Vault::resolve_ref`).
+/// Human-only like `resolve_link`: private notes are not filtered.
+#[tauri::command]
+pub fn resolve_ref(state: State<'_, AppState>, target: String, from: Option<String>) -> Result<RefResolution, String> {
+    with_vault(&state, |v| {
+        let from_id = match from {
+            Some(f) => Some(v.note_id(&f).map_err(crate::i18n::err)?),
+            None => None,
+        };
+        v.resolve_ref(&target, from_id.as_ref()).map_err(crate::i18n::err)
+    })
+}
+
+/// Give a block on disk a stable `^id` (minted on demand) and return it.
+/// `local_id` and `guard` come from a query hit, so an edited note refuses
+/// instead of tagging the wrong block.
+#[tauri::command]
+pub fn block_ensure_id(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    local_id: String,
+    guard: Option<String>,
+) -> Result<String, String> {
+    let (id, event) = with_vault_mut(&state, |v| {
+        let nid = v.note_id(&path).map_err(crate::i18n::err)?;
+        v.ensure_block_id(&nid, &local_id, guard.as_deref()).map_err(crate::i18n::err)
+    })?;
+    if let Some(ev) = event {
+        broadcast(&app, &ev);
+    }
+    Ok(id)
+}
+
+/// The editor-buffer half of id minting: the frontend sends the text it
+/// holds (a disk write would be clobbered by autosave) and gets back the
+/// one insert to apply. Pure — no vault lock, nothing written.
+#[tauri::command]
+pub fn block_id_plan(source: String, selector: BlockSelector) -> Result<BlockIdPlan, String> {
+    vemry_core::plan_block_id(&source, &selector).map_err(crate::i18n::err)
 }
 
 /// Resolve a wikilink target to a note path, if it exists.

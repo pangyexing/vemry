@@ -90,6 +90,9 @@ pub fn tf(lang: Lang, key: &str, params: &[(&str, &str)]) -> String {
 pub fn err(e: VemryError) -> String {
     match &e {
         VemryError::InvalidPath { reason, path } => tf(current(), reason.key(), &[("path", path)]),
+        VemryError::BlockNotFound { local_id } => tf(current(), "err.blockNotFound", &[("id", local_id)]),
+        VemryError::BlockChanged { local_id } => tf(current(), "err.blockChanged", &[("id", local_id)]),
+        VemryError::BlockNotIdable => tf(current(), "err.blockNotIdable", &[]),
         _ => e.to_string(),
     }
 }
@@ -200,6 +203,9 @@ mod tests {
         "err.reservedName",
         "err.escapes",
         "err.empty",
+        "err.blockNotFound",
+        "err.blockChanged",
+        "err.blockNotIdable",
     ];
 
     #[test]
