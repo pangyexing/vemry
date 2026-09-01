@@ -11,8 +11,11 @@ import {
 import { type EditorState } from "@codemirror/state";
 import { type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { linkClickHandlers, matchAt, type LinkHit } from "./clickopen";
+import type { RefHost } from "./blockref";
 
-export interface WikilinkHost {
+/** What the editor supplies: link resolution and completion candidates, plus the
+ *  reference stages' needs (RefHost: the current note, block lists, id minting). */
+export interface WikilinkHost extends RefHost {
   /** lowercase set of known stems/aliases, kept fresh by the caller */
   isKnown(target: string): boolean;
   targets(): string[];
@@ -23,8 +26,14 @@ export interface WikilinkHost {
  *  regex — two copies would let clickable and hidden ranges drift apart. */
 export const LINK_RE = /\[\[([^\[\]\n]+)\]\]/g;
 
-function targetOf(inner: string): string {
-  return inner.split("|")[0].split("#")[0].trim();
+/** The target as written, alias stripped, fragment kept: `Note#Heading`, `Note#^id`, `#^id`. */
+export function targetOf(inner: string): string {
+  return inner.split("|")[0].trim();
+}
+
+/** The note part of a target (empty = this note). */
+export function noteOf(target: string): string {
+  return target.split("#")[0].trim();
 }
 
 /** The wikilink at pos (an inline scan, on the same LINK_RE as the decoration).
@@ -47,7 +56,9 @@ export function wikilinkExtension(host: WikilinkHost, singleClick: () => boolean
   const decorator = new MatchDecorator({
     regexp: LINK_RE,
     decoration: (match) => {
-      const known = host.isKnown(targetOf(match[1]).toLowerCase());
+      const note = noteOf(targetOf(match[1]));
+      // an empty note part means this note, which exists by definition
+      const known = note === "" || host.isKnown(note.toLowerCase());
       return Decoration.mark({ class: known ? "cm-wikilink" : "cm-wikilink cm-wikilink-unresolved" });
     },
   });
@@ -73,7 +84,8 @@ export function wikilinkExtension(host: WikilinkHost, singleClick: () => boolean
   );
 
   function completions(context: CompletionContext): CompletionResult | null {
-    const before = context.matchBefore(/\[\[([^\]\n]*)$/);
+    // stage 1: note names — `#` and `|` end this stage (blockref.ts takes over after `#`)
+    const before = context.matchBefore(/\[\[([^\]\n#|]*)$/);
     if (!before) return null;
     const from = before.from + 2;
     return {
@@ -91,7 +103,7 @@ export function wikilinkExtension(host: WikilinkHost, singleClick: () => boolean
           });
         },
       })),
-      validFor: /^[^\]\n]*$/,
+      validFor: /^[^\]\n#|]*$/,
     };
   }
 

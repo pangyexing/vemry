@@ -13,7 +13,8 @@ import { wikilinkExtension, type WikilinkHost } from "./wikilink";
 import { mdlinkExtension } from "./mdlink";
 import { linkAt } from "./linkat";
 import { livePreview, type AssetLoader, type ImageCopier } from "./livepreview";
-import { tagCompletions, calloutCompletions } from "./completions";
+import { tagCompletions, calloutCompletions, atCompletions } from "./completions";
+import { refCompletions } from "./blockref";
 import { Highlight, highlightTag } from "./markdown-ext";
 import { queryBlockExtension, type QueryHost } from "./queryblock";
 import { runBlockExtension, type RunHost } from "./runblock";
@@ -180,8 +181,16 @@ function buildState(opts: EditorOptions): EditorState {
       foldExtension(),
       blockSelection(),
       autocompletion({
-        override: [wikilink.completions, tagCompletions(opts.tags ?? (() => [])), calloutCompletions],
+        override: [
+          refCompletions(host),
+          wikilink.completions,
+          atCompletions(host.targets),
+          tagCompletions(opts.tags ?? (() => [])),
+          calloutCompletions,
+        ],
         icons: false,
+        // a picked `@note` chains into the heading/block stage
+        activateOnCompletion: (c) => c.type === "chain",
       }),
       wikilink.extension,
       keymap.of(completionKeymap),

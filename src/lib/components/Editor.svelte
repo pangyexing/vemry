@@ -23,7 +23,7 @@
   import { agent } from "$lib/stores/agent.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { toast } from "$lib/stores/toast.svelte";
-  import { api, SELECTION_MAX_CHARS, trimLoneSurrogate, type BlockQuery } from "$lib/api";
+  import { api, SELECTION_MAX_CHARS, trimLoneSurrogate, type BlockHit, type BlockQuery, type BlockSelector } from "$lib/api";
   import { planInsert, planCursorInsert } from "$lib/insert";
   import { extractOutline } from "$lib/outline";
   import { countWords } from "$lib/stats";
@@ -427,10 +427,53 @@
     },
   };
 
+  /** The blocks of a note for the reference stages, cached per index version. */
+  const blocksCache = new Map<string, { version: number; promise: Promise<BlockHit[]> }>();
+  function blocksOf(note: string): Promise<BlockHit[]> {
+    const version = vault.indexVersion;
+    const hit = blocksCache.get(note);
+    if (hit && hit.version === version) return hit.promise;
+    const promise = api.queryBlocks({ note, limit: 5000 });
+    blocksCache.set(note, { version, promise });
+    return promise;
+  }
+
   const host = {
     isKnown: (t: string) => knownTargets.has(t),
     targets: () => targetList,
     follow: (t: string) => void vault.followLink(t),
+    currentPath: () => docPath,
+    resolveNote: async (target: string) => {
+      const note = target.trim() ? await api.resolveLink(target.trim(), docPath ?? undefined) : docPath;
+      return note && !vault.privatePaths.has(note) ? note : null;
+    },
+    blocksOf,
+    planId: (source: string, selector: BlockSelector) => api.blockIdPlan(source, selector),
+    ensureId: (note: string, localId: string, guard: string) => api.blockEnsureId(note, localId, guard),
+    toast: (message: string, level?: "info" | "error") => toast.push(message, level),
+  };
+
+  /** Where `text` sits in the open buffer, nearest to `near`: the index's spans lag an
+   *  unsaved buffer by up to the autosave delay, so a jump verifies its landing point. */
+  function locateText(text: string, near: number): number | null {
+    if (!view || !text) return null;
+    const doc = view.state.doc;
+    const head = text.split("\n")[0] ?? text;
+    if (doc.sliceString(near, near + head.length) === head) return near;
+    const all = doc.toString();
+    let best: number | null = null;
+    for (let i = all.indexOf(head); i >= 0; i = all.indexOf(head, i + 1)) {
+      if (best == null || Math.abs(i - near) < Math.abs(best - near)) best = i;
+    }
+    return best;
+  }
+  vault.locateText = locateText;
+  vault.copyBlockRef = (embed: boolean) => {
+    if (!view || !docPath?.endsWith(".md") || docPath !== vault.currentPath) return false;
+    const b = blockAt(view.state, view.state.selection.main.head);
+    if (!b) return false;
+    void copyBlockRef(embed, b);
+    return true;
   };
 
   // markdown link targets: CommonMark forbids raw spaces/parens in (…), and
@@ -834,6 +877,8 @@
     if (vault.insertAtSection === insertAtSection) vault.insertAtSection = null;
     if (vault.revealPos === revealPos) vault.revealPos = null;
     vault.blockCommand = null;
+    vault.locateText = null;
+    vault.copyBlockRef = null;
     clearDocSignals();
     unlistenLocalized?.();
     view?.destroy();

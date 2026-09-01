@@ -195,6 +195,14 @@ CMD = {
         ("Reveal current note in file tree", "在文件树定位当前笔记"),
         ("Expand the left panel and scroll to the current note", "展开左栏并滚到当前笔记"),
     ),
+    "copy-block-link": (
+        ("Copy block link", "复制块链接"),
+        ("Copy [[Note#^id]] for the block at the cursor, minting the id if the block has none", "复制光标所在块的 [[笔记#^id]]，块没有 id 时自动生成"),
+    ),
+    "copy-block-embed": (
+        ("Copy block embed", "复制块嵌入"),
+        ("Copy ![[Note#^id]] for the block at the cursor", "复制光标所在块的 ![[笔记#^id]]"),
+    ),
     "block-move-up": (
         ("Move block up", "上移块"),
         ("Move the selected blocks, or the block at the cursor, above the previous one", "把选中的块（或光标所在块）移到上一个块之前"),
@@ -1275,6 +1283,7 @@ add("app.", {
 
 # ---------------------------------------------------------------- vault store toasts
 add("vaultStore.", {
+    "fragmentMissing": ("Opened {path}; \"{fragment}\" is not in it", "已打开 {path}，其中没有「{fragment}」"),
     "undoneMovedBack": ("Undone: moved back to {path}", "已撤销：移回 {path}"),
     "undoneImport": ("Undone: {n} files moved to the trash", "已撤销导入，{n} 个文件移入废纸篓"),
     "undoneCreate": ("Undone: moved to the trash — {path}", "已撤销新建，移入废纸篓：{path}"),
@@ -1358,6 +1367,20 @@ add("queryBlock.", {
     "querying": ("Querying…", "查询中…"),
     "hits": ("vemry-query · {n} hits", "vemry-query · {n} 条"),
     "noHits": ("No matches", "无匹配"),
+})
+
+add("wikilink.", {
+    "wholeNote": ("Whole note", "整篇笔记"),
+    "sectionNotes": ("Notes", "笔记"),
+    "sectionHeadings": ("Headings", "标题"),
+    "sectionBlocks": ("Blocks", "块"),
+    "sectionDates": ("Dates", "日期"),
+    "today": ("today", "今天"),
+    "tomorrow": ("tomorrow", "明天"),
+    "dayAfter": ("day after tomorrow", "后天"),
+    "nextMonday": ("next Monday", "下周一"),
+    "blockChanged": ("This block changed since it was indexed — save and try again", "块内容已变化，索引尚未更新，稍后再试"),
+    "mintedNotInserted": ("Block id ^{id} was created but the cursor moved; the link was not inserted", "已创建块 id ^{id}，但光标已移动，未插入链接"),
 })
 
 add("block.", {

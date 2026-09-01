@@ -700,6 +700,14 @@
     id: "reveal-in-tree", group: "nav",
     run: () => vault.revealInTree(),
   });
+  for (const [id, embed] of [["copy-block-link", false], ["copy-block-embed", true]] as const) {
+    registerCommand({
+      id, group: "note",
+      run: () => {
+        if (!vault.copyBlockRef?.(embed)) toast.push(t("block.noBlockHere"), "error");
+      },
+    });
+  }
   // Block commands (the keys themselves are CodeMirror bindings in blocksel.ts; the
   // hints here are display only)
   for (const [id, op, hotkey] of [

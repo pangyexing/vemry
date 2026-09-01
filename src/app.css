@@ -870,6 +870,22 @@ button:focus-visible,
   caret-color: transparent;
 }
 
+/* ---- Completion sections and details (the reference stages, the @ picker, the slash menu) ---- */
+.cm-tooltip-autocomplete .cm-completionSection {
+  font-size: var(--fs-xs);
+  color: var(--fg-faint);
+  padding: 4px 8px 2px;
+  border-top: 1px solid var(--border);
+}
+.cm-tooltip-autocomplete .cm-completionSection:first-child {
+  border-top: 0;
+}
+.cm-tooltip-autocomplete .cm-completionDetail {
+  margin-left: 10px;
+  color: var(--fg-faint);
+  font-style: normal;
+}
+
 /* ---- The hover block handle (blockhandle.ts): one grip in the editor's left padding,
    absolutely positioned inside the scroller (so it scrolls with the content and stays
    under every overlay above the editor); a tooltip in the copy button's style ---- */

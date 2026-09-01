@@ -311,10 +311,19 @@ class VaultStore {
    *  primitive behind "jump to the source" on a query result card: openNote may fail or
    *  land elsewhere, so `currentPath` has to be rechecked after the await; the byte →
    *  UTF-16 conversion also lives here alone. */
-  async openBlockAt(note: string, byteStart: number) {
+  async openBlockAt(note: string, byteStart: number, content?: string) {
     await this.openNote(note);
-    if (this.currentPath === note) await this.revealInEditor(byteToChar(this.currentContent, byteStart));
+    if (this.currentPath !== note) return;
+    let pos = byteToChar(this.currentContent, byteStart);
+    // the index may lag an unsaved buffer: the block's text, if given, corrects the landing point
+    if (content && this.locateText) pos = this.locateText(content, pos) ?? pos;
+    await this.revealInEditor(pos);
   }
+  /** Editor hook: where `text` sits in the open buffer, nearest to `near` (exact at
+   *  `near` first); null when the buffer no longer holds it. */
+  locateText: ((text: string, near: number) => number | null) | null = null;
+  /** Editor hook: copy `[[Stem#^id]]` (or the embed) for the block at the cursor. */
+  copyBlockRef: ((embed: boolean) => boolean) | null = null;
   /** The current note's heading outline, recomputed by Editor behind an input debounce
    *  (it does not wait for a disk write, which is why it does not go through
    *  query_blocks). null = not a note, or no document open. */
@@ -1381,12 +1390,29 @@ class VaultStore {
 
   /** Follow a wikilink target: open if resolved, create if not. */
   async followLink(target: string) {
-    const resolved = await api.resolveLink(target, this.currentPath ?? undefined);
+    const hash = target.indexOf("#");
+    const notePart = hash >= 0 ? target.slice(0, hash).trim() : target.trim();
+    const fragment = hash >= 0 ? target.slice(hash + 1).trim() : "";
+    if (fragment) {
+      // `Note#Heading` / `Note#^id` / `#^id`: land on the block, not at position 0
+      const r = await api.resolveRef(target, this.currentPath ?? undefined);
+      if (r.state === "resolved") {
+        await this.openBlockAt(r.note, r.span.start, r.content);
+        return;
+      }
+      if (r.state === "anchor_missing") {
+        await this.openNote(r.note);
+        toast.push(t("vaultStore.fragmentMissing", { path: r.note, fragment }));
+        return;
+      }
+      // note missing: fall through with the note part alone
+    }
+    const resolved = notePart ? await api.resolveLink(notePart, this.currentPath ?? undefined) : null;
     if (resolved) {
       await this.openNote(resolved);
       return;
     }
-    const clean = target.split("#")[0].trim();
+    const clean = notePart;
     if (!clean) return;
     // [[attachment.png]] / ⌘-clicking ![[img.png]]: when the target is a non-note file that
     // already exists in the vault, it is opened — falling into "unresolved, so create it"
