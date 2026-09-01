@@ -1,0 +1,182 @@
+// The block menu's entries (the grip's click, and the "块" group of the text
+// context menu). Every action re-resolves the block from its start position
+// before acting, since the document may have changed since the menu opened;
+// every dispatch carries a `block.*` user event and the transforms come from
+// blockops.ts. Labels come from the catalog; the context-menu store itself is
+// reached through the host so this module, like the rest of the editor, does
+// not import a store.
+import { t } from "$lib/i18n/i18n.svelte";
+import { k } from "$lib/shortcut";
+import { foldedRanges } from "@codemirror/language";
+import type { EditorView } from "@codemirror/view";
+import type { MenuEntry, MenuItem } from "$lib/stores/contextMenu.svelte";
+import { type EditorBlock, blockAt, blockContentStart, extentTo, nextSibling, prevSibling } from "./blocks";
+import {
+  type TurnTarget,
+  canTurnInto,
+  deleteBlocks,
+  duplicateBlocks,
+  indentBlock,
+  moveBlocks,
+  outdentBlock,
+  turnInto,
+} from "./blockops";
+import { selectBlock } from "./blocksel";
+import { foldRangeAt, toggleFoldAt } from "./fold";
+
+export interface BlockMenuHost {
+  copyRef(view: EditorView, block: EditorBlock, embed: boolean): void;
+  askAgent(view: EditorView, block: EditorBlock): void;
+  /** Whether the whole note is in a privacy zone (the AI cannot be asked about it). */
+  isPrivate(): boolean;
+}
+
+export const TURN_TARGETS: TurnTarget[] = [
+  "paragraph",
+  "heading1",
+  "heading2",
+  "heading3",
+  "bullet",
+  "numbered",
+  "task",
+  "quote",
+  "callout",
+  "code",
+];
+
+const ANCHORABLE: EditorBlock["kind"][] = ["paragraph", "heading", "list_item", "task", "quote", "callout"];
+
+function fresh(view: EditorView, b: EditorBlock): EditorBlock | null {
+  const now = blockAt(view.state, b.from);
+  return now && now.kind === b.kind ? now : null;
+}
+
+function act(view: EditorView, b: EditorBlock, f: (now: EditorBlock) => void) {
+  return () => {
+    const now = fresh(view, b);
+    if (!now) return;
+    f(now);
+    view.focus();
+  };
+}
+
+/** Whether `[[Note#^id]]` could point at this block. */
+export function isAnchorable(b: EditorBlock): boolean {
+  return ANCHORABLE.includes(b.kind);
+}
+
+export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMenuHost, opts: { compact: boolean }): MenuEntry[] {
+  const state = view.state;
+  const anchorable = isAnchorable(b);
+  const isList = b.kind === "list_item" || b.kind === "task";
+  const line = state.doc.lineAt(b.from);
+  const foldRange = foldRangeAt(state, line);
+  let folded = false;
+  if (foldRange) foldedRanges(state).between(foldRange.from, foldRange.from, (f) => void (folded = folded || f === foldRange.from));
+  const copyLink: MenuItem = { label: t("block.copyLink"), disabled: !anchorable, action: act(view, b, (now) => host.copyRef(view, now, false)) };
+  const copyEmbed: MenuItem = { label: t("block.copyEmbed"), disabled: !anchorable, action: act(view, b, (now) => host.copyRef(view, now, true)) };
+  const turnItems: MenuEntry[] = TURN_TARGETS.map((target) => ({
+    label: t(`block.kind.${target}`),
+    disabled: !canTurnInto(b, target),
+    action: act(view, b, (now) => {
+      const spec = turnInto(state, now, target);
+      if (spec) view.dispatch(spec);
+    }),
+  }));
+  const turn: MenuItem = { label: t("block.turnInto"), disabled: ["table", "hr", "html", "other"].includes(b.kind), submenu: turnItems };
+  const ask: MenuItem = { label: t("block.askAgent"), action: act(view, b, (now) => host.askAgent(view, now)) };
+  if (opts.compact) return [{ title: t("block.title") }, copyLink, copyEmbed, turn, ask];
+  return [
+    {
+      label: t("block.insertBelow"),
+      action: act(view, b, (now) => {
+        const at = extentTo(state, now);
+        view.dispatch({ changes: { from: at, insert: "\n\n" }, selection: { anchor: at + 2 }, userEvent: "input.type" });
+      }),
+    },
+    { separator: true },
+    copyLink,
+    copyEmbed,
+    turn,
+    { separator: true },
+    {
+      label: t("block.moveUp"),
+      hint: k("Mod+Shift+↑"),
+      disabled: !prevSibling(state, b),
+      action: act(view, b, (now) => {
+        const spec = moveBlocks(state, [now], -1);
+        if (spec) {
+          view.dispatch(spec);
+          const moved = blockAt(view.state, view.state.selection.main.head);
+          if (moved) selectBlock(view, moved);
+        }
+      }),
+    },
+    {
+      label: t("block.moveDown"),
+      hint: k("Mod+Shift+↓"),
+      disabled: !nextSibling(state, b),
+      action: act(view, b, (now) => {
+        const spec = moveBlocks(state, [now], 1);
+        if (spec) {
+          view.dispatch(spec);
+          const moved = blockAt(view.state, view.state.selection.main.head);
+          if (moved) selectBlock(view, moved);
+        }
+      }),
+    },
+    ...(isList
+      ? [
+          {
+            label: t("block.indent"),
+            disabled: !indentBlock(state, b),
+            action: act(view, b, (now) => {
+              const spec = indentBlock(state, now);
+              if (spec) view.dispatch(spec);
+            }),
+          },
+          {
+            label: t("block.outdent"),
+            disabled: !outdentBlock(state, b),
+            action: act(view, b, (now) => {
+              const spec = outdentBlock(state, now);
+              if (spec) view.dispatch(spec);
+            }),
+          },
+        ]
+      : []),
+    ...(foldRange
+      ? [
+          {
+            label: t(folded ? "block.unfold" : "block.fold"),
+            action: act(view, b, (now) => void toggleFoldAt(view, now.from)),
+          },
+        ]
+      : []),
+    { separator: true },
+    {
+      label: t("block.duplicate"),
+      hint: k("Mod+D"),
+      action: act(view, b, (now) => {
+        const spec = duplicateBlocks(state, [now]);
+        if (spec) view.dispatch(spec);
+      }),
+    },
+    {
+      label: t("block.delete"),
+      hint: k("Backspace"),
+      danger: true,
+      action: act(view, b, (now) => {
+        const spec = deleteBlocks(state, [now]);
+        if (spec) view.dispatch(spec);
+      }),
+    },
+    { separator: true },
+    ask,
+  ];
+}
+
+/** The character offset Rust turns into the block's content start when an id is minted by position. */
+export function idOffsetOf(view: EditorView, b: EditorBlock): number {
+  return blockContentStart(view.state, b);
+}

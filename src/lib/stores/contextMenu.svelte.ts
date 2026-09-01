@@ -14,7 +14,10 @@ export interface MenuItem {
   disabled?: boolean;
   /** A second confirmation: the first click turns the item's wording into this string and only another click runs it; a click outside or Esc resets it. */
   confirm?: string;
-  action: () => void;
+  /** Absent on a parent item that only opens its `submenu`. */
+  action?: () => void;
+  /** A second level, opened by hovering or clicking the item (the block menu's "turn into ›"). */
+  submenu?: MenuEntry[];
 }
 export type MenuEntry = MenuItem | { separator: true } | { title: string };
 

@@ -870,6 +870,62 @@ button:focus-visible,
   caret-color: transparent;
 }
 
+/* ---- The hover block handle (blockhandle.ts): one grip in the editor's left padding,
+   absolutely positioned inside the scroller (so it scrolls with the content and stays
+   under every overlay above the editor); a tooltip in the copy button's style ---- */
+.cm-block-handle {
+  position: absolute;
+  z-index: 3;
+  width: 18px;
+  height: 22px;
+  pointer-events: none;
+}
+.cm-block-grip {
+  position: relative;
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--fg-faint);
+  cursor: grab;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cm-block-grip svg {
+  width: 14px;
+  height: 14px;
+}
+.cm-block-grip:hover {
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+}
+.cm-block-grip::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: var(--fg);
+  color: var(--bg);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 2;
+}
+.cm-block-grip:hover::after {
+  opacity: 1;
+  transition-delay: 0.4s;
+}
+
 /* ---- Folding (fold.ts): a chevron at the start of a foldable line, shown on hover
    (always while folded), and the "n lines" chip standing in for a folded range ---- */
 .cm-fold-toggle {

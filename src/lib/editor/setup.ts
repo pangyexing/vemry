@@ -19,6 +19,7 @@ import { queryBlockExtension, type QueryHost } from "./queryblock";
 import { runBlockExtension, type RunHost } from "./runblock";
 import { blockSelection } from "./blocksel";
 import { foldExtension } from "./fold";
+import { blockHandle, type BlockHost } from "./blockhandle";
 
 // The font and line height have to be declared in the theme layer: CM's baseTheme
 // injects monospace and a 1.4 line height at .ͼx .cm-scroller (0,2,0), which app.css's
@@ -105,6 +106,8 @@ export interface EditorOptions {
   queryHost?: QueryHost | null;
   /** note mode: run button on `js` blocks (one-shot read-only sandbox) */
   runHost?: RunHost | null;
+  /** note mode: the hover block handle and its menu (null: no handle) */
+  blockHost?: BlockHost | null;
   onSave: (content: string) => void;
   onDirty: () => void;
   /** Cursor (selection head) change notification, shared by the outline panel
@@ -205,6 +208,7 @@ function buildState(opts: EditorOptions): EditorState {
     if (opts.onOpenLink) mode.push(mdlinkExtension(opts.onOpenLink, singleClick));
     if (opts.queryHost) mode.push(queryBlockExtension(opts.queryHost));
     if (opts.runHost) mode.push(runBlockExtension(opts.runHost));
+    if (opts.blockHost) mode.push(blockHandle(opts.blockHost));
   } else {
     if (opts.language) mode.push(opts.language);
     mode.push(codeFont, syntaxHighlighting(codeHighlight));

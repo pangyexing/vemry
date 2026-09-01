@@ -6,6 +6,11 @@
   import type { EditorState } from "@codemirror/state";
   import { createEditor, resetDoc, languageFor } from "$lib/editor/setup";
   import { foldOnLoad } from "$lib/editor/fold";
+  import { type EditorBlock, blockAt, blockContentStart, extentTo } from "$lib/editor/blocks";
+  import { blockMenuEntries } from "$lib/editor/blockmenu";
+  import type { BlockHost } from "$lib/editor/blockhandle";
+  import { byteToChar, charToByte } from "$lib/views/tasks";
+  import { copyText } from "$lib/copytext";
   import { privateRangeAt, selectionTouchesPrivate } from "$lib/editor/privateblock";
   import { queryRefresh } from "$lib/editor/queryblock";
   import { suppressReveal } from "$lib/editor/reveal";
@@ -341,6 +346,58 @@
     tagList = [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)! || a.localeCompare(b));
   });
 
+  /** Copy `[[Stem#^id]]` (or `![[…]]`) for a block: Rust decides the id and where it
+   *  goes (`block_id_plan` with the block's content offset); the editor applies the one
+   *  insert to its buffer and never guesses the placement. A heading needs no id. */
+  async function copyBlockRef(embed: boolean, b: EditorBlock) {
+    if (!view || !docPath) return;
+    const source = view.state.doc.toString();
+    let plan;
+    try {
+      plan = await api.blockIdPlan(source, { by: "offset", offset: charToByte(source, blockContentStart(view.state, b)) });
+    } catch (e) {
+      toast.push(String(e), "error");
+      return;
+    }
+    if (plan.insert && view.state.doc.toString() === source) {
+      view.dispatch({
+        changes: { from: byteToChar(source, plan.insert.offset), insert: plan.insert.text },
+        userEvent: "block.id",
+      });
+    } else if (plan.insert) {
+      toast.push(t("block.changedRetry"), "error");
+      return;
+    }
+    const stem = docPath.replace(/\.md$/, "");
+    const short = stem.split("/").pop() ?? stem;
+    // another note with the same stem: the path form resolves exactly (SYNTAX: resolution)
+    const clash = vault.notes.some((n) => n.id !== docPath && (n.id.split("/").pop() ?? n.id).replace(/\.md$/, "").toLowerCase() === short.toLowerCase());
+    const name = clash ? stem : short;
+    const link = plan.target.kind === "heading" ? `[[${name}#${plan.target.text}]]` : `[[${name}#^${plan.target.id}]]`;
+    const ok = await copyText(embed ? `!${link}` : link);
+    toast.push(t(ok ? "editor.copied" : "editor.copyFailed"), ok ? "info" : "error");
+  }
+
+  const blockHost: BlockHost & { copyRef: (v: EditorView, b: EditorBlock, embed: boolean) => void; askAgent: (v: EditorView, b: EditorBlock) => void; isPrivate: () => boolean } = {
+    gripTip: () => t("block.handleTip"),
+    openMenu: (v, b, e) => contextMenu.open(e, blockMenuEntries(v, b, blockHost, { compact: false })),
+    copyRef: (_v, b, embed) => void copyBlockRef(embed, b),
+    isPrivate: () => !!docPath && vault.privatePaths.has(docPath),
+    // Select the block's lines (the composer's automatic selection chip picks the
+    // selection up through syncSelection → vault.editorSelection) and summon the agent
+    askAgent: (v, b) => {
+      const from = b.from;
+      const to = extentTo(v.state, b);
+      v.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+      v.focus();
+      if (blockHost.isPrivate()) {
+        toast.push(t("block.askPrivate"), "error");
+        return;
+      }
+      void executeCommand("focus-agent");
+    },
+  };
+
   const host = {
     isKnown: (t: string) => knownTargets.has(t),
     targets: () => targetList,
@@ -550,6 +607,12 @@
       { label: t("editor.copy"), hint: k("Mod+C"), disabled: !hasSel, action: () => void copySelection() },
       { label: t("editor.paste"), hint: k("Mod+V"), action: () => void pasteFromMenu() },
       { separator: true },
+    );
+    // The block under the point: copy its link, turn it into another kind, ask the AI
+    // about it (the structural operations live on the grip and the keyboard)
+    const block = isNote && pos != null ? blockAt(view.state, pos) : null;
+    if (block) entries.push(...blockMenuEntries(view, block, blockHost, { compact: true }), { separator: true });
+    entries.push(
       { label: t("tabBar.revealInTree"), action: () => void executeCommand("reveal-in-tree") },
       privacyMenuItem(path, (op) => void executeCommand(op === "mark" ? "mark-private" : "unmark-private")),
       { separator: true },
@@ -648,6 +711,7 @@
       loadAsset,
       copyImage,
       tags: () => tagList,
+      blockHost: isNote ? blockHost : null,
       queryHost: isNote
         ? {
             runQuery: (q: BlockQuery) => api.queryBlocks(q),

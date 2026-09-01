@@ -10,11 +10,16 @@
 
   let el = $state<HTMLElement | null>(null);
   let confirming = $state<number | null>(null);
+  /** The open second level: which parent item, and where its flyout sits (fixed coordinates, flipped left when the right edge overflows). */
+  let sub = $state<{ index: number; x: number; y: number } | null>(null);
+  let subEl = $state<HTMLElement | null>(null);
+  let subTimer: ReturnType<typeof setTimeout> | null = null;
   /** The clamped landing point: rendered at the raw coordinates first, then measured against its own rect after mounting and pulled inside the viewport. */
   let clamped = $state<{ x: number; y: number } | null>(null);
 
   $effect(() => {
     confirming = null;
+    sub = null;
     const p = pos;
     clamped = p;
     if (!p) return;
@@ -32,12 +37,43 @@
 
   function onItemClick(item: MenuItem, i: number) {
     if (item.disabled) return;
+    if (item.submenu) {
+      openSub(i);
+      return;
+    }
     if (item.confirm && confirming !== i) {
       confirming = i;
       return;
     }
     close();
-    item.action();
+    item.action?.();
+  }
+
+  function openSub(i: number) {
+    if (subTimer) clearTimeout(subTimer);
+    const btn = el?.querySelectorAll<HTMLElement>("[role='menuitem']")[i];
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    sub = { index: i, x: r.right + 2, y: r.top - 4 };
+    queueMicrotask(() => {
+      if (!subEl || !sub || sub.index !== i) return;
+      const sr = subEl.getBoundingClientRect();
+      const x = r.right + 2 + sr.width > window.innerWidth - 4 ? Math.max(4, r.left - sr.width - 2) : r.right + 2;
+      const y = Math.min(r.top - 4, Math.max(4, window.innerHeight - sr.height - 4));
+      sub = { index: i, x, y };
+    });
+  }
+
+  function onItemEnter(item: MenuItem, i: number) {
+    if (subTimer) clearTimeout(subTimer);
+    if (item.submenu && !item.disabled) subTimer = setTimeout(() => openSub(i), 120);
+    else if (sub) subTimer = setTimeout(() => (sub = null), 200);
+  }
+
+  function onSubClick(item: MenuItem) {
+    if (item.disabled) return;
+    close();
+    item.action?.();
   }
 
   // Close on a click outside (pointerdown comes before click, so a click inside the menu is
@@ -60,7 +96,21 @@
 <svelte:window onpointerdowncapture={onWindowPointerdown} onkeydowncapture={onWindowKeydown} />
 
 {#if clamped}
-  <div class="menu" bind:this={el} style:left={`${clamped.x}px`} style:top={`${clamped.y}px`} role="menu">
+  <div
+    class="menu"
+    bind:this={el}
+    style:left={`${clamped.x}px`}
+    style:top={`${clamped.y}px`}
+    role="menu"
+    tabindex="-1"
+    onmouseleave={() => {
+      if (subTimer) clearTimeout(subTimer);
+      subTimer = setTimeout(() => (sub = null), 200);
+    }}
+    onmouseenter={() => {
+      if (subTimer) clearTimeout(subTimer);
+    }}
+  >
     {#each entries as entry, i (i)}
       {#if "separator" in entry}
         <div class="menu-sep"></div>
@@ -69,15 +119,36 @@
       {:else}
         <button
           class:danger={entry.danger || (entry.confirm != null && confirming === i)}
+          class:open={sub?.index === i}
           disabled={entry.disabled}
           onclick={() => onItemClick(entry, i)}
+          onmouseenter={() => onItemEnter(entry, i)}
           role="menuitem"
         >
           {confirming === i && entry.confirm ? entry.confirm : entry.label}
-          {#if entry.hint}<span class="key-hint">{entry.hint}</span>{/if}
+          {#if entry.submenu}<span class="key-hint">›</span>{:else if entry.hint}<span class="key-hint">{entry.hint}</span>{/if}
         </button>
       {/if}
     {/each}
+    {#if sub}
+      {@const parent = entries[sub.index]}
+      {#if parent && !("separator" in parent) && !("title" in parent) && parent.submenu}
+        <div class="menu menu-sub" bind:this={subEl} style:left={`${sub.x}px`} style:top={`${sub.y}px`} role="menu">
+          {#each parent.submenu as item, j (j)}
+            {#if "separator" in item}
+              <div class="menu-sep"></div>
+            {:else if "title" in item}
+              <div class="menu-title">{item.title}</div>
+            {:else}
+              <button class:danger={item.danger} disabled={item.disabled} onclick={() => onSubClick(item)} role="menuitem">
+                {item.label}
+                {#if item.hint}<span class="key-hint">{item.hint}</span>{/if}
+              </button>
+            {/if}
+          {/each}
+        </div>
+      {/if}
+    {/if}
   </div>
 {/if}
 
@@ -120,8 +191,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .menu button:hover:not(:disabled) {
+  .menu button:hover:not(:disabled),
+  .menu button.open {
     background: var(--bg-hover);
+  }
+  /* the flyout is a child of the root menu so the outside-click and Esc handling cover it unchanged */
+  .menu-sub {
+    z-index: 251;
   }
   .menu button.danger {
     color: var(--danger);

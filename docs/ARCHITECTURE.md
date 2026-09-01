@@ -179,7 +179,12 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   suppressReveal, so tables and query blocks stay rendered) plus the text-mode
   block keys; `fold.ts` heading and callout folding (a hover chevron, a
   "n lines" chip, `[!type]-` folded on open; fold state lives in the editor
-  state only). `reveal.ts` is **the one definition of reveal** — inline and line-level
+  state only); `blockhandle.ts` the hover grip in the left padding (one element
+  in the scroller, placed through the height map, never a layout read per
+  frame) and `blockmenu.ts` its menu — copy link or embed, turn into ›, move,
+  indent, fold, duplicate, delete, ask the AI about the block (the text context
+  menu shows the compact group). The context menu grew a second level for
+  "turn into". `reveal.ts` is **the one definition of reveal** — inline and line-level
   constructs only accept a bare cursor (drag-selection stays rendered), block-level
   ones also open when `selectionTouches` intersects a range selection, and an armed
   gate keeps a newly opened document and a programmatic jump (the `suppressReveal`
