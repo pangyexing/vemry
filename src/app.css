@@ -926,6 +926,51 @@ button:focus-visible,
   transition-delay: 0.4s;
 }
 
+/* ---- Dragging a block (blockdrag.ts): the source lines dim, a 2px accent bar marks
+   the drop boundary (indented by the drop depth), and a fixed ghost follows the pointer
+   (the file tree's drag-ghost values, copied since that one is component-scoped) ---- */
+.cm-block-drop {
+  position: absolute;
+  z-index: 3;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.cm-block-drop::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.cm-editor .cm-scroller .cm-line.cm-block-dragging {
+  opacity: 0.4;
+}
+.cm-editor.cm-block-drag .cm-content {
+  cursor: grabbing;
+  user-select: none;
+}
+.cm-block-ghost {
+  position: fixed;
+  z-index: 300;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 /* ---- Folding (fold.ts): a chevron at the start of a foldable line, shown on hover
    (always while folded), and the "n lines" chip standing in for a folded range ---- */
 .cm-fold-toggle {

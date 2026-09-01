@@ -8,7 +8,10 @@
   import { foldOnLoad } from "$lib/editor/fold";
   import { type EditorBlock, blockAt, blockContentStart, extentTo } from "$lib/editor/blocks";
   import { blockMenuEntries } from "$lib/editor/blockmenu";
+  import { selectedBlocks } from "$lib/editor/blocksel";
+  import { deleteBlocks, duplicateBlocks, moveBlocks } from "$lib/editor/blockops";
   import type { BlockHost } from "$lib/editor/blockhandle";
+  import { startBlockDrag } from "$lib/editor/blockdrag";
   import { byteToChar, charToByte } from "$lib/views/tasks";
   import { copyText } from "$lib/copytext";
   import { privateRangeAt, selectionTouchesPrivate } from "$lib/editor/privateblock";
@@ -253,6 +256,31 @@
   }
   vault.revealPos = revealPos;
 
+  /** The palette's block commands act on the selected run (block mode) or the block at the cursor. */
+  function blockCommand(op: "move-up" | "move-down" | "duplicate" | "delete"): boolean {
+    if (!view || !docPath?.endsWith(".md") || docPath !== vault.currentPath) return false;
+    const state = view.state;
+    let run = selectedBlocks(state);
+    if (!run.length) {
+      const b = blockAt(state, state.selection.main.head);
+      if (!b) return false;
+      run = [b];
+    }
+    const spec =
+      op === "move-up"
+        ? moveBlocks(state, run, -1)
+        : op === "move-down"
+          ? moveBlocks(state, run, 1)
+          : op === "duplicate"
+            ? duplicateBlocks(state, run)
+            : deleteBlocks(state, run);
+    if (!spec) return false;
+    view.dispatch(spec);
+    view.focus();
+    return true;
+  }
+  vault.blockCommand = blockCommand;
+
   /** The snapshot source of `@ current selection`: with a non-empty main selection it updates
    *  vault.editorSelection with the line numbers (1-based, inclusive) and the text, and an
    *  empty selection or no document clears it to null. When the selection's end falls exactly
@@ -381,6 +409,7 @@
   const blockHost: BlockHost & { copyRef: (v: EditorView, b: EditorBlock, embed: boolean) => void; askAgent: (v: EditorView, b: EditorBlock) => void; isPrivate: () => boolean } = {
     gripTip: () => t("block.handleTip"),
     openMenu: (v, b, e) => contextMenu.open(e, blockMenuEntries(v, b, blockHost, { compact: false })),
+    onGripPointerDown: (v, b, e, grip, done) => startBlockDrag(v, b, e, grip, done),
     copyRef: (_v, b, embed) => void copyBlockRef(embed, b),
     isPrivate: () => !!docPath && vault.privatePaths.has(docPath),
     // Select the block's lines (the composer's automatic selection chip picks the
@@ -804,6 +833,7 @@
     if (vault.insertAtCursor === insertAtCursor) vault.insertAtCursor = null;
     if (vault.insertAtSection === insertAtSection) vault.insertAtSection = null;
     if (vault.revealPos === revealPos) vault.revealPos = null;
+    vault.blockCommand = null;
     clearDocSignals();
     unlistenLocalized?.();
     view?.destroy();

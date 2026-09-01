@@ -195,6 +195,22 @@ CMD = {
         ("Reveal current note in file tree", "在文件树定位当前笔记"),
         ("Expand the left panel and scroll to the current note", "展开左栏并滚到当前笔记"),
     ),
+    "block-move-up": (
+        ("Move block up", "上移块"),
+        ("Move the selected blocks, or the block at the cursor, above the previous one", "把选中的块（或光标所在块）移到上一个块之前"),
+    ),
+    "block-move-down": (
+        ("Move block down", "下移块"),
+        ("Move the selected blocks, or the block at the cursor, below the next one", "把选中的块（或光标所在块）移到下一个块之后"),
+    ),
+    "block-duplicate": (
+        ("Duplicate block", "复制块"),
+        ("Insert a copy of the selected blocks right after them", "在选中的块之后插入一份副本"),
+    ),
+    "block-delete": (
+        ("Delete block", "删除块"),
+        ("Delete the selected blocks, or the block at the cursor (undo with ⌘Z)", "删除选中的块（或光标所在块），可用 ⌘Z 撤销"),
+    ),
     "delete-current-note": (
         ("Delete current note", "删除当前笔记"),
         ("Move to the system trash (recoverable)", "移入系统废纸篓(可恢复)"),
@@ -1363,6 +1379,7 @@ add("block.", {
     "askAgent": ("Ask AI about this block", "就此块问 AI"),
     "askPrivate": ("This note is in a privacy zone — the AI cannot read it", "这篇笔记在隐私区，AI 读不到它"),
     "changedRetry": ("The note changed while the id was being prepared — try again", "准备块 ID 时笔记已改动，请重试"),
+    "noBlockHere": ("No block at the cursor", "光标处没有块"),
     "kind.paragraph": ("Paragraph", "段落"),
     "kind.heading1": ("Heading 1", "标题 1"),
     "kind.heading2": ("Heading 2", "标题 2"),

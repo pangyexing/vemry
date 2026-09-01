@@ -184,7 +184,10 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   frame) and `blockmenu.ts` its menu — copy link or embed, turn into ›, move,
   indent, fold, duplicate, delete, ask the AI about the block (the text context
   menu shows the compact group). The context menu grew a second level for
-  "turn into". `reveal.ts` is **the one definition of reveal** — inline and line-level
+  "turn into". `blockdrag.ts` drags a block by its grip (the file tree's
+  pointer contract; the drop boundary comes from the height map and the depth
+  from the horizontal travel, one level per 24px for list items) and lands it
+  as one `moveBlockTo` transaction. `reveal.ts` is **the one definition of reveal** — inline and line-level
   constructs only accept a bare cursor (drag-selection stays rendered), block-level
   ones also open when `selectionTouches` intersects a range selection, and an armed
   gate keeps a newly opened document and a programmatic jump (the `suppressReveal`

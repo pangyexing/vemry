@@ -700,6 +700,21 @@
     id: "reveal-in-tree", group: "nav",
     run: () => vault.revealInTree(),
   });
+  // Block commands (the keys themselves are CodeMirror bindings in blocksel.ts; the
+  // hints here are display only)
+  for (const [id, op, hotkey] of [
+    ["block-move-up", "move-up", k("Mod+Shift+↑")],
+    ["block-move-down", "move-down", k("Mod+Shift+↓")],
+    ["block-duplicate", "duplicate", k("Mod+Shift+D")],
+    ["block-delete", "delete", undefined],
+  ] as const) {
+    registerCommand({
+      id, group: "note", hotkey,
+      run: () => {
+        if (!vault.blockCommand?.(op)) toast.push(t("block.noBlockHere"), "error");
+      },
+    });
+  }
   registerCommand({
     id: "delete-current-note", group: "note",
     run: async () => {

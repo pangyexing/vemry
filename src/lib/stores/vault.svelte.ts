@@ -289,6 +289,9 @@ class VaultStore {
    *  registers (used by the outline's clicks).
    *  Returns false = there is no note editor to jump in. */
   revealPos: ((pos: number) => boolean) | null = null;
+  /** Block commands from the palette (move / duplicate / delete the selected run or the
+   *  block at the cursor); registered by the editor, null when no note is open. */
+  blockCommand: ((op: "move-up" | "move-down" | "duplicate" | "delete") => boolean) | null = null;
   /** Under a projection view it returns to the editor before scrolling into view — the
    *  editor host needs a tick to leave display:none before CM can measure the scroll.
    *  The outline's jumps and "land back after closing a browser window" share this one

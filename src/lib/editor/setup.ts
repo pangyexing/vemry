@@ -20,6 +20,7 @@ import { runBlockExtension, type RunHost } from "./runblock";
 import { blockSelection } from "./blocksel";
 import { foldExtension } from "./fold";
 import { blockHandle, type BlockHost } from "./blockhandle";
+import { dragSourceField } from "./blockdrag";
 
 // The font and line height have to be declared in the theme layer: CM's baseTheme
 // injects monospace and a 1.4 line height at .ͼx .cm-scroller (0,2,0), which app.css's
@@ -208,7 +209,7 @@ function buildState(opts: EditorOptions): EditorState {
     if (opts.onOpenLink) mode.push(mdlinkExtension(opts.onOpenLink, singleClick));
     if (opts.queryHost) mode.push(queryBlockExtension(opts.queryHost));
     if (opts.runHost) mode.push(runBlockExtension(opts.runHost));
-    if (opts.blockHost) mode.push(blockHandle(opts.blockHost));
+    if (opts.blockHost) mode.push(blockHandle(opts.blockHost), dragSourceField);
   } else {
     if (opts.language) mode.push(opts.language);
     mode.push(codeFont, syntaxHighlighting(codeHighlight));

@@ -13,8 +13,8 @@ import { selectBlock } from "./blocksel";
 export interface BlockHost {
   /** The grip was clicked (left or right): open the block menu for `block`. */
   openMenu(view: EditorView, block: EditorBlock, e: MouseEvent): void;
-  /** The grip was pressed: a drag may follow (the drag batch fills this in). */
-  onGripPointerDown?(view: EditorView, block: EditorBlock, e: PointerEvent, grip: HTMLElement): void;
+  /** The grip was pressed: a drag may follow; `done(dropped)` runs when it ends. */
+  onGripPointerDown?(view: EditorView, block: EditorBlock, e: PointerEvent, grip: HTMLElement, done: (dropped: boolean) => void): void;
   /** Tooltip text for the grip. */
   gripTip(): string;
 }
@@ -58,7 +58,11 @@ class HandlePlugin {
   private readonly onDown = (e: PointerEvent) => {
     if (e.button !== 0 || e.pointerType === "touch") return;
     e.preventDefault();
-    if (this.current) this.host.onGripPointerDown?.(this.view, this.current, e, this.grip);
+    if (this.current)
+      this.host.onGripPointerDown?.(this.view, this.current, e, this.grip, (dropped) => {
+        // the click that follows a drag must not open the menu
+        this.suppressClick = dropped;
+      });
   };
 
   constructor(
