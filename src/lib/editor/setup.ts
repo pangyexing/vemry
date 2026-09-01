@@ -15,6 +15,7 @@ import { linkAt } from "./linkat";
 import { livePreview, type AssetLoader, type ImageCopier } from "./livepreview";
 import { tagCompletions, calloutCompletions, atCompletions } from "./completions";
 import { refCompletions } from "./blockref";
+import { slashCompletions } from "./slash";
 import { Highlight, highlightTag } from "./markdown-ext";
 import { queryBlockExtension, type QueryHost } from "./queryblock";
 import { runBlockExtension, type RunHost } from "./runblock";
@@ -185,6 +186,7 @@ function buildState(opts: EditorOptions): EditorState {
           refCompletions(host),
           wikilink.completions,
           atCompletions(host.targets),
+          slashCompletions(),
           tagCompletions(opts.tags ?? (() => [])),
           calloutCompletions,
         ],
