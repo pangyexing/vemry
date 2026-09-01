@@ -42,7 +42,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         f(
             "read_note",
-            "Read the full content of a note by its vault-relative path.",
+            "Read the full content of a note by its vault-relative path. A line ending in ` ^id` names a block you can cite as [[path#^id]].",
             json!({
                 "type": "object",
                 "properties": {"path": {"type": "string", "description": "e.g. 'projects/Alpha.md'"}},
@@ -72,7 +72,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         f(
             "query_blocks",
-            "Query typed blocks across the vault: tasks, list items, claims, evidence, code blocks, headings. Blocks carry inline `key:: value` fields you can filter on. The same projection API the UI uses.",
+            "Query typed blocks across the vault: tasks, list items, claims, evidence, code blocks, headings. Blocks carry inline `key:: value` fields you can filter on. The same projection API the UI uses. Each hit's `block` is a citation handle: `^id` is stable, `bN` is positional and valid in this conversation only — cite it as [[note#block]].",
             json!({
                 "type": "object",
                 "properties": {
@@ -353,9 +353,12 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
                 .into_iter()
                 .map(|h| {
                     let content: String = h.block.content.chars().take(300).collect();
+                    // The citation handle: an explicit id keeps its caret so the model
+                    // can tell stable from positional without a second field
+                    let block = if h.block.explicit_id { format!("^{}", h.block.local_id) } else { h.block.local_id.clone() };
                     json!({
                         "note": h.note.as_str(),
-                        "block": h.block.local_id,
+                        "block": block,
                         "kind": h.block.kind,
                         "content": content,
                     })
@@ -809,6 +812,16 @@ mod tests {
         let out = read(&vault, "query_blocks", json!({"note": "Mixed.md"})).unwrap();
         assert!(out.text.contains("\"block\": \"b1\"") && out.text.contains("\"block\": \"b3\""), "{}", out.text);
         assert!(!out.text.contains("\"block\": \"b2\"") && !out.text.contains("BLOCKSECRET"));
+    }
+
+    #[test]
+    fn query_blocks_marks_explicit_ids_with_caret() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cite.md"), "Alpha ^c1\n\nBeta\n").unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let out = read(&vault, "query_blocks", json!({"note": "Cite.md"})).unwrap();
+        // positional numbering counts only the blocks without an explicit id
+        assert!(out.text.contains("\"block\": \"^c1\"") && out.text.contains("\"block\": \"b1\""), "{}", out.text);
     }
 
     #[test]

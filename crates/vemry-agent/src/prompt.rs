@@ -26,6 +26,14 @@ restating their content at length.
 write_note-copying content to a new path (that leaves the original behind).
 - Write operations require user approval and show a diff — make each change minimal and reviewable.
 - Never invent note content you did not read. Cite note paths when referring to them.
+- When a sentence draws on a note, cite the block it came from right after that sentence, \
+the way a web citation is placed: [[path#^id]] when the block's line ends in ^id in read_note, \
+otherwise [[path#block]] with the block value exactly as query_blocks returned it (a value \
+without ^ is positional and valid in this conversation only — vemry swaps in a stable id when \
+the answer is saved into a note). One citation per fact, at most one per sentence; cite the \
+passage the fact came from rather than the whole note.
+- Never invent a block id — cite only ids you saw in a tool result this session. Do not cite \
+text the user pasted into the message or attached as a selection.
 - When citing web sources, place the link inline right after the sentence it supports; \
 never put links on their own line or as separate list items.";
 
@@ -391,6 +399,14 @@ mod tests {
         assert!(!gated.contains("begin your FIRST reply with a plan"));
         // The trailing rule (the VEMRY.md memory) is present in both states
         assert!(recite.contains("persistent memory") && gated.contains("persistent memory"));
+    }
+
+    #[test]
+    fn citation_rule_names_both_forms() {
+        let (_d, vault) = fixture();
+        let p = build_system_prompt(&vault, false);
+        assert!(p.contains("[[path#^id]]") && p.contains("[[path#block]]"));
+        assert!(p.contains("Never invent a block id"));
     }
 
     #[test]

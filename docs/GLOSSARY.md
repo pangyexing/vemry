@@ -31,6 +31,8 @@ three months later, and each translation drifts on its own. A new user-visible t
 | 审计日志 | audit log | history, activity |
 | 出处 | provenance | origin (the frontmatter key only), source (taken by clipping), authorship |
 | 待确认 | pending review | unreviewed, draft |
+| 块引用 | block citation | block reference, block link |
+| 位置 id | positional id | temporary id, transient id |
 
 ## Interface elements
 

@@ -387,7 +387,8 @@ export interface PageContext {
 /** An action from the detached chat window to the main window (run by host.ts; the editor, the clip destination and the command table live in the main window alone). */
 export type HostAction =
   | { kind: "open-note"; path: string }
-  | { kind: "follow-link"; target: string }
+  /** guard: for a positional citation, the block's content when it was cited (a moved block is still found). */
+  | { kind: "follow-link"; target: string; guard?: string }
   /** session: the chat session the text came from (recorded as the blocks' provenance). */
   | { kind: "insert"; payload: string; session?: string }
   | { kind: "pin"; payload: string; session?: string }

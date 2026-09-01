@@ -46,7 +46,7 @@ export async function runHostAction(a: HostAction): Promise<void> {
       await vault.openNote(a.path);
       return;
     case "follow-link":
-      await vault.followLink(a.target);
+      await vault.followLink(a.target, { guard: a.guard });
       return;
     case "insert":
       // It has to pass the canInsertIntoVisibleNote guard — under a projection the

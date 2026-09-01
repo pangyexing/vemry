@@ -10,6 +10,8 @@
   import { api, AGENT_IMAGE_EXTS, EFFORT_OPTIONS, type EffortValue, isAgentImage, type WebSearchResult } from "$lib/api";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { agent, type ComposerHandle, type DraftRef, type TimelineItem } from "$lib/stores/agent.svelte";
+  import HoverCard, { type HoverCardData } from "./HoverCard.svelte";
+  import { POSITIONAL_RE, TRANSIENT_CITE_RE, blocksOf, findBlock, materializeCitations, parseRefTarget } from "$lib/citation";
   import AtPicker, { linesLabel } from "./AtPicker.svelte";
   import RefIcon, { type RefIconKind } from "./RefIcon.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
@@ -28,6 +30,7 @@
     domainOf,
     extractCitations,
     handleCodeCopyClick,
+    plainText,
     renderAssistantMarkdownBlocks,
     stableBlockPrefix,
     TASK_PREFIX_RE,
@@ -201,6 +204,9 @@
   $effect(() => {
     if (agent.viewEpoch === seenEpoch) return;
     seenEpoch = agent.viewEpoch;
+    citeGuards.clear();
+    citeCache.clear();
+    hover = null;
     resetTimelineUi();
   });
 
@@ -578,7 +584,7 @@
   async function copyAnswer(text: string) {
     const sel = selectedInTimeline();
     try {
-      await navigator.clipboard.writeText(sel || text);
+      await navigator.clipboard.writeText(await exportAnswer(sel || text));
       toast.push(t(sel ? "chat.copiedSelection" : "chat.copiedAnswer"));
     } catch (e) {
       toast.push(String(e), "error");
@@ -588,13 +594,15 @@
   /** Insert at the cursor in the current note. It has to pass the canInsertIntoVisibleNote guard
    *  — under a projection the editor is only hidden by CSS, and a bare insertAtCursor cannot tell
    *  a visible note from a hidden one. */
-  function insertAnswer(text: string) {
-    void hostDispatch({ kind: "insert", payload: answerPayload(text), session: agent.sessionId ?? undefined });
+  async function insertAnswer(text: string) {
+    const payload = await exportAnswer(answerPayload(text));
+    void hostDispatch({ kind: "insert", payload, session: agent.sessionId ?? undefined });
   }
 
   /** Send it to the pinned destination (sharing clipTarget.deliver's pipeline and destination contract with a clipped selection). */
-  function sendToPinned(text: string) {
-    void hostDispatch({ kind: "pin", payload: answerPayload(text), session: agent.sessionId ?? undefined });
+  async function sendToPinned(text: string) {
+    const payload = await exportAnswer(answerPayload(text));
+    void hostDispatch({ kind: "pin", payload, session: agent.sessionId ?? undefined });
   }
 
   /** This turn's context: look back to the most recent user question and forward to the next turn to collect the sources. */
@@ -620,7 +628,8 @@
   }
 
   /** Save as a new note: it lands in research/, with the frontmatter recording the question and this turn's sources. */
-  async function saveAsNote(text: string, i: number) {
+  async function saveAsNote(rawText: string, i: number) {
+    const text = await exportAnswer(rawText);
     const { question, sources } = turnInfoFor(i);
     // The fallback comes after the cleaning: a question like "???" or "[link]" is empty once
     // cleaned, and a fallback before it would be displaced by the truncated original, landing as
@@ -767,7 +776,112 @@
     if (!(el instanceof HTMLElement)) return;
     e.preventDefault();
     if (el.dataset.url) openCitation(el.dataset.url, e.metaKey || e.ctrlKey);
-    else if (el.dataset.wiki) void hostDispatch({ kind: "follow-link", target: el.dataset.wiki });
+    else if (el.dataset.wiki) {
+      const { note, frag } = parseRefTarget(el.dataset.wiki);
+      hover = null;
+      void hostDispatch({ kind: "follow-link", target: el.dataset.wiki, guard: citeGuards.get(`${note}#${frag}`) });
+    }
+  }
+
+  // ---- Block citations: the guard captured at turn end, the hover card, the export funnel ----
+
+  /** A positional citation's content the moment the answer arrived (key `note#bN`, the note
+   *  as the model wrote it): a block that moves before the click or the export is still
+   *  found by its words. Cleared with the session. */
+  const citeGuards = new Map<string, string>();
+  /** The hover card's resolved texts, per citation; cleared when the index moves. */
+  const citeCache = new Map<string, Promise<string | null>>();
+  let hover = $state<HoverCardData | null>(null);
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+
+  $effect(() => {
+    if (agent.running) return;
+    const i = lastAssistantIndex;
+    if (i < 0) return;
+    const item = agent.timeline[i];
+    if (item?.kind !== "assistant") return;
+    const seen = new Set<string>();
+    TRANSIENT_CITE_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = TRANSIENT_CITE_RE.exec(item.text))) {
+      const note = m[1].trim();
+      const key = `${note}#${m[2]}`;
+      if (seen.has(key) || citeGuards.has(key)) continue;
+      seen.add(key);
+      void captureGuard(note, m[2], key);
+    }
+  });
+  $effect(() => {
+    void vault.indexVersion;
+    citeCache.clear();
+  });
+
+  async function captureGuard(note: string, bN: string, key: string) {
+    try {
+      const path = await api.resolveLink(note, vault.currentPath ?? undefined);
+      if (!path) return;
+      const hit = findBlock(await blocksOf(path, vault.indexVersion), bN);
+      if (hit) citeGuards.set(key, hit.block.content);
+    } catch {
+      // the guard is a nicety: without it the click still lands by id
+    }
+  }
+
+  async function citationText(note: string, frag: string): Promise<string | null> {
+    const key = `${note}#${frag}`;
+    let p = citeCache.get(key);
+    if (!p) {
+      p = (async () => {
+        if (POSITIONAL_RE.test(frag)) {
+          const path = note ? await api.resolveLink(note, vault.currentPath ?? undefined) : vault.currentPath;
+          if (!path) return null;
+          const hit = findBlock(await blocksOf(path, vault.indexVersion), frag, citeGuards.get(key));
+          return hit ? hit.block.content : null;
+        }
+        const r = await api.resolveRef(`${note}#${frag}`, vault.currentPath ?? undefined);
+        return r.state === "resolved" ? r.content : null;
+      })().catch(() => null);
+      citeCache.set(key, p);
+    }
+    const text = await p;
+    return text == null ? null : plainText(text).slice(0, 300);
+  }
+
+  function onTimelineOver(e: MouseEvent) {
+    if (!(e.target instanceof Element)) return;
+    const el = e.target.closest<HTMLElement>("a.md-blockref");
+    if (!el) return;
+    if (hoverTimer) clearTimeout(hoverTimer);
+    const target = el.dataset.wiki ?? "";
+    hoverTimer = setTimeout(() => void showHover(el, target), 250);
+  }
+  function onTimelineOut(e: MouseEvent) {
+    if (!(e.target instanceof Element) || !e.target.closest("a.md-blockref")) return;
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = null;
+    hover = null;
+  }
+  async function showHover(el: HTMLElement, target: string) {
+    if (!el.isConnected) return;
+    const r = el.getBoundingClientRect();
+    hover = { x: r.left, y: r.bottom + 6, title: target, text: t("hover.loading") };
+    const { note, frag } = parseRefTarget(target);
+    const text = await citationText(note, frag);
+    if (!hover || hover.title !== target) return;
+    hover = { ...hover, text: text ?? t("hover.missing"), missing: text == null };
+  }
+
+  /** The one funnel for text leaving the panel into the vault or the clipboard:
+   *  positional citations become stable ids written into the cited notes (a note that
+   *  is open and dirty flushes first, or autosave would clobber the ` ^id`). */
+  async function exportAnswer(text: string): Promise<string> {
+    TRANSIENT_CITE_RE.lastIndex = 0;
+    if (!TRANSIENT_CITE_RE.test(text)) return text;
+    if (vault.currentPath && vault.dirty) await vault.flushEditor?.();
+    const r = await materializeCitations(text, (note, frag) => citeGuards.get(`${note}#${frag}`), vault.currentPath ?? undefined);
+    if (r.minted) toast.push(t("chat.citationsMaterialized", { n: r.minted }));
+    if (r.failed) toast.push(t("chat.citationsDropped", { n: r.failed }), "error");
+    return r.text;
   }
 
   async function clipSource(r: WebSearchResult) {
@@ -1183,6 +1297,7 @@
   }
 
   function onScroll() {
+    hover = null;
     if (!scroller) return;
     atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
     // The popover is positioned against the wrap and does not scroll with the content, so any scroll dismisses it (as selection popovers commonly do)
@@ -1263,8 +1378,17 @@
       {/if}
     </div>
   {/if}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="timeline" bind:this={scroller} onscroll={onScroll} onclick={onTimelineClick} onmouseup={onTimelineMouseUp}>
+  <HoverCard card={hover} />
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_mouse_events_have_key_events, a11y_no_static_element_interactions -->
+  <div
+    class="timeline"
+    bind:this={scroller}
+    onscroll={onScroll}
+    onclick={onTimelineClick}
+    onmouseup={onTimelineMouseUp}
+    onmouseover={onTimelineOver}
+    onmouseout={onTimelineOut}
+  >
     {#if agent.timeline.length === 0}
       <div class="welcome">
         <p class="welcome-title">{t("chat.welcomeTitle")}</p>
@@ -1364,7 +1488,7 @@
             {#if isTurnFinal(i) && !(agent.running && i === lastAssistantIndex)}
               <div class="msg-foot" class:current={i === lastAssistantIndex}>
                 <button title={t("chat.copyAnswerHint")} onclick={() => void copyAnswer(body)}>{t("chat.copy")}</button>
-                <button title={t("chat.insertAnswerHint")} onclick={() => insertAnswer(body)}>{t("chat.insert")}</button>
+                <button title={t("chat.insertAnswerHint")} onclick={() => void insertAnswer(body)}>{t("chat.insert")}</button>
                 <button
                   title={clipTarget.path ? t("chat.sendToTargetPlain", { name: clipTarget.name ?? "" }) : t("chat.pinFirst")}
                   onclick={() => void sendToPinned(body)}
@@ -1850,6 +1974,10 @@
   .msg.assistant :global(.md-link:hover),
   .msg.assistant :global(.md-wiki:hover) {
     text-decoration: underline;
+  }
+  /* A block citation: a chip with a ¶ / › glyph (the styles are global in app.css so the replay view shares them) */
+  .msg.assistant :global(.md-blockref:hover) {
+    text-decoration: none;
   }
   /* The table skeleton lives in app.css's global .md-tablewrap section (shared with ReadingView);
      only the chat bubble's own paragraph spacing stays here */

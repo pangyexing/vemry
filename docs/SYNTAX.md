@@ -228,6 +228,14 @@ temporary id from the index, which is **never written back to disk**.
 - An id on a list item names that item alone; the item's children are not
   part of the id's block, though a reference to the item shows them.
 
+**Transient positional citations.** An AI answer may cite a block that has no
+id yet as `[[path#bN]]`, where `bN` is the index's positional id from the tool
+result. This form is **not part of the dialect**: it is valid only inside that
+conversation, and vemry never writes it to a note. When an answer is copied,
+inserted, pinned or saved as a note, every `[[path#bN]]` is materialized — the
+cited block receives a minted ` ^id` and the link becomes `[[path#^id]]`; a
+citation that cannot be pinned (the block is gone) degrades to `[[path]]`.
+
 **Fallback**: ordinary text at the end of the line.
 
 ## Inline highlight

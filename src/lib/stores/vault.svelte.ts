@@ -7,6 +7,7 @@ import { api, onVaultEvent, type EditorSelection, type NoteSummary, type Origin,
 import { agent } from "$lib/stores/agent.svelte";
 import { clips } from "$lib/stores/clips.svelte";
 import { toast } from "$lib/stores/toast.svelte";
+import { POSITIONAL_RE, blocksOf, findBlock } from "$lib/citation";
 import { k } from "$lib/shortcut";
 import { byteToChar, ymd } from "$lib/views/tasks";
 import { loadBucketMap, saveBucket } from "$lib/persist";
@@ -288,7 +289,7 @@ class VaultStore {
   /** The "jump to a document character position and scroll it into view" hook Editor
    *  registers (used by the outline's clicks).
    *  Returns false = there is no note editor to jump in. */
-  revealPos: ((pos: number) => boolean) | null = null;
+  revealPos: ((pos: number, flash?: boolean) => boolean) | null = null;
   /** Block commands from the palette (move / duplicate / delete the selected run or the
    *  block at the cursor); registered by the editor, null when no note is open. */
   blockCommand: ((op: "move-up" | "move-down" | "duplicate" | "delete") => boolean) | null = null;
@@ -296,7 +297,7 @@ class VaultStore {
    *  editor host needs a tick to leave display:none before CM can measure the scroll.
    *  The outline's jumps and "land back after closing a browser window" share this one
    *  contract (change it in one place and both entry points get it). */
-  async revealInEditor(pos: number) {
+  async revealInEditor(pos: number, flash = false) {
     // With no active document (a view tab is active, or there is no tab): there is
     // nowhere to jump, and mainView must not be switched either — that would produce the
     // decoupled state "the editor's empty view is shown while the active tab is a view".
@@ -304,20 +305,20 @@ class VaultStore {
     if (this.currentPath == null) return;
     if (this.mainView !== "editor") this.mainView = "editor";
     await tick();
-    this.revealPos?.(pos);
+    this.revealPos?.(pos, flash);
   }
 
   /** Open a note and jump to a **byte** span (the units of Rust's block.span). The one
    *  primitive behind "jump to the source" on a query result card: openNote may fail or
    *  land elsewhere, so `currentPath` has to be rechecked after the await; the byte →
    *  UTF-16 conversion also lives here alone. */
-  async openBlockAt(note: string, byteStart: number, content?: string) {
+  async openBlockAt(note: string, byteStart: number, content?: string, flash = true) {
     await this.openNote(note);
     if (this.currentPath !== note) return;
     let pos = byteToChar(this.currentContent, byteStart);
     // the index may lag an unsaved buffer: the block's text, if given, corrects the landing point
     if (content && this.locateText) pos = this.locateText(content, pos) ?? pos;
-    await this.revealInEditor(pos);
+    await this.revealInEditor(pos, flash);
   }
   /** Editor hook: where `text` sits in the open buffer, nearest to `near` (exact at
    *  `near` first); null when the buffer no longer holds it. */
@@ -1400,11 +1401,28 @@ class VaultStore {
     await this.openNote(id, true, true); // a newly created file gets a pinned tab
   }
 
-  /** Follow a wikilink target: open if resolved, create if not. */
-  async followLink(target: string) {
+  /** Follow a wikilink target: open if resolved, create if not. A fragment lands on the
+   *  block (with a flash); guard is a positional citation's content when it was cited. */
+  async followLink(target: string, opts: { guard?: string } = {}) {
     const hash = target.indexOf("#");
     const notePart = hash >= 0 ? target.slice(0, hash).trim() : target.trim();
     const fragment = hash >= 0 ? target.slice(hash + 1).trim() : "";
+    if (POSITIONAL_RE.test(fragment)) {
+      // `Note#bN`: a positional id from an AI answer — the index knows it, resolve_ref does not
+      const note = notePart ? await api.resolveLink(notePart, this.currentPath ?? undefined) : this.currentPath;
+      if (!note) {
+        toast.push(t("vaultStore.fragmentMissing", { path: notePart, fragment }));
+        return;
+      }
+      const hit = findBlock(await blocksOf(note, this.indexVersion), fragment, opts.guard);
+      if (hit) {
+        await this.openBlockAt(note, hit.block.span.start, hit.block.content);
+        return;
+      }
+      await this.openNote(note);
+      toast.push(t("vaultStore.fragmentMissing", { path: note, fragment }));
+      return;
+    }
     if (fragment) {
       // `Note#Heading` / `Note#^id` / `#^id`: land on the block, not at position 0
       const r = await api.resolveRef(target, this.currentPath ?? undefined);

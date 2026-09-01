@@ -870,6 +870,51 @@ button:focus-visible,
   caret-color: transparent;
 }
 
+/* ---- The landing flash after a jump (flash.ts) ---- */
+@keyframes cm-flash {
+  0% {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+.cm-editor .cm-scroller .cm-line.cm-flash {
+  animation: cm-flash 1.2s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-editor .cm-scroller .cm-line.cm-flash {
+    animation: none;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+}
+
+/* ---- Block citation chips in rendered Markdown (the chat and the replay view) ---- */
+.md-blockref {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 0 6px;
+  margin: 0 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 0.88em;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: baseline;
+}
+.md-blockref:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.md-blockref-glyph {
+  opacity: 0.7;
+}
+
 /* ---- Block provenance (provenance.ts): the amber bar of an AI block awaiting review, and
    the four-colour origin overlay. Line decorations need the three-level selector, like the
    line padding; the colours are tokens so the status bar and the overlay agree ---- */

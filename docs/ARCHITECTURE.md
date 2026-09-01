@@ -205,7 +205,8 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   size instead of pushing the scroll position around. `provenance.ts` holds the
   block-provenance rows (byte spans mapped to positions once, then mapped
   through edits by the field) and draws the pending bar and the origin overlay
-  as line decorations — see "Block provenance" below.
+  as line decorations — see "Block provenance" below. `flash.ts` is the one-shot
+  landing highlight after a jump (a citation, a query card, a fragment link).
 - `components/`: the activity bar and the three-column layout (both side panels
   collapse, resize and swap sides as a unit, with UI state in localStorage; the
   right side's two panels stay mounted and switch by CSS, so changing tab loses
@@ -1475,6 +1476,27 @@ private is one line in the rules.
 The security boundary: a remote page never gets IPC, and the clipping JS is a fixed
 extraction script on the app side, pulled one way by a user command — Rust asks the
 browser webview for the selection or DOM, and page scripts cannot write to the vault.
+
+### Citations into the vault (block citations)
+
+The model cites the block a fact came from, the way it cites a web source:
+`[[path#^id]]` when the block already carries an id, otherwise `[[path#bN]]`
+with the positional handle exactly as `query_blocks` returned it (an explicit
+id is returned with its caret so the two are told apart without a second
+field; the prompt rules ask for one citation per fact and forbid invented
+ids). The panel renders a fragment link as a chip (`wikiAnchor` in
+`markdown.ts`: a ¶ or › glyph and the note's name); hovering 250 ms shows a
+text-only preview card (`HoverCard.svelte`; a positional citation is looked
+up in the note's block list, a stable one through `resolve_ref`), and a click
+opens the note on the block with a 1.2 s flash (`editor/flash.ts`). Positional
+ids are transient — never written to a note — so every path out of the panel
+(copy, insert, pin, save as note) goes through one funnel, `exportAnswer`,
+which materializes them: `block_ensure_id` mints ` ^id` into the cited note
+and the link becomes `[[path#^id]]`, or degrades to `[[path]]` when the block
+is gone. Because a block may move between the answer and the click, the panel
+captures each positional citation's content when the turn ends and passes it
+as a guard: a mismatch falls back to the one block that still has that text.
+The guard lives in `src/lib/citation.ts` next to the shared block cache.
 
 ### AI web search (the DeepSeek Responses API)
 

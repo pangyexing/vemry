@@ -194,11 +194,7 @@ function renderInline(raw: string, cite: (url: string, title: string, standalone
     );
   s = s.replace(MD_LINK, (_, title: string, url: string) => stash(cite(stripTrailingPunct(url), title, standalone)));
   s = s.replace(BARE_URL, (m: string) => stash(cite(stripTrailingPunct(m), "", standalone)));
-  s = s.replace(
-    /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
-    (_, target: string, alias?: string) =>
-      stash(`<a class="md-wiki" data-wiki="${escapeHtml(target.trim())}">${escapeHtml(alias ?? target)}</a>`),
-  );
+  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target: string, alias?: string) => stash(wikiAnchor(target.trim(), alias)));
   s = escapeHtml(s);
   s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/(?<![*\w])\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
@@ -253,6 +249,24 @@ export function renderNoteMarkdown(text: string): string {
     return `<a class="md-link" data-url="${escapeHtml(url)}" title="${escapeHtml(url)}">${escapeHtml(label)}</a>`;
   };
   return renderBlocks(text, (line) => renderInline(foldNestedEmbeds(line), plainLink));
+}
+
+/** A wikilink anchor. A plain `[[Note]]` is the link it always was; a target with a
+ *  fragment (`[[Note#^id]]`, `[[Note#bN]]`, `[[Note#Heading]]`) becomes a block
+ *  citation chip — a ¶ (block) or › (heading) glyph and the note's name — carrying
+ *  data-note / data-frag for the hover card and the click. */
+export function wikiAnchor(target: string, alias?: string): string {
+  const hash = target.indexOf("#");
+  if (hash < 0) return `<a class="md-wiki" data-wiki="${escapeHtml(target)}">${escapeHtml(alias ?? target)}</a>`;
+  const note = target.slice(0, hash).trim();
+  const frag = target.slice(hash + 1).trim();
+  const isBlock = frag.startsWith("^") || /^b\d+$/.test(frag);
+  const stem = (note.split("/").pop() ?? note).replace(/\.md$/i, "");
+  const label = alias ?? (isBlock ? stem || t("chat.thisNote") : `${stem ? `${stem} › ` : ""}${frag}`);
+  return (
+    `<a class="md-wiki md-blockref" data-wiki="${escapeHtml(target)}" data-note="${escapeHtml(note)}" data-frag="${escapeHtml(frag)}" title="${escapeHtml(target)}">` +
+    `<span class="md-blockref-glyph">${isBlock ? "¶" : "›"}</span>${escapeHtml(label)}</a>`
+  );
 }
 
 /** `![[t]]` / `![[t|a]]` → `[[t|⧉ a]]`: an embed inside embedded content shows as a link. */

@@ -890,7 +890,15 @@ add("agentPanel.", {
 })
 
 # ---------------------------------------------------------------- agent chat
+add("hover.", {
+    "loading": ("Loading…", "加载中…"),
+    "missing": ("The cited block is no longer in the note", "引用的块已不在笔记中"),
+})
+
 add("chat.", {
+    "thisNote": ("this note", "本笔记"),
+    "citationsMaterialized": ("Wrote {n} block ids into the cited notes", "已为引用的 {n} 个块写入 id"),
+    "citationsDropped": ("{n} citations could not be pinned to a block and point to the note instead", "{n} 条引用无法定位到块，改为指向笔记"),
     "skillInstalled": ("Research skill installed (.vemry/skills/research.md — disable it in Settings)",
                        "已安装研究方法论 skill(.vemry/skills/research.md,可在设置中停用)"),
     "planRejectedByUser": ("Rejected by the user", "用户否决"),

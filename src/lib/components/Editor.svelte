@@ -43,6 +43,7 @@
     provenanceSet,
   } from "$lib/editor/provenance";
   import { byteSpansToChar } from "$lib/views/tasks";
+  import { flashRange } from "$lib/editor/flash";
   import "katex/dist/katex.min.css";
 
   let container = $state<HTMLDivElement | null>(null);
@@ -229,7 +230,7 @@
    *  suppressReveal: a programmatic jump is not a user's intent about the selection, so the
    *  landing line stays rendered (without the annotation a task line would burst into a bare
    *  `- [ ]`); any later key or mouse action by the user arms it again. */
-  function revealPos(pos: number): boolean {
+  function revealPos(pos: number, flash = false): boolean {
     if (!view || !docPath?.endsWith(".md") || docPath !== vault.currentPath) return false;
     // The document may have shortened during the outline's debounce window, so it is clamped against a RangeError
     const p = Math.min(pos, view.state.doc.length);
@@ -250,6 +251,11 @@
       annotations: suppressReveal.of(true),
     });
     view.focus();
+    if (flash) {
+      // The landing block (its whole extent) flashes so the eye finds it after the scroll
+      const b = blockAt(view.state, p);
+      flashRange(view, p, b ? extentTo(view.state, b) : view.state.doc.lineAt(p).to);
+    }
     // One more beat: CM clears scrollTarget once it has used it (scrollTarget = null after
     // scrollIntoView inside the measure loop), and after that nobody corrects a transaction
     // that changes the height above the landing point. So the next frame scrolls the same way

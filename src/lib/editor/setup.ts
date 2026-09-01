@@ -18,6 +18,7 @@ import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
 import { embedAt, embedExtension, openEmbedSource, type EmbedHost } from "./embed";
 import { provenanceExtension } from "./provenance";
+import { flashField } from "./flash";
 import { Highlight, highlightTag } from "./markdown-ext";
 import { queryBlockExtension, type QueryHost } from "./queryblock";
 import { runBlockExtension, type RunHost } from "./runblock";
@@ -185,6 +186,7 @@ function buildState(opts: EditorOptions): EditorState {
       livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage }),
       foldExtension(),
       blockSelection(),
+      flashField,
       autocompletion({
         override: [
           refCompletions(host),
