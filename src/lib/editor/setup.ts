@@ -16,6 +16,7 @@ import { livePreview, type AssetLoader, type ImageCopier } from "./livepreview";
 import { tagCompletions, calloutCompletions, atCompletions } from "./completions";
 import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
+import { embedAt, embedExtension, openEmbedSource, type EmbedHost } from "./embed";
 import { Highlight, highlightTag } from "./markdown-ext";
 import { queryBlockExtension, type QueryHost } from "./queryblock";
 import { runBlockExtension, type RunHost } from "./runblock";
@@ -111,6 +112,8 @@ export interface EditorOptions {
   runHost?: RunHost | null;
   /** note mode: the hover block handle and its menu (null: no handle) */
   blockHost?: BlockHost | null;
+  /** note mode: cross-note embeds `![[Note#^id]]` rendered read-only (null: plain links) */
+  embedHost?: EmbedHost | null;
   onSave: (content: string) => void;
   onDirty: () => void;
   /** Cursor (selection head) change notification, shared by the outline panel
@@ -203,7 +206,16 @@ function buildState(opts: EditorOptions): EditorState {
         {
           key: "Mod-Enter",
           run: (v) => {
-            const found = linkAt(v.state, v.state.selection.main.head);
+            const head = v.state.selection.main.head;
+            // an embed line opens its source
+            if (opts.embedHost) {
+              const em = embedAt(v.state, head);
+              if (em) {
+                void openEmbedSource(opts.embedHost, em.inner);
+                return true;
+              }
+            }
+            const found = linkAt(v.state, head);
             if (!found) return false;
             if (found.flavor === "wiki") {
               host.follow(found.hit.target);
@@ -221,6 +233,7 @@ function buildState(opts: EditorOptions): EditorState {
     if (opts.queryHost) mode.push(queryBlockExtension(opts.queryHost));
     if (opts.runHost) mode.push(runBlockExtension(opts.runHost));
     if (opts.blockHost) mode.push(blockHandle(opts.blockHost), dragSourceField);
+    if (opts.embedHost) mode.push(embedExtension(opts.embedHost));
   } else {
     if (opts.language) mode.push(opts.language);
     mode.push(codeFont, syntaxHighlighting(codeHighlight));

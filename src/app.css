@@ -870,6 +870,92 @@ button:focus-visible,
   caret-color: transparent;
 }
 
+/* ---- Cross-note embeds (embed.ts): a block widget with a header row and a rendered
+   body sharing the .md-body contract; a chip inside a line ---- */
+.cm-embed {
+  margin: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-panel) 60%, transparent);
+  overflow: hidden;
+}
+.cm-embed-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+.cm-embed-head:hover {
+  background: var(--bg-hover);
+}
+.cm-embed-title {
+  font-weight: 600;
+  color: var(--accent);
+}
+.cm-embed-sep {
+  color: var(--fg-faint);
+}
+.cm-embed-open,
+.cm-embed-edit {
+  margin-left: auto;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  color: var(--fg-faint);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+}
+.cm-embed-edit {
+  margin-left: 0;
+}
+.cm-embed-open:hover,
+.cm-embed-edit:hover {
+  color: var(--accent);
+}
+.cm-embed-body {
+  padding: 6px 12px;
+  white-space: normal;
+  font-family: var(--font-ui);
+  cursor: default;
+}
+.cm-embed-body .md-h1 {
+  font-size: 1.25em;
+}
+.cm-embed-body .md-h2 {
+  font-size: 1.15em;
+}
+.cm-embed-body .md-h3 {
+  font-size: 1.05em;
+}
+.cm-embed-note {
+  padding: 6px 12px;
+  font-size: var(--fs-xs);
+  color: var(--fg-faint);
+}
+.cm-embed-missing,
+.cm-embed-recursive {
+  border-style: dashed;
+}
+.cm-embed-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--accent);
+  font-size: 0.9em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cm-embed-chip-missing {
+  color: var(--fg-faint);
+  text-decoration: line-through;
+}
+
 /* ---- Completion sections and details (the reference stages, the @ picker, the slash menu) ---- */
 .cm-tooltip-autocomplete .cm-completionSection {
   font-size: var(--fs-xs);

@@ -24,7 +24,8 @@ export interface WikilinkHost extends RefHost {
 
 /** The one wikilink grammar. livepreview.ts hides brackets with the same
  *  regex — two copies would let clickable and hidden ranges drift apart. */
-export const LINK_RE = /\[\[([^\[\]\n]+)\]\]/g;
+export const WIKI_RE_SOURCE = String.raw`\[\[([^\[\]\n]+)\]\]`;
+export const LINK_RE = new RegExp(WIKI_RE_SOURCE, "g");
 
 /** The target as written, alias stripped, fragment kept: `Note#Heading`, `Note#^id`, `#^id`. */
 export function targetOf(inner: string): string {

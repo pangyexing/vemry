@@ -49,7 +49,7 @@ export function inCode(state: EditorState, pos: number): boolean {
 const TAG_RE = /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
 // The character class mirrors Rust's block-id rule (blockid.rs::is_valid_block_id): a badge must never claim an id the parser rejects
 const ANCHOR_RE = /[ \t]\^([A-Za-z0-9-]+)$/gm;
-const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|tiff?)$/i;
+export const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|tiff?)$/i;
 // CALLOUT_RE lives in blocks.ts (the block model, fold.ts and this renderer share it)
 
 const hideDeco = Decoration.replace({});
@@ -759,7 +759,9 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
       // The embed form's replace range includes the leading "!", so the reveal check has to cover it or the cursor cannot reach it from the left
       const embed = doc.sliceString(start - 1, start) === "!";
       if (revealedEl(embed ? start - 1 : start, end) || isCode(start)) continue;
-      // ![[img.png]] / ![[img.png|300]] embed an image (a non-image ![[…]] keeps the link styling)
+      // ![[img.png]] / ![[img.png|300]] embed an image; a non-image ![[…]] belongs to
+      // embed.ts (a block widget or a chip) — this scan neither hides its brackets nor
+      // draws › / ¶ for it, so the two decorators never overlap
       if (embed) {
         const parts = m[1].split("|");
         const target = parts[0].split("#")[0].trim();
@@ -773,8 +775,8 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
               widget: new ImageWidget(target, target, width, opts.loadAsset, opts.copyImage),
             }),
           });
-          continue;
         }
+        continue;
       }
       // The supports:[[…]] prefix is the marker of an evidence's supporting relation and
       // renders as a citation badge (the badge's range lies outside [start,end], so it

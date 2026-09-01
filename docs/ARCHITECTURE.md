@@ -195,7 +195,14 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   livepreview, table, queryblock and frontmatter all share it; a second copy would
   drift. `linkat.ts` holds the three rules for "which link is at this point or
   cursor": wiki before md, not inside code, skip `![[embed]]` — shared by ⌘↩ and
-  the editor's context menu.
+  the editor's context menu. `embed.ts` renders a non-image `![[Note#^id]]` as a
+  read-only projection of its source (a block widget alone on a line, a chip
+  inside one): a StateField (a block-level replace may not come from a view
+  plugin) resolves every target through `resolve_ref` with a per-index-version
+  cache, and `renderNoteMarkdown` in `markdown.ts` folds nested embeds into ⧉
+  links so depth is one by construction; an embed of the note itself shows a
+  marker, and heights are remembered per target so a widget mounts at its last
+  size instead of pushing the scroll position around.
 - `components/`: the activity bar and the three-column layout (both side panels
   collapse, resize and swap sides as a unit, with UI state in localStorage; the
   right side's two panels stay mounted and switch by CSS, so changing tab loses

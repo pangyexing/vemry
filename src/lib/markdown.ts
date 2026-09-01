@@ -242,6 +242,24 @@ export function renderAssistantMarkdownBlocks(
   return renderBlockList(text, (line) => renderInline(line, cite), state);
 }
 
+/** A note's Markdown as the editor's embed widget shows it: the chat renderer's
+ *  block and inline rules with plain links (no citation numbering), and nested
+ *  `![[…]]` folded into ⧉ wikilinks — so an embed is one level deep by
+ *  construction and can never loop. Same escaping contract as the chat: every
+ *  character is escaped first, only tags generated here are emitted. */
+export function renderNoteMarkdown(text: string): string {
+  const plainLink = (url: string, title: string): string => {
+    const label = plainLabel(title) || domainOf(url);
+    return `<a class="md-link" data-url="${escapeHtml(url)}" title="${escapeHtml(url)}">${escapeHtml(label)}</a>`;
+  };
+  return renderBlocks(text, (line) => renderInline(foldNestedEmbeds(line), plainLink));
+}
+
+/** `![[t]]` / `![[t|a]]` → `[[t|⧉ a]]`: an embed inside embedded content shows as a link. */
+function foldNestedEmbeds(line: string): string {
+  return line.replace(/!\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_, target: string, alias?: string) => `[[${target}|⧉ ${alias ?? target}]]`);
+}
+
 // ---- merging a pure-source item into the previous one (chat only: the reading projection emits no md-cite and never triggers it) ----
 
 const CITE_CHIP = /<a class="md-cite"[^>]*>[^<]*<\/a>/g;

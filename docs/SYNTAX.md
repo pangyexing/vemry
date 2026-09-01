@@ -56,6 +56,9 @@ top; the body is untouched.
 | `[[#Section]]` / `[[#^blockId]]` | empty target = this note |
 | `![[image.png]]` | embed an image inline |
 | `![[image.png\|300]]` | embed at a given width in px |
+| `![[Note]]` | embed a whole note (its body, read-only) |
+| `![[Note#Section]]` | embed a section |
+| `![[Note#^blockId]]` | embed one block (a list item brings its sub-items) |
 
 Parsing (`scan_inline`): `[[…]]` does not span lines, must be non-empty, and is not
 parsed inside inline code spans.
@@ -67,6 +70,16 @@ or an entry in `aliases`, **case-insensitively**, with the shortest path winning
 **Fallback**: renders as the literal text `[[Target]]` — readable, but not a link.
 **This is the weakest fallback in the dialect**: the semantics (link graph,
 backlinks) are lost in other tools, though no text is.
+
+**Embeds** (`![[…]]` with a non-image target) show the target's current text
+inside the editor — a live, read-only projection, nothing copied into the file.
+Alone on its line the embed is a block with a header that jumps to the source;
+inside a line it is a chip. An embed expands exactly one level: `![[…]]` inside
+embedded content shows as a ⧉ link, so an embed can never loop, and an embed of
+the note itself (or of the section it sits in) shows a marker. A target that
+does not resolve keeps the literal text and shows "not found". The agent sees
+the literal `![[…]]` of the note it reads, never the embedded content (see
+"Privacy markers" for why that matters). Fallback: the literal text.
 
 ## Tags
 

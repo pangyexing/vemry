@@ -33,6 +33,8 @@
   import FilePreview from "./FilePreview.svelte";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import { clearImageDims } from "$lib/editor/livepreview";
+  import { clearEmbedCaches, type EmbedHost } from "$lib/editor/embed";
+  import "katex/dist/katex.min.css";
 
   let container = $state<HTMLDivElement | null>(null);
   let view: EditorView | null = null;
@@ -438,6 +440,14 @@
     return promise;
   }
 
+  const embedHost: EmbedHost = {
+    resolve: (target: string) => api.resolveRef(target, docPath ?? undefined),
+    follow: (target: string) => void vault.followLink(target),
+    openUrl: (url: string) => openMdLink(url, false),
+    openBlockAt: (note: string, byteStart: number, content?: string) => void vault.openBlockAt(note, byteStart, content),
+    currentNote: () => docPath,
+  };
+
   const host = {
     isKnown: (t: string) => knownTargets.has(t),
     targets: () => targetList,
@@ -500,6 +510,7 @@
     for (const p of assetUrls.values()) void p.then((u) => u && URL.revokeObjectURL(u));
     assetUrls.clear();
     clearImageDims(); // the size placeholder cache has the same trap: the previous vault's aspect ratio would skew a same-named image in the new one
+    clearEmbedCaches(); // and the embed caches: the same target names another note's block in the new vault
   });
 
   /** An image embed's target → a vault-relative path. With a / it matches the vault-root-relative
@@ -784,6 +795,7 @@
       copyImage,
       tags: () => tagList,
       blockHost: isNote ? blockHost : null,
+      embedHost: isNote ? embedHost : null,
       queryHost: isNote
         ? {
             runQuery: (q: BlockQuery) => api.queryBlocks(q),

@@ -1383,6 +1383,16 @@ add("wikilink.", {
     "mintedNotInserted": ("Block id ^{id} was created but the cursor moved; the link was not inserted", "已创建块 id ^{id}，但光标已移动，未插入链接"),
 })
 
+add("embed.", {
+    "loading": ("Loading…", "加载中…"),
+    "notFound": ("Block not found", "未找到该块"),
+    "noteNotFound": ("Note not found", "未找到该笔记"),
+    "open": ("Open source", "打开来源"),
+    "edit": ("Edit reference", "编辑引用"),
+    "recursive": ("This embed contains itself", "嵌入了自身"),
+    "thisNote": ("this note", "本笔记"),
+})
+
 add("slash.", {
     "section.basic": ("Basic", "基本"),
     "section.blocks": ("Blocks", "块"),
