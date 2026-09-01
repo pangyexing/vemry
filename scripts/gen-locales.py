@@ -1344,6 +1344,12 @@ add("queryBlock.", {
     "noHits": ("No matches", "无匹配"),
 })
 
+add("block.", {
+    "foldedLines": ("{n} lines", "{n} 行"),
+    "fold": ("Fold", "折叠"),
+    "unfold": ("Unfold", "展开"),
+})
+
 add("runBlock.", {
     "run": ("Run", "运行"),
     "running": ("Running…", "运行中…"),

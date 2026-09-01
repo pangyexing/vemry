@@ -17,7 +17,8 @@ import { tagCompletions, calloutCompletions } from "./completions";
 import { Highlight, highlightTag } from "./markdown-ext";
 import { queryBlockExtension, type QueryHost } from "./queryblock";
 import { runBlockExtension, type RunHost } from "./runblock";
-import { blockKeys } from "./blocksel";
+import { blockSelection } from "./blocksel";
+import { foldExtension } from "./fold";
 
 // The font and line height have to be declared in the theme layer: CM's baseTheme
 // injects monospace and a 1.4 line height at .ͼx .cm-scroller (0,2,0), which app.css's
@@ -172,7 +173,8 @@ function buildState(opts: EditorOptions): EditorState {
       markdown({ base: markdownLanguage, extensions: [Highlight] }),
       syntaxHighlighting(mdHighlight),
       livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage }),
-      blockKeys(),
+      foldExtension(),
+      blockSelection(),
       autocompletion({
         override: [wikilink.completions, tagCompletions(opts.tags ?? (() => [])), calloutCompletions],
         icons: false,

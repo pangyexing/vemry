@@ -169,7 +169,17 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   the same test the live preview's element-level reveal uses) a single click still
   edits, and code blocks, image embeds and drag-selection do not trigger it.
   `completions.ts` provides the `#` tag and `[!` callout completion sources.
-  `reveal.ts` is **the one definition of reveal** — inline and line-level
+  `blocks.ts` is the editor's block model, derived live from the Lezer tree
+  (paragraph, heading, list item with nested items as children, quote or
+  callout, fence, table, rule — an own range and a subtree each); `blockops.ts`
+  the transforms over it (turn into, move with one seam rule, indent, duplicate,
+  delete, copy), each one change and one undo step; `blocksel.ts` the block
+  selection mode (Esc selects the block at the cursor; the mode's own field
+  tints the run and collapses CodeMirror's selection to the head with
+  suppressReveal, so tables and query blocks stay rendered) plus the text-mode
+  block keys; `fold.ts` heading and callout folding (a hover chevron, a
+  "n lines" chip, `[!type]-` folded on open; fold state lives in the editor
+  state only). `reveal.ts` is **the one definition of reveal** — inline and line-level
   constructs only accept a bare cursor (drag-selection stays rendered), block-level
   ones also open when `selectionTouches` intersects a range selection, and an armed
   gate keeps a newly opened document and a programmatic jump (the `suppressReveal`

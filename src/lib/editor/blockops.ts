@@ -19,6 +19,7 @@ import {
   blockAt as blockAtLazy,
   blockContentStart,
   chunkOf,
+  extentTo,
   nextSibling,
   prevSibling,
   subtreeTo,
@@ -306,9 +307,9 @@ export function moveBlocks(state: EditorState, run: EditorBlock[], dir: -1 | 1):
   const doc = state.doc;
   // E = the earlier piece, L = the later one; after the move L comes first
   const eStart = dir < 0 ? neighbor.from : first.from;
-  const eEnd = dir < 0 ? subtreeTo(neighbor) : subtreeTo(last);
+  const eEnd = dir < 0 ? extentTo(state, neighbor) : extentTo(state, last);
   const lStart = dir < 0 ? first.from : neighbor.from;
-  const lEnd = dir < 0 ? subtreeTo(last) : subtreeTo(neighbor);
+  const lEnd = dir < 0 ? extentTo(state, last) : extentTo(state, neighbor);
   const eFirst = dir < 0 ? neighbor.kind : first.kind;
   const eLast = kindOfLastDescendant(dir < 0 ? neighbor : last);
   const lFirst = dir < 0 ? first.kind : neighbor.kind;
@@ -335,7 +336,7 @@ export function moveBlocks(state: EditorState, run: EditorBlock[], dir: -1 | 1):
   // keep the cursor on the moved run
   const head = state.selection.main.head;
   const runStart = first.from;
-  const runEnd = subtreeTo(last);
+  const runEnd = extentTo(state, last);
   const newRunStart = dir < 0 ? eStart + lead.length : eStart + lead.length + lText.length + mid.length;
   const anchor = head >= runStart && head <= runEnd ? newRunStart + (head - runStart) : head;
   return {
@@ -443,7 +444,7 @@ export function duplicateBlocks(state: EditorState, run: EditorBlock[]): Transac
   const sorted = [...run].sort((a, b) => a.from - b.from);
   const first = sorted[0];
   const last = sorted[sorted.length - 1];
-  const sub = subtreeTo(last);
+  const sub = extentTo(state, last);
   const text = state.doc.sliceString(first.from, sub);
   const sep = seamSeparator(kindOfLastDescendant(last), first.kind);
   const insert = "\n" + sep + text;
@@ -474,7 +475,7 @@ export function deleteBlocks(state: EditorState, run: EditorBlock[]): Transactio
 export function copyBlocksText(state: EditorState, run: EditorBlock[]): string {
   if (!run.length) return "";
   const sorted = [...run].sort((a, b) => a.from - b.from);
-  const text = state.doc.sliceString(sorted[0].from, subtreeTo(sorted[sorted.length - 1]));
+  const text = state.doc.sliceString(sorted[0].from, extentTo(state, sorted[sorted.length - 1]));
   return reindent(text, -(sorted[0].indentCols ?? 0)).replace(/\n+$/, "") + "\n";
 }
 

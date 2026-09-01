@@ -846,6 +846,81 @@ button:focus-visible,
 .cm-lp-co-private {
   --co-color: var(--accent);
 }
+
+/* ---- Block selection mode (blocksel.ts): the selected run's lines are tinted and
+   carry a left bar; the caret and the text-selection layer are hidden while the mode
+   is on, since the block is the selection ---- */
+.cm-editor .cm-scroller .cm-blocksel {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.cm-editor .cm-scroller .cm-blocksel-first {
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+}
+.cm-editor .cm-scroller .cm-blocksel-last {
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+}
+.cm-editor.cm-blocksel-active .cm-scroller .cm-cursorLayer,
+.cm-editor.cm-blocksel-active .cm-scroller .cm-selectionLayer {
+  display: none;
+}
+.cm-editor.cm-blocksel-active .cm-content {
+  caret-color: transparent;
+}
+
+/* ---- Folding (fold.ts): a chevron at the start of a foldable line, shown on hover
+   (always while folded), and the "n lines" chip standing in for a folded range ---- */
+.cm-fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0 2px 0 -20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-faint);
+  cursor: pointer;
+  opacity: 0;
+  vertical-align: middle;
+  transition: opacity 0.12s;
+}
+.cm-fold-toggle svg {
+  width: 14px;
+  height: 14px;
+  transform: rotate(90deg);
+  transition: transform 0.12s;
+}
+.cm-fold-toggle.cm-fold-folded svg {
+  transform: none;
+}
+.cm-editor .cm-scroller .cm-foldable:hover .cm-fold-toggle,
+.cm-fold-toggle.cm-fold-folded {
+  opacity: 1;
+}
+.cm-fold-toggle:hover {
+  color: var(--accent);
+}
+.cm-fold-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 8px;
+  font-size: 0.8em;
+  line-height: 1.5;
+  color: var(--fg-faint);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+}
+.cm-fold-chip:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 /* ---- The body typography of the assistant's Markdown bubbles (the class-name contract
    markdown.ts's renderAssistantMarkdown* produces). Attaching .md-body gives the whole
    set: content injected with {@html} would otherwise have to be written out with

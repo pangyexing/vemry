@@ -5,6 +5,7 @@
   import { EditorView } from "@codemirror/view";
   import type { EditorState } from "@codemirror/state";
   import { createEditor, resetDoc, languageFor } from "$lib/editor/setup";
+  import { foldOnLoad } from "$lib/editor/fold";
   import { privateRangeAt, selectionTouchesPrivate } from "$lib/editor/privateblock";
   import { queryRefresh } from "$lib/editor/queryblock";
   import { suppressReveal } from "$lib/editor/reveal";
@@ -222,6 +223,8 @@
     // blocks rebuild within that same transaction; on a timeout (a very large note) it falls
     // back to the old late rendering.
     ensureSyntaxTree(view.state, Math.min(p + 5000, view.state.doc.length), 100);
+    // A landing point inside a folded section needs no unfolding here: CodeMirror's
+    // fold field unfolds any fold the selection head enters
     view.dispatch({
       selection: { anchor: p },
       effects: EditorView.scrollIntoView(p, { y: "start", yMargin: REVEAL_TOP_MARGIN }),
@@ -683,6 +686,8 @@
       } else {
         view = createEditor(opts);
       }
+      // `[!type]-` callouts start folded (a restored state keeps its own folds)
+      if (isNote) foldOnLoad(view);
     } finally {
       loadingDoc = false;
     }

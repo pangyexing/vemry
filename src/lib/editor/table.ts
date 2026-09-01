@@ -12,7 +12,7 @@
 // an absolute position and can be mapped across document changes; each transaction
 // only recomputes the dirty regions (the edited range, the old and new selections,
 // newly parsed areas) rather than rescanning the document.
-import { syntaxTree } from "@codemirror/language";
+import { foldEffect, foldedRanges, syntaxTree, unfoldEffect } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { type EditorState, StateField, type Transaction } from "@codemirror/state";
 import { selectionTouches } from "./reveal";
@@ -219,6 +219,9 @@ function computeRegion(state: EditorState, region: Region): ReturnType<Decoratio
     to: region.to,
     enter(node) {
       if (node.name !== "Table") return;
+      // inside a fold the placeholder already replaces the lines; a second block
+      // replace over the same range is not allowed
+      if (insideFold(state, node.from, node.to)) return false;
       const deco = buildTable(state, node.from, node.to);
       if (deco) decos.push(deco);
       return false;
@@ -231,6 +234,24 @@ function tableDecos(state: EditorState): DecorationSet {
   return Decoration.set(computeRegion(state, { from: 0, to: state.doc.length }), true);
 }
 
+/** Whether [from, to] lies within a folded range (shared with queryblock.ts). */
+export function insideFold(state: EditorState, from: number, to: number): boolean {
+  let inside = false;
+  foldedRanges(state).between(from, to, (f, t) => {
+    if (f < from && t >= to) inside = true;
+  });
+  return inside;
+}
+
+/** The fold/unfold ranges a transaction carries (they change what may be rendered there). */
+export function foldRangesOf(tr: Transaction): Region[] {
+  const out: Region[] = [];
+  for (const e of tr.effects) {
+    if (e.is(foldEffect) || e.is(unfoldEffect)) out.push({ from: e.value.from, to: e.value.to });
+  }
+  return out;
+}
+
 /** The dirty regions this transaction has to recompute (in new document coordinates, already widened to whole lines, sorted and merged) */
 function dirtyRegions(tr: Transaction, treeChanged: boolean): Region[] {
   const doc = tr.state.doc;
@@ -238,6 +259,7 @@ function dirtyRegions(tr: Transaction, treeChanged: boolean): Region[] {
   if (tr.docChanged) {
     tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => raw.push({ from: fromB, to: toB }));
   }
+  raw.push(...foldRangesOf(tr));
   // Both the old and the new selection count as dirty: a table expands and collapses as the selection moves in and out
   for (const r of tr.startState.selection.ranges) {
     raw.push({ from: tr.changes.mapPos(r.from, -1), to: tr.changes.mapPos(r.to, 1) });
@@ -270,7 +292,8 @@ export const tableField = StateField.define<DecorationSet>({
     // transactions that do not change the document, and this is what renders a Table
     // that only appears once the first parse finishes
     const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
-    if (!tr.docChanged && !tr.selection && !treeChanged) return value;
+    const foldChanged = foldRangesOf(tr).length > 0;
+    if (!tr.docChanged && !tr.selection && !treeChanged && !foldChanged) return value;
 
     let decos = tr.docChanged ? value.map(tr.changes) : value;
     for (const region of dirtyRegions(tr, treeChanged)) {

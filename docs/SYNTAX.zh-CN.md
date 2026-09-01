@@ -132,7 +132,7 @@ author:: Ursula K. Le Guin
 > supports:[[睡眠研究#^c1]], [[另一笔记#^c9]]
 ```
 
-- `[!类型]` 大小写不敏感、类型内不能有空白；后面可跟 `+`/`-` 折叠记号
+- `[!类型]` 大小写不敏感、类型内不能有空白；后面可跟 `+`/`-` 折叠记号——编辑器里 `-` 打开时默认折叠，`+` 或不写则展开；折叠状态永远不写回文件
 - 识别的类型：`note`/`info`/`todo`/`abstract`/`summary`/`tldr`、`tip`/`hint`/`important`、`success`/`check`/`done`、`question`/`help`/`faq`、`warning`/`caution`/`attention`、`danger`/`error`/`failure`/`fail`/`missing`/`bug`、`example`、`quote`/`cite`，以及 vemry 自有的 `claim`/`evidence`
 - `claim`、`evidence`、`private` 进块索引成为独立块类型，其余按段落索引
 - `private` 是块级隐私区（见[隐私标记](#隐私标记)）：必须从行首（缩进之后）开始，所以在列表项里要另起一个续行；不带 `>` 的懒续行不在块内

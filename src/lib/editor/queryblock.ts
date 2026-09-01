@@ -17,6 +17,7 @@ import { type EditorState, type Extension, StateEffect, StateField } from "@code
 import type { BlockHit, BlockQuery } from "$lib/api";
 import { fencedCodeText } from "./fenced";
 import { selectionTouches } from "./reveal";
+import { foldRangesOf, insideFold } from "./table";
 import { localDate } from "$lib/views/tasks";
 
 export interface QueryHost {
@@ -198,6 +199,7 @@ function build(state: EditorState, version: number, host: QueryHost): BuildResul
       // deliberately different from the empty-only rule of inline elements, see
       // reveal.ts)
       if (selectionTouches(state, from, to)) return false;
+      if (insideFold(state, from, to)) return false;
       const src = fencedCodeText(doc, node.node);
       decos.push(Decoration.replace({ widget: new QueryWidget(src, version, host), block: true }).range(from, to));
       return false;
@@ -219,11 +221,12 @@ export function queryBlockExtension(host: QueryHost): Extension {
         }
       }
       const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
-      if (!tr.docChanged && !tr.selection && !treeChanged && !refreshed) return value;
+      const foldChanged = foldRangesOf(tr).length > 0;
+      if (!tr.docChanged && !tr.selection && !treeChanged && !refreshed && !foldChanged) return value;
       // The common case — a note with no query block: neither a cursor move nor an
       // index refresh needs a full rescan (a document or syntax-tree change still does,
       // since a fence may have just been typed)
-      if (!value.hasFence && !tr.docChanged && !treeChanged) {
+      if (!value.hasFence && !tr.docChanged && !treeChanged && !foldChanged) {
         return version === value.version ? value : { ...value, version };
       }
       return { version, ...build(tr.state, version, host) };

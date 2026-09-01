@@ -177,7 +177,8 @@ parenthesis. Nothing is swallowed and no list is broken.
 ```
 
 - `[!type]` is case-insensitive and may not contain whitespace; a `+`/`-` fold
-  marker may follow
+  marker may follow — in the editor `-` opens the callout folded and `+` or no
+  marker opens it expanded; the fold state is never written to the file
 - Recognised types: `note`/`info`/`todo`/`abstract`/`summary`/`tldr`,
   `tip`/`hint`/`important`, `success`/`check`/`done`, `question`/`help`/`faq`,
   `warning`/`caution`/`attention`,

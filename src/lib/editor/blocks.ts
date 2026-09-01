@@ -12,7 +12,7 @@
 // (`block_id_plan`) with the block's content offset. Own range vs subtree: a
 // list item's own range is its marker line and continuation lines before its
 // first nested list; its subtree is everything down to its last descendant.
-import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, foldedRanges, syntaxTree } from "@codemirror/language";
 import type { EditorState, Text } from "@codemirror/state";
 
 // @lezer/common is not a direct dependency (pnpm's isolated layout cannot import it);
@@ -207,6 +207,19 @@ export function subtreeRange(b: EditorBlock): { from: number; to: number } {
   return { from: b.from, to: subtreeTo(b) };
 }
 
+/** The block's extent as a unit: its subtree — or, for a folded heading, the
+ *  whole folded section, so that what is shown as one thing moves, copies and
+ *  deletes as one thing. */
+export function extentTo(state: EditorState, b: EditorBlock): number {
+  let to = subtreeTo(b);
+  if (b.kind === "heading") {
+    foldedRanges(state).between(b.to, b.to, (from, end) => {
+      if (from === b.to) to = Math.max(to, end);
+    });
+  }
+  return to;
+}
+
 /** The innermost block containing pos (a nested item beats its parent); with
  *  `top`, the document-level block. Null on a blank line between blocks or
  *  inside the frontmatter. */
@@ -276,7 +289,7 @@ export function ancestorAtDepth(b: EditorBlock, depth: number): EditorBlock {
 export function chunkOf(state: EditorState, b: EditorBlock): { from: number; to: number } {
   const doc = state.doc;
   let from = b.from;
-  let to = subtreeTo(b);
+  let to = extentTo(state, b);
   let line = doc.lineAt(to);
   // the empty last line after a terminating newline is the file's end, not a separator
   const lastContent = doc.lines - (doc.lines > 1 && doc.line(doc.lines).text === "" ? 1 : 0);
