@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "agent-window",
+  "description": "IPC for the detached AI chat window (label `agent`). It runs our own frontend bundle, so it gets the same core IPC as the main webview; browser-* windows (remote content) still match no capability at all.",
+  "webviews": ["agent"],
+  "permissions": ["core:default", "dialog:default"]
+}

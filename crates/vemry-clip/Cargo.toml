@@ -1,0 +1,19 @@
+[package]
+name = "vemry-clip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The web page → vault note clipping pipeline: Readability body extraction, html→markdown, frontmatter composition. Pure logic, zero Tauri/UI dependencies."
+
+[dependencies]
+vemry-core = { path = "../vemry-core" }
+dom_smoothie = "0.17"
+htmd = "0.5"
+# The math sentinel handler reads the node text of an htmd Element — kept on the
+# same version as htmd
+markup5ever_rcdom = "0.38"
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+url = "2"

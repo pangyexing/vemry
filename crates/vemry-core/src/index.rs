@@ -1,0 +1,334 @@
+//! Block-level vault index: note table, block table, link graph (with derived
+//! backlinks), name-resolution table and tag table. Every projection — UI
+//! views, scripts, agent tools — reads from here.
+
+use serde::Serialize;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::time::UNIX_EPOCH;
+
+use crate::block::Block;
+use crate::note::{Note, NoteId};
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NoteSummary {
+    pub id: NoteId,
+    pub title: String,
+    pub aliases: Vec<String>,
+    pub tags: Vec<String>,
+    pub mtime_ms: u64,
+    /// Frontmatter `created` as written (free-form date string).
+    pub created: Option<String>,
+    /// Frontmatter `private: true` — the note belongs to the privacy zone.
+    pub private: bool,
+    /// Frontmatter `source:` as written — the external origin URL of a
+    /// clipped note. Indexed so a clip reverse lookup never re-reads disk.
+    pub source: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphNode {
+    pub id: NoteId,
+    pub title: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphEdge {
+    pub source: NoteId,
+    pub target: NoteId,
+    /// Number of resolved links source -> target (parallel links aggregate).
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphData {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ResolvedLink {
+    Resolved { target: NoteId },
+    Unresolved { target: String },
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LinkEdge {
+    /// The note part of the wikilink target as written, e.g. "folder/Name".
+    pub raw_target: String,
+    pub resolved: Option<NoteId>,
+    pub from_block: String,
+}
+
+struct NoteEntry {
+    summary: NoteSummary,
+    blocks: Vec<Block>,
+    edges: Vec<LinkEdge>,
+}
+
+#[derive(Default)]
+pub struct BlockIndex {
+    notes: HashMap<NoteId, NoteEntry>,
+    /// lowercase stem/alias -> candidate notes
+    by_name: HashMap<String, BTreeSet<NoteId>>,
+    /// lowercase full path without ".md" -> note
+    by_path: HashMap<String, NoteId>,
+    tags: HashMap<String, HashSet<NoteId>>,
+    backlinks: HashMap<NoteId, HashSet<NoteId>>,
+}
+
+impl BlockIndex {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn upsert(&mut self, note: &Note) {
+        self.remove_contributions(&note.id);
+        let mtime_ms = note
+            .mtime
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut tags: Vec<String> = note.frontmatter.tags.clone();
+        for b in &note.blocks {
+            for t in &b.tags {
+                if !tags.contains(t) {
+                    tags.push(t.clone());
+                }
+            }
+        }
+        let edges: Vec<LinkEdge> = note
+            .blocks
+            .iter()
+            .flat_map(|b| {
+                b.links.iter().map(|l| LinkEdge {
+                    raw_target: l.target.clone(),
+                    resolved: None,
+                    from_block: b.local_id.clone(),
+                })
+            })
+            .collect();
+        let summary = NoteSummary {
+            id: note.id.clone(),
+            title: note.effective_title().to_string(),
+            aliases: note.frontmatter.aliases.clone(),
+            tags: tags.clone(),
+            mtime_ms,
+            created: note.frontmatter.created.clone(),
+            private: note.frontmatter.private,
+            source: note
+                .frontmatter
+                .extra
+                .get("source")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        };
+
+        self.by_name.entry(note.id.stem().to_lowercase()).or_default().insert(note.id.clone());
+        for alias in &note.frontmatter.aliases {
+            self.by_name.entry(alias.to_lowercase()).or_default().insert(note.id.clone());
+        }
+        let path_key = note.id.as_str().strip_suffix(".md").unwrap_or(note.id.as_str()).to_lowercase();
+        self.by_path.insert(path_key, note.id.clone());
+        for t in &tags {
+            self.tags.entry(t.clone()).or_default().insert(note.id.clone());
+        }
+
+        self.notes.insert(
+            note.id.clone(),
+            NoteEntry { summary, blocks: note.blocks.clone(), edges },
+        );
+        self.resolve_all();
+    }
+
+    pub fn remove(&mut self, id: &NoteId) {
+        self.remove_contributions(id);
+        self.resolve_all();
+    }
+
+    fn remove_contributions(&mut self, id: &NoteId) {
+        if self.notes.remove(id).is_none() {
+            return;
+        }
+        self.by_name.retain(|_, set| {
+            set.remove(id);
+            !set.is_empty()
+        });
+        self.by_path.retain(|_, v| v != id);
+        self.tags.retain(|_, set| {
+            set.remove(id);
+            !set.is_empty()
+        });
+    }
+
+    /// Re-resolve every edge and rebuild backlinks. O(total links); fine for
+    /// vaults in the tens of thousands of notes, and trivially correct after
+    /// renames/creations that can flip unresolved links anywhere in the vault.
+    fn resolve_all(&mut self) {
+        let mut backlinks: HashMap<NoteId, HashSet<NoteId>> = HashMap::new();
+        let sources: Vec<NoteId> = self.notes.keys().cloned().collect();
+        for source in sources {
+            let raw_targets: Vec<String> = self.notes[&source].edges.iter().map(|e| e.raw_target.clone()).collect();
+            let resolved: Vec<Option<NoteId>> =
+                raw_targets.iter().map(|t| self.resolve_target(t, &source)).collect();
+            for (i, r) in resolved.iter().enumerate() {
+                if let Some(t) = r {
+                    if *t != source {
+                        backlinks.entry(t.clone()).or_default().insert(source.clone());
+                    }
+                }
+                if let Some(entry) = self.notes.get_mut(&source) {
+                    entry.edges[i].resolved = r.clone();
+                }
+            }
+        }
+        self.backlinks = backlinks;
+    }
+
+    /// Wikilink resolution: empty target = self; path targets match
+    /// by full relative path; bare names match stem/alias (case-insensitive),
+    /// shortest path wins on ambiguity.
+    pub fn resolve_target(&self, target: &str, from: &NoteId) -> Option<NoteId> {
+        if target.is_empty() {
+            return Some(from.clone());
+        }
+        let lower = target.to_lowercase();
+        let lower = lower.strip_suffix(".md").unwrap_or(&lower);
+        if target.contains('/') {
+            return self.by_path.get(lower).cloned();
+        }
+        if let Some(hit) = self.by_path.get(lower) {
+            return Some(hit.clone());
+        }
+        let candidates = self.by_name.get(lower)?;
+        candidates
+            .iter()
+            .min_by_key(|id| (id.as_str().len(), id.as_str().to_string()))
+            .cloned()
+    }
+
+    pub fn note_count(&self) -> usize {
+        self.notes.len()
+    }
+
+    pub fn contains(&self, id: &NoteId) -> bool {
+        self.notes.contains_key(id)
+    }
+
+    /// Resolve a possibly-miscased note id to its canonical indexed id. A
+    /// case-insensitive filesystem (APFS/NTFS) opens `Diary.md` for `diary.md`,
+    /// but the note table is keyed by the exact `NoteId`; privacy checks must
+    /// see through that folding. Returns the exact id when it is itself
+    /// indexed, otherwise the case-insensitive `by_path` match, if any.
+    /// Only `.md` paths fold: `by_path` keys strip the extension, so a plain
+    /// file like `data.csv` must not resolve to a note named `data.csv.md`.
+    pub fn canonical_id(&self, id: &NoteId) -> Option<NoteId> {
+        if self.notes.contains_key(id) {
+            return Some(id.clone());
+        }
+        let key = id.as_str().strip_suffix(".md")?.to_lowercase();
+        self.by_path.get(&key).cloned()
+    }
+
+    pub fn summaries(&self) -> Vec<NoteSummary> {
+        let mut v: Vec<NoteSummary> = self.notes.values().map(|e| e.summary.clone()).collect();
+        v.sort_by(|a, b| a.id.cmp(&b.id));
+        v
+    }
+
+    /// (id, frontmatter `source:`) for notes that carry one — the zero-copy
+    /// entry point for clip reverse lookup: no cloning every summary just to
+    /// resolve a handful of URLs.
+    pub fn sources(&self) -> impl Iterator<Item = (&NoteId, &str)> {
+        self.notes
+            .values()
+            .filter_map(|e| e.summary.source.as_deref().map(|s| (&e.summary.id, s)))
+    }
+
+    /// Whole-vault link graph: every note is a node; resolved note-to-note
+    /// links aggregate into weighted edges (self-links and unresolved targets
+    /// skipped). Sorted for deterministic output.
+    pub fn graph(&self) -> GraphData {
+        let mut nodes: Vec<GraphNode> = self
+            .notes
+            .values()
+            .map(|e| GraphNode { id: e.summary.id.clone(), title: e.summary.title.clone() })
+            .collect();
+        nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut counts: HashMap<(&NoteId, &NoteId), u32> = HashMap::new();
+        for (source, entry) in &self.notes {
+            for edge in &entry.edges {
+                if let Some(target) = &edge.resolved {
+                    if target != source {
+                        *counts.entry((source, target)).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        let mut edges: Vec<GraphEdge> = counts
+            .into_iter()
+            .map(|((source, target), count)| GraphEdge { source: source.clone(), target: target.clone(), count })
+            .collect();
+        edges.sort_by(|a, b| a.source.cmp(&b.source).then_with(|| a.target.cmp(&b.target)));
+        GraphData { nodes, edges }
+    }
+
+    pub fn summary(&self, id: &NoteId) -> Option<NoteSummary> {
+        self.notes.get(id).map(|e| e.summary.clone())
+    }
+
+    pub fn blocks(&self, id: &NoteId) -> Option<&[Block]> {
+        self.notes.get(id).map(|e| e.blocks.as_slice())
+    }
+
+    pub fn links_out(&self, id: &NoteId) -> Vec<(LinkEdge, ResolvedLink)> {
+        match self.notes.get(id) {
+            Some(e) => e
+                .edges
+                .iter()
+                .map(|edge| {
+                    let r = match &edge.resolved {
+                        Some(t) => ResolvedLink::Resolved { target: t.clone() },
+                        None => ResolvedLink::Unresolved { target: edge.raw_target.clone() },
+                    };
+                    (edge.clone(), r)
+                })
+                .collect(),
+            None => vec![],
+        }
+    }
+
+    pub fn backlinks_of(&self, id: &NoteId) -> Vec<NoteId> {
+        let mut v: Vec<NoteId> = self.backlinks.get(id).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+        v.sort();
+        v
+    }
+
+    pub fn tags(&self) -> Vec<(String, usize)> {
+        let mut v: Vec<(String, usize)> = self.tags.iter().map(|(t, s)| (t.clone(), s.len())).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        v
+    }
+
+    /// All note stems + aliases, for wikilink completion.
+    pub fn link_targets(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .notes
+            .values()
+            .flat_map(|e| {
+                std::iter::once(e.summary.id.stem().to_string()).chain(e.summary.aliases.iter().cloned())
+            })
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&NoteId, &NoteSummary, &[Block])> {
+        self.notes.iter().map(|(id, e)| (id, &e.summary, e.blocks.as_slice()))
+    }
+
+    pub fn mtime_of(&self, id: &NoteId) -> Option<u64> {
+        self.notes.get(id).map(|e| e.summary.mtime_ms)
+    }
+}

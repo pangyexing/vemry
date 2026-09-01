@@ -1,0 +1,16 @@
+/target
+/node_modules
+/dist
+*.local
+.DS_Store
+*.key
+.env
+
+# The shipped demo vault is content, but the app writes state into it as soon as
+# anyone opens it from a clone — that state is not ours to commit.
+examples/*/.vemry/config.json
+examples/*/.vemry/script-log.jsonl
+examples/*/.vemry/scripts.json
+# The model-history sidecar beside a session log: it carries the whole system
+# prompt and is regenerated on demand. The .jsonl audit log is the shipped artifact.
+examples/*/.vemry/sessions/*.history.json

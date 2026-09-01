@@ -1,0 +1,2209 @@
+//! The agent loop: stream a completion, execute tool calls (write tools
+//! through the permission gate), feed results back, repeat until the model
+//! stops. Fully testable via a mock ChatTransport.
+//!
+//! Since v0.7 the loop carries three layers of resilience: a transient network
+//! error (429/5xx, a broken stream) backs off and retries while nothing has been
+//! produced yet; a context overflow first runs first-level compaction (old tool
+//! results turned into handles, see compact.rs) and then a second-level LLM
+//! summary, and retries rather than writing the session off; a stalled stream is
+//! caught by the transport layer's idle timeout. usage is reported per iteration,
+//! driving the frontend gauge and proactive compaction.
+
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use vemry_core::Vault;
+
+use crate::client::ChatTransport;
+use crate::compact;
+use crate::context::{resolve_context_refs, ContextRef};
+use crate::permission::{PermissionDecision, PermissionGate, PlanDecision, PlanGate, PlanRequest, WriteRequest};
+use crate::context::{inflate_images, scrub_private_refs, strip_images};
+use crate::prompt::{build_system_prompt, compose_user_content, PageContext, TurnContext};
+use crate::provider::ProviderConfig;
+use crate::session::SessionLog;
+use crate::tools::{execute_read_tool, execute_write, is_write_tool, prepare_write, propose_plan_def, tool_defs, ToolError};
+use crate::types::{
+    ChatMessage, ChatRequest, ToolCall, ToolCallAccumulator, ToolDef, Usage, WebSearchResult,
+    WebSearchStatus,
+};
+use crate::{AgentError, Result};
+
+/// The backstop limit (in characters) on one tool result entering the model
+/// history. Each tool has its own finer-grained truncation (read_note's 30k and
+/// so on); this is the last gate against something slipping through — events and
+/// the audit log have had a preview all along, and only the copy that reaches the
+/// model must not be unbounded.
+const TOOL_RESULT_MAX_CHARS: usize = 32_000;
+/// With this many iterations of budget left, a wrap-up hint is appended to the
+/// tool result, turning a hard MaxIterations failure into an ending that reaches a
+/// conclusion.
+const WRAP_UP_REMAINING: usize = 5;
+/// How many times a transient error (429/5xx, a broken stream) is retried with
+/// backoff at most (counted across one conversation turn).
+const MAX_TRANSIENT_RETRIES: u32 = 2;
+
+/// Events streamed to the UI (and mirrored into the session log).
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentEvent {
+    /// A new user turn begins: `turn` is the turn id, and the same id is stamped
+    /// on both the audit user line and the model history's envelope message — the
+    /// UI timeline tags its user item with it, and forking locates by it.
+    /// Not emitted on a regenerate (Retry): that produces no new turn.
+    TurnStarted { turn: String },
+    TextDelta { text: String },
+    Thinking { text: String },
+    ToolCallStarted { id: String, name: String, args: String },
+    ToolCallFinished { id: String, name: String, ok: bool, output: String },
+    PermissionRequest { request: WriteRequest },
+    /// propose_plan is suspended awaiting the user's decision (the plan gate, of
+    /// the same family as the permission gate).
+    PlanRequest { request: PlanRequest },
+    /// A server-side web search is running (the Responses API's web_search).
+    WebSearching,
+    /// The queries the server actually ran (visibility into the process; DeepSeek
+    /// returns no structured results).
+    WebSearchQueries { queries: Vec<String> },
+    /// The citation sources of a search — the UI renders them as cards that open
+    /// in the built-in browser.
+    WebSearchResults { results: Vec<WebSearchResult> },
+    /// Per-iteration token counts (only when the provider reports them; they drive
+    /// the frontend gauge and the compaction trigger).
+    Usage {
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        cache_hit_tokens: u64,
+        iteration: usize,
+        max_iterations: usize,
+    },
+    /// The context was compacted (1 = old tool results turned into handles, 2 = an
+    /// LLM summary).
+    Compacted { level: u8 },
+    /// truncated: the model's output was cut off by the length limit
+    /// (finish_reason=length), and the UI can offer "continue".
+    TurnFinished { truncated: bool },
+    Error { message: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WritePolicy {
+    Ask,
+    Allow,
+}
+
+#[derive(Clone)]
+pub struct RunnerConfig {
+    pub max_iterations: usize,
+    pub write_policy: WritePolicy,
+    /// Inject the server-side web_search tool into the request (only a provider on
+    /// the Responses shape knows it; the search executes read-only on the provider
+    /// side, writes nothing to disk and does not pass through the PermissionGate,
+    /// with visibility guaranteed by the WebSearch* events and the session log).
+    /// Fixed per session — switching it mid-session changes the tool table and
+    /// throws the prefix cache away.
+    pub web_search: bool,
+    /// The session-level system prompt snapshot (the glue layer takes it on the
+    /// session's first turn and passes it in; the whole session reuses it — a
+    /// stable prefix is the precondition for a KV-cache hit). With None it is
+    /// rebuilt every turn (the test path).
+    pub system_prompt: Option<String>,
+    /// The cross-turn carrier of "allow writes for this session":
+    /// AllowSession/AllowAlways set it, and the glue layer clears it with the
+    /// session's lifetime. With None the authorisation lives only for the current
+    /// turn (the test path).
+    pub session_allow: Option<Arc<AtomicBool>>,
+    /// The soft context limit (in prompt tokens): crossing it triggers first-level
+    /// compaction, and crossing 1.25× of it when the first level can squeeze out no
+    /// more room triggers the second-level summary.
+    pub context_soft_limit: u64,
+    /// The thinking level (none/low/high/max). None = send no effort field at all —
+    /// the glue layer only sets Some when the endpoint is DeepSeek (the same gating
+    /// as stream_options); it is a per-turn request parameter, stays out of the
+    /// prompt prefix, and changing it mid-session does not upend the provider's
+    /// cache.
+    pub reasoning_effort: Option<String>,
+    /// Plan confirmation (the propose_plan tool plus a blocking gate). Like
+    /// web_search, an addition to the tool table frozen per session — switching it
+    /// mid-session changes the tool table and throws the prefix cache away; the
+    /// glue layer pins it when it snapshots the session, so a settings change takes
+    /// effect from the next session. Default false, so tests are undisturbed.
+    pub plan_confirm: bool,
+}
+
+impl Default for RunnerConfig {
+    fn default() -> Self {
+        RunnerConfig {
+            max_iterations: 25,
+            write_policy: WritePolicy::Ask,
+            web_search: false,
+            system_prompt: None,
+            session_allow: None,
+            context_soft_limit: 80_000,
+            reasoning_effort: None,
+            plan_confirm: false,
+        }
+    }
+}
+
+pub struct AgentRunner {
+    pub transport: Arc<dyn ChatTransport>,
+    pub gate: Arc<dyn PermissionGate>,
+    pub plan_gate: Arc<dyn PlanGate>,
+    pub vault: Arc<Mutex<Option<Vault>>>,
+}
+
+/// The two-field effort mapping on the Chat Completions line: the official Chat
+/// Completions shape has no "none" level, so turning thinking off goes through
+/// thinking:{"type":"disabled"} while every other level goes through the
+/// top-level reasoning_effort. The Responses line restores the same ChatRequest
+/// into reasoning:{effort} in responses_request_body (covering all four levels);
+/// both mappings have their own unit test.
+fn effort_fields(effort: Option<&str>) -> (Option<String>, Option<Value>) {
+    match effort {
+        None => (None, None),
+        Some("none") => (None, Some(json!({ "type": "disabled" }))),
+        Some(e) => (Some(e.to_string()), None),
+    }
+}
+
+/// The level for a summary request: a summary needs no deep thinking — high/max
+/// are pushed down to "low" to save time and money; a user who turned thinking off
+/// (none) does not get it turned back on; and unconfigured (Zhipu) stays unsent.
+fn summary_effort(config_effort: Option<&str>) -> Option<&'static str> {
+    match config_effort {
+        None => None,
+        Some("none") => Some("none"),
+        Some(_) => Some("low"),
+    }
+}
+
+/// Transient errors that are safe to resend: rate limiting, a server error, a
+/// broken stream. Retried only while the stream has produced no output at all, so
+/// the user never sees content repeated.
+fn is_retryable(e: &AgentError) -> bool {
+    match e {
+        AgentError::Http(_) => true,
+        AgentError::Status { code, .. } => *code == 429 || *code >= 500,
+        _ => false,
+    }
+}
+
+/// The overflow verdict looks at the structured status code first: 429/5xx are
+/// rate limiting and server errors, and even when the message says "too many
+/// tokens" (the standard wording of TPM rate limiting) they must take the backoff
+/// retry — never trigger the irreversible compaction or summary. Only HTTP 400/413
+/// and an in-stream Responses error (`Api`, which has no status code to look at)
+/// judge an overflow by the message text.
+fn is_overflow_error(e: &AgentError) -> bool {
+    match e {
+        AgentError::Status { code, .. } => {
+            matches!(code, 400 | 413) && compact::is_context_overflow(&e.to_string())
+        }
+        AgentError::Api(m) => compact::is_context_overflow(m),
+        _ => false,
+    }
+}
+
+fn local_date_string() -> String {
+    use chrono::Datelike;
+    let now = chrono::Local::now();
+    let wd = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        [now.weekday().num_days_from_monday() as usize];
+    format!("{} {}", now.format("%Y-%m-%d"), wd)
+}
+
+impl AgentRunner {
+    /// Run one user turn. Mutates `history` in place (assistant/tool messages
+    /// are appended). `cancel` is checked between chunks and tool calls.
+    /// `page` is the web context the user handed over with the message and `refs`
+    /// are the notes, folders and attachments picked with @: the audit log records
+    /// only the structured url/title and kind/path (never the content), and the
+    /// complete envelope goes only into the model history (compose_user_message is
+    /// the one place it is assembled). refs are resolved inside this function's
+    /// vault lock — privacy can change between pick and send, and only the privacy
+    /// gate at resolution time counts (the same spirit as execute_write's TOCTOU
+    /// re-check).
+    /// A None `user_message` means a regenerate: no user message is appended (refs
+    /// are replayed with the original envelope already in the history and are not
+    /// resolved again) and generation continues straight from the end of the
+    /// existing history.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run(
+        &self,
+        provider: &ProviderConfig,
+        config: &RunnerConfig,
+        history: &mut Vec<ChatMessage>,
+        user_message: Option<String>,
+        page: Option<PageContext>,
+        refs: Vec<ContextRef>,
+        current_note: Option<String>,
+        on_event: &(dyn Fn(AgentEvent) + Send + Sync),
+        cancel: &AtomicBool,
+        log: &SessionLog,
+    ) -> Result<()> {
+        // The image fill-in cache: one image is read from disk once across this
+        // turn's iterations; the resolution at the head of the turn warms this
+        // turn's new attachments into it in passing (see resolve_context_refs)
+        let mut image_cache: HashMap<String, std::result::Result<String, String>> = HashMap::new();
+        let (system, open_note, resolved_refs, refs_filtered) = {
+            let guard = self.vault.lock().unwrap();
+            let vault = guard.as_ref().ok_or_else(|| AgentError::Api("no vault open".into()))?;
+            let system = match &config.system_prompt {
+                Some(s) => s.clone(),
+                None => build_system_prompt(vault, config.plan_confirm),
+            };
+            // The current note is privacy-filtered here (a private note does not even
+            // give the model the fact that it is open)
+            let open_note = current_note.filter(|n| !vault.is_private_rel(n, false));
+            // @ references resolve under the same lock at the same instant (a
+            // regenerate resolves nothing: refs only apply to a new user message)
+            let (resolved, filtered) = if user_message.is_some() && !refs.is_empty() {
+                resolve_context_refs(vault, &refs, &mut image_cache)
+            } else {
+                (vec![], 0)
+            };
+            // Scrub the history itself at the head of the turn: a reference envelope
+            // marked private between turns is cleaned here, so what write_history
+            // persists at the end of the turn is already the clean version (which is
+            // what makes a retry replay immune)
+            scrub_private_refs(vault, history);
+            (system, open_note, resolved, filtered)
+        };
+        if let Some(user_message) = user_message {
+            // The turn id: the same one in all three places — the audit user line,
+            // the model history envelope and the TurnStarted event — and forking
+            // locates by it (counting user ordinals falls out of step once
+            // compaction synthesises a message or an edit is re-sent)
+            let turn_id = chrono::Utc::now().format("%Y%m%d-%H%M%S%.3f").to_string();
+            let mut line = json!({ "content": &user_message, "turn": &turn_id });
+            if let Some(p) = &page {
+                line["page"] = json!({ "url": &p.url, "title": &p.title });
+            }
+            // Only kind/path is recorded; the content stays in the model history,
+            // the same policy as a web page. A reference filtered out by the privacy
+            // gate has not even its path recorded — the ledger lives inside the
+            // vault, and recording it would write a private path back to disk (the
+            // count is the privacy line below)
+            let audit_refs: Vec<_> = resolved_refs
+                .iter()
+                .filter(|r| !r.private)
+                .map(|r| {
+                    let mut o = json!({ "kind": r.kind.as_str(), "path": &r.path });
+                    // A selection records the line range alone; the selected text
+                    // stays out of the audit log like every other reference body
+                    if let Some((a, b)) = r.lines {
+                        o["lines"] = json!([a, b]);
+                    }
+                    o
+                })
+                .collect();
+            if !audit_refs.is_empty() {
+                line["refs"] = json!(audit_refs);
+            }
+            log.append("user", line);
+            if refs_filtered > 0 {
+                // The same privacy audit as the read tools: the count only, never which one was filtered
+                log.append("privacy", json!({ "tool": "context_ref", "filtered": refs_filtered }));
+            }
+            on_event(AgentEvent::TurnStarted { turn: turn_id.clone() });
+            let ctx = TurnContext { date: local_date_string(), current_note: open_note };
+            let mut envelope =
+                ChatMessage::user_content(compose_user_content(user_message, page.as_ref(), &resolved_refs, &ctx));
+            envelope.turn = Some(turn_id);
+            // A successfully injected reference keeps its kind/path metadata (never
+            // its content): scrub_private_refs locates the envelope by it afterwards
+            // — fence_attr is lossy, and a pathological file name cannot be resolved
+            // back to its real path
+            envelope.context_refs = resolved_refs
+                .iter()
+                .filter(|r| r.body.is_ok())
+                .map(|r| crate::types::StoredRef { kind: r.kind.as_str().into(), path: r.path.clone() })
+                .collect();
+            history.push(envelope);
+        }
+
+        let mut session_allow_writes = config.write_policy == WritePolicy::Allow
+            || config.session_allow.as_ref().is_some_and(|f| f.load(Ordering::Relaxed));
+        // stream_options is sent to DeepSeek only (a Zhipu stream carries usage by
+        // default, and an unknown parameter risks a 400); the Responses shape
+        // ignores the field.
+        let stream_options = provider.is_deepseek().then(|| json!({ "include_usage": true }));
+        // Thinking level → the two Chat Completions fields (the gating is already in
+        // the glue layer: config is None unless the endpoint is DeepSeek)
+        let (reasoning_effort, thinking) = effort_fields(config.reasoning_effort.as_deref());
+
+        let mut iteration = 0usize;
+        let mut transient_retries = 0u32;
+        let mut overflow_l1_done = false;
+        let mut did_summary = false;
+        let mut last_prompt_tokens: Option<u64> = None;
+
+        while iteration < config.max_iterations {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(AgentError::Cancelled);
+            }
+            // Proactive compaction: once the previous iteration's prompt tokens
+            // cross the soft limit, make room now rather than waiting for the
+            // provider's 4xx. The summary is only used when the first level can
+            // squeeze out nothing more and the hard line has been crossed.
+            if let Some(pt) = last_prompt_tokens.take() {
+                if pt > config.context_soft_limit {
+                    let saved = compact::compact_tool_results(history);
+                    if saved > 0 {
+                        on_event(AgentEvent::Compacted { level: 1 });
+                        log.append("compact", json!({ "level": 1, "saved_chars": saved }));
+                    } else if pt > config.context_soft_limit + config.context_soft_limit / 4
+                        && !did_summary
+                    {
+                        did_summary = true;
+                        self.do_summary(provider, config, history, cancel, on_event, log).await?;
+                    }
+                }
+            }
+
+            let mut messages = Vec::with_capacity(history.len() + 1);
+            messages.push(ChatMessage::system(system.clone()));
+            messages.extend(history.iter().cloned());
+            // Image references are filled into data URLs here and only here: what
+            // changes is the request copy, while the history still holds paths; the
+            // lock covers only the byte reading and never spans an await.
+            // Before filling in, run the text-reference scrub over the copy — a
+            // reference marked private mid-turn disappears on the next iteration
+            // (re-gated at the same instant under the same lock as the images, since
+            // the pass at the head of the turn cannot cover a change made while
+            // running)
+            {
+                let guard = self.vault.lock().unwrap();
+                if let Some(vault) = guard.as_ref() {
+                    scrub_private_refs(vault, &mut messages);
+                    inflate_images(vault, &mut messages, &mut image_cache);
+                }
+            }
+            let mut tools = tool_defs();
+            if config.plan_confirm {
+                // Same shape as web_search: an addition to the tool table frozen per
+                // session, so the prefix stays stable
+                tools.push(propose_plan_def());
+            }
+            if config.web_search {
+                // Kept parameterless: measured live (2026-08-19, params_probe) that
+                // the OpenAI-style filters.allowed_domains is accepted by DeepSeek
+                // and then completely ignored — adding parameters would only fake a
+                // control surface that does not exist
+                tools.push(ToolDef::Raw(json!({ "type": "web_search" })));
+            }
+            let request = ChatRequest {
+                model: provider.model.clone(),
+                messages,
+                tools: Some(tools),
+                stream: true,
+                stream_options: stream_options.clone(),
+                reasoning_effort: reasoning_effort.clone(),
+                thinking: thinking.clone(),
+            };
+
+            let mut text = String::new();
+            let mut reasoning = String::new();
+            let mut acc = ToolCallAccumulator::default();
+            let mut finish_reason: Option<String> = None;
+            let mut extra_items: Vec<Value> = Vec::new();
+            let mut usage_val: Option<Usage> = None;
+            let mut produced = false;
+            let stream_result = {
+                let text_ref = &mut text;
+                let reasoning_ref = &mut reasoning;
+                let acc_ref = &mut acc;
+                let finish_ref = &mut finish_reason;
+                let extra_ref = &mut extra_items;
+                let usage_ref = &mut usage_val;
+                let produced_ref = &mut produced;
+                let mut on_chunk = move |chunk: crate::types::StreamChunk| -> bool {
+                    if cancel.load(Ordering::Relaxed) {
+                        return false;
+                    }
+                    if chunk.web_search_status == Some(WebSearchStatus::Searching) {
+                        on_event(AgentEvent::WebSearching);
+                    }
+                    if let Some(queries) = &chunk.web_search_queries {
+                        log.append("web_search", json!({ "queries": queries }));
+                        on_event(AgentEvent::WebSearchQueries { queries: queries.clone() });
+                    }
+                    if let Some(results) = &chunk.web_search {
+                        if !results.is_empty() {
+                            // The session log lives in the vault: only title/link is
+                            // recorded, never the full snippet
+                            let links: Vec<Value> = results
+                                .iter()
+                                .map(|r| json!({ "title": &r.title, "url": &r.url }))
+                                .collect();
+                            log.append("web_search", json!({ "count": results.len(), "links": links }));
+                            on_event(AgentEvent::WebSearchResults { results: results.clone() });
+                        }
+                    }
+                    if let Some(items) = &chunk.raw_items {
+                        extra_ref.extend(items.iter().cloned());
+                    }
+                    if let Some(u) = &chunk.usage {
+                        *usage_ref = Some(u.clone());
+                    }
+                    for choice in &chunk.choices {
+                        if let Some(t) = &choice.delta.reasoning_content {
+                            if !t.is_empty() {
+                                *produced_ref = true;
+                                reasoning_ref.push_str(t);
+                                on_event(AgentEvent::Thinking { text: t.clone() });
+                            }
+                        }
+                        if let Some(t) = &choice.delta.content {
+                            if !t.is_empty() {
+                                *produced_ref = true;
+                                text_ref.push_str(t);
+                                on_event(AgentEvent::TextDelta { text: t.clone() });
+                            }
+                        }
+                        if let Some(tcs) = &choice.delta.tool_calls {
+                            *produced_ref = true;
+                            for tc in tcs {
+                                acc_ref.push(tc);
+                            }
+                        }
+                        if let Some(fr) = &choice.finish_reason {
+                            *finish_ref = Some(fr.clone());
+                        }
+                    }
+                    true
+                };
+                self.transport.stream_chat(provider, &request, cancel, &mut on_chunk).await
+            };
+            match stream_result {
+                Ok(()) => {}
+                // Context overflow: first-level compaction (handles) → second-level
+                // summary → retry; only when both levels are exhausted and it still
+                // overflows is the error handed to the user. A session no longer
+                // gets written off just for growing long.
+                // Status covers HTTP 400/413 and Api covers a Responses in-stream
+                // error event; a 429/5xx lands in the transient retry arm below even
+                // when its wording looks like an overflow.
+                Err(e) if is_overflow_error(&e) => {
+                    if !overflow_l1_done {
+                        overflow_l1_done = true;
+                        let saved = compact::compact_tool_results(history);
+                        if saved > 0 {
+                            on_event(AgentEvent::Compacted { level: 1 });
+                            log.append("compact", json!({ "level": 1, "saved_chars": saved }));
+                            continue;
+                        }
+                    }
+                    if !did_summary {
+                        did_summary = true;
+                        self.do_summary(provider, config, history, cancel, on_event, log).await?;
+                        continue;
+                    }
+                    return Err(e);
+                }
+                // A transient error with nothing produced yet: back off and retry
+                // without interrupting the turn
+                Err(e) if !produced && transient_retries < MAX_TRANSIENT_RETRIES && is_retryable(&e) => {
+                    transient_retries += 1;
+                    tokio::time::sleep(Duration::from_secs(1 << transient_retries)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+            if cancel.load(Ordering::Relaxed) {
+                return Err(AgentError::Cancelled);
+            }
+
+            let tool_calls = acc.finish();
+            if let Some(u) = &usage_val {
+                last_prompt_tokens = Some(u.prompt_tokens);
+                on_event(AgentEvent::Usage {
+                    prompt_tokens: u.prompt_tokens,
+                    completion_tokens: u.completion_tokens,
+                    cache_hit_tokens: u.cache_hit_tokens(),
+                    iteration: iteration + 1,
+                    max_iterations: config.max_iterations,
+                });
+            }
+            let assistant_text = if text.is_empty() { None } else { Some(text.clone()) };
+            log.append("assistant", json!({ "content": &text, "tool_calls": tool_calls.len() }));
+            let mut assistant = ChatMessage::assistant(
+                assistant_text,
+                if tool_calls.is_empty() { None } else { Some(tool_calls.clone()) },
+            );
+            // The DeepSeek thinking contract: reasoning_content must go back with the history
+            assistant.reasoning_content = (!reasoning.is_empty()).then(|| reasoning.clone());
+            assistant.extra_items = extra_items;
+            history.push(assistant);
+
+            if tool_calls.is_empty() {
+                on_event(AgentEvent::TurnFinished {
+                    truncated: finish_reason.as_deref() == Some("length"),
+                });
+                return Ok(());
+            }
+
+            let mut plan_rejected = false;
+            for (idx, call) in tool_calls.iter().enumerate() {
+                if cancel.load(Ordering::Relaxed) {
+                    // A cancellation must still fill in the remaining tool_results:
+                    // with an assistant(tool_calls) left dangling, write_history
+                    // persists it and the server refuses the next request with a
+                    // 400, writing the session off
+                    for c in &tool_calls[idx..] {
+                        history.push(ChatMessage::tool_result(
+                            c.id.clone(),
+                            "(cancelled: the user stopped this turn; this tool call was not executed)",
+                        ));
+                    }
+                    return Err(AgentError::Cancelled);
+                }
+                // The plan was rejected: the rest of this batch does not execute and
+                // gets placeholder results (the same filling-in as a cancellation, so
+                // the history structure never dangles), and the model revises the
+                // plan on its next iteration
+                if plan_rejected {
+                    history.push(ChatMessage::tool_result(
+                        call.id.clone(),
+                        "(skipped: the plan was rejected; this tool call was not executed — revise the plan first)",
+                    ));
+                    continue;
+                }
+                let result = self
+                    .execute_tool(call, &mut session_allow_writes, &config.session_allow, &mut plan_rejected, on_event, log)
+                    .await;
+                let (ok, output) = match result {
+                    Ok(o) => (true, o),
+                    Err(e) => (false, format!("ERROR: {e}")),
+                };
+                // The backstop gate: the copy entering the model history needs a limit too (events and the audit log have always had a preview)
+                let output = crate::truncate_chars(
+                    &output,
+                    TOOL_RESULT_MAX_CHARS,
+                    &format!("[... tool result truncated at {TOOL_RESULT_MAX_CHARS} chars]"),
+                )
+                .unwrap_or(output);
+                on_event(AgentEvent::ToolCallFinished {
+                    id: call.id.clone(),
+                    name: call.function.name.clone(),
+                    ok,
+                    output: preview(&output, 500),
+                });
+                log.append(
+                    "tool_result",
+                    json!({ "tool": &call.function.name, "ok": ok, "output": preview(&output, 2000) }),
+                );
+                history.push(ChatMessage::tool_result(call.id.clone(), output));
+            }
+            // The budget wrap-up hint: appended to the last tool result (producing no
+            // message of its own and not polluting the conversation structure), which
+            // turns "run out and hard-fail" into an ending that reaches a conclusion
+            let used = iteration + 1;
+            if config.max_iterations.saturating_sub(used) == WRAP_UP_REMAINING {
+                if let Some(last) = history.last_mut() {
+                    if last.role == "tool" {
+                        if let Some(c) = &mut last.content {
+                            c.push_str(&format!(
+                                "\n\n[note: iteration budget {used}/{} nearly exhausted — wrap up and answer with your current findings]",
+                                config.max_iterations
+                            ));
+                        }
+                    }
+                }
+            }
+            iteration += 1;
+            // loop continues: model sees tool results
+        }
+        Err(AgentError::MaxIterations(config.max_iterations))
+    }
+
+    /// Second-level compaction: have the model summarise the old conversation into
+    /// something it can keep working from, and replace the whole history before the
+    /// current turn. A failed summary call (because it overflowed too, say)
+    /// degrades to a hard truncation — whatever happens, the session must be able
+    /// to continue. The one exception is the user cancelling: that is not a "failed
+    /// summary", and the history is kept untouched to the character — otherwise one
+    /// press of stop would permanently hard-truncate the earlier context and
+    /// persist that at the end of the turn.
+    async fn do_summary(
+        &self,
+        provider: &ProviderConfig,
+        config: &RunnerConfig,
+        history: &mut Vec<ChatMessage>,
+        cancel: &AtomicBool,
+        on_event: &(dyn Fn(AgentEvent) + Send + Sync),
+        log: &SessionLog,
+    ) -> Result<()> {
+        match self.summarize(provider, config, history, cancel).await {
+            Ok(s) if !s.trim().is_empty() => compact::apply_summary(history, s.trim()),
+            Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
+            _ => compact::hard_truncate(history),
+        }
+        on_event(AgentEvent::Compacted { level: 2 });
+        log.append("compact", json!({ "level": 2 }));
+        Ok(())
+    }
+
+    async fn summarize(
+        &self,
+        provider: &ProviderConfig,
+        config: &RunnerConfig,
+        history: &[ChatMessage],
+        cancel: &AtomicBool,
+    ) -> Result<String> {
+        let mut messages = history.to_vec();
+        // A summary is an outbound request too, so it passes the reference re-gate
+        // first — a summary is text the model synthesised, it cannot be traced and
+        // scrubbed afterwards, and once private content is baked into it there is no
+        // getting it out
+        {
+            let guard = self.vault.lock().unwrap();
+            if let Some(vault) = guard.as_ref() {
+                scrub_private_refs(vault, &mut messages);
+            }
+        }
+        strip_images(&mut messages); // a summary does not resend images
+        messages.push(ChatMessage::user(compact::SUMMARY_INSTRUCTION));
+        // The summary is pinned to low (summary_effort): it needs no deep thinking, which saves time and money
+        let (reasoning_effort, thinking) =
+            effort_fields(summary_effort(config.reasoning_effort.as_deref()));
+        let request = ChatRequest {
+            model: provider.model.clone(),
+            messages,
+            tools: None,
+            stream: true,
+            stream_options: None,
+            reasoning_effort,
+            thinking,
+        };
+        let mut text = String::new();
+        {
+            let text_ref = &mut text;
+            let mut on_chunk = move |chunk: crate::types::StreamChunk| -> bool {
+                for choice in &chunk.choices {
+                    if let Some(t) = &choice.delta.content {
+                        text_ref.push_str(t);
+                    }
+                }
+                true
+            };
+            self.transport.stream_chat(provider, &request, cancel, &mut on_chunk).await?;
+        }
+        Ok(text)
+    }
+
+    async fn execute_tool(
+        &self,
+        call: &ToolCall,
+        session_allow_writes: &mut bool,
+        session_flag: &Option<Arc<AtomicBool>>,
+        plan_rejected: &mut bool,
+        on_event: &(dyn Fn(AgentEvent) + Send + Sync),
+        log: &SessionLog,
+    ) -> std::result::Result<String, String> {
+        let name = call.function.name.as_str();
+        // Started comes before argument parsing: a parse failure needs a matching
+        // Started too, because the frontend does not take a headless Finished
+        on_event(AgentEvent::ToolCallStarted {
+            id: call.id.clone(),
+            name: name.to_string(),
+            args: preview(&call.function.arguments, 300),
+        });
+        let args: Value = match serde_json::from_str(&call.function.arguments) {
+            Ok(v) => v,
+            Err(e) => {
+                log.append(
+                    "tool_call",
+                    json!({ "tool": name, "args_raw": preview(&call.function.arguments, 2000) }),
+                );
+                return Err(format!("invalid tool arguments JSON: {e}"));
+            }
+        };
+        log.append("tool_call", json!({ "tool": name, "args": &args }));
+
+        if name == "propose_plan" {
+            return self.execute_plan(call, &args, plan_rejected, on_event, log).await;
+        }
+
+        if !is_write_tool(name) {
+            let guard = self.vault.lock().unwrap();
+            let vault = guard.as_ref().ok_or("no vault open")?;
+            // Privacy audit records that filtering happened and how much —
+            // never which paths (that would leak into the vault-synced log).
+            return match execute_read_tool(vault, name, &args) {
+                Ok(outcome) => {
+                    if outcome.filtered > 0 {
+                        log.append("privacy", json!({ "tool": name, "filtered": outcome.filtered }));
+                    }
+                    Ok(outcome.text)
+                }
+                Err(ToolError::Privacy(msg)) => {
+                    log.append("privacy", json!({ "tool": name, "filtered": 1 }));
+                    Err(msg)
+                }
+                Err(ToolError::Other(msg)) => Err(msg),
+            };
+        }
+
+        // Write tool: prepare (no disk mutation), gate, then execute.
+        let write_req = {
+            let guard = self.vault.lock().unwrap();
+            let vault = guard.as_ref().ok_or("no vault open")?;
+            match prepare_write(vault, call.id.clone(), name, &args) {
+                Ok(req) => req,
+                Err(ToolError::Privacy(msg)) => {
+                    // No diff, no permission dialog, no write_prepared line:
+                    // the model just sees an error tool result.
+                    log.append("privacy", json!({ "tool": name, "filtered": 1 }));
+                    return Err(msg);
+                }
+                Err(ToolError::Other(msg)) => return Err(msg),
+            }
+        };
+        let mut prepared = json!({ "tool": name, "path": &write_req.path, "diff": &write_req.diff });
+        // Only a move inserts the "to" key: the line shape of the old kinds does not drift (an append-only ledger gets new keys on new lines)
+        if let Some(to) = &write_req.to_path {
+            prepared["to"] = json!(to);
+        }
+        log.append("write_prepared", prepared);
+
+        let decision = if *session_allow_writes {
+            PermissionDecision::Allow
+        } else {
+            on_event(AgentEvent::PermissionRequest { request: write_req.clone() });
+            self.gate.request(&write_req).await
+        };
+        log.append("permission", json!({ "path": &write_req.path, "decision": decision_label(&decision) }));
+
+        let content_override = match &decision {
+            PermissionDecision::Deny { reason } => {
+                return Err(format!("denied by user: {reason}"));
+            }
+            PermissionDecision::AllowSession | PermissionDecision::AllowAlways => {
+                *session_allow_writes = true;
+                // Effective across turns: the glue layer holds and clears it with the session's lifetime
+                if let Some(f) = session_flag {
+                    f.store(true, Ordering::Relaxed);
+                }
+                None
+            }
+            PermissionDecision::Allow => None,
+            PermissionDecision::AllowEdited { content } => Some(content.clone()),
+        };
+
+        let mut guard = self.vault.lock().unwrap();
+        let vault = guard.as_mut().ok_or("no vault open")?;
+        execute_write(vault, &write_req, content_override.as_deref())
+    }
+
+    /// propose_plan: record the plan line → emit the event → suspend awaiting the
+    /// plan gate → record the plan_decision line → hand the decision back to the
+    /// model as a tool result. A Reject sets `plan_rejected`, and the rest of the
+    /// batch is skipped by the caller.
+    async fn execute_plan(
+        &self,
+        call: &ToolCall,
+        args: &Value,
+        plan_rejected: &mut bool,
+        on_event: &(dyn Fn(AgentEvent) + Send + Sync),
+        log: &SessionLog,
+    ) -> std::result::Result<String, String> {
+        let items: Vec<String> = args
+            .get("items")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if items.len() < 2 || items.len() > 9 {
+            // An error tool result for the model to correct itself with — no card is
+            // raised and no plan line is recorded
+            return Err("plan must have 2-9 non-empty items".into());
+        }
+        log.append("plan", json!({ "id": &call.id, "items": &items }));
+        let request = PlanRequest { id: call.id.clone(), items };
+        on_event(AgentEvent::PlanRequest { request: request.clone() });
+        let decision = self.plan_gate.request(&request).await;
+        match decision {
+            PlanDecision::Approve => {
+                log.append("plan_decision", json!({ "id": &request.id, "decision": "approve" }));
+                Ok("The plan is confirmed; begin. From now on, restate this list at the start of every reply (finished items as '- [x]') before continuing.".into())
+            }
+            PlanDecision::ApproveEdited { items } => {
+                log.append("plan_decision", json!({ "id": &request.id, "decision": "approve_edited", "items": &items }));
+                let list = items.iter().map(|i| format!("- [ ] {i}")).collect::<Vec<_>>().join("\n");
+                Ok(format!(
+                    "The user edited the plan; follow the list below (restate it at the start of every reply from now on, with finished items as '- [x]'):\n{list}"
+                ))
+            }
+            PlanDecision::Reject { reason } => {
+                log.append("plan_decision", json!({ "id": &request.id, "decision": "reject", "reason": &reason }));
+                *plan_rejected = true;
+                Err(format!(
+                    "The user rejected the plan: {reason}. Revise it accordingly and call propose_plan again — run no other tool until a plan is confirmed."
+                ))
+            }
+        }
+    }
+}
+
+fn decision_label(d: &PermissionDecision) -> &'static str {
+    match d {
+        PermissionDecision::Allow => "allow",
+        PermissionDecision::AllowSession => "allow_session",
+        PermissionDecision::AllowAlways => "allow_always",
+        PermissionDecision::AllowEdited { .. } => "allow_edited",
+        PermissionDecision::Deny { .. } => "deny",
+    }
+}
+
+fn preview(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let t: String = s.chars().take(max).collect();
+        format!("{t}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The one not-found wording, from the same constructor production uses.
+    fn not_found(rel: &str) -> String {
+        vemry_core::reject(vemry_core::PathReject::NotFound, rel).to_string()
+    }
+
+
+    use super::*;
+    use crate::permission::{AutoAllow, AutoDeny};
+    use crate::provider::ProviderConfig;
+    use crate::types::{Delta, FunctionDelta, Part, StreamChoice, StreamChunk, ToolCallDelta};
+    use async_trait::async_trait;
+    use std::collections::VecDeque;
+
+    /// Scripted transport: each stream_chat call replays the next chunk list.
+    struct MockTransport {
+        scripts: Mutex<VecDeque<Vec<StreamChunk>>>,
+        pub requests: Mutex<Vec<ChatRequest>>,
+    }
+
+    impl MockTransport {
+        fn new(scripts: Vec<Vec<StreamChunk>>) -> Self {
+            MockTransport { scripts: Mutex::new(scripts.into()), requests: Mutex::new(vec![]) }
+        }
+    }
+
+    #[async_trait]
+    impl ChatTransport for MockTransport {
+        async fn stream_chat(
+            &self,
+            _config: &ProviderConfig,
+            request: &ChatRequest,
+            _cancel: &AtomicBool,
+            on_chunk: &mut (dyn FnMut(StreamChunk) -> bool + Send),
+        ) -> Result<()> {
+            self.requests.lock().unwrap().push(request.clone());
+            let script = self
+                .scripts
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("mock transport: no more scripted responses");
+            for chunk in script {
+                if !on_chunk(chunk) {
+                    break;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Returns the given error for the first N calls and then replays the script
+    /// (for the retry and compaction self-healing paths).
+    struct FailNTransport {
+        remaining: Mutex<u32>,
+        make_err: fn() -> AgentError,
+        inner: MockTransport,
+    }
+
+    #[async_trait]
+    impl ChatTransport for FailNTransport {
+        async fn stream_chat(
+            &self,
+            config: &ProviderConfig,
+            request: &ChatRequest,
+            cancel: &AtomicBool,
+            on_chunk: &mut (dyn FnMut(StreamChunk) -> bool + Send),
+        ) -> Result<()> {
+            {
+                let mut r = self.remaining.lock().unwrap();
+                if *r > 0 {
+                    *r -= 1;
+                    return Err((self.make_err)());
+                }
+            }
+            self.inner.stream_chat(config, request, cancel, on_chunk).await
+        }
+    }
+
+    fn text_chunk(t: &str) -> StreamChunk {
+        StreamChunk {
+            choices: vec![StreamChoice {
+                delta: Delta { content: Some(t.into()), ..Default::default() },
+                finish_reason: None,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn finish_chunk(reason: &str) -> StreamChunk {
+        StreamChunk {
+            choices: vec![StreamChoice { delta: Delta::default(), finish_reason: Some(reason.into()) }],
+            ..Default::default()
+        }
+    }
+
+    fn tool_call_chunks(id: &str, name: &str, args: &str) -> Vec<StreamChunk> {
+        // split args across two deltas to exercise accumulation
+        let mid = args.len() / 2;
+        let mk = |idx: Option<usize>, id: Option<&str>, name: Option<&str>, args: Option<&str>| StreamChunk {
+            choices: vec![StreamChoice {
+                delta: Delta {
+                    tool_calls: Some(vec![ToolCallDelta {
+                        index: idx,
+                        id: id.map(String::from),
+                        function: Some(FunctionDelta {
+                            name: name.map(String::from),
+                            arguments: args.map(String::from),
+                        }),
+                    }]),
+                    ..Default::default()
+                },
+                finish_reason: None,
+            }],
+            ..Default::default()
+        };
+        vec![
+            mk(Some(0), Some(id), Some(name), Some(&args[..mid])),
+            mk(Some(0), None, None, Some(&args[mid..])),
+            finish_chunk("tool_calls"),
+        ]
+    }
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        vault: Arc<Mutex<Option<Vault>>>,
+        log_dir: tempfile::TempDir,
+    }
+
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Hello.md"), "# Hello\n\nworld content\n").unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        Fixture {
+            _dir: dir,
+            vault: Arc::new(Mutex::new(Some(vault))),
+            log_dir: tempfile::tempdir().unwrap(),
+        }
+    }
+
+    fn runner(f: &Fixture, transport: Arc<dyn ChatTransport>, gate: Arc<dyn PermissionGate>) -> AgentRunner {
+        AgentRunner { transport, gate, plan_gate: Arc::new(crate::permission::AutoApprovePlan), vault: f.vault.clone() }
+    }
+
+    async fn run_turn(
+        r: &AgentRunner,
+        f: &Fixture,
+        history: &mut Vec<ChatMessage>,
+        msg: &str,
+    ) -> (Result<()>, Vec<AgentEvent>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let result = r
+            .run(
+                &ProviderConfig::zhipu("test-key".into()),
+                &RunnerConfig::default(),
+                history,
+                Some(msg.to_string()),
+                None,
+                vec![],
+                None,
+                &move |e| ev.lock().unwrap().push(e),
+                &AtomicBool::new(false),
+                &log,
+            )
+            .await;
+        let events = Arc::try_unwrap(events).unwrap().into_inner().unwrap();
+        (result, events)
+    }
+
+    #[tokio::test]
+    async fn plain_text_turn() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![vec![
+            text_chunk("你好"),
+            text_chunk("！"),
+            finish_chunk("stop"),
+        ]]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, events) = run_turn(&r, &f, &mut history, "hi").await;
+        result.unwrap();
+        assert_eq!(history.len(), 2); // user + assistant
+        assert_eq!(history[1].text(), Some("你好！"));
+        assert!(matches!(events.last(), Some(AgentEvent::TurnFinished { truncated: false })));
+        // The user message carries the turn context tail (the date as a time anchor)
+        assert!(history[0].text().unwrap().contains("Today: "));
+        // system prompt is injected but not stored in history
+        let reqs = transport.requests.lock().unwrap();
+        assert_eq!(reqs[0].messages[0].role, "system");
+        assert!(reqs[0].messages[0].text().unwrap().contains("Vault overview"));
+    }
+
+    /// The turn id in all three places: the TurnStarted event, the model history's
+    /// envelope message and the audit user line carry the same id (which is what
+    /// aligns the three layers when forking); a regenerate (user_message=None)
+    /// emits no TurnStarted and adds no new user message — it produces no new turn.
+    #[tokio::test]
+    async fn turn_id_stamped_into_event_history_and_audit() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            vec![text_chunk("答"), finish_chunk("stop")],
+            vec![text_chunk("重答"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig::default(),
+            &mut history,
+            Some("问".into()),
+            None,
+            vec![],
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        let events = Arc::try_unwrap(events).unwrap().into_inner().unwrap();
+        let event_turn = events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::TurnStarted { turn } => Some(turn.clone()),
+                _ => None,
+            })
+            .expect("a new user turn must emit TurnStarted");
+        assert_eq!(history[0].turn.as_deref(), Some(event_turn.as_str()), "the envelope message carries the same id");
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        let user_line = jsonl.lines().find(|l| l.contains(r#""kind":"user""#)).unwrap();
+        assert!(user_line.contains(&format!(r#""turn":"{event_turn}""#)), "the audit line carries the same id: {user_line}");
+
+        // Regenerate: the glue layer cuts the assistant tail off and replays with None
+        history.truncate(1);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig::default(),
+            &mut history,
+            None,
+            None,
+            vec![],
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        let events = Arc::try_unwrap(events).unwrap().into_inner().unwrap();
+        assert!(
+            !events.iter().any(|e| matches!(e, AgentEvent::TurnStarted { .. })),
+            "Retry produces no new turn"
+        );
+        assert_eq!(history[0].turn.as_deref(), Some(event_turn.as_str()), "the original turn id is kept");
+    }
+
+    /// The three promises of an @ reference: the envelope holds the resolved body
+    /// (read inside the privacy gate); the audit user line records kind/path and
+    /// never the body; a private reference is "worded like a miss" and adds a
+    /// privacy audit line.
+    /// Plus the two effort pure functions: the Chat Completions two-field mapping
+    /// (none → thinking disabled) and the summary downgrade (high/max→low, none
+    /// kept, unconfigured unsent).
+    #[test]
+    fn effort_fields_and_summary_effort_mapping() {
+        assert_eq!(effort_fields(None), (None, None));
+        let (re, th) = effort_fields(Some("none"));
+        assert_eq!(re, None);
+        assert_eq!(th, Some(json!({ "type": "disabled" })));
+        let (re, th) = effort_fields(Some("max"));
+        assert_eq!(re.as_deref(), Some("max"));
+        assert_eq!(th, None);
+
+        assert_eq!(summary_effort(None), None);
+        assert_eq!(summary_effort(Some("none")), Some("none"));
+        assert_eq!(summary_effort(Some("high")), Some("low"));
+        assert_eq!(summary_effort(Some("max")), Some("low"));
+    }
+
+    /// The effort setting flows end to end into the request; with nothing configured
+    /// neither field appears (keeping the Zhipu line clean, the same "never send a
+    /// parameter that was not confirmed" as web_search_off_by_default).
+    #[tokio::test]
+    async fn reasoning_effort_flows_into_request() {
+        let f = fixture();
+        for (cfg, want_re, want_th) in [
+            (Some("max"), Some("max".to_string()), None),
+            (Some("none"), None, Some(json!({ "type": "disabled" }))),
+            (None, None, None),
+        ] {
+            let transport = Arc::new(MockTransport::new(vec![vec![text_chunk("ok"), finish_chunk("stop")]]));
+            let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+            let log = SessionLog::create(f.log_dir.path()).unwrap();
+            let mut history = vec![];
+            r.run(
+                &ProviderConfig::zhipu("test-key".into()),
+                &RunnerConfig { reasoning_effort: cfg.map(String::from), ..Default::default() },
+                &mut history,
+                Some("hi".into()),
+                None,
+                vec![],
+                None,
+                &|_e| {},
+                &AtomicBool::new(false),
+                &log,
+            )
+            .await
+            .unwrap();
+            let reqs = transport.requests.lock().unwrap();
+            assert_eq!(reqs[0].reasoning_effort, want_re, "cfg={cfg:?}");
+            assert_eq!(reqs[0].thinking, want_th, "cfg={cfg:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn context_refs_envelope_audit_and_privacy() {
+        let f = fixture();
+        {
+            let mut guard = f.vault.lock().unwrap();
+            let vault = guard.as_mut().unwrap();
+            std::fs::create_dir_all(vault.root().join(".vemry")).unwrap();
+            std::fs::write(vault.root().join(".vemry/privacy"), "secret/\n").unwrap();
+            std::fs::create_dir_all(vault.root().join("secret")).unwrap();
+            std::fs::write(vault.root().join("secret/Plan.md"), "TOPSECRET\n").unwrap();
+            *vault = Vault::open(vault.root()).unwrap();
+        }
+        let transport = Arc::new(MockTransport::new(vec![vec![text_chunk("好"), finish_chunk("stop")]]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig::default(),
+            &mut history,
+            Some("看看这些".into()),
+            None,
+            vec![
+                ContextRef::Note { path: "Hello.md".into() },
+                ContextRef::Note { path: "secret/Plan.md".into() },
+                ContextRef::Selection {
+                    path: "secret/Plan.md".into(),
+                    from_line: 1,
+                    to_line: 1,
+                    text: "TOPSECRET-SEL".into(),
+                },
+                ContextRef::Selection { path: "Hello.md".into(), from_line: 2, to_line: 3, text: "划选正文".into() },
+            ],
+            None,
+            &|_e| {},
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        // The envelope: a public note's body enters the user message; a private reference shows up as "unavailable, worded like a miss"
+        let envelope = history[0].text().unwrap();
+        assert!(envelope.contains("<note-context path=\"Hello.md\">"));
+        assert!(envelope.contains("world content"));
+        assert!(envelope.contains("(attachment secret/Plan.md unavailable: note not found: secret/Plan.md)"));
+        assert!(!envelope.contains("TOPSECRET"), "the body of a selection inside a private note does not enter the envelope either");
+        assert!(envelope.contains("<selection-context path=\"Hello.md\" lines=\"2-3\">"));
+        assert!(envelope.contains("划选正文"));
+        // The request side carries the same envelope (it is what goes to the model)
+        let reqs = transport.requests.lock().unwrap();
+        assert!(reqs[0].messages[1].text().unwrap().contains("world content"));
+        // The audit: the user line records the kind/path of public references only —
+        // a filtered reference has not even its path recorded (the ledger lives in
+        // the vault), and the count is the privacy line's job
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        let user_line = jsonl.lines().find(|l| l.contains(r#""kind":"user""#)).unwrap();
+        assert!(
+            user_line.contains(
+                r#""refs":[{"kind":"note","path":"Hello.md"},{"kind":"selection","lines":[2,3],"path":"Hello.md"}]"#
+            ),
+            "{user_line}"
+        );
+        assert!(!user_line.contains("secret/Plan"), "a filtered reference's path stays out of the audit log: {user_line}");
+        assert!(!user_line.contains("world content"), "the audit log holds no reference body");
+        assert!(!user_line.contains("划选正文") && !user_line.contains("TOPSECRET"), "the audit log holds no selection body");
+        let privacy_line = jsonl.lines().find(|l| l.contains(r#""kind":"privacy""#)).expect("a privacy line");
+        assert!(privacy_line.contains(r#""tool":"context_ref""#));
+        assert!(privacy_line.contains(r#""filtered":2"#), "the private note and the selection inside it count once each: {privacy_line}");
+    }
+
+    #[tokio::test]
+    async fn frozen_system_prompt_is_used_verbatim() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![vec![text_chunk("ok"), finish_chunk("stop")]]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig { system_prompt: Some("FROZEN SNAPSHOT".into()), ..Default::default() },
+            &mut history,
+            Some("hi".into()),
+            None,
+            vec![],
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        let reqs = transport.requests.lock().unwrap();
+        assert_eq!(reqs[0].messages[0].text(), Some("FROZEN SNAPSHOT"));
+    }
+
+    #[tokio::test]
+    async fn finish_length_marks_turn_truncated() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![vec![
+            text_chunk("写到一半"),
+            finish_chunk("length"),
+        ]]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, events) = run_turn(&r, &f, &mut history, "长文").await;
+        result.unwrap();
+        assert!(matches!(events.last(), Some(AgentEvent::TurnFinished { truncated: true })));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transient_error_retries_before_output() {
+        let f = fixture();
+        let transport = Arc::new(FailNTransport {
+            remaining: Mutex::new(2),
+            make_err: || AgentError::Status { code: 429, message: "HTTP 429 Too Many Requests: slow down".into() },
+            inner: MockTransport::new(vec![vec![text_chunk("恢复了"), finish_chunk("stop")]]),
+        });
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "hi").await;
+        result.unwrap();
+        assert_eq!(history[1].text(), Some("恢复了"));
+    }
+
+    /// A 429 whose message says "too many tokens" (the standard wording of TPM rate
+    /// limiting) must still back off and retry — it must not be caught by the
+    /// overflow arm and made to compact irreversibly.
+    #[tokio::test(start_paused = true)]
+    async fn rate_limit_with_token_wording_backs_off_instead_of_compacting() {
+        let f = fixture();
+        let transport = Arc::new(FailNTransport {
+            remaining: Mutex::new(1),
+            make_err: || AgentError::Status {
+                code: 429,
+                message: "HTTP 429: Rate limit reached: too many tokens per minute".into(),
+            },
+            inner: MockTransport::new(vec![vec![text_chunk("恢复了"), finish_chunk("stop")]]),
+        });
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, events) = run_turn(&r, &f, &mut history, "hi").await;
+        result.unwrap();
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::Compacted { .. })), "{events:?}");
+        assert_eq!(history[1].text(), Some("恢复了"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transient_retries_exhausted_surfaces_error() {
+        let f = fixture();
+        let transport = Arc::new(FailNTransport {
+            remaining: Mutex::new(10),
+            make_err: || AgentError::Http("connection reset".into()),
+            inner: MockTransport::new(vec![]),
+        });
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "hi").await;
+        assert!(matches!(result, Err(AgentError::Http(_))));
+    }
+
+    /// Context-overflow self-healing: after first-level compaction (old tool results
+    /// turned into handles) the retry succeeds and the session is not written off.
+    #[tokio::test]
+    async fn context_overflow_recovers_via_compaction() {
+        let f = fixture();
+        // Seed a history with 6 large tool results (the first 2 become handles, the last 4 are inside the protection window)
+        let big = "x".repeat(2000);
+        let mut history = vec![ChatMessage::user("此前的研究")];
+        for i in 0..6 {
+            let id = format!("old{i}");
+            history.push(ChatMessage::assistant(
+                None,
+                Some(vec![ToolCall {
+                    id: id.clone(),
+                    kind: "function".into(),
+                    function: crate::types::FunctionCall {
+                        name: "read_note".into(),
+                        arguments: format!(r#"{{"path":"n{i}.md"}}"#),
+                    },
+                }]),
+            ));
+            history.push(ChatMessage::tool_result(id, &big));
+        }
+        history.push(ChatMessage::assistant(Some("上次的答案".into()), None));
+
+        let transport = Arc::new(FailNTransport {
+            remaining: Mutex::new(1),
+            make_err: || AgentError::Status {
+                code: 400,
+                message: "HTTP 400: This model's maximum context length is 131072 tokens".into(),
+            },
+            inner: MockTransport::new(vec![vec![text_chunk("压缩后成功"), finish_chunk("stop")]]),
+        });
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let (result, events) = run_turn(&r, &f, &mut history, "继续").await;
+        result.unwrap();
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { level: 1 })));
+        let first_tool = history.iter().find(|m| m.role == "tool").unwrap();
+        assert!(first_tool.text().unwrap().starts_with(compact::COMPACTED_MARK));
+        assert_eq!(history.last().unwrap().text(), Some("压缩后成功"));
+    }
+
+    #[tokio::test]
+    async fn read_tool_roundtrip() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "read_note", r#"{"path": "Hello.md"}"#),
+            vec![text_chunk("done"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _events) = run_turn(&r, &f, &mut history, "read hello").await;
+        result.unwrap();
+        // user, assistant(tool_calls), tool, assistant(text)
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[2].role, "tool");
+        assert!(history[2].text().unwrap().contains("world content"));
+        assert_eq!(history[2].tool_call_id.as_deref(), Some("c1"));
+        // second request must include the tool result
+        let reqs = transport.requests.lock().unwrap();
+        assert_eq!(reqs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn write_tool_allowed_writes_file() {
+        let f = fixture();
+        let args = r##"{"path": "New.md", "content": "# 新笔记\n\nagent 写的"}"##;
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "write_note", args),
+            vec![text_chunk("created"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "create note").await;
+        result.unwrap();
+        let guard = f.vault.lock().unwrap();
+        let vault = guard.as_ref().unwrap();
+        let content = vault.read_note(&vault.note_id("New.md").unwrap()).unwrap();
+        assert!(content.contains("agent 写的"));
+        // provenance frontmatter stamped on agent-created notes
+        assert!(content.starts_with("---\nvemry:\n  origin: agent\n---\n"));
+    }
+
+    /// The full move_note chain: through the permission gate, a write_prepared line
+    /// carrying to, a real move on disk and a tool result of moved; with AutoDeny
+    /// nothing moves.
+    #[tokio::test]
+    async fn move_tool_full_chain_via_gate() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "move_note", r#"{"from": "Hello.md", "to": "archive/Hello.md"}"#),
+            vec![text_chunk("moved"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, events) = run_turn(&r, &f, &mut history, "move it").await;
+        result.unwrap();
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::PermissionRequest { request } if request.to_path.as_deref() == Some("archive/Hello.md"))));
+        assert_eq!(history[2].text(), Some("moved Hello.md -> archive/Hello.md"));
+        {
+            let guard = f.vault.lock().unwrap();
+            let vault = guard.as_ref().unwrap();
+            assert!(vault.index().contains(&vault.note_id("archive/Hello.md").unwrap()));
+            assert!(!vault.root().join("Hello.md").exists());
+        }
+        let sessions = f.log_dir.path().join("sessions");
+        let log_file = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+        let log_text = std::fs::read_to_string(&log_file).unwrap();
+        let prepared = log_text.lines().find(|l| l.contains(r#""kind":"write_prepared""#)).unwrap();
+        assert!(prepared.contains(r#""to":"archive/Hello.md""#), "{prepared}");
+    }
+
+    /// Several calls in one batch (for the propose_plan in-batch short-circuit test).
+    fn tool_batch(calls: &[(&str, &str, &str)]) -> Vec<StreamChunk> {
+        let mut out: Vec<StreamChunk> = calls
+            .iter()
+            .enumerate()
+            .map(|(i, (id, name, args))| StreamChunk {
+                choices: vec![StreamChoice {
+                    delta: Delta {
+                        tool_calls: Some(vec![ToolCallDelta {
+                            index: Some(i),
+                            id: Some((*id).into()),
+                            function: Some(FunctionDelta {
+                                name: Some((*name).into()),
+                                arguments: Some((*args).into()),
+                            }),
+                        }]),
+                        ..Default::default()
+                    },
+                    finish_reason: None,
+                }],
+                ..Default::default()
+            })
+            .collect();
+        out.push(finish_chunk("tool_calls"));
+        out
+    }
+
+    fn plan_config() -> RunnerConfig {
+        RunnerConfig { plan_confirm: true, ..Default::default() }
+    }
+
+    async fn run_plan_turn(
+        r: &AgentRunner,
+        f: &Fixture,
+        history: &mut Vec<ChatMessage>,
+    ) -> (SessionLog, Vec<AgentEvent>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &plan_config(),
+            history,
+            Some("整理".into()),
+            None,
+            vec![],
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        (log, Arc::try_unwrap(events).unwrap().into_inner().unwrap())
+    }
+
+    /// The full propose_plan chain (AutoApprovePlan): the tool is injected, the
+    /// events pair up, the jsonl holds both a plan and a plan_decision line, the
+    /// tool result is the confirmation wording, and the turn continues.
+    #[tokio::test]
+    async fn propose_plan_blocks_until_approved() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            // ASCII arguments: tool_call_chunks splits the stream in half by byte, and CJK would be cut mid-character
+            tool_call_chunks("c1", "propose_plan", r#"{"items": ["read-notes", "summarize", "write-out"]}"#),
+            vec![text_chunk("开始"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (log, events) = run_plan_turn(&r, &f, &mut history).await;
+        let reqs = transport.requests.lock().unwrap();
+        let tools_json = serde_json::to_string(reqs[0].tools.as_ref().unwrap()).unwrap();
+        assert!(tools_json.contains("propose_plan"), "a plan_confirm session injects the tool");
+        drop(reqs);
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::PlanRequest { request } if request.items.len() == 3)));
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::ToolCallFinished { id, ok: true, .. } if id == "c1")));
+        assert!(history[2].text().unwrap().contains("The plan is confirmed"));
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert!(jsonl.lines().any(|l| l.contains(r#""kind":"plan""#) && l.contains("read-notes")), "{jsonl}");
+        assert!(
+            jsonl.lines().any(|l| l.contains(r#""kind":"plan_decision""#) && l.contains(r#""decision":"approve""#)),
+            "{jsonl}"
+        );
+    }
+
+    /// Rejection: the reason enters the tool result; the rest of the batch is skipped
+    /// (never executed, and given placeholder results).
+    #[tokio::test]
+    async fn plan_reject_feeds_reason_and_skips_batch() {
+        struct AutoRejectPlan(String);
+        #[async_trait]
+        impl PlanGate for AutoRejectPlan {
+            async fn request(&self, _req: &PlanRequest) -> PlanDecision {
+                PlanDecision::Reject { reason: self.0.clone() }
+            }
+        }
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_batch(&[
+                ("c1", "propose_plan", r#"{"items": ["a", "b"]}"#),
+                ("c2", "read_note", r#"{"path": "Hello.md"}"#),
+            ]),
+            vec![text_chunk("修订中"), finish_chunk("stop")],
+        ]));
+        let r = AgentRunner {
+            transport: transport.clone(),
+            gate: Arc::new(AutoAllow),
+            plan_gate: Arc::new(AutoRejectPlan("先别动笔记".into())),
+            vault: f.vault.clone(),
+        };
+        let mut history = vec![];
+        let (_log, events) = run_plan_turn(&r, &f, &mut history).await;
+        let c1 = history.iter().find(|m| m.tool_call_id.as_deref() == Some("c1")).unwrap();
+        assert!(c1.text().unwrap().contains("rejected the plan") && c1.text().unwrap().contains("先别动笔记"));
+        let c2 = history.iter().find(|m| m.tool_call_id.as_deref() == Some("c2")).unwrap();
+        assert!(c2.text().unwrap().contains("skipped"), "the rest of the batch does not execute: {}", c2.text().unwrap());
+        assert!(
+            !events.iter().any(|e| matches!(e, AgentEvent::ToolCallStarted { id, .. } if id == "c2")),
+            "a skipped call must not actually start"
+        );
+    }
+
+    /// Confirmed after editing: the edited list reaches the tool result verbatim and
+    /// the model follows it.
+    #[tokio::test]
+    async fn plan_edited_items_reach_model() {
+        struct AutoEditPlan;
+        #[async_trait]
+        impl PlanGate for AutoEditPlan {
+            async fn request(&self, _req: &PlanRequest) -> PlanDecision {
+                PlanDecision::ApproveEdited { items: vec!["只做甲".into(), "再做乙".into()] }
+            }
+        }
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            // ASCII arguments: tool_call_chunks splits the stream by byte (see the propose_plan test)
+            tool_call_chunks("c1", "propose_plan", r#"{"items": ["orig-1", "orig-2", "orig-3"]}"#),
+            vec![text_chunk("按改后执行"), finish_chunk("stop")],
+        ]));
+        let r = AgentRunner {
+            transport,
+            gate: Arc::new(AutoAllow),
+            plan_gate: Arc::new(AutoEditPlan),
+            vault: f.vault.clone(),
+        };
+        let mut history = vec![];
+        let (log, _events) = run_plan_turn(&r, &f, &mut history).await;
+        let result = history[2].text().unwrap();
+        assert!(result.contains("- [ ] 只做甲") && result.contains("- [ ] 再做乙"), "{result}");
+        assert!(!result.contains("orig-1"), "the edited list replaces the original");
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert!(jsonl.lines().any(|l| l.contains(r#""decision":"approve_edited""#) && l.contains("只做甲")));
+    }
+
+    /// By default (plan_confirm=false) the request body holds no propose_plan tool.
+    #[tokio::test]
+    async fn plan_tool_absent_when_disabled() {
+        let f = fixture();
+        let transport =
+            Arc::new(MockTransport::new(vec![vec![text_chunk("好"), finish_chunk("stop")]]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "hi").await;
+        result.unwrap();
+        let reqs = transport.requests.lock().unwrap();
+        let tools_json = serde_json::to_string(reqs[0].tools.as_ref().unwrap()).unwrap();
+        assert!(!tools_json.contains("propose_plan"), "the plan tool must follow the session switch");
+    }
+
+    /// An invalid list (empty or over the limit): an error tool result lets the model
+    /// correct itself, with no gate raised and no plan line recorded.
+    #[tokio::test]
+    async fn bad_plan_args_is_error() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "propose_plan", r#"{"items": []}"#),
+            vec![text_chunk("再试"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (log, events) = run_plan_turn(&r, &f, &mut history).await;
+        assert!(history[2].text().unwrap().contains("2-9"));
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::PlanRequest { .. })));
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert!(!jsonl.contains(r#""kind":"plan""#), "an invalid list records no plan line");
+    }
+
+    #[tokio::test]
+    async fn move_tool_denied_leaves_file_in_place() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "move_note", r#"{"from": "Hello.md", "to": "archive/Hello.md"}"#),
+            vec![text_chunk("ok"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoDeny("放着别动".into())));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "move it").await;
+        result.unwrap();
+        assert!(history[2].text().unwrap().contains("denied by user: 放着别动"));
+        let guard = f.vault.lock().unwrap();
+        let vault = guard.as_ref().unwrap();
+        assert!(vault.root().join("Hello.md").exists());
+        assert!(!vault.root().join("archive").exists());
+    }
+
+    #[tokio::test]
+    async fn write_tool_denied_returns_error_result() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "write_note", r#"{"path": "New.md", "content": "x"}"#),
+            vec![text_chunk("ok, not writing"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoDeny("不需要".into())));
+        let mut history = vec![];
+        let (result, events) = run_turn(&r, &f, &mut history, "create note").await;
+        result.unwrap();
+        assert!(history[2].text().unwrap().contains("denied by user: 不需要"));
+        let guard = f.vault.lock().unwrap();
+        let vault = guard.as_ref().unwrap();
+        assert!(vault.read_note(&vault.note_id("New.md").unwrap()).is_err());
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::PermissionRequest { .. })));
+    }
+
+    /// AllowSession takes effect across turns through config.session_allow: the
+    /// second turn's write raises no permission request.
+    #[tokio::test]
+    async fn allow_session_flag_carries_across_turns() {
+        struct AllowSessionOnce;
+        #[async_trait]
+        impl PermissionGate for AllowSessionOnce {
+            async fn request(&self, _req: &WriteRequest) -> PermissionDecision {
+                PermissionDecision::AllowSession
+            }
+        }
+        let f = fixture();
+        let flag = Arc::new(AtomicBool::new(false));
+        let config = RunnerConfig { session_allow: Some(flag.clone()), ..Default::default() };
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "write_note", r#"{"path": "A.md", "content": "a"}"#),
+            vec![text_chunk("ok"), finish_chunk("stop")],
+            tool_call_chunks("c2", "write_note", r#"{"path": "B.md", "content": "b"}"#),
+            vec![text_chunk("ok2"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AllowSessionOnce));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        for msg in ["写 A", "写 B"] {
+            let ev = events.clone();
+            r.run(
+                &ProviderConfig::zhipu("test-key".into()),
+                &config,
+                &mut history,
+                Some(msg.into()),
+                None,
+                vec![],
+                None,
+                &move |e| ev.lock().unwrap().push(e),
+                &AtomicBool::new(false),
+                &log,
+            )
+            .await
+            .unwrap();
+        }
+        assert!(flag.load(Ordering::Relaxed), "AllowSession must set the shared flag");
+        let events = events.lock().unwrap();
+        let perm_count =
+            events.iter().filter(|e| matches!(e, AgentEvent::PermissionRequest { .. })).count();
+        assert_eq!(perm_count, 1, "second turn must not re-ask");
+    }
+
+    #[tokio::test]
+    async fn edit_note_bad_match_is_error() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "edit_note", r#"{"path": "Hello.md", "old_str": "NOPE", "new_str": "x"}"#),
+            vec![text_chunk("I'll re-read"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "edit").await;
+        result.unwrap();
+        assert!(history[2].text().unwrap().starts_with("ERROR:"));
+        assert!(history[2].text().unwrap().contains("not found"));
+    }
+
+    /// A tool's argument JSON fails to parse: Started and Finished must still appear
+    /// as a pair.
+    #[tokio::test]
+    async fn bad_args_json_still_pairs_started_and_finished() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "read_note", r#"{"path": broken"#),
+            vec![text_chunk("retrying"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, events) = run_turn(&r, &f, &mut history, "read").await;
+        result.unwrap();
+        let started = events.iter().any(|e| matches!(e, AgentEvent::ToolCallStarted { id, .. } if id == "c1"));
+        let finished =
+            events.iter().any(|e| matches!(e, AgentEvent::ToolCallFinished { id, ok: false, .. } if id == "c1"));
+        assert!(started, "Started must precede the parse failure");
+        assert!(finished);
+        assert!(history[2].text().unwrap().contains("invalid tool arguments JSON"));
+    }
+
+    /// End-to-end zero-leakage sweep: the model actively probes the privacy
+    /// zone through every tool. Nothing private may reach history, events,
+    /// disk or the session log; the log must show privacy fired (count only).
+    #[tokio::test]
+    async fn privacy_sweep_zero_leakage() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join("secret")).unwrap();
+        std::fs::create_dir_all(root.join(".vemry")).unwrap();
+        // ZANZIBAR is the leak sentinel: it exists only inside private files
+        // and the scripted model never types it, so any occurrence in
+        // history/events/log is vault-originated leakage.
+        std::fs::write(root.join("Hello.md"), "# Hello\n\nsee [[secret/Plan]]\n").unwrap();
+        std::fs::write(root.join("secret/Plan.md"), "ZANZIBAR glob content\n").unwrap();
+        std::fs::write(root.join("Diary.md"), "---\nprivate: true\n---\nZANZIBAR diary content [[Hello]]\n").unwrap();
+        std::fs::write(root.join(".vemry/privacy"), "secret/\n").unwrap();
+        let vault = Vault::open(&root).unwrap();
+        let f = Fixture {
+            _dir: dir,
+            vault: Arc::new(Mutex::new(Some(vault))),
+            log_dir: tempfile::tempdir().unwrap(),
+        };
+
+        let scripts = vec![
+            tool_call_chunks("c1", "read_note", r#"{"path": "secret/Plan.md"}"#),
+            tool_call_chunks("c2", "read_note", r#"{"path": "Diary.md"}"#),
+            tool_call_chunks("c3", "search_notes", r#"{"query": "content"}"#),
+            tool_call_chunks("c4", "query_blocks", r#"{"text": "content"}"#),
+            tool_call_chunks("c5", "get_links", r#"{"path": "Hello.md"}"#),
+            tool_call_chunks("c6", "write_note", r#"{"path": "secret/New.md", "content": "x"}"#),
+            tool_call_chunks("c7", "edit_note", r#"{"path": "Diary.md", "old_str": "a", "new_str": "b"}"#),
+            // case-variant spellings of the frontmatter-private note: a
+            // case-insensitive FS folds these onto Diary.md, so they must be
+            // blocked exactly like the exact-case probes above (no diff, no
+            // write_prepared line, no content leak into the oracle)
+            tool_call_chunks("c8", "write_note", r#"{"path": "diary.md", "content": "x"}"#),
+            tool_call_chunks("c9", "edit_note", r#"{"path": "diary.md", "old_str": "a", "new_str": "b"}"#),
+            // The move leg: a private source moved out / a public note moved into a privacy zone — both directions must be refused
+            tool_call_chunks("c10", "move_note", r#"{"from": "secret/Plan.md", "to": "Exfil.md"}"#),
+            tool_call_chunks("c11", "move_note", r#"{"from": "Hello.md", "to": "secret/Hello.md"}"#),
+            vec![text_chunk("giving up"), finish_chunk("stop")],
+        ];
+        let transport = Arc::new(MockTransport::new(scripts));
+        // AutoAllow: if privacy ever fails to block, the write would really
+        // land on disk and the assertion below would catch it
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        // The refs leg, probed at the same time: a private note, a selection inside a private note, and a public note
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let result = r
+            .run(
+                &ProviderConfig::zhipu("test-key".into()),
+                &RunnerConfig::default(),
+                &mut history,
+                Some("probe the privacy zone".to_string()),
+                None,
+                vec![
+                    ContextRef::Note { path: "secret/Plan.md".into() },
+                    ContextRef::Selection {
+                        path: "secret/Plan.md".into(),
+                        from_line: 1,
+                        to_line: 1,
+                        text: "ZANZIBAR selected".into(),
+                    },
+                    ContextRef::Note { path: "Hello.md".into() },
+                ],
+                None,
+                &move |e| ev.lock().unwrap().push(e),
+                &AtomicBool::new(false),
+                &log,
+            )
+            .await;
+        let events = Arc::try_unwrap(events).unwrap().into_inner().unwrap();
+        result.unwrap();
+
+        // privacy-zone writes/moves never reach the gate or the disk
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::PermissionRequest { .. })));
+        assert!(!root.join("secret/New.md").exists());
+        assert!(root.join("secret/Plan.md").exists() && !root.join("Exfil.md").exists(), "a private note must not be moved out");
+        assert!(root.join("Hello.md").exists() && !root.join("secret/Hello.md").exists(), "a public note must not be moved into a privacy zone");
+
+        // sentinel never appears in history, events, requests or the log
+        let history_json = serde_json::to_string(&history).unwrap();
+        assert!(!history_json.contains("ZANZIBAR"));
+        let events_json = serde_json::to_string(&events).unwrap();
+        assert!(!events_json.contains("ZANZIBAR"));
+        let requests_json = serde_json::to_string(&*transport.requests.lock().unwrap()).unwrap();
+        assert!(!requests_json.contains("ZANZIBAR"), "system prompt or history leaked");
+
+        let sessions = f.log_dir.path().join("sessions");
+        let log_file = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+        let log_text = std::fs::read_to_string(&log_file).unwrap();
+        assert!(!log_text.contains("ZANZIBAR"));
+        assert!(!log_text.contains("write_prepared"), "privacy writes must not produce diffs");
+        // privacy lines exist and carry counts, not paths
+        let privacy_lines: Vec<&str> = log_text.lines().filter(|l| l.contains(r#""kind":"privacy""#)).collect();
+        assert!(privacy_lines.len() >= 5, "expected privacy audit lines, got: {log_text}");
+        for line in privacy_lines {
+            assert!(line.contains(r#""filtered""#));
+            assert!(!line.contains("secret"), "privacy line leaked a path: {line}");
+            assert!(!line.contains("Diary"), "privacy line leaked a path: {line}");
+        }
+
+        // the model saw plain not-found errors, indistinguishable from missing
+        assert!(history.iter().any(|m| m.text() == Some("ERROR: note not found: secret/Plan.md")));
+        assert!(history.iter().any(|m| m.text() == Some("ERROR: invalid path: secret/New.md")));
+        assert!(history.iter().any(|m| m.text() == Some("ERROR: invalid path: secret/Hello.md")), "a move destination is worded the same way");
+
+        // The refs leg: the audit user line records public references only — a
+        // filtered reference has neither kind nor path recorded, and the count goes
+        // through the context_ref privacy line
+        let user_line = log_text.lines().find(|l| l.contains(r#""kind":"user""#)).unwrap();
+        assert!(user_line.contains(r#""refs":[{"kind":"note","path":"Hello.md"}]"#), "{user_line}");
+        assert!(
+            log_text.lines().any(|l| l.contains(r#""kind":"privacy""#) && l.contains(r#""tool":"context_ref""#)),
+            "the context_ref privacy count line must exist: {log_text}"
+        );
+    }
+
+    /// Scrubbing a frozen replay: turn 1's reference body entered the envelope, it is
+    /// marked private between turns, and from turn 2 that body is gone from both the
+    /// request body and the history itself, replaced byte for byte with the
+    /// resolution-time wording.
+    #[tokio::test]
+    async fn scrub_removes_frozen_private_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::write(root.join("Doc.md"), "# D\n\nXANADU-BODY\n").unwrap();
+        let vault = Vault::open(&root).unwrap();
+        let f = Fixture {
+            _dir: dir,
+            vault: Arc::new(Mutex::new(Some(vault))),
+            log_dir: tempfile::tempdir().unwrap(),
+        };
+        let transport = Arc::new(MockTransport::new(vec![
+            vec![text_chunk("好"), finish_chunk("stop")],
+            vec![text_chunk("答"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig::default(),
+            &mut history,
+            Some("看".into()),
+            None,
+            vec![ContextRef::Note { path: "Doc.md".into() }],
+            None,
+            &|_e| {},
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        assert!(history[0].text().unwrap().contains("XANADU-BODY"), "turn 1's body is in the envelope");
+        {
+            let mut guard = f.vault.lock().unwrap();
+            guard.as_mut().unwrap().add_privacy_rule("Doc.md").unwrap();
+        }
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig::default(),
+            &mut history,
+            Some("继续".into()),
+            None,
+            vec![],
+            None,
+            &|_e| {},
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        let reqs = transport.requests.lock().unwrap();
+        let second = serde_json::to_string(&reqs[1]).unwrap();
+        assert!(!second.contains("XANADU-BODY"), "turn 2's request body must already be scrubbed: {second}");
+        assert!(second.contains("note not found: Doc.md"), "the replacement is worded like resolution time: {second}");
+        // The history itself is cleaned along with it (it is what write_history persists at the end of the turn)
+        let history_json = serde_json::to_string(&history).unwrap();
+        assert!(!history_json.contains("XANADU-BODY"), "the history itself must already be scrubbed");
+    }
+
+    /// web_search on: the Raw tool is injected into the request body, search chunks
+    /// become events, and raw_items enter the assistant history (for
+    /// ResponsesTransport to replay next turn). With it off by default, the request
+    /// body must not hold web_search.
+    #[tokio::test]
+    async fn web_search_flag_injects_tool_and_forwards_results() {
+        let f = fixture();
+        let search_chunk = StreamChunk {
+            web_search_status: Some(crate::types::WebSearchStatus::Searching),
+            ..Default::default()
+        };
+        let results_chunk = StreamChunk {
+            web_search: Some(vec![crate::types::WebSearchResult {
+                title: "来源一".into(),
+                url: "https://a.example/1".into(),
+                snippet: "摘要".into(),
+                publish_date: None,
+            }]),
+            raw_items: Some(vec![json!({"type": "web_search_call", "id": "ws_1"})]),
+            ..Default::default()
+        };
+        let transport = Arc::new(MockTransport::new(vec![vec![
+            search_chunk,
+            results_chunk,
+            text_chunk("答案"),
+            finish_chunk("stop"),
+        ]]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig { web_search: true, ..Default::default() },
+            &mut history,
+            Some("搜一下".into()),
+            None,
+            vec![],
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+
+        // The request body: 9 function tools plus 1 Raw web_search
+        let reqs = transport.requests.lock().unwrap();
+        let tools_json = serde_json::to_value(reqs[0].tools.as_ref().unwrap()).unwrap();
+        let arr = tools_json.as_array().unwrap();
+        assert!(arr.iter().any(|t| t == &json!({"type": "web_search"})), "web_search tool missing");
+        drop(reqs);
+
+        let events = Arc::try_unwrap(events).unwrap().into_inner().unwrap();
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::WebSearching)));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::WebSearchResults { results } if results[0].url == "https://a.example/1")));
+
+        // raw_items are stored in the assistant history, and the session log records only title/url
+        assert_eq!(history[1].extra_items.len(), 1);
+        assert_eq!(history[1].extra_items[0]["id"], "ws_1");
+        let sessions = f.log_dir.path().join("sessions");
+        let log_file = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+        let log_text = std::fs::read_to_string(&log_file).unwrap();
+        assert!(log_text.contains(r#""kind":"web_search""#), "missing web_search log line");
+        assert!(!log_text.contains("摘要"), "snippet full text must not enter the session log");
+    }
+
+    #[tokio::test]
+    async fn web_search_off_by_default_keeps_request_clean() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![vec![text_chunk("hi"), finish_chunk("stop")]]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "hello").await;
+        result.unwrap();
+        let reqs = transport.requests.lock().unwrap();
+        let tools_json = serde_json::to_string(reqs[0].tools.as_ref().unwrap()).unwrap();
+        assert!(!tools_json.contains("web_search"), "web_search must be opt-in");
+    }
+
+    /// reasoning_content is stored in the assistant history and sent back with the
+    /// next request (a hard contract of DeepSeek thinking plus tool calls).
+    #[tokio::test]
+    async fn reasoning_content_persisted_and_replayed() {
+        let f = fixture();
+        let reasoning_chunk = StreamChunk {
+            choices: vec![StreamChoice {
+                delta: Delta { reasoning_content: Some("推理过程".into()), ..Default::default() },
+                finish_reason: None,
+            }],
+            ..Default::default()
+        };
+        let mut first: Vec<StreamChunk> = vec![reasoning_chunk];
+        first.extend(tool_call_chunks("c1", "read_note", r#"{"path": "Hello.md"}"#));
+        let transport = Arc::new(MockTransport::new(vec![
+            first,
+            vec![text_chunk("done"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "想一想再读").await;
+        result.unwrap();
+        assert_eq!(history[1].reasoning_content.as_deref(), Some("推理过程"));
+        // The second request's serialisation must carry reasoning_content
+        let reqs = transport.requests.lock().unwrap();
+        let second = serde_json::to_string(&reqs[1].messages).unwrap();
+        assert!(second.contains("reasoning_content"), "must be replayed to the provider");
+    }
+
+    /// A usage chunk → a Usage event (cache hits read from either spelling).
+    #[tokio::test]
+    async fn usage_chunk_emits_event() {
+        let f = fixture();
+        let usage_chunk = StreamChunk {
+            usage: Some(crate::types::Usage {
+                prompt_tokens: 1200,
+                completion_tokens: 80,
+                prompt_cache_hit_tokens: Some(1000),
+                prompt_tokens_details: None,
+            }),
+            ..Default::default()
+        };
+        let transport = Arc::new(MockTransport::new(vec![vec![
+            text_chunk("答"),
+            usage_chunk,
+            finish_chunk("stop"),
+        ]]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, events) = run_turn(&r, &f, &mut history, "hi").await;
+        result.unwrap();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Usage { prompt_tokens: 1200, cache_hit_tokens: 1000, iteration: 1, .. }
+        )));
+    }
+
+    #[tokio::test]
+    async fn max_iterations_guard() {
+        let f = fixture();
+        // model calls a read tool forever
+        let scripts: Vec<Vec<StreamChunk>> = (0..30)
+            .map(|_| tool_call_chunks("c", "list_notes", "{}"))
+            .collect();
+        let transport = Arc::new(MockTransport::new(scripts));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "loop forever").await;
+        assert!(matches!(result, Err(AgentError::MaxIterations(25))));
+        // The budget wrap-up hint was injected (appended to a tool result with 5 iterations left)
+        assert!(
+            history.iter().any(|m| m.role == "tool"
+                && m.text().is_some_and(|c| c.contains("wrap up"))),
+            "wrap-up hint must be appended near the budget end"
+        );
+    }
+
+    /// Image references end to end: the request holds a data URL, the history holds
+    /// only the path (so the sidecar has no base64), and the audit user line records
+    /// kind=image; once the image turns private, the historical image in the next
+    /// request is left as an "attachment unavailable" placeholder — re-gated every
+    /// turn.
+    #[tokio::test]
+    async fn image_ref_inflated_in_request_but_history_keeps_path() {
+        let f = fixture();
+        {
+            let mut guard = f.vault.lock().unwrap();
+            let vault = guard.as_mut().unwrap();
+            std::fs::create_dir_all(vault.root().join("secret")).unwrap();
+            std::fs::write(vault.root().join("secret/pic.png"), b"\x89PNG fake").unwrap();
+            *vault = Vault::open(vault.root()).unwrap();
+        }
+        let transport = Arc::new(MockTransport::new(vec![
+            vec![text_chunk("看到了"), finish_chunk("stop")],
+            vec![text_chunk("看不到了"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig::default(),
+            &mut history,
+            Some("这是什么".into()),
+            None,
+            vec![ContextRef::Image { path: "secret/pic.png".into() }],
+            None,
+            &|_e| {},
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        let parts = history[0].content.as_ref().unwrap().parts().unwrap();
+        assert!(matches!(&parts[1], Part::ImageRef { path } if path == "secret/pic.png"));
+        assert!(history[0].text().unwrap().contains("images attached to this message: secret/pic.png"));
+        assert!(!serde_json::to_string(&history).unwrap().contains("base64,"), "the history never holds base64");
+        {
+            let reqs = transport.requests.lock().unwrap();
+            let sent = reqs[0].messages[1].content.as_ref().unwrap().parts().unwrap();
+            assert!(
+                matches!(&sent[1], Part::ImageUrl { image_url } if image_url.url.starts_with("data:image/png;base64,")),
+                "{:?}",
+                sent[1]
+            );
+        }
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        let user_line = jsonl.lines().find(|l| l.contains(r#""kind":"user""#)).unwrap();
+        assert!(user_line.contains(r#""refs":[{"kind":"image","path":"secret/pic.png"}]"#), "{user_line}");
+        assert!(!jsonl.contains(r#""tool":"context_ref""#), "a public image records no privacy line");
+
+        // The image's directory turns private → filling it in fails when the history is replayed next turn, leaving only the placeholder
+        {
+            let mut guard = f.vault.lock().unwrap();
+            let vault = guard.as_mut().unwrap();
+            std::fs::create_dir_all(vault.root().join(".vemry")).unwrap();
+            std::fs::write(vault.root().join(".vemry/privacy"), "secret/\n").unwrap();
+            *vault = Vault::open(vault.root()).unwrap();
+        }
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig::default(),
+            &mut history,
+            Some("再看一次".into()),
+            None,
+            vec![],
+            None,
+            &|_e| {},
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        let reqs = transport.requests.lock().unwrap();
+        let replay = reqs[1].messages[1].content.as_ref().unwrap().parts().unwrap();
+        assert!(
+            matches!(&replay[1], Part::Text { text } if *text == format!("(attachment secret/pic.png unavailable: {})", not_found("secret/pic.png"))),
+            "{:?}",
+            replay[1]
+        );
+        assert!(matches!(&history[0].content.as_ref().unwrap().parts().unwrap()[1], Part::ImageRef { .. }), "the history is not polluted by the fill-in");
+    }
+}

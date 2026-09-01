@@ -1,0 +1,1094 @@
+/* vemry design tokens — clean and plain: a warm paper ground with a single ink-teal accent, a 4px grid, two themes */
+
+:root {
+  color-scheme: light dark;
+  --bg: #fafaf9;
+  --bg-panel: #f4f4f2;
+  --bg-hover: #ecebe8;
+  --bg-active: #e4e2de;
+  --fg: #1c1917;
+  --fg-muted: #78716c;
+  --fg-faint: #a8a29e;
+  --border: #e7e5e4;
+  /* The structural divider (between the activity bar, the two sidebars, the status bar
+     and the content area) is one step heavier than an ordinary stroke: on the same
+     --border, dark mode leaves only a step of grey between it and --bg-panel, and the
+     three columns would blur into one */
+  --border-strong: #d6d3d1;
+  --accent: #0f766e;
+  --accent-soft: rgba(15, 118, 110, 0.1);
+  --danger: #b91c1c;
+  --diff-add-bg: rgba(15, 118, 110, 0.08);
+  --diff-del-bg: rgba(185, 28, 28, 0.07);
+
+  --mark-bg: rgba(250, 204, 21, 0.35);
+  --co-info: #3b82f6;
+  --co-tip: #0f766e;
+  --co-success: #16a34a;
+  --co-question: #ea580c;
+  --co-warn: #d97706;
+  --co-danger: #dc2626;
+  --co-example: #9333ea;
+  --co-quote: #78716c;
+  --co-claim: #e11d48;
+  --co-evidence: #0891b2;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "PingFang SC", monospace;
+
+  /* Whole pixels throughout: a half-pixel size such as 12.5px lands on a half grid on a 1x screen and looks blurred */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  /* The note body's font size, adjustable on the settings "General" page (15-18); prefs.applyNoteFontSize overrides it at runtime */
+  --fs-note: 16px;
+  /* The body's column width: shared by the editor and the reading projection, written as a
+     curve that grows with the pane but is capped at both ends.
+     The lower bound of 42em (≈672px at 16px, about 40 CJK characters per line, the usual
+     order of magnitude for readable long-form text) — in a narrow pane it behaves exactly
+     like a hardcoded 42em; wider than that it follows 66% and grows, capping at 54em
+     (about 50 CJK characters per line), which halves the empty space on a large screen
+     without letting a line grow too long to read.
+     The percentage resolves against the scrolling container's content box (not the
+     viewport), so dragging a sidebar wider or docking a panel follows automatically; em
+     resolves where it is used, so a larger body font makes the column wider with it.
+     With the "readable line width" setting off, prefs.applyReadableLineWidth overrides it
+     inline on :root to none */
+  --content-width: clamp(42em, 66%, 54em);
+
+  /* The single source of truth for the bottom status bar's height: StatusBar's own height
+     and every fixed overlay that has to clear it (the error toast, ToastStack) derive from
+     here, so one change is enough */
+  --statusbar-h: 22px;
+
+  --radius: 6px;
+  --shadow: 0 8px 32px rgba(28, 25, 23, 0.14);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* The whole scale is raised: a near-black ground (#131312) with a high-contrast
+       foreground glares and floats, so it moves up into the #1e1e1e range (contrast down
+       to ≈12:1), keeping the warm tone and the original steps */
+    --bg: #1e1e1c;
+    --bg-panel: #252523;
+    --bg-hover: #2e2e2b;
+    --bg-active: #363633;
+    --fg: #dedcd8;
+    --fg-muted: #98948b;
+    --fg-faint: #6a675f;
+    /* One step up from the original #33322f: the file tree's indent guides (.guide) and the
+       three-column dividers all sit on --border, and at the old value they were less than a
+       step of grey from --bg-panel (#252523) and effectively invisible */
+    --border: #3b3a36;
+    --border-strong: #4a4844;
+    --accent: #38b2a3;
+    --accent-soft: rgba(56, 178, 163, 0.13);
+    --danger: #e06c6c;
+    --diff-add-bg: rgba(56, 178, 163, 0.1);
+    --diff-del-bg: rgba(224, 108, 108, 0.09);
+    --mark-bg: rgba(250, 204, 21, 0.22);
+    --co-info: #60a5fa;
+    --co-tip: #38b2a3;
+    --co-success: #4ade80;
+    --co-question: #fb923c;
+    --co-warn: #fbbf24;
+    --co-danger: #f87171;
+    --co-example: #c084fc;
+    --co-quote: #98948b;
+    --co-claim: #fb7185;
+    --co-evidence: #22d3ee;
+    --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* -webkit-font-smoothing:antialiased is deliberately not set — it turns off macOS's
+   weight-adding smoothing, and the UI and CJK faces thin out and look washed;
+   mainstream editors leave the body on the system default too (measured: their bundles
+   set it nowhere) */
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg);
+  text-rendering: optimizeLegibility;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+/* Native checkboxes and radios take the system accent (blue on macOS), the one foreign
+   colour in a screen of ink teal. One accent-color line changes all ten of them, and
+   drawing them by hand is not worth it — a hand-drawn checkbox would also have to supply
+   the focus, disabled and indeterminate states itself */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+input,
+textarea {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+/* A role="button" div (the clickable rows and cards in the projection views) does not
+   match the button selector above — tabbing to one used to give no visible feedback at
+   all, and they happen to be the only row-level entry point in those views. One rule
+   here saves every view writing its own, each slightly differently.
+   It is scoped inside .view (the root of all seven projection views): DOM generated at
+   runtime (CodeMirror's content element, HTML rendered in a replay) may carry a tabindex
+   too, grep cannot see them, and a bare selector could put a 2px outline around a whole
+   editing area. */
+.view [tabindex="0"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- CodeMirror ---- */
+.cm-editor {
+  height: 100%;
+  font-size: var(--fs-note);
+  background: var(--bg);
+}
+.cm-editor.cm-focused {
+  outline: none;
+}
+/* The font and line height are not here: baseTheme's .ͼx .cm-scroller (0,2,0) outweighs a
+   bare class, and only declaring them in setup.ts's noteFont/codeFont (EditorView.theme)
+   takes effect */
+.cm-scroller {
+  padding: 32px 0 40vh;
+}
+.cm-content {
+  caret-color: var(--accent);
+  user-select: text;
+}
+/* CM injects .ͼx .cm-content { margin: 0; padding: 4px 0 } at runtime (specificity 0,2,0)
+   and outweighs a bare class — so the column width and the centring are written in this
+   three-level selector alone (a copy on the bare class is dead code that changes nothing
+   and only misleads), or the body would hug the left of a wide pane with a large empty
+   area
+   (the same as the .cm-cursor note: a theme CM injects always comes later in the
+   cascade) */
+.cm-editor .cm-scroller .cm-content {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+/* The one way to write a line decoration's padding: the .ͼx .cm-line{padding:0 2px 0 6px}
+   CM injects at runtime is (0,2,0), and any padding on the bare .cm-line / .cm-lp-*
+   classes is outweighed by it — changing those does nothing and only misleads (as with
+   .cm-content above). Every rule in this file that gives a line padding is written in this
+   three-level form and comes after this one; the order is the priority */
+.cm-editor .cm-scroller .cm-line {
+  padding: 0;
+}
+/* !important: CodeMirror injects its own theme at runtime and would otherwise
+   win the cascade, leaving a black (invisible-on-dark) cursor. The caret must
+   use the editor foreground color. */
+.cm-editor .cm-cursor,
+.cm-editor .cm-dropCursor {
+  border-left: 2px solid var(--fg) !important;
+}
+.cm-selectionBackground,
+.cm-editor ::selection {
+  background: var(--accent-soft) !important;
+}
+.cm-wikilink {
+  color: var(--accent);
+  cursor: pointer;
+}
+.cm-wikilink-unresolved {
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.cm-md-heading {
+  /* 600 rather than 650: the CJK face has only the discrete 400/500/600 weights, and a non-standard step makes mixed Latin and CJK text differ in weight */
+  font-weight: 600;
+  line-height: 1.4;
+}
+/* The heading scale (a geometric scale of about 1.125; h6 has no size class and is 1em,
+   bold only).
+   The size has to be here and cannot go into setup.ts's HighlightStyle rules — there a
+   class and the style properties are mutually exclusive (see the mdHighlight note).
+   Change it together with ReadingView.svelte's .md-h1..h6 */
+.cm-md-h1 { font-size: 1.8em; }
+.cm-md-h2 { font-size: 1.6em; }
+.cm-md-h3 { font-size: 1.42em; }
+.cm-md-h4 { font-size: 1.27em; }
+.cm-md-h5 { font-size: 1.12em; }
+.cm-md-mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.cm-md-quote {
+  color: var(--fg-muted);
+}
+/* ---- live preview (note mode) ---- */
+/* A descendant selector: the highlighter's .cm-md-quote is nested inside the marker and
+   hits the text directly, and without covering it this accent would never take effect
+   (the list marker in the raw state) */
+.cm-lp-bullet,
+.cm-lp-bullet .cm-md-quote,
+.cm-lp-bulletdot {
+  color: var(--accent);
+}
+/* A heading's vertical rhythm: space above alone. The value is 0.8 × that level's font
+   size and shrinks in step with the geometric scale of .cm-md-h1..h6; em resolves on the
+   line (the font size sits on an inner span), so what is written here is the converted
+   multiple — a larger body font widens the spacing with it. On the reading projection's
+   side the counterpart is ReadingView's margin:1.4em 0 .5em: that is parsed HTML with no
+   blank lines, so the numbers differ while the rhythm (large above, small below) matches.
+   The line decoration is attached by livepreview.ts's headingLines, and the document's
+   first line does not get one */
+.cm-editor .cm-scroller .cm-lp-h1 { padding-top: 1.44em; }
+.cm-editor .cm-scroller .cm-lp-h2 { padding-top: 1.28em; }
+.cm-editor .cm-scroller .cm-lp-h3 { padding-top: 1.14em; }
+.cm-editor .cm-scroller .cm-lp-h4 { padding-top: 1.02em; }
+.cm-editor .cm-scroller .cm-lp-h5 { padding-top: 0.9em; }
+.cm-editor .cm-scroller .cm-lp-h6 { padding-top: 0.8em; }
+.cm-editor .cm-scroller .cm-lp-quote {
+  border-left: 2px solid var(--fg-faint);
+  padding-left: 12px;
+}
+.cm-editor .cm-scroller .cm-lp-code {
+  background: var(--bg-panel);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  padding: 0 10px;
+}
+.cm-lp-code-head {
+  position: relative;
+}
+/* The copy button: an icon alone, with the words moved into the hover tip (::after reads data-tip) */
+.cm-lp-copy {
+  position: absolute;
+  right: 8px;
+  top: 4px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  color: var(--fg-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.cm-lp-copy:hover {
+  opacity: 1;
+  color: var(--fg);
+}
+.cm-lp-copy svg {
+  display: block;
+}
+.cm-lp-copy-ok,
+.cm-lp-copy-ok:hover {
+  color: var(--co-success);
+}
+.cm-lp-copy-fail,
+.cm-lp-copy-fail:hover {
+  color: var(--danger);
+}
+/* The hover tip: an inverted little capsule hanging below the button; right-aligned, so it is not clipped against the editor's right edge */
+.cm-lp-copy::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: var(--fg);
+  color: var(--bg);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 2;
+}
+.cm-lp-copy:hover::after {
+  opacity: 1;
+  transition-delay: 0.15s;
+}
+/* A js code block's run button: on the same row as the copy button, each taking a top-right slot */
+.cm-lp-run {
+  position: absolute;
+  right: 38px;
+  top: 4px;
+  z-index: 1;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.cm-lp-run:hover {
+  opacity: 1;
+}
+.cm-lp-run:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* A js code block's output: it exists only in the editor's state and never reaches disk */
+.cm-runblock-out {
+  position: relative;
+  margin: 2px 0 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 30px 8px 12px;
+}
+.cm-runblock-out pre {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
+.cm-runblock-err {
+  border-left-color: var(--danger);
+}
+.cm-runblock-err pre {
+  color: var(--danger);
+}
+.cm-runblock-clear {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  color: var(--fg-faint);
+  font-size: var(--fs-xs);
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.cm-runblock-clear:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+/* The vemry-query block: the live query result replaces the whole fence */
+.cm-queryblock {
+  margin: 2px 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: var(--fs-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cm-queryblock-head {
+  font-size: var(--fs-xs);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  margin-bottom: 2px;
+}
+.cm-queryblock-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  text-align: left;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+}
+.cm-queryblock-row:hover {
+  background: var(--bg-hover);
+}
+.cm-queryblock-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-queryblock-note {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--accent);
+}
+.cm-queryblock-empty {
+  color: var(--fg-faint);
+  font-size: var(--fs-xs);
+  padding: 2px 6px;
+}
+.cm-queryblock-error {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.cm-lp-strike {
+  text-decoration: line-through;
+  color: var(--fg-muted);
+}
+.cm-lp-done {
+  color: var(--fg-faint);
+  text-decoration: line-through;
+}
+.cm-lp-hr {
+  display: inline-block;
+  width: 100%;
+  vertical-align: middle;
+  border-top: 1px solid var(--border);
+}
+.cm-lp-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--fg-faint);
+  border-radius: 4px;
+  margin: 0 7px -2px 1px;
+  cursor: pointer;
+  position: relative;
+}
+.cm-lp-checkbox:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.cm-lp-checkbox:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.cm-lp-frontmatter {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  margin-bottom: 12px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.cm-lp-fm-label {
+  color: var(--fg-muted);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.cm-lp-fm-keys {
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ---- live preview, stage two: highlight / tags / images / tables / callouts ---- */
+.cm-md-mark {
+  background: var(--mark-bg);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.cm-lp-tag {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 1px 7px 2px;
+  font-size: 0.85em;
+}
+/* A date marker on a task line that does not parse: the parser silently treats it as no date, and this draws the warning */
+.cm-lp-baddate {
+  text-decoration: underline wavy var(--danger);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+/* The task date chip: a capsule of the same family as the #tag and Agenda chips, coloured
+   danger when overdue and unfinished.
+   inline rather than inline-flex+text-bottom: the chip's text shares the baseline with the
+   line's text, which is what keeps it strictly aligned under the font metrics of both
+   WebView engines (under WebView2/Segoe, text-bottom drifts with the metrics and the whole
+   chip floats up) */
+.cm-lp-datechip {
+  display: inline;
+  white-space: nowrap;
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+  border-radius: 999px;
+  padding: 1px 8px 2px;
+  font-size: 0.85em;
+}
+.cm-lp-datechip svg {
+  width: 0.9em;
+  height: 0.9em;
+  vertical-align: -0.08em;
+  margin-right: 4px;
+}
+.cm-lp-datechip-overdue {
+  color: var(--danger);
+}
+/* The *(timestamp)* signature a memo or a clip writes: demoted to a metadata footnote */
+.cm-lp-stamp {
+  color: var(--fg-faint);
+  font-size: 0.85em;
+}
+/* Where a block anchor is defined, "^id": a quiet mono badge marking that this block can be cited as [[note#^id]] */
+.cm-lp-anchor {
+  color: var(--fg-faint);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  padding: 0 4px;
+}
+/* The friendly rendering of a wikilink's suffix: the heading separator "›", the block reference "¶", the supports prefix */
+.cm-lp-linksep {
+  color: var(--fg-faint);
+  padding: 0 2px;
+}
+.cm-lp-blockref {
+  color: var(--fg-faint);
+  font-size: 0.8em;
+  padding-left: 3px;
+}
+.cm-lp-supports {
+  color: var(--fg-faint);
+  font-size: 0.85em;
+  margin-right: 4px;
+}
+.cm-lp-image {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+.cm-lp-image img {
+  max-width: 100%;
+  /* height:auto outweighs the height attribute JS sets: the attribute only holds the
+     aspect-ratio placeholder before loading (ImageWidget's imageDims cache), and after
+     loading the height still follows the intrinsic ratio, so narrowing max-width does not
+     squash it to the attribute's value */
+  height: auto;
+  max-height: 480px;
+  vertical-align: bottom;
+  border-radius: var(--radius);
+  cursor: zoom-in; /* clicking an image in the rendered state (with or without ⌘) opens the lightbox, so the zoom cursor is always shown */
+}
+/* The floating buttons in an image's top-right corner (copy, zoom): they reuse the code
+   block's .cm-lp-copy appearance (the element carries both classes) and only adjust the
+   position and the visibility — a button always visible on an image is too loud, so it
+   appears on hover */
+.cm-lp-imgbtn {
+  top: 8px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+/* The placeholder box while an image seen for the first time (with no cached size) loads:
+   the height is a guess, and all it aims for is narrowing the "mounts at height 0 → loads
+   and pushes open" scroll jump; the width is a class rather than a min-width — the inline
+   style of the `|width` syntax has to be able to outweigh it. The class is removed once it
+   loads or fails */
+.cm-lp-image img.cm-lp-loading {
+  width: 240px;
+  min-height: 160px;
+  background: var(--bg-hover);
+}
+.cm-lp-image:hover .cm-lp-imgbtn {
+  opacity: 0.9;
+}
+.cm-lp-imgbtn:hover {
+  opacity: 1;
+  color: var(--fg);
+}
+/* With a copy button present the zoom button gives up the top-right corner and moves one slot left (8+24+6, as in .cm-lp-run) */
+.cm-lp-imgzoom-shift {
+  right: 38px;
+}
+.cm-lp-image-missing {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--fg-faint);
+  font-size: var(--fs-sm);
+}
+/* Zoomed image viewing (the lightbox, src/lib/lightbox.ts): an overlay in the current
+   window with no second window opened. Wheel and pinch zooming, drag panning, and a double
+   click toggling fit and actual pixels. The dark ground serves both themes; its z-index
+   sits below the permission dialog (200) — a security dialog always covers it */
+.imgbox {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.78);
+  opacity: 0;
+  transition: opacity 0.15s;
+  outline: none;
+}
+.imgbox.show {
+  opacity: 1;
+}
+.imgbox img {
+  max-width: calc(100vw - 64px);
+  max-height: calc(100vh - 64px);
+  border-radius: var(--radius);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.08s ease-out;
+}
+.imgbox.dragging img {
+  cursor: grabbing;
+}
+.imgbox-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 15px;
+  cursor: pointer;
+}
+.imgbox-close:hover {
+  background: rgba(255, 255, 255, 0.24);
+  color: #fff;
+}
+.imgbox-zoom {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: rgba(255, 255, 255, 0.92);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.imgbox-zoom.show {
+  opacity: 1;
+}
+.cm-lp-table {
+  padding: 6px 0;
+  overflow-x: auto;
+}
+/* The width rule comes from the same place as a rendered table's (.md-tablewrap table):
+   without declaring a width it shrinks to the container, and since CJK can break between
+   characters, min-content collapses to one character per column (set vertically) and
+   overflow never fires — so it spreads to the content's width up to the cap, and
+   horizontal scrolling is left to the .cm-lp-table layer */
+.cm-lp-table table {
+  border-collapse: collapse;
+  font-size: 0.95em;
+  line-height: 1.5;
+  width: max-content;
+  max-width: max(100%, 640px);
+}
+.cm-lp-table th,
+.cm-lp-table td {
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  text-align: left;
+  cursor: text;
+}
+.cm-lp-table th {
+  background: var(--bg-panel);
+  font-weight: 600;
+}
+.cm-lp-cell-strong {
+  font-weight: 600;
+}
+.cm-lp-cell-em {
+  font-style: italic;
+}
+.cm-lp-cell-code {
+  background: var(--bg-panel);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.cm-lp-tablesrc {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.cm-lp-callout {
+  --co-color: var(--co-info);
+  border-left: 2px solid var(--co-color);
+  background: color-mix(in srgb, var(--co-color) 7%, transparent);
+}
+/* Only the padding's specificity is raised: raising the whole rule to three levels would
+   defeat the (0,1,0) --co-color overrides of the .cm-lp-co-tip family below, and every
+   callout would turn info blue */
+.cm-editor .cm-scroller .cm-lp-callout {
+  padding-left: 12px;
+}
+.cm-editor .cm-scroller .cm-lp-co-first {
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+  padding-top: 4px;
+}
+.cm-editor .cm-scroller .cm-lp-co-last {
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+  padding-bottom: 4px;
+}
+.cm-lp-co-head {
+  color: var(--co-color);
+  font-weight: 600;
+}
+.cm-lp-co-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: -3px;
+  margin-right: 6px;
+  text-transform: capitalize;
+}
+.cm-lp-co-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.cm-lp-co-tip {
+  --co-color: var(--co-tip);
+}
+.cm-lp-co-success {
+  --co-color: var(--co-success);
+}
+.cm-lp-co-question {
+  --co-color: var(--co-question);
+}
+.cm-lp-co-warn {
+  --co-color: var(--co-warn);
+}
+.cm-lp-co-danger {
+  --co-color: var(--co-danger);
+}
+.cm-lp-co-example {
+  --co-color: var(--co-example);
+}
+.cm-lp-co-quote {
+  --co-color: var(--co-quote);
+}
+.cm-lp-co-claim {
+  --co-color: var(--co-claim);
+}
+.cm-lp-co-evidence {
+  --co-color: var(--co-evidence);
+}
+/* ---- The body typography of the assistant's Markdown bubbles (the class-name contract
+   markdown.ts's renderAssistantMarkdown* produces). Attaching .md-body gives the whole
+   set: content injected with {@html} would otherwise have to be written out with
+   :global() rule by rule inside each component, and every extra consumer would copy
+   another ~100 lines — one change to the class-name contract would then mean changing N
+   places. This is that contract's only style implementation; each consumer overrides only
+   what is really different for it (ReadingView's heading scale, say). The skeleton classes
+   .md-tablewrap/.md-codewrap/.md-check/.md-taskdone are below and are global as well. ---- */
+.md-body p {
+  margin: 0 0 8px;
+}
+.md-body p:last-child {
+  margin-bottom: 0;
+}
+.md-body ul,
+.md-body ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.md-body li {
+  margin: 3px 0;
+}
+.md-body li::marker {
+  color: var(--fg-faint);
+}
+.md-body strong {
+  font-weight: 600;
+}
+.md-body blockquote {
+  margin: 0 0 8px;
+  padding: 2px 10px;
+  border-left: 2px solid var(--border);
+  color: var(--fg-muted);
+}
+.md-body code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-panel);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.md-body .md-code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  background: var(--bg-panel);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-x: auto;
+  margin: 0 0 8px;
+}
+.md-body .md-code code {
+  background: none;
+  padding: 0;
+}
+.md-body .md-h {
+  font-weight: 600;
+  margin: 16px 0 6px;
+}
+.md-body .md-h:first-child {
+  margin-top: 2px;
+}
+.md-body .md-h1 {
+  font-size: 1.1em;
+}
+.md-body .md-h2 {
+  font-size: 1.05em;
+}
+.md-body .md-h1,
+.md-body .md-h2 {
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+}
+.md-body .md-hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 8px 0;
+}
+.md-body .md-link,
+.md-body .md-wiki {
+  color: var(--accent);
+  cursor: pointer;
+}
+.md-body .md-link:hover,
+.md-body .md-wiki:hover {
+  text-decoration: underline;
+}
+.md-body .md-tablewrap {
+  margin: 2px 0 10px;
+}
+.md-body .md-img {
+  display: inline-block;
+  font-size: 0.85em;
+  color: var(--fg-muted);
+  background: var(--bg-panel);
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  padding: 1px 8px;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.md-body .md-img:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+/* ---- Rendered Markdown tables (shared by the chat bubbles and the reading projection;
+   markdown.ts only produces a table inside .md-tablewrap). Without declaring a width it
+   shrinks to the container, and since CJK can break between characters, min-content
+   collapses to one character per column (set vertically) and overflow never fires — so it
+   spreads to the content's width up to the cap, with the scrolling left to the wrapper.
+   Only horizontal rules are drawn; drawing every vertical line as well would give it the
+   face of a spreadsheet. The rounded corners sit on the table, since the wrapper may be
+   wider (a shrunk table) or narrower (scrolling) than it, and the border only follows the
+   table when it belongs to it.
+   The per-component differences in paragraph spacing and padding are overridden in those
+   components ---- */
+.md-tablewrap {
+  overflow-x: auto;
+}
+.md-tablewrap table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.92em;
+  line-height: 1.55;
+  width: max-content;
+  max-width: max(100%, 640px);
+}
+.md-tablewrap th,
+.md-tablewrap td {
+  padding: 4px 10px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.md-tablewrap th {
+  background: var(--bg-panel);
+  font-size: 0.92em;
+  font-weight: 600;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+}
+.md-tablewrap th:first-child {
+  border-top-left-radius: 5px;
+}
+.md-tablewrap th:last-child {
+  border-top-right-radius: 5px;
+}
+.md-tablewrap tbody tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+/* ---- The code block's copy button and the task list of rendered Markdown (shared by chat
+   and the projection; markdown.ts generates static HTML and the click goes through each
+   component's delegation) ---- */
+.md-codewrap {
+  position: relative;
+}
+.md-codewrap .md-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 10px;
+  color: var(--fg-faint);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.md-codewrap:hover .md-copy,
+.md-codewrap:focus-within .md-copy {
+  opacity: 1;
+}
+.md-codewrap .md-copy:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+.md-check {
+  color: var(--fg-faint);
+  margin-right: 2px;
+}
+.md-check.done {
+  color: var(--accent);
+}
+.md-taskdone {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-faint);
+}
+
+/* code-file highlighting (plain files opened in the editor) */
+.cm-code-keyword {
+  color: #a12a55;
+}
+.cm-code-string {
+  color: #0a3069;
+}
+.cm-code-comment {
+  color: var(--fg-faint);
+  font-style: italic;
+}
+.cm-code-atom {
+  color: #0550ae;
+}
+.cm-code-type {
+  color: #953800;
+}
+.cm-code-func {
+  color: #6639ba;
+}
+.cm-code-prop {
+  color: #116329;
+}
+@media (prefers-color-scheme: dark) {
+  .cm-code-keyword {
+    color: #f28fad;
+  }
+  .cm-code-string {
+    color: #a5d6ff;
+  }
+  .cm-code-atom {
+    color: #79c0ff;
+  }
+  .cm-code-type {
+    color: #ffa657;
+  }
+  .cm-code-func {
+    color: #d2a8ff;
+  }
+  .cm-code-prop {
+    color: #7ee787;
+  }
+}
+.cm-tooltip.cm-tooltip-autocomplete {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-family: var(--font-ui);
+}
+.cm-tooltip-autocomplete ul li[aria-selected] {
+  background: var(--accent-soft);
+  color: var(--fg);
+}

@@ -1,0 +1,31 @@
+[package]
+name = "vemry-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vemry-core = { path = "../vemry-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+similar.workspace = true
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+eventsource-stream = "0.2"
+futures-util = "0.3"
+# Image references filled in as data URLs (only while the runner assembles a
+# request; never written to a sidecar)
+base64 = "0.22"
+# Text extraction from PDF attachments into <file-context> (pure Rust; when a
+# scan yields nothing, it says so)
+pdf-extract = "0.12.0"
+
+[dev-dependencies]
+# Builds a one-page PDF on the fly in tests (a transitive dependency of
+# pdf-extract, so the same version costs nothing)
+lopdf = "0.42"
+tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"

@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["crates/vemry-core", "crates/vemry-agent", "crates/vemry-script", "crates/vemry-clip", "src-tauri"]
+
+[workspace.package]
+version = "0.9.0"
+edition = "2021"
+license = "FSL-1.1-ALv2"
+repository = "https://github.com/pangyexing/vemry"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+async-trait = "0.1"
+similar = "2"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

@@ -1,0 +1,9 @@
+allowBuilds:
+  esbuild: true
+# pnpm configuration (not a monorepo; this file only carries settings)
+# Exempt from the minimumReleaseAge supply-chain policy: these two packages from
+# the official Svelte ecosystem were freshly published when the lockfile was
+# committed, and their provenance was checked by hand
+minimumReleaseAgeExclude:
+  - '@sveltejs/acorn-typescript'
+  - esrap

@@ -1,0 +1,104 @@
+name: Release
+
+# Triggers:
+# - pushing a v* tag: build all four platform artifacts and create a draft release
+#   (including the updater's latest.json)
+# - workflow_dispatch: build only (a dry run of the pipeline; no release is created)
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  # Version-drift guard: the tag has to equal the workspace Cargo.toml version
+  # (the single source of truth for the version)
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert tag matches workspace version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "tag=$TAG workspace=$VERSION"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::tag v$TAG does not match workspace Cargo.toml version=$VERSION; bump first, then tag"
+            exit 1
+          fi
+
+  build:
+    needs: guard
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    env:
+      # The minisign update signature (required); PASSWORD may be an empty string
+      # when the key has no passphrase
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # Note: APPLE_* must not go here — a missing secret makes the env var an
+      # empty string rather than undefined, and the packager treats an empty
+      # APPLE_CERTIFICATE as configured, tries to import it into the keychain and
+      # fails (measured on the first rc.1 run). The guard step below writes them
+      # into GITHUB_ENV only when the secret is non-empty.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: pnpm install
+      - name: Enable Apple code signing (only when certificate secret exists)
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
+        run: |
+          {
+            echo "APPLE_CERTIFICATE<<__VEMRY_EOF__"
+            echo "${{ secrets.APPLE_CERTIFICATE }}"
+            echo "__VEMRY_EOF__"
+            echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}"
+            echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}"
+            echo "APPLE_ID=${{ secrets.APPLE_ID }}"
+            echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}"
+            echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
+          } >> "$GITHUB_ENV"
+      - name: Build and publish draft release (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "vemry ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+      - name: Build only (manual dry run)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: tauri-apps/tauri-action@v0
+        with:
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}

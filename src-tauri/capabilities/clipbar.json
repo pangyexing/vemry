@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "clipbar",
+  "description": "The clip toolbar window (clipbar-N, our own bundle, paired with browser-N). Using a prefix wildcard for webviews is an explicit exception to the \"a capability does not use wildcards\" principle: the label is minted by Rust alone (clipbar.rs), and a window holding remote content is always browser-* or reader and never matches this prefix. Tauri's ACL does not constrain an application's own custom commands one by one, so the allowlist below is a discipline list rather than an enforced boundary — what the toolbar actually calls is: clipbar_to_main / clipbar_set_expanded / browser_set_docked / browser_navigate / browser_back / browser_forward / browser_focus / browser_state / bookmark_toggle / bookmark_list / vault_current / vault_last / notes_list / query_blocks / note_create / clips_lookup / settings_get.",
+  "webviews": ["clipbar-*"],
+  "permissions": ["core:default"]
+}

@@ -1,0 +1,4 @@
+# Paths matched here are invisible to the AI: not read, not written, never in a
+# prompt. gitignore syntax; `!` exempts. Enforced in Rust, at the layer that owns
+# file access — the UI cannot widen it.
+private/

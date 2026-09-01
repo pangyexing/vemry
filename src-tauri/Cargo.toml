@@ -1,0 +1,95 @@
+[package]
+name = "vemry-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "vemry_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+vemry-core = { path = "../crates/vemry-core" }
+vemry-agent = { path = "../crates/vemry-agent" }
+vemry-script = { path = "../crates/vemry-script" }
+vemry-clip = { path = "../crates/vemry-clip" }
+chrono.workspace = true
+# macos-private-api: needed by the transparent clip toolbar window (its bottom
+# corners match the browser window); it only affects windows that declare
+# themselves transparent, and is harmless outside App Store distribution
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+# In-app updates (minisign signature verification; the check is user-initiated by
+# default — rule 5 of the controlled network egress)
+tauri-plugin-updater = "2"
+# Restart after an update is installed (process:allow-restart)
+tauri-plugin-process = "2"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+opener = "0.8.5"
+# OS locale for the "auto" language setting: the native menu is built before the
+# frontend loads, so Rust cannot borrow navigator.language for it. No transitive deps.
+sys-locale = "0.3"
+# Ad-blocking rules → WKContentRuleList JSON. content-blocking is an empty
+# feature and avoids css-validation's heavy dependencies (cssparser/selectors)
+adblock = { version = "0.13", default-features = false, features = ["content-blocking", "embedded-domain-resolver"] }
+# Manual update downloads for the rule subscriptions (network only when the user
+# asks for it) plus the projection image proxy (the vemry-asset protocol, a
+# controlled egress behind SSRF validation). Reuses 0.12, the same version as
+# vemry-agent
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+# The content-addressed key of the image proxy's disk cache (URL → sha256; fnv is
+# not collision-resistant and must not be used for a cache key)
+sha2 = "0.10"
+# URL parsing/validation for the image proxy (tauri re-exports Url without Host;
+# already in the tree)
+url = "2"
+# Decoding the path header of attachment_save: the frontend encodes with
+# encodeURIComponent and this decodes it symmetrically (a header value can only
+# be ISO-8859-1, and a non-ASCII file name placed there raw blows up WebView2 on
+# Windows). url/reqwest are already in the tree, so this adds no compilation unit
+percent-encoding = "2"
+
+# clipboard file/image paste reads NSPasteboard directly; these crates are
+# already in the tree via wry, so this adds no new compilation units.
+# objc2-web-kit (WKContentRuleList) likewise comes in through wry; this only
+# turns features on
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+# NSWindow/NSGraphics/NSResponder: the browser window is attached to the main
+# window as a native child window (the pseudo-merged dock)
+# NSButton/NSControl/NSView: a docked browser window hides the minimise and zoom
+# buttons and keeps only the red close button
+objc2-app-kit = { version = "0.3", features = [
+    "NSPasteboard",
+    "NSWindow",
+    "NSGraphics",
+    "NSResponder",
+    "NSButton",
+    "NSControl",
+    "NSView",
+    # One-click image copy: NSImage writes straight to NSPasteboard (decoding is
+    # left to the system)
+    "NSImage",
+    # key-follows-mouse for the clip toolbar: a tracking area plus mouseEntered events
+    "NSTrackingArea",
+    "NSEvent",
+    # Smoothing a discrete scroll wheel: the handler of an NSEvent local monitor
+    # (addLocalMonitorForEvents…) is a block
+    "block2",
+] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSEnumerator", "NSError", "NSString", "NSURL"] }
+objc2-web-kit = { version = "0.3", features = [
+    "WKContentRuleList",
+    "WKContentRuleListStore",
+    "WKUserContentController",
+    "WKWebViewConfiguration",
+    "WKWebView",
+    "block2",
+] }
+block2 = "0.6"
