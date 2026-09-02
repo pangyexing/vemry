@@ -809,6 +809,14 @@
     vault.editorBlockPrivate = privateRangeAt(v.state.doc, head) != null;
     vault.editorOrigin = null;
     vault.pendingCount = 0;
+    // Provenance for the document just loaded. The effect below keys on the store's
+    // reactive signals only; view and docPath are plain variables, so at startup (and
+    // on any load the effect ran ahead of) it had returned early and nothing re-ran it
+    // until the next index event — marks appeared only after the next chat turn
+    if (path.endsWith(".md")) {
+      v.dispatch({ effects: [provOverlayEffect.of(vault.provenanceOverlay), provMarksEffect.of(prefs.provenanceMarks)] });
+      whenNotComposing(() => void loadProvenance(path));
+    }
     // The onSelection resetDoc fires still carries the previous note's docPath, so it is zeroed here against the new document
     vault.editorSelection = null;
     vault.editorSelStats = null;
