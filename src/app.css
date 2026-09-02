@@ -470,6 +470,33 @@ button:focus-visible,
   font-size: var(--fs-xs);
   padding: 2px 6px;
 }
+/* A grouped result (`group:`): one <details> per group, the native marker as the chevron */
+.cm-queryblock-group {
+  margin: 2px 0;
+}
+.cm-queryblock-group > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 4px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  color: var(--fg);
+}
+.cm-queryblock-group > summary::marker {
+  color: var(--fg-faint);
+  font-size: 0.8em;
+}
+.cm-queryblock-group-count {
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+.cm-queryblock-row-nonote .cm-queryblock-note {
+  display: none;
+}
 .cm-queryblock-error {
   color: var(--danger);
   font-family: var(--font-mono);

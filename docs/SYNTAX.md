@@ -271,7 +271,8 @@ limit: 20
 ```
 ````
 
-A YAML body with **eight flat scalars**, all optional (`field` may repeat):
+A YAML body with **eight flat scalars** for the query, all optional (`field` may
+repeat), plus two presentation keys:
 
 | Field | Values |
 |---|---|
@@ -283,6 +284,8 @@ A YAML body with **eight flat scalars**, all optional (`field` may repeat):
 | `due_before` | `YYYY-MM-DD` or `today` (evaluated in local time) |
 | `field` | `key` (present) / `key = v` / `key != v` / `key < v` / `key > v` / `key ~ text`; dates and numbers compare as such; several `field` lines all have to hold |
 | `limit` | positive integer |
+| `group` | `note` / `kind` / a field key — one collapsible group per value, blocks without the field under "None", last (presentation only: applied in the editor, not part of the query the agent's tool takes) |
+| `sort` | `note` / `kind` / `text` / a field key, optionally followed by `asc` (default) or `desc`; dates and numbers sort as such, blocks without the field last either way (presentation only, like `group`) |
 
 No nesting, no expressions — deliberately a safe subset: a query block is read-only,
 cannot write to disk, and cannot reach the network.

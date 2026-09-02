@@ -547,8 +547,10 @@ skipped rather than replayed, leaving one `schedule_missed` line.
 ### Query blocks and runnable js blocks (the editor side)
 
 - A ` ```vemry-query ` fence with a YAML body (eight flat scalars —
-  `kind/note/tag/text/task_state/due_before/limit` — with `due_before: today` as
-  sugar; a 20-line parser, no js-yaml dependency). When the cursor is outside the
+  `kind/note/tag/text/task_state/due_before/field/limit` — with `due_before: today` as
+  sugar, plus the presentation keys `group` and `sort`, which the frontend applies
+  in `views/queryrows.ts` and never sends to Rust; a 20-line parser, no js-yaml
+  dependency). When the cursor is outside the
   block, the whole fence is replaced by a live-results widget (`queryblock.ts`,
   the same StateField block-replace semantics as table.ts); clicking a row jumps
   through `openNote` and enters navigation history. A change to

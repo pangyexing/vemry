@@ -4,10 +4,11 @@
 // With the cursor outside the block the whole fence renders as a live query result
 // (the same block-level replace semantics as table.ts, which has to come from a
 // StateField); clicking a result row jumps to the note it came from. The YAML body is
-// eight flat scalars (all the fields of BlockQuery), for which a 20-line parser is
-// enough and js-yaml is not pulled in. An index update triggers a requery through the
-// queryRefresh effect — sharing the refresh signal (indexVersion) with the projection
-// views.
+// eight flat scalars (all the fields of BlockQuery) plus two presentation keys,
+// `group` and `sort`, that never leave the frontend (views/queryrows.ts) — for which
+// a 20-line parser is enough and js-yaml is not pulled in. An index update triggers
+// a requery through the queryRefresh effect — sharing the refresh signal
+// (indexVersion) with the projection views.
 // In any standard Markdown renderer it degrades to an ordinary code block, with zero
 // lock-in.
 import { t } from "$lib/i18n/i18n.svelte";
@@ -19,6 +20,7 @@ import { fencedCodeText } from "./fenced";
 import { selectionTouches } from "./reveal";
 import { foldRangesOf, insideFold } from "./table";
 import { localDate } from "$lib/views/tasks";
+import { type GroupKey, type SortSpec, groupHits, parseGroup, parseSort, sortHits } from "$lib/views/queryrows";
 
 export interface QueryHost {
   runQuery(q: BlockQuery): Promise<BlockHit[]>;
@@ -31,13 +33,23 @@ export const queryRefresh = StateEffect.define<number>();
 // The types come from api.ts's BlockQuery mirror: when the Rust side adds a kind or a state, tsc catches the drift
 const KINDS: NonNullable<BlockQuery["kind"]>[] = ["paragraph", "heading", "list_item", "task", "claim", "evidence", "code_block", "private"];
 const STATES: NonNullable<BlockQuery["task_state"]>[] = ["todo", "doing", "done"];
-const FIELDS = "kind/note/tag/text/task_state/due_before/field/limit";
+const FIELDS = "kind/note/tag/text/task_state/due_before/field/limit/group/sort";
 // Mirrors vemry-core's parse_field_filter grammar for a localized error only; Rust is the authority
 const FIELD_FLAT_RE = /^[\p{L}\p{N}_-]+\s*(?:(?:!=|=|<|>|~)\s*\S.*)?$/u;
 
+/** What a fence parses to: the query for Rust, and the two presentation keys the widget applies itself. */
+export interface ParsedQuery {
+  query?: BlockQuery;
+  error?: string;
+  group?: GroupKey;
+  sort?: SortSpec;
+}
+
 /** Flat `key: value` lines → BlockQuery fields, validated field by field (exported for testing) */
-export function parseQuerySource(src: string): { query?: BlockQuery; error?: string } {
+export function parseQuerySource(src: string): ParsedQuery {
   const q: BlockQuery = {};
+  let group: GroupKey | undefined;
+  let sort: SortSpec | undefined;
   for (const rawLine of src.split("\n")) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
@@ -92,11 +104,29 @@ export function parseQuerySource(src: string): { query?: BlockQuery; error?: str
         q.limit = n;
         break;
       }
+      // Presentation keys: applied by the widget, never sent to Rust
+      case "group": {
+        const g = parseGroup(value);
+        if (!g) return { error: t("queryBlock.groupFormat") };
+        group = g;
+        break;
+      }
+      case "sort": {
+        const s = parseSort(value);
+        if (!s) return { error: t("queryBlock.sortFormat") };
+        sort = s;
+        break;
+      }
       default:
         return { error: t("queryBlock.unknownField", { key, fields: FIELDS }) };
     }
   }
-  return { query: q };
+  return { query: q, group, sort };
+}
+
+/** A block kind's name for a group header. */
+function kindLabel(kind: string): string {
+  return (KINDS as string[]).includes(kind) ? t(`queryBlock.kind.${kind as (typeof KINDS)[number]}`) : kind;
 }
 
 function truncate(s: string, max: number): string {
@@ -141,7 +171,7 @@ class QueryWidget extends WidgetType {
         head.className = "cm-queryblock-head";
         head.textContent = t("queryBlock.hits", { n: hits.length });
         wrap.appendChild(head);
-        for (const hit of hits) {
+        const rowEl = (hit: BlockHit) => {
           const row = document.createElement("button");
           row.className = "cm-queryblock-row";
           const text = document.createElement("span");
@@ -155,7 +185,34 @@ class QueryWidget extends WidgetType {
             e.preventDefault();
             this.host.openNote(hit.note);
           };
-          wrap.appendChild(row);
+          return row;
+        };
+        const ordered = parsed.sort ? sortHits(hits, parsed.sort) : hits;
+        if (parsed.group) {
+          // One <details> per group, open by default; a group by note hides the
+          // per-row note name (the header says it), a missing field value lands last
+          for (const g of groupHits(ordered, parsed.group, t("queryBlock.none"), kindLabel)) {
+            const details = document.createElement("details");
+            details.className = "cm-queryblock-group";
+            details.open = true;
+            const summary = document.createElement("summary");
+            const title = document.createElement("span");
+            title.className = "cm-queryblock-group-title";
+            title.textContent = g.title;
+            const count = document.createElement("span");
+            count.className = "cm-queryblock-group-count";
+            count.textContent = String(g.hits.length);
+            summary.append(title, count);
+            details.appendChild(summary);
+            for (const hit of g.hits) {
+              const row = rowEl(hit);
+              if (parsed.group.by === "note") row.classList.add("cm-queryblock-row-nonote");
+              details.appendChild(row);
+            }
+            wrap.appendChild(details);
+          }
+        } else {
+          for (const hit of ordered) wrap.appendChild(rowEl(hit));
         }
         if (!hits.length) {
           const empty = document.createElement("div");
