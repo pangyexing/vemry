@@ -33,7 +33,8 @@
       "M2.5 10 a7.5 7.5 0 1 0 15 0 a7.5 7.5 0 1 0 -15 0",
       "M10 6 V10 L12.8 12.8",
     ],
-    // Two blocks of unequal width: the eye reads "chunks of text", and the ink stays in the agenda/kanban cluster
+    // Two blocks of unequal width. The entry is required by the type (every projection
+    // has an icon; the tab bar may show it) even though the rail does not list Blocks
     blocks: [
       "M3 4 h14 a0.8 0.8 0 0 1 0.8 0.8 v2.4 a0.8 0.8 0 0 1 -0.8 0.8 h-14 a0.8 0.8 0 0 1 -0.8 -0.8 v-2.4 a0.8 0.8 0 0 1 0.8 -0.8 Z",
       "M3 11.5 h9 a0.8 0.8 0 0 1 0.8 0.8 v3.4 a0.8 0.8 0 0 1 -0.8 0.8 h-9 a0.8 0.8 0 0 1 -0.8 -0.8 v-3.4 a0.8 0.8 0 0 1 0.8 -0.8 Z",
@@ -86,7 +87,8 @@
       { cmd: "view-agenda", view: "agenda" },
       { cmd: "view-kanban", view: "kanban" },
       { cmd: "view-timeline", view: "timeline" },
-      { cmd: "view-blocks", view: "blocks" },
+      // The Blocks view is deliberately not on the rail (nor in the menu): it is a
+      // power tool reached from the palette (view-blocks), and the rail stays at seven
       { cmd: "view-graph", view: "graph" },
     ],
     // research

@@ -134,7 +134,6 @@ mod tests {
         "cmd.view-agenda.title",
         "cmd.view-kanban.title",
         "cmd.view-timeline.title",
-        "cmd.view-blocks.title",
         "cmd.view-claims.title",
         "cmd.view-evidence.title",
         "cmd.view-graph.title",
