@@ -565,6 +565,20 @@ skipped rather than replayed, leaving one `schedule_missed` line.
   has no stable identity (the body can be edited freely, or synced in from
   outside). If it needs to write, it graduates to `.vemry/scripts/`.
 
+### Block types (typed blocks on Markdown)
+
+`.vemry/types/*.md` (`vemry-core/src/types.rs`, the same loader shape as the
+skills: regular `.md` files only, a symlink refused, malformed frontmatter
+degrading to defaults) declares a kind of block plus its inline fields, tag
+and template. The editor lists the enabled types in the `/` menu and under
+"turn into ›" (`editor/blocktype.ts`: one transaction that turns the block
+into the kind and appends the fields it lacks); the system prompt names them
+under `## Block types` so the agent writes such blocks the same way; the
+watcher emits `TypesChanged` for the directory, which refreshes the menus and
+invalidates the prompt snapshot. IPC: `types_list`, `types_init` (the example
+`book.md`). A typed block is ordinary Markdown with fields — no note points
+at a type.
+
 ### Skills (instruction-level)
 
 `.vemry/skills/*.md`, with frontmatter `name` (defaulting to the file stem),

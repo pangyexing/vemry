@@ -28,6 +28,10 @@ const SELF_WRITE_WINDOW: Duration = Duration::from_secs(2);
 /// `VaultEvent::ScriptsChanged` so the script host can hot-reload.
 pub const SCRIPTS_DIR: &str = ".vemry/scripts";
 
+/// Block types live here (vault-relative). Edits under it emit
+/// `VaultEvent::TypesChanged`.
+pub const TYPES_DIR: &str = ".vemry/types";
+
 /// Text files above this open with the OS default app instead of the editor.
 const MAX_TEXT_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
@@ -852,6 +856,7 @@ impl Vault {
         let mut events = Vec::new();
         let mut files_changed = false;
         let mut scripts_changed = false;
+        let mut types_changed = false;
         for path in paths {
             let Ok(rel) = path.strip_prefix(&self.root) else { continue };
             // The rules file lives in a hidden dir, so it must be handled
@@ -870,6 +875,12 @@ impl Vault {
                 || (rel.starts_with(SCRIPTS_DIR) && rel.extension().is_some_and(|x| x == "js"))
             {
                 scripts_changed = true;
+                continue;
+            }
+            if rel == Path::new(TYPES_DIR)
+                || (rel.starts_with(TYPES_DIR) && rel.extension().is_some_and(|x| x == "md"))
+            {
+                types_changed = true;
                 continue;
             }
             if rel.components().any(|c| is_hidden(c.as_os_str().to_string_lossy().as_ref())) {
@@ -919,6 +930,9 @@ impl Vault {
         }
         if scripts_changed {
             events.push(VaultEvent::ScriptsChanged);
+        }
+        if types_changed {
+            events.push(VaultEvent::TypesChanged);
         }
         events
     }
@@ -2159,6 +2173,18 @@ mod tests {
         assert!(vault.is_private(&NoteId::new("projects/Alpha.md")));
         // other hidden paths stay silent
         assert!(vault.handle_fs_change(&[root.join(".vemry/config.json")]).is_empty());
+    }
+
+    #[test]
+    fn types_dir_change_emits_types_changed() {
+        let (_d, mut vault) = fixture_vault();
+        let root = vault.root().to_path_buf();
+        fs::create_dir_all(root.join(".vemry/types")).unwrap();
+        fs::write(root.join(".vemry/types/book.md"), "---\nname: book\n---\n").unwrap();
+        let events = vault.handle_fs_change(&[root.join(".vemry/types/book.md")]);
+        assert!(matches!(events[..], [VaultEvent::TypesChanged]));
+        // a stray non-md file under the directory stays silent
+        assert!(vault.handle_fs_change(&[root.join(".vemry/types/notes.txt")]).is_empty());
     }
 
     #[test]

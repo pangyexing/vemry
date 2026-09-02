@@ -1,4 +1,4 @@
-import type { FieldStat } from "$lib/api";
+import type { FieldStat, BlockType } from "$lib/api";
 // CodeMirror assembly for the note editor and the plain/code file editor.
 import { t } from "$lib/i18n/i18n.svelte";
 import { EditorState, type Extension } from "@codemirror/state";
@@ -111,6 +111,8 @@ export interface EditorOptions {
   tags?: () => string[];
   /** note mode: inline-field keys and values for `key::` completion (kept fresh by the caller) */
   fieldStats?: () => FieldStat[];
+  /** note mode: the vault's enabled block types (the `/` menu's "types" section) */
+  blockTypes?: () => BlockType[];
   /** note mode: a click on a date chip (a task date or a `key:: YYYY-MM-DD` field) */
   onFieldChip?: FieldChipHandler;
   /** note mode: live `vemry-query` blocks (query + result-row navigation) */
@@ -197,7 +199,7 @@ function buildState(opts: EditorOptions): EditorState {
           refCompletions(host),
           wikilink.completions,
           atCompletions(host.targets),
-          slashCompletions(),
+          slashCompletions(opts.blockTypes ?? (() => [])),
           fieldCompletions(opts.fieldStats ?? (() => [])),
           tagCompletions(opts.tags ?? (() => [])),
           calloutCompletions,

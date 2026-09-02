@@ -185,6 +185,10 @@ CMD = {
         ("Open VEMRY.md", "打开 VEMRY.md"),
         ("Edit the agent's vault-level instructions", "编辑 agent 的 vault 级指令"),
     ),
+    "types-init": (
+        ("Create an example block type", "创建示例块类型"),
+        ("Write .vemry/types/book.md — a bullet with author, status and rating fields — to start from", "写入 .vemry/types/book.md（带 author/status/rating 字段的列表项）作为起点"),
+    ),
     "init-research-skill": (
         ("Install research skill", "初始化研究方法论 skill"),
         ("Write .vemry/skills/research.md: search the vault before the web, citation "
@@ -1453,6 +1457,7 @@ add("embed.", {
 
 add("slash.", {
     "section.basic": ("Basic", "基本"),
+    "section.types": ("Types", "类型"),
     "section.blocks": ("Blocks", "块"),
     "section.refs": ("References", "引用"),
     "heading1.title": ("Heading 1", "标题 1"),
@@ -1666,6 +1671,7 @@ add("ipc.", {
     "contentEmpty": ("The content is empty", "内容为空"),
     "memoryExists": ("VEMRY.md already exists", "VEMRY.md 已存在"),
     "researchSkillExists": ("The research skill already exists", "research skill 已存在"),
+    "typeExampleExists": ("The example block type already exists (.vemry/types/book.md)", "示例块类型已存在（.vemry/types/book.md）"),
     "trashFailed": ("Could not move it to the trash: {error}", "移入废纸篓失败: {error}"),
     "rulesUpdateRunning": ("A rule update is already running", "拦截规则更新正在进行中"),
     "noRuleSource": ("No rule subscription source is configured", "没有配置拦截规则订阅源"),

@@ -165,6 +165,7 @@ mod tests {
         // `ipc.trashFailed` is missing on purpose: the frontend is what looks that
         // one up.
         "ipc.fileExists",
+        "ipc.typeExampleExists",
         "ipc.dirNotEmpty",
         "ipc.imageFormatUnsupported",
         "ipc.copyImageUnsupported",

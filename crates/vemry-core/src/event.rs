@@ -21,6 +21,9 @@ pub enum VaultEvent {
     /// A file under `.vemry/scripts/` changed on disk — the script host must
     /// reload. At most one per watcher batch.
     ScriptsChanged,
+    /// A file under `.vemry/types/` changed on disk — the block-type menus and
+    /// the prompt snapshot must refresh. At most one per watcher batch.
+    TypesChanged,
 }
 
 type Subscriber = Box<dyn Fn(&VaultEvent) + Send + Sync>;

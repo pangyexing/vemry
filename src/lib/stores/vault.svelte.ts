@@ -8,6 +8,7 @@ import { agent } from "$lib/stores/agent.svelte";
 import { clips } from "$lib/stores/clips.svelte";
 import { toast } from "$lib/stores/toast.svelte";
 import { POSITIONAL_RE, blocksOf, findBlock } from "$lib/citation";
+import { types } from "$lib/stores/types.svelte";
 import { k } from "$lib/shortcut";
 import { byteToChar, ymd } from "$lib/views/tasks";
 import { loadBucketMap, saveBucket } from "$lib/persist";
@@ -969,6 +970,10 @@ class VaultStore {
           }
         }
       }
+    }
+    if (e.type === "types_changed") {
+      void types.refresh();
+      return;
     }
     if (e.type === "files_changed") {
       // The external-delete check for background text tabs: it only consults the lists

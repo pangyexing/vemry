@@ -18,6 +18,7 @@ pub mod privacy;
 pub mod provenance;
 pub mod query;
 pub mod search;
+pub mod types;
 pub mod vault;
 pub mod watcher;
 
@@ -36,6 +37,7 @@ pub use provenance::{
 };
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
+pub use types::{list_block_types, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE, TYPES_SUBDIR};
 pub use vault::{sanitize_filename, BacklinkEntry, InsertLanded, RefHit, RefResolution, RefTarget, Vault};
 
 #[derive(thiserror::Error, Debug)]

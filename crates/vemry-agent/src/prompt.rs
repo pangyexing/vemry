@@ -112,6 +112,22 @@ pub fn build_system_prompt(vault: &Vault, plan_tool: bool) -> String {
         }
     }
 
+    // Block types: the user's own kinds of block (`.vemry/types/`), named so
+    // the model writes them the way the editor does — fields on the block's
+    // line, the tag with it. Snapshotted per session like the skills
+    let types: Vec<_> = vemry_core::list_block_types(&vault.meta_dir()).into_iter().filter(|t| !t.disabled).collect();
+    if !types.is_empty() {
+        prompt.push_str(
+            "\n\n## Block types\n\nThe user's block types. When you write a block of one of these, use its kind and put its fields on the block's line as [key:: value] (dates as YYYY-MM-DD), with the tag when one is listed.\n",
+        );
+        for t in &types {
+            let fields = t.fields.iter().map(|f| f.key.as_str()).collect::<Vec<_>>().join(", ");
+            let tag = t.tag.as_deref().map(|g| format!(" #{g}")).unwrap_or_default();
+            let desc = if t.description.is_empty() { String::new() } else { format!(" — {}", t.description) };
+            prompt.push_str(&format!("- {} ({}{}): {}{}\n", t.name, t.kind, tag, fields, desc));
+        }
+    }
+
     // Everything below aggregates from privacy-visible notes only: counts,
     // folder names and tag statistics must not betray what was filtered.
     let visible: Vec<_> = vault
@@ -417,6 +433,20 @@ mod tests {
         let p = build_system_prompt(&vault, false);
         assert!(p.contains("[[path#^id]]") && p.contains("[[path#block]]"));
         assert!(p.contains("Never invent a block id"));
+    }
+
+    #[test]
+    fn block_types_injected_only_when_present() {
+        let (_d, vault) = fixture();
+        assert!(!build_system_prompt(&vault, false).contains("## Block types"));
+        let dir = vault.meta_dir().join("types");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("book.md"), vemry_core::BOOK_TYPE_TEMPLATE).unwrap();
+        std::fs::write(dir.join("off.md"), "---\nname: off\ndisabled: true\n---\n").unwrap();
+        let p = build_system_prompt(&vault, false);
+        assert!(p.contains("## Block types"), "{p}");
+        assert!(p.contains("- book (bullet #book): author, status, rating"), "{p}");
+        assert!(!p.contains("- off"));
     }
 
     #[test]

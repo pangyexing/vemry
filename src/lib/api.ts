@@ -75,6 +75,31 @@ export interface Block {
   explicit_id?: boolean;
 }
 
+/** One inline field a block type carries (mirrors vemry-core's `FieldSpec`). */
+export interface FieldSpec {
+  key: string;
+  default?: string;
+  values?: string[];
+  /** `date` / `number` / `text` (a hint). */
+  type?: string;
+}
+
+/** A block type from `.vemry/types/<file>` (mirrors vemry-core's `BlockType`). */
+export interface BlockType {
+  file: string;
+  name: string;
+  description: string;
+  /** A turn-into target id (`paragraph`, `bullet`, `task`, …). */
+  kind: string;
+  callout?: string;
+  tag?: string;
+  icon?: string;
+  fields: FieldSpec[];
+  /** `{{key}}` = a field's default, `{{date}}` = today, `{{cursor}}` = where the caret lands. */
+  template: string;
+  disabled: boolean;
+}
+
 /** One inline-field key across the vault (mirrors vemry-core's `FieldStat`). */
 export interface FieldStat {
   key: string;
@@ -349,7 +374,8 @@ export type VaultEvent =
   | { type: "index_ready"; note_count: number }
   | { type: "files_changed" }
   | { type: "privacy_changed" }
-  | { type: "scripts_changed" };
+  | { type: "scripts_changed" }
+  | { type: "types_changed" };
 
 // ---- the built-in knowledge browser (v0.4) ----
 
@@ -641,6 +667,10 @@ export const api = {
   linkTargets: () => invoke<string[]>("link_targets"),
   /** Inline-field keys in use and their frequent values (for `key::` completion and group-by menus). */
   fieldsList: () => invoke<FieldStat[]>("fields_list"),
+  /** The vault's block types (`.vemry/types/*.md`), disabled ones included. */
+  typesList: () => invoke<BlockType[]>("types_list"),
+  /** Write the example block type; returns its vault-relative path (an error when it exists). */
+  typesInit: () => invoke<string>("types_init"),
   foldersList: () => invoke<string[]>("folders_list"),
   folderCreate: (path: string) => invoke<string>("folder_create", { path }),
   filesList: () => invoke<string[]>("files_list"),

@@ -245,6 +245,21 @@ paired-delimiter extension modelled on `@lezer/markdown`'s own strikethrough.
 
 **Fallback**: the literal `==highlighted text==`, which is readable.
 
+## Block types
+
+`.vemry/types/<name>.md` declares a kind of block you write often: frontmatter
+`name`, `description`, `kind` (a turn-into target: `paragraph`, `bullet`,
+`task`, `quote`, `callout`, …), `tag`, `icon`, `fields` (a list of keys, or
+`{key, default, values, type}` mappings), and a body that is the template
+(`{{key}}` a field's default, `{{date}}` today, `{{cursor}}` the caret). The `/`
+menu and "turn into ›" list the enabled types; applying one turns the block into
+the kind and appends the fields it lacks as `[key:: value]` with the tag. A
+typed block is ordinary Markdown with inline fields — nothing in a note points
+at the type, and deleting a type file changes no note. The agent's system
+prompt names the types so it writes such blocks the same way.
+
+**Fallback**: a typed block is a normal block with `[key:: value]` text.
+
 ## Query blocks
 
 ````markdown

@@ -164,6 +164,12 @@ author:: Ursula K. Le Guin
 
 **降级**：字面 `==高亮文字==`，可读。
 
+## 块类型
+
+`.vemry/types/<名称>.md` 声明一种常写的块：frontmatter 里 `name`、`description`、`kind`（转换目标：`paragraph`、`bullet`、`task`、`quote`、`callout` 等）、`tag`、`icon`、`fields`（键列表，或 `{key, default, values, type}` 映射），正文是模板（`{{key}}` = 字段默认值，`{{date}}` = 今天，`{{cursor}}` = 光标落点）。`/` 菜单与「转换为 ›」列出启用的类型；应用一个类型 = 把块转成该 kind，并把缺失的字段以 `[key:: value]` 连同标签补到行尾。类型化的块就是带行内字段的普通 Markdown——笔记里没有任何东西指向类型，删除类型文件不改任何笔记。agent 的系统提示会列出类型，使它以同样方式写这类块。
+
+**降级**：类型化的块就是带 `[key:: value]` 文本的普通块。
+
 ## 查询块
 
 ````markdown

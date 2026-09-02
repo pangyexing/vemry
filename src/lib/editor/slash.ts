@@ -8,6 +8,8 @@
 // link, block reference, embed) insert their opener and hand over to the next
 // completion source through the picked-completion annotation.
 import { t } from "$lib/i18n/i18n.svelte";
+import type { BlockType } from "$lib/api";
+import { applyType, typeBlockText } from "./blocktype";
 import { type Completion, type CompletionContext, type CompletionResult, type CompletionSource, pickedCompletion } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
 import { localDate } from "$lib/views/tasks";
@@ -81,6 +83,31 @@ const ITEMS: SlashItem[] = [
 ];
 
 const RANK: Record<Section, number> = { basic: 0, blocks: 1, refs: 2 };
+const TYPES_RANK = 3;
+
+/** A block type from the `/` menu: a line with text (or a marker to keep) is turned into
+ *  the type; an empty line gets a fresh block from the template. */
+function applyTypeItem(view: EditorView, type: BlockType, applyTo: number) {
+  const state = view.state;
+  const line = state.doc.lineAt(applyTo);
+  const m = SLASH_RE.exec(state.sliceDoc(line.from, applyTo));
+  if (!m) return;
+  const indentLen = m[1].length;
+  const markersLen = m[2].length;
+  const slashPos = line.from + indentLen + markersLen;
+  const rest = line.text.slice(applyTo - line.from);
+  const block = blockAt(state, applyTo);
+  if (block && (rest.trim() !== "" || markersLen > 0)) {
+    const spec = applyType(state, block, type, { omit: { from: slashPos, to: applyTo } });
+    if (spec) view.dispatch(spec);
+    return;
+  }
+  const { text, caret } = typeBlockText(type);
+  const from = line.from + indentLen;
+  const pad = " ".repeat(indentLen);
+  const body = text.replace(/\n/g, "\n" + pad);
+  view.dispatch({ changes: { from, to: applyTo, insert: body }, selection: { anchor: from + caret }, userEvent: "block.type" });
+}
 
 function apply(view: EditorView, item: SlashItem, completion: Completion, applyTo: number) {
   const state = view.state;
@@ -153,7 +180,7 @@ function apply(view: EditorView, item: SlashItem, completion: Completion, applyT
   });
 }
 
-export function slashCompletions(): CompletionSource {
+export function slashCompletions(blockTypes: () => BlockType[] = () => []): CompletionSource {
   return (context: CompletionContext): CompletionResult | null => {
     const before = context.matchBefore(SLASH_RE);
     if (!before) return null;
@@ -168,6 +195,17 @@ export function slashCompletions(): CompletionSource {
       section: { name: t(`slash.section.${item.section}`), rank: RANK[item.section] },
       apply: (view: EditorView, completion: Completion, _from: number, applyTo: number) => apply(view, item, completion, applyTo),
     }));
+    // The vault's own block types, a section of their own after the built-ins
+    blockTypes().forEach((type, i) => {
+      options.push({
+        label: type.icon ? `${type.icon} ${type.name}` : type.name,
+        detail: type.description || undefined,
+        type: "text",
+        sortText: `t${String(i).padStart(3, "0")}`,
+        section: { name: t("slash.section.types"), rank: TYPES_RANK },
+        apply: (view: EditorView, _completion: Completion, _from: number, applyTo: number) => applyTypeItem(view, type, applyTo),
+      });
+    });
     return { from: slashPos + 1, options, validFor: /^[^\s/]*$/ };
   };
 }

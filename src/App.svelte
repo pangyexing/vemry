@@ -10,6 +10,7 @@
   import { vault } from "$lib/stores/vault.svelte";
   import { agent } from "$lib/stores/agent.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
+  import { types } from "$lib/stores/types.svelte";
   import { browser, revealPanelIfDocked } from "$lib/stores/browser.svelte";
   import { reading } from "$lib/stores/reading.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -318,6 +319,11 @@
     void api.scriptsList().then((infos) => {
       if (pushSeq === seqAtRequest) applyScripts(infos);
     });
+  });
+  // The block types of the vault just opened (types_changed keeps them fresh afterwards)
+  $effect(() => {
+    if (!vault.root) return;
+    void types.refresh();
   });
 
   async function pickVault() {
@@ -689,6 +695,12 @@
   registerCommand({
     id: "open-memory", group: "research",
     run: () => vault.openNote("VEMRY.md"),
+  });
+  registerCommand({
+    id: "types-init", group: "note",
+    run: async () => {
+      try { toast.push(t("app.wroteFile", { path: await api.typesInit() })); } catch (e) { toast.push(String(e), "error"); }
+    },
   });
   registerCommand({
     id: "init-research-skill", group: "research",

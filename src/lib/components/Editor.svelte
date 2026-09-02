@@ -47,6 +47,7 @@
   import { setFieldValue, fieldValueKind } from "$lib/fields";
   import { DATE_FIELDS, rescheduleLine, type DateField } from "$lib/views/tasks";
   import TaskDateMenu from "./views/TaskDateMenu.svelte";
+  import { types } from "$lib/stores/types.svelte";
   import type { FieldStat } from "$lib/api";
   import "katex/dist/katex.min.css";
 
@@ -479,6 +480,7 @@
       return row && isPending(row.origin) ? row.local_id : null;
     },
     pendingCount: () => vault.pendingCount,
+    blockTypes: () => types.enabled,
     acceptProvenance: (localId) => {
       vault
         .acceptProvenance(localId)
@@ -892,6 +894,7 @@
       copyImage,
       tags: () => tagList,
       fieldStats: () => fieldStats,
+      blockTypes: () => types.enabled,
       onFieldChip: (_v: EditorView, pos: number, key: string, value: string, e: MouseEvent) => {
         if (!(key in DATE_FIELDS) && fieldValueKind(value) !== "date") return;
         fieldMenu = { x: e.clientX, y: e.clientY, pos, key, current: value, field: key === "scheduled" ? "scheduled" : "due" };

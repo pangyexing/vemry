@@ -22,6 +22,8 @@ import {
   turnInto,
 } from "./blockops";
 import { selectBlock } from "./blocksel";
+import { applyType } from "./blocktype";
+import type { BlockType } from "$lib/api";
 import { foldRangeAt, toggleFoldAt } from "./fold";
 
 export interface BlockMenuHost {
@@ -35,6 +37,8 @@ export interface BlockMenuHost {
   pendingCount(): number;
   /** Accept one pending block (a local id) or, with null, every one in the note. */
   acceptProvenance(localId: string | null): void;
+  /** The vault's enabled block types ("turn into ›" lists them after the kinds). */
+  blockTypes(): BlockType[];
 }
 
 export const TURN_TARGETS: TurnTarget[] = [
@@ -89,6 +93,14 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
       if (spec) view.dispatch(spec);
     }),
   }));
+  const typeItems: MenuEntry[] = host.blockTypes().map((type) => ({
+    label: type.icon ? `${type.icon} ${type.name}` : type.name,
+    action: act(view, b, (now) => {
+      const spec = applyType(state, now, type);
+      if (spec) view.dispatch(spec);
+    }),
+  }));
+  if (typeItems.length) turnItems.push({ separator: true }, ...typeItems);
   const turn: MenuItem = { label: t("block.turnInto"), disabled: ["table", "hr", "html", "other"].includes(b.kind), submenu: turnItems };
   const ask: MenuItem = { label: t("block.askAgent"), action: act(view, b, (now) => host.askAgent(view, now)) };
   // Provenance review: shown only when there is something to accept

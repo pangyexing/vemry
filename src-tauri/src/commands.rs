@@ -52,6 +52,12 @@ pub(crate) fn broadcast(app: &AppHandle, event: &VaultEvent) {
             _ => {}
         }
     }
+    // The block types are snapshotted into the system prompt like the skills: a
+    // change under `.vemry/types/` applies from the next turn
+    if matches!(event, VaultEvent::TypesChanged) {
+        let state: State<'_, AppState> = app.state();
+        state.agent.invalidate_prompt_snapshot();
+    }
     // VEMRY.md is snapshotted into the system prompt per session; a change to
     // it (a private block added, a convention edited) applies from the next
     // turn instead of the next session
@@ -373,6 +379,30 @@ pub fn graph_get(state: State<'_, AppState>) -> Result<GraphData, String> {
 #[tauri::command]
 pub fn link_targets(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     with_vault(&state, |v| Ok(v.index().link_targets()))
+}
+
+/// The vault's block types (`.vemry/types/*.md`, disabled ones included; the
+/// frontend's menus filter). Read live from disk: the editor refreshes on
+/// `types_changed`.
+#[tauri::command]
+pub fn types_list(state: State<'_, AppState>) -> Result<Vec<vemry_core::BlockType>, String> {
+    with_vault(&state, |v| Ok(vemry_core::list_block_types(&v.meta_dir())))
+}
+
+/// Write the example block type (`.vemry/types/book.md`); refuses to overwrite one
+/// the user already has. The prompt snapshot is invalidated and the change
+/// broadcast, the same as an external edit under the directory.
+#[tauri::command]
+pub fn types_init(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let dir = with_vault(&state, |v| Ok(v.meta_dir()))?.join(vemry_core::TYPES_SUBDIR);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("book.md");
+    if path.exists() {
+        return Err(crate::i18n::t(crate::i18n::current(), "ipc.typeExampleExists"));
+    }
+    std::fs::write(&path, vemry_core::BOOK_TYPE_TEMPLATE).map_err(|e| e.to_string())?;
+    broadcast(&app, &VaultEvent::TypesChanged);
+    Ok(".vemry/types/book.md".into())
 }
 
 /// Inline-field keys and their frequent values for the editor's `key::` completion;
