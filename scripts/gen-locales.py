@@ -228,16 +228,16 @@ CMD = {
         ("Tint every block by who wrote it: you, the AI, a clip or a capture", "按写入者给每个块着色：你、AI、剪藏、速记"),
     ),
     "provenance-accept": (
-        ("Accept AI change", "接受 AI 修改"),
-        ("Mark the AI block at the cursor as reviewed", "把光标所在的 AI 块标为已确认"),
+        ("Mark AI block as reviewed", "AI 块标为已审阅"),
+        ("Mark the AI block at the cursor as reviewed", "把光标所在的 AI 块标为已审阅"),
     ),
     "provenance-accept-all": (
-        ("Accept all AI changes in this note", "接受本篇全部 AI 修改"),
-        ("Mark every pending AI block of the current note as reviewed", "把当前笔记所有待确认的 AI 块标为已确认"),
+        ("Mark all AI blocks in this note as reviewed", "本篇 AI 块全部标为已审阅"),
+        ("Mark every unreviewed AI block of the current note as reviewed", "把当前笔记所有未审阅的 AI 块标为已审阅"),
     ),
     "provenance-next-pending": (
-        ("Next pending AI block", "下一个待确认块"),
-        ("Jump to the next AI block still awaiting review", "跳到下一个尚未确认的 AI 块"),
+        ("Next unreviewed AI block", "下一个未审阅的 AI 块"),
+        ("Jump to the next AI block you have not looked at", "跳到下一个还没看过的 AI 块"),
     ),
     "delete-current-note": (
         ("Delete current note", "删除当前笔记"),
@@ -1117,8 +1117,8 @@ add("settings.", {
                       "built-in browser.",
                       "走 DeepSeek Responses API 的服务端 web_search,仅端点为 api.deepseek.com 时生效;"
                       "搜索由 provider 按次计费,与本地功能无关,默认关闭。来源引用会显示在 AI 时间线,可点开内置浏览器。"),
-    "provenanceMarks": ("Mark AI blocks awaiting review", "标记待确认的 AI 块"),
-    "provenanceMarksHint": ("An amber bar beside blocks the AI wrote until you accept them (the block menu or the status bar); the origin overlay is a separate command", "AI 写入的块旁显示琥珀色条，直到你接受（块菜单或状态栏）；出处着色是另一条命令"),
+    "provenanceMarks": ("Mark unreviewed AI blocks", "标记未审阅的 AI 块"),
+    "provenanceMarksHint": ("An amber bar and a status-bar count for blocks the AI wrote under a standing grant, until you mark them reviewed; a marker, never a prompt. The origin overlay is a separate command", "AI 在常设授权下写入的块显示琥珀色条并在状态栏计数，直到你标为已审阅；只是标记，不会打断。出处着色是另一条命令"),
     "planConfirm": ("AI plan confirmation", "AI 计划确认"),
     "planConfirmHint": ("A multi-step task shows you a plan card first and waits for “run it / edit / "
                         "reject”; approving continues the same turn. Turned off, the AI recites the plan "
@@ -1438,15 +1438,15 @@ add("prov.", {
     "origin.capture": ("Capture", "速记"),
     "session": ("session {id}", "会话 {id}"),
     "sessionUnknown": ("session unknown", "会话未知"),
-    "pending": ("awaiting review", "待确认"),
-    "pendingCount": ("Pending {n}", "待确认 {n}"),
-    "pendingHint": ("AI blocks in this note not yet reviewed — click to jump to the next one", "本篇尚未确认的 AI 块——点击跳到下一个"),
-    "acceptBlock": ("Accept AI change", "接受 AI 修改"),
-    "acceptAll": ("Accept all in this note", "接受本篇全部"),
-    "accepted": ("Accepted", "已接受"),
-    "acceptedAll": ("Accepted {n} blocks", "已接受 {n} 个块"),
-    "noPending": ("No AI blocks awaiting review in this note", "本篇没有待确认的 AI 块"),
-    "noPendingHere": ("The block at the cursor is not awaiting review", "光标所在块不是待确认的 AI 块"),
+    "pending": ("unreviewed", "未审阅"),
+    "pendingCount": ("Unreviewed {n}", "未审阅 {n}"),
+    "pendingHint": ("AI blocks in this note you have not looked at yet — a marker, not a request; click to jump to the next one", "本篇你还没看过的 AI 块——只是标记，不是待办；点击跳到下一个"),
+    "acceptBlock": ("Mark as reviewed", "标为已审阅"),
+    "acceptAll": ("Mark all in this note as reviewed", "本篇全部标为已审阅"),
+    "accepted": ("Marked as reviewed", "已标为已审阅"),
+    "acceptedAll": ("Marked {n} blocks as reviewed", "已把 {n} 个块标为已审阅"),
+    "noPending": ("No unreviewed AI blocks in this note", "本篇没有未审阅的 AI 块"),
+    "noPendingHere": ("The block at the cursor is not an unreviewed AI block", "光标所在块不是未审阅的 AI 块"),
     "overlayOn": ("Origin overlay on", "已显示出处"),
     "overlayOff": ("Origin overlay off", "已隐藏出处"),
 })
