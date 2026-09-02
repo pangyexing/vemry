@@ -1511,6 +1511,8 @@ add("slash.", {
     "quote.desc": ("A quoted block", "A quoted block"),
     "callout.title": ("Callout", "Callout"),
     "callout.desc": ("A typed callout — pick the type next", "A typed callout — pick the type next"),
+    "private.title": ("Private block", "Private block"),
+    "private.desc": ("A block the AI never sees", "A block the AI never sees"),
     "claim.title": ("Claim", "Claim"),
     "claim.desc": ("A claim block other notes can support with evidence", "A claim block other notes can support with evidence"),
     "evidence.title": ("Evidence", "Evidence"),
@@ -1565,6 +1567,9 @@ add("block.", {
     "kind.quote": ("Quote", "引用"),
     "kind.callout": ("Callout", "标注"),
     "kind.code": ("Code block", "代码块"),
+    "kind.private": ("Private block", "私密块"),
+    "makePrivate": ("Make private", "设为私密"),
+    "unmakePrivate": ("Remove privacy", "取消私密"),
 })
 
 add("runBlock.", {

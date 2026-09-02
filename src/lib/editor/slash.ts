@@ -34,6 +34,7 @@ type SlashId =
   | "task"
   | "quote"
   | "callout"
+  | "private"
   | "claim"
   | "evidence"
   | "code"
@@ -69,6 +70,7 @@ const ITEMS: SlashItem[] = [
   { id: "task", kind: "prefix", section: "basic", text: "- [ ] ", turn: "task" },
   { id: "quote", kind: "prefix", section: "basic", text: "> ", turn: "quote" },
   { id: "callout", kind: "prefix", section: "blocks", text: "> [!", chain: true, turn: "callout" },
+  { id: "private", kind: "prefix", section: "blocks", text: "> [!private] ", turn: "private" },
   { id: "claim", kind: "prefix", section: "blocks", text: "> [!claim] " },
   { id: "evidence", kind: "prefix", section: "blocks", text: "> [!evidence] \n> supports:@", chain: true },
   { id: "code", kind: "block", section: "blocks", text: "```\n\n```", caret: 4, turn: "code" },

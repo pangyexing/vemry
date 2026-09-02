@@ -35,7 +35,8 @@ export type TurnTarget =
   | "task"
   | "quote"
   | "callout"
-  | "code";
+  | "code"
+  | "private";
 
 const LIST_KINDS: EditorBlockKind[] = ["list_item", "task"];
 
@@ -106,7 +107,14 @@ export function canTurnInto(b: EditorBlock, target: TurnTarget): boolean {
       return b.kind !== "callout";
     case "code":
       return b.kind !== "code";
+    case "private":
+      return !isPrivateBlock(b);
   }
+}
+
+/** A `> [!private]` callout: the block-level privacy zone. */
+export function isPrivateBlock(b: EditorBlock): boolean {
+  return b.kind === "callout" && b.calloutType === "private";
 }
 
 /** The block's own lines with its current prefix removed. */
@@ -207,8 +215,9 @@ export function turnInto(
       break;
     }
     case "quote":
-    case "callout": {
-      const head = target === "callout" ? "[!note] " : "";
+    case "callout":
+    case "private": {
+      const head = target === "callout" ? "[!note] " : target === "private" ? "[!private] " : "";
       const body = [...plain];
       if (children) body.push(...children.split("\n"));
       lines = body.map((l, i) => pad + "> " + (i === 0 ? head : "") + l.trimStart());

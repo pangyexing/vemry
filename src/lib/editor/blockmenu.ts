@@ -17,6 +17,7 @@ import {
   deleteBlocks,
   duplicateBlocks,
   indentBlock,
+  isPrivateBlock,
   moveBlocks,
   outdentBlock,
   turnInto,
@@ -109,6 +110,17 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
   }));
   if (typeItems.length) turnItems.push({ separator: true }, ...typeItems);
   const turn: MenuItem = { label: t("block.turnInto"), disabled: ["table", "hr", "html", "other"].includes(b.kind), submenu: turnItems };
+  // The block-level privacy zone as one toggle: a plain block becomes a `[!private]`
+  // callout, a private block goes back to a paragraph
+  const privateNow = isPrivateBlock(b);
+  const privacy: MenuItem = {
+    label: t(privateNow ? "block.unmakePrivate" : "block.makePrivate"),
+    disabled: !privateNow && !canTurnInto(b, "private"),
+    action: act(view, b, (now) => {
+      const spec = turnInto(view.state, now, privateNow ? "paragraph" : "private");
+      if (spec) view.dispatch(spec);
+    }),
+  };
   const ask: MenuItem = { label: t("block.askAgent"), action: act(view, b, (now) => host.askAgent(view, now)) };
   // Provenance review: shown only when there is something to accept
   const prov: MenuEntry[] = [];
@@ -122,7 +134,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
     prov.push({ label: t("prov.rejectAll"), action: () => host.rejectProvenance(null) });
   }
   if (prov.length) prov.unshift({ separator: true });
-  if (opts.compact) return [{ title: t("block.title") }, copyLink, copyEmbed, turn, ask, ...prov];
+  if (opts.compact) return [{ title: t("block.title") }, copyLink, copyEmbed, turn, privacy, ask, ...prov];
   return [
     {
       label: t("block.insertBelow"),
@@ -135,6 +147,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
     copyLink,
     copyEmbed,
     turn,
+    privacy,
     { separator: true },
     {
       label: t("block.moveUp"),
