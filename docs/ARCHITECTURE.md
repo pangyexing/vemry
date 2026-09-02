@@ -243,6 +243,7 @@ the model streams a tool_call(edit_note)
   → a oneshot wakes the loop
   → allowed: vault.write_note() (registers self-write suppression → incremental reindex)
     → vault.record_provenance(the blocks the applied bytes added, under the session id) — pending review
+    → AgentEvent::VaultChanged (the NoteModified / NoteAdded / NoteRemoved the write means) → the app broadcasts it like an IPC write — the watcher would have swallowed the change as a self-write, and without this the open note's buffer kept the pre-edit text until reopened
     denied: an error tool result goes back to the model, which adjusts
   → the audit log records permission + tool_result
 ```

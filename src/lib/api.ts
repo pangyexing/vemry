@@ -300,6 +300,8 @@ export type AgentEvent =
    *  and the model history's envelope), the timeline tags its user item with it, and
    *  forking locates by it. A regenerate does not emit it (it produces no new turn). */
   | { type: "turn_started"; turn: string }
+  /** A write tool landed: the same vault events the watcher would have sent (the app also broadcasts them). */
+  | { type: "vault_changed"; events: VaultEvent[] }
   | { type: "text_delta"; text: string }
   | { type: "thinking"; text: string }
   | { type: "tool_call_started"; id: string; name: string; args: string }

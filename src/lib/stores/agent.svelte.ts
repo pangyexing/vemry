@@ -822,6 +822,11 @@ class AgentStore {
         this.lastTruncated = e.truncated;
         break;
       }
+      case "vault_changed": {
+        // The app broadcasts these as vault events (the store's handleEvent reloads the
+        // open note and moves the index version); nothing to do on the agent side
+        break;
+      }
       case "error": {
         // A turn that errored or was cancelled will get no more search results, so the source card must not spin on "searching the web…" forever
         this.settleSources();

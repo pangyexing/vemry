@@ -86,6 +86,11 @@ pub enum AgentEvent {
     /// truncated: the model's output was cut off by the length limit
     /// (finish_reason=length), and the UI can offer "continue".
     TurnFinished { truncated: bool },
+    /// A write tool landed on disk. The vault's own watcher swallows the change as
+    /// a self-write (the same suppression that keeps a user's save from echoing), so
+    /// the glue layer broadcasts these as vault events — the open note reloads, the
+    /// index version moves, workflows see the change.
+    VaultChanged { events: Vec<vemry_core::VaultEvent> },
     Error { message: String },
 }
 
@@ -810,7 +815,29 @@ impl AgentRunner {
 
         let mut guard = self.vault.lock().unwrap();
         let vault = guard.as_mut().ok_or("no vault open")?;
-        execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id))
+        // What the write will mean to the index, judged before it lands (created or
+        // modified; a move removes one path and adds another)
+        let events: Vec<vemry_core::VaultEvent> = match (&write_req.to_path, vault.note_id(&write_req.path)) {
+            (Some(to), Ok(from)) => match vault.note_id(to) {
+                Ok(to_id) => vec![
+                    vemry_core::VaultEvent::NoteRemoved { id: from },
+                    vemry_core::VaultEvent::NoteAdded { id: to_id },
+                ],
+                Err(_) => vec![],
+            },
+            (None, Ok(id)) => vec![if vault.index().contains(&id) {
+                vemry_core::VaultEvent::NoteModified { id }
+            } else {
+                vemry_core::VaultEvent::NoteAdded { id }
+            }],
+            (_, Err(_)) => vec![],
+        };
+        let text = execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id))?;
+        drop(guard);
+        if !events.is_empty() {
+            on_event(AgentEvent::VaultChanged { events });
+        }
+        Ok(text)
     }
 
     /// propose_plan: record the plan line → emit the event → suspend awaiting the

@@ -1199,7 +1199,16 @@ async fn run_agent_turn(
     };
 
     let channel = on_event.clone();
+    let app_for_events = app.clone();
     let emit = move |e: AgentEvent| {
+        // A write the agent landed is a vault change like any other: the watcher
+        // swallows it as a self-write, so it is broadcast from here (the open note
+        // reloads, the index version moves, workflows see it)
+        if let AgentEvent::VaultChanged { events } = &e {
+            for ev in events {
+                broadcast(&app_for_events, ev);
+            }
+        }
         let _ = channel.send(e);
     };
 
