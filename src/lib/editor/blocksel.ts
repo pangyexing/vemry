@@ -170,7 +170,9 @@ const escape: Command = (view) => {
     exitTo(view, head ? blockContentStart(view.state, head) : sel.head);
     return true;
   }
-  if (completionStatus(view.state) === "active") return false;
+  // A completion popup (open or still being computed) owns Escape; and an IME
+  // composition must not be turned into a block selection under the user's fingers
+  if (completionStatus(view.state) != null || view.composing) return false;
   const main = view.state.selection.main;
   if (!main.empty) return false;
   if (!ensureParsed(view.state, Math.min(view.state.doc.length, main.head + 5000))) view.dispatch({});
@@ -334,15 +336,28 @@ const handlers = Prec.highest(
       }
       return true;
     },
-    compositionstart(_e, view) {
+    // An IME starts with a keydown whose keyCode is 229, before any composition
+    // event: that is the last moment the cursor may be moved safely, so block mode
+    // ends here (at the block's end, the same place a typed character lands)
+    keydown(e, view) {
+      if (e.keyCode !== 229 && !e.isComposing) return false;
       const head = headBlock(view);
       if (head) exitTo(view, head.to);
+      return false;
+    },
+    // Still in block mode when the composition starts (a path without the 229
+    // keydown): only drop the mode. Moving the selection now would pull the DOM out
+    // from under the composition, after which WebKit stops delivering input
+    compositionstart(_e, view) {
+      if (isBlockMode(view.state)) view.dispatch({ effects: setBlockSel.of(null), annotations: blockSelTx.of(true) });
       return false;
     },
   }),
 );
 
 const input = EditorView.inputHandler.of((view, _from, _to, text) => {
+  // Never rewrite a composition's text: the DOM already holds it
+  if (view.composing) return false;
   const head = headBlock(view);
   if (!head) return false;
   const at = head.to;
