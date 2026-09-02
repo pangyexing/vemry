@@ -665,6 +665,7 @@
   "planDecision.approve_edited": "Plan approved with edits",
   "planDecision.reject": "Plan rejected",
   "prov.acceptAll": "Mark all in this note as reviewed",
+  "prov.acceptAllShort": "✓ All",
   "prov.acceptBlock": "Mark as reviewed",
   "prov.accepted": "Marked as reviewed",
   "prov.acceptedAll": "Marked {n} blocks as reviewed",

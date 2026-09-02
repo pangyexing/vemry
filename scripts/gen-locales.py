@@ -1443,6 +1443,7 @@ add("prov.", {
     "pendingHint": ("AI blocks in this note you have not looked at yet — a marker, not a request; click to jump to the next one", "本篇你还没看过的 AI 块——只是标记，不是待办；点击跳到下一个"),
     "acceptBlock": ("Mark as reviewed", "标为已审阅"),
     "acceptAll": ("Mark all in this note as reviewed", "本篇全部标为已审阅"),
+    "acceptAllShort": ("✓ All", "✓ 全部"),
     "accepted": ("Marked as reviewed", "已标为已审阅"),
     "acceptedAll": ("Marked {n} blocks as reviewed", "已把 {n} 个块标为已审阅"),
     "noPending": ("No unreviewed AI blocks in this note", "本篇没有未审阅的 AI 块"),

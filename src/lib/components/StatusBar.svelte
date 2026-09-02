@@ -9,6 +9,7 @@
   import { vault, vaultName } from "$lib/stores/vault.svelte";
   import { originLabel } from "$lib/editor/provenance";
   import { prefs } from "$lib/stores/prefs.svelte";
+  import { executeCommand } from "$lib/commands/registry";
   import PrivacyIcon from "./PrivacyIcon.svelte";
 
   const inPrivate = $derived(vault.currentPath !== null && vault.privatePaths.has(vault.currentPath));
@@ -32,6 +33,8 @@
   {/if}
   {#if vault.pendingCount > 0 && prefs.provenanceMarks}
     <button class="pending" title={t("prov.pendingHint")} onclick={() => vault.nextPending?.()}>{t("prov.pendingCount", { n: vault.pendingCount })}</button>
+    <!-- one click for the whole note (the palette command carries the toast) -->
+    <button class="pending" title={t("prov.acceptAll")} onclick={() => void executeCommand("provenance-accept-all")}>{t("prov.acceptAllShort")}</button>
   {/if}
   <span class="right">
     {#if vault.editorLoc}

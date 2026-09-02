@@ -665,6 +665,7 @@
   "planDecision.approve_edited": "计划修改后确认",
   "planDecision.reject": "计划被否决",
   "prov.acceptAll": "本篇全部标为已审阅",
+  "prov.acceptAllShort": "✓ 全部",
   "prov.acceptBlock": "标为已审阅",
   "prov.accepted": "已标为已审阅",
   "prov.acceptedAll": "已把 {n} 个块标为已审阅",
