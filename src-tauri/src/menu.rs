@@ -115,6 +115,7 @@ mod imp {
             .item(&item(app, lang, "view-agenda", &cmd("view-agenda"))?)
             .item(&item(app, lang, "view-kanban", &cmd("view-kanban"))?)
             .item(&item(app, lang, "view-timeline", &cmd("view-timeline"))?)
+            .item(&item(app, lang, "view-blocks", &cmd("view-blocks"))?)
             .item(&item(app, lang, "view-claims", &cmd("view-claims"))?)
             .item(&item(app, lang, "view-evidence", &cmd("view-evidence"))?)
             .item(&item(app, lang, "view-graph", &cmd("view-graph"))?)

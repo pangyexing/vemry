@@ -33,6 +33,11 @@
       "M2.5 10 a7.5 7.5 0 1 0 15 0 a7.5 7.5 0 1 0 -15 0",
       "M10 6 V10 L12.8 12.8",
     ],
+    // Two blocks of unequal width: the eye reads "chunks of text", and the ink stays in the agenda/kanban cluster
+    blocks: [
+      "M3 4 h14 a0.8 0.8 0 0 1 0.8 0.8 v2.4 a0.8 0.8 0 0 1 -0.8 0.8 h-14 a0.8 0.8 0 0 1 -0.8 -0.8 v-2.4 a0.8 0.8 0 0 1 0.8 -0.8 Z",
+      "M3 11.5 h9 a0.8 0.8 0 0 1 0.8 0.8 v3.4 a0.8 0.8 0 0 1 -0.8 0.8 h-9 a0.8 0.8 0 0 1 -0.8 -0.8 v-3.4 a0.8 0.8 0 0 1 0.8 -0.8 Z",
+    ],
     graph: [
       "M8.2 4.5 a1.8 1.8 0 1 0 3.6 0 a1.8 1.8 0 1 0 -3.6 0",
       "M3 15 a1.8 1.8 0 1 0 3.6 0 a1.8 1.8 0 1 0 -3.6 0",
@@ -81,6 +86,7 @@
       { cmd: "view-agenda", view: "agenda" },
       { cmd: "view-kanban", view: "kanban" },
       { cmd: "view-timeline", view: "timeline" },
+      { cmd: "view-blocks", view: "blocks" },
       { cmd: "view-graph", view: "graph" },
     ],
     // research
