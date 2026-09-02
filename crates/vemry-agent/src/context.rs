@@ -250,7 +250,15 @@ pub fn resolve_context_refs(
                 ContextRef::Folder { path } => vault.is_private_rel(path.trim().trim_matches('/'), true),
                 _ => body.is_err() && filtered > before,
             };
-            ResolvedRef { kind: r.kind(), path: r.path().to_string(), lines: r.lines(), block: r.block(), body, private }
+            // A selection that lies inside one block is citable as that block (the
+            // block menu's "ask the AI about this block" arrives as a selection)
+            let block = match r {
+                ContextRef::Selection { path, from_line, to_line, .. } if body.is_ok() => {
+                    selection_block(vault, path, *from_line, *to_line)
+                }
+                _ => r.block(),
+            };
+            ResolvedRef { kind: r.kind(), path: r.path().to_string(), lines: r.lines(), block, body, private }
         })
         .collect();
     (out, filtered)
@@ -290,6 +298,38 @@ fn gate_private<'a>(vault: &Vault, path: &'a str, filtered: &mut usize) -> Resul
         return Err(vemry_core::reject(vemry_core::PathReject::NotFound, rel).to_string());
     }
     Ok(rel)
+}
+
+/// The block a selection lies in, as a citation handle (`^id` / `bN`): only when
+/// its first and last lines fall inside one block that is not private — a passage
+/// spanning blocks, or one the disk no longer holds, gets no handle. The lines are
+/// the editor's (1-based, over the whole file) and the mapping is against the disk
+/// copy, so an unsaved buffer may miss; the frontend's content guard catches a
+/// handle that went stale.
+fn selection_block(vault: &Vault, path: &str, from_line: usize, to_line: usize) -> Option<String> {
+    let id = vault.note_id(path).ok()?;
+    if vault.is_private(&id) {
+        return None;
+    }
+    let raw = vault.read_note(&id).ok()?;
+    let mut offsets = Vec::new();
+    let mut off = 0;
+    for l in raw.split_inclusive('\n') {
+        offsets.push(off);
+        off += l.len();
+    }
+    let start = *offsets.get(from_line.checked_sub(1)?)?;
+    let end = *offsets.get(to_line.checked_sub(1)?)?;
+    let parsed = vemry_core::parser::parse_note(&raw);
+    let i = vemry_core::locate::find_block_at(&parsed.blocks, start)?;
+    if vemry_core::locate::find_block_at(&parsed.blocks, end)? != i {
+        return None;
+    }
+    let b = &parsed.blocks[i];
+    if matches!(b.kind, vemry_core::BlockKind::Private) {
+        return None;
+    }
+    Some(if b.explicit_id { format!("^{}", b.local_id) } else { b.local_id.clone() })
 }
 
 /// `bN`: the index's positional id (never written to disk; valid until the note changes).
@@ -1029,6 +1069,24 @@ mod tests {
     /// A selection inside a private note is dropped whole: both glob and
     /// frontmatter privacy hit, the wording matches a missing file, and not one
     /// character of the body enters the envelope.
+    #[test]
+    fn selection_inside_one_block_carries_its_handle() {
+        let (_d, vault) = fixture();
+        // Hello.md: line 1 the heading (b0), line 3 the paragraph (b1)
+        let sel = |from: usize, to: usize| ContextRef::Selection { path: "Hello.md".into(), from_line: from, to_line: to, text: "x".into() };
+        assert_eq!(one(&vault, sel(3, 3)).0.block.as_deref(), Some("b1"));
+        assert_eq!(one(&vault, sel(1, 1)).0.block.as_deref(), Some("b0"));
+        // across two blocks, or past the end: no handle
+        assert_eq!(one(&vault, sel(1, 3)).0.block, None);
+        assert_eq!(one(&vault, sel(40, 41)).0.block, None);
+        // an explicit id keeps its caret; a private block gives none
+        std::fs::write(vault.root().join("Ids.md"), "first ^k1\n\n> [!private] SECRET\n").unwrap();
+        let (r, _) = one(&vault, ContextRef::Selection { path: "Ids.md".into(), from_line: 1, to_line: 1, text: "first".into() });
+        assert_eq!(r.block.as_deref(), Some("^k1"));
+        let (r, _) = one(&vault, ContextRef::Selection { path: "Ids.md".into(), from_line: 3, to_line: 3, text: "x".into() });
+        assert_eq!(r.block, None);
+    }
+
     #[test]
     fn selection_in_private_note_is_dropped_like_missing() {
         let (_d, vault) = fixture();

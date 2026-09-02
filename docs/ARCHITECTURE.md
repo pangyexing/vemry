@@ -1530,7 +1530,12 @@ subtree, private blocks removed from the slice, a private block nonexistent;
 the path goes through the same privacy gate as every attachment, worded like
 a missing note), and the envelope is `<block-context path="…" block="^id">`
 whose intro tells the model how to cite it. The audit records the handle, not
-the text. This is the seam an in-editor agent will use.
+the text. A selection attachment that lies inside one block carries the same
+handle (`<selection-context … lines="8-8" block="b1">`, the intro naming the
+citation), so the block menu's "ask the AI about this block" — which arrives as
+a selection — yields a citable answer; a passage spanning blocks, or one in a
+private block, carries none, and the rules still forbid citing such a
+selection. This is the seam an in-editor agent will use.
 
 ### AI web search (the DeepSeek Responses API)
 
