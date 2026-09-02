@@ -1556,8 +1556,12 @@ opens the note on the block with a 1.2 s flash (`editor/flash.ts`). Positional
 ids are transient — never written to a note — so every path out of the panel
 (copy, insert, pin, save as note) goes through one funnel, `exportAnswer`,
 which materializes them: `block_ensure_id` mints ` ^id` into the cited note
-and the link becomes `[[path#^id]]`, or degrades to `[[path]]` when the block
-is gone. Because a block may move between the answer and the click, the panel
+and the link becomes `[[Note#^id]]` — a heading, which cannot carry an id, is
+linked by its text as `[[Note#Heading]]`, and a block that is gone or cannot
+be anchored (a table, a code block) degrades to `[[Note]]`. The note part is the
+note's stem when the stem alone resolves to it, the path otherwise, and the
+stable citations the model wrote itself get the same treatment so one answer
+links a note one way. Because a block may move between the answer and the click, the panel
 captures each positional citation's content when the turn ends and passes it
 as a guard: a mismatch falls back to the one block that still has that text.
 The guard lives in `src/lib/citation.ts` next to the shared block cache.

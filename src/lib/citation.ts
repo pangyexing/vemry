@@ -10,6 +10,8 @@ import { api, type BlockHit } from "$lib/api";
 export const POSITIONAL_RE = /^b\d+$/;
 /** `[[note#bN]]` / `[[note#bN|alias]]` — the transient form, with the note as the model wrote it. */
 export const TRANSIENT_CITE_RE = /\[\[([^\]\n#|]+)#(b\d+)((?:\|[^\]\n]*)?)\]\]/g;
+/** `[[note#^id]]` / `[[note#Heading]]` — a stable citation, whose note part the export normalizes. */
+const STABLE_CITE_RE = /\[\[([^\]\n#|]+)#((?!b\d+[\]|])[^\]\n|]+)((?:\|[^\]\n]*)?)\]\]/g;
 
 export function parseRefTarget(target: string): { note: string; frag: string } {
   const h = target.indexOf("#");
@@ -57,16 +59,40 @@ export async function materializeCitations(
   text: string,
   guards: (note: string, frag: string) => string | undefined,
   from?: string,
+  version?: number,
 ): Promise<Materialized> {
-  const jobs = new Map<string, Promise<{ path: string; id: string } | null>>();
+  // The link's note part: the note's stem when the stem alone resolves to it (the form
+  // the editor's own links take), else the path without its extension
+  const names = new Map<string, Promise<string>>();
+  const shownName = (path: string) => {
+    let name = names.get(path);
+    if (!name) {
+      name = (async () => {
+        const bare = path.replace(/\.md$/i, "");
+        const stem = bare.slice(bare.lastIndexOf("/") + 1);
+        if (stem === bare) return bare;
+        const r = await api.resolveLink(stem, from).catch(() => null);
+        return r === path ? stem : bare;
+      })();
+      names.set(path, name);
+    }
+    return name;
+  };
+  const jobs = new Map<string, Promise<{ path: string; frag: string } | null>>();
   const pin = (note: string, bN: string) => {
     const key = `${note}#${bN}`;
     let job = jobs.get(key);
     if (!job) {
       job = (async () => {
         const path = (await api.resolveLink(note, from)) ?? note;
+        if (version != null) {
+          // A heading is its own anchor: link it by its text instead of minting an
+          // id it cannot carry
+          const hit = findBlock(await blocksOf(path, version), bN, guards(note, bN));
+          if (hit?.block.kind.type === "heading") return { path, frag: hit.block.content.replace(/\s*\^[A-Za-z0-9-]+$/, "") };
+        }
         const id = await api.blockEnsureId(path, bN, guards(note, bN));
-        return { path, id: id.replace(/^\^/, "") };
+        return { path, frag: `^${id.replace(/^\^/, "")}` };
       })().catch(() => null);
       jobs.set(key, job);
     }
@@ -84,10 +110,10 @@ export async function materializeCitations(
     const [, rawNote, bN, alias] = m;
     const note = rawNote.trim();
     parts.push(
-      pin(note, bN).then((r) => {
+      pin(note, bN).then(async (r) => {
         if (r) {
           minted++;
-          return `[[${r.path.replace(/\.md$/i, "")}#^${r.id}${alias}]]`;
+          return `[[${await shownName(r.path)}#${r.frag}${alias}]]`;
         }
         failed++;
         return `[[${note}${alias}]]`;
@@ -96,5 +122,25 @@ export async function materializeCitations(
   }
   parts.push(text.slice(last));
   const resolved = await Promise.all(parts);
-  return { text: resolved.join(""), minted, failed };
+  // The stable citations the model wrote itself (`[[path#^id]]`, `[[path#Heading]]`)
+  // get the same note part as the minted ones, so one answer does not link the same
+  // note two ways
+  const stable: (string | Promise<string>)[] = [];
+  const joined = resolved.join("");
+  last = 0;
+  STABLE_CITE_RE.lastIndex = 0;
+  while ((m = STABLE_CITE_RE.exec(joined))) {
+    stable.push(joined.slice(last, m.index));
+    last = m.index + m[0].length;
+    const [whole, rawNote, frag, alias] = m;
+    const note = rawNote.trim();
+    stable.push(
+      (async () => {
+        const path = await api.resolveLink(note, from).catch(() => null);
+        return path ? `[[${await shownName(path)}#${frag}${alias}]]` : whole;
+      })(),
+    );
+  }
+  stable.push(joined.slice(last));
+  return { text: (await Promise.all(stable)).join(""), minted, failed };
 }

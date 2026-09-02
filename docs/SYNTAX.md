@@ -239,8 +239,10 @@ id yet as `[[path#bN]]`, where `bN` is the index's positional id from the tool
 result. This form is **not part of the dialect**: it is valid only inside that
 conversation, and vemry never writes it to a note. When an answer is copied,
 inserted, pinned or saved as a note, every `[[path#bN]]` is materialized — the
-cited block receives a minted ` ^id` and the link becomes `[[path#^id]]`; a
-citation that cannot be pinned (the block is gone) degrades to `[[path]]`.
+cited block receives a minted ` ^id` and the link becomes `[[path#^id]]` (a
+heading, which cannot carry an id, is linked by its text as `[[path#Heading]]`);
+a citation that cannot be pinned (the block is gone, or is a table or a code
+block) degrades to `[[path]]`.
 
 **Fallback**: ordinary text at the end of the line.
 

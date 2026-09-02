@@ -878,7 +878,7 @@
     TRANSIENT_CITE_RE.lastIndex = 0;
     if (!TRANSIENT_CITE_RE.test(text)) return text;
     if (vault.currentPath && vault.dirty) await vault.flushEditor?.();
-    const r = await materializeCitations(text, (note, frag) => citeGuards.get(`${note}#${frag}`), vault.currentPath ?? undefined);
+    const r = await materializeCitations(text, (note, frag) => citeGuards.get(`${note}#${frag}`), vault.currentPath ?? undefined, vault.indexVersion);
     if (r.minted) toast.push(t("chat.citationsMaterialized", { n: r.minted }));
     if (r.failed) toast.push(t("chat.citationsDropped", { n: r.failed }), "error");
     return r.text;

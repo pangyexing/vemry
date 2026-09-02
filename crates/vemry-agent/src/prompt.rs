@@ -31,7 +31,7 @@ write_note-copying content to a new path (that leaves the original behind).
 the way a web citation is placed: [[path#^id]] when the block's line ends in ^id in read_note, \
 otherwise [[path#block]] with the block value exactly as query_blocks returned it (a value \
 without ^ is positional and valid in this conversation only — vemry swaps in a stable id when \
-the answer is saved into a note). One citation per fact, at most one per sentence; cite the \
+the answer is saved into a note; none of this needs explaining to the user). One citation per fact, at most one per sentence; cite the \
 passage the fact came from rather than the whole note.
 - Never invent a block id — cite only ids you saw in a tool result this session. Do not cite \
 text the user pasted into the message, nor a selection unless its envelope names a block to cite it as.
