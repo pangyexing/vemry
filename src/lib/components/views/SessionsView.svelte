@@ -229,6 +229,8 @@
     </aside>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="replay" onclick={onReplayClick}>
+      <!-- .rows keeps a press in the padding or a flex gap off the scroll container itself (the same WebKit anchor bug as AgentChat .turns) -->
+      <div class="rows">
       {#each entries as e, i (i)}
         {#if e.kind === "user"}
           <div class="row">
@@ -390,6 +392,7 @@
           <p class="empty">{t("sessionsView.pickSession")}</p>
         {/if}
       {/each}
+      </div>
     </div>
   </div>
 </div>
@@ -462,6 +465,8 @@
   }
   .replay {
     overflow-y: auto;
+  }
+  .rows {
     padding: 12px 20px 30px;
     display: flex;
     flex-direction: column;

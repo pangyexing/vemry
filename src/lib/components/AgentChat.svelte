@@ -1392,6 +1392,10 @@
     onmouseover={onTimelineOver}
     onmouseout={onTimelineOut}
   >
+    <!-- .turns exists so that a press in the padding or in a flex gap never targets the scroll
+      container itself: for that target WebKit resolves the selection anchor as if the container
+      were not scrolled, and a drag started in a gap selects a turn that is scrolled far above -->
+    <div class="turns">
     {#if agent.timeline.length === 0}
       <div class="welcome">
         <p class="welcome-title">{t("chat.welcomeTitle")}</p>
@@ -1653,6 +1657,7 @@
         <button class="cancel" onclick={() => agent.cancel()}>{t("chat.stop")}</button>
       </div>
     {/if}
+    </div>
   </div>
   {#if !atBottom}
     <button class="to-bottom" onclick={scrollToBottom}>
@@ -1782,6 +1787,9 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+  }
+  /* The column itself is a child of the scroller, not the scroller (see the .turns comment in the markup) */
+  .turns {
     padding: 12px;
     display: flex;
     flex-direction: column;
@@ -1862,7 +1870,7 @@
     white-space: pre-wrap;
   }
   /* Turn separation: room to breathe before a new turn's user message */
-  .timeline > .msg.user:not(:first-child) {
+  .turns > .msg.user:not(:first-child) {
     margin-top: 16px;
   }
   .user-page {
@@ -2600,6 +2608,10 @@
     flex-wrap: wrap;
     gap: 2px;
     margin-top: 8px;
+    /* Not selectable although it sits inside the selectable bubble: it is transparent until
+       hovered, and a drag started on it would otherwise anchor in its invisible labels */
+    -webkit-user-select: none;
+    user-select: none;
     opacity: 0;
     transition: opacity 0.12s ease;
   }
@@ -2663,6 +2675,8 @@
     right: 2px;
     bottom: -10px;
     z-index: 2;
+    -webkit-user-select: none;
+    user-select: none;
     display: flex;
     gap: 3px;
     opacity: 0;
