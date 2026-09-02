@@ -1,5 +1,6 @@
 // Agenda-view task actions: flip a checkbox / reschedule a date on disk, span-accurate.
 import { t, tn } from "$lib/i18n/i18n.svelte";
+import { setFieldValue, stripFields } from "$lib/fields";
 import { api, type BlockHit } from "$lib/api";
 import { plainText } from "$lib/markdown";
 
@@ -279,6 +280,8 @@ export async function rescheduleTask(hit: BlockHit, field: DateField, date: stri
 
 export interface TaskEdit {
   state?: "todo" | "doing" | "done";
+  /** Set (or with null remove) one inline field on the task's first line — a kanban grouped by a field moves cards this way */
+  field?: { key: string; value: string | null };
   /** Set or change one date field (rescheduleLine semantics: the marker style is kept and it is inserted before the ^anchor) */
   date?: { field: DateField; value: string };
   /** Clear both due and scheduled (dragging to "unscheduled" on the kanban — clearing only one would land it in the other field's group) */
@@ -300,6 +303,7 @@ export async function updateTask(hit: BlockHit, edit: TaskEdit): Promise<boolean
     let head = nl < 0 ? out : out.slice(0, nl);
     if (edit.clearDates) for (const f of FIELDS) head = rescheduleLine(head, f, null);
     if (edit.date) head = rescheduleLine(head, edit.date.field, edit.date.value);
+    if (edit.field) head = setFieldValue(head, edit.field.key, edit.field.value);
     return head + (nl < 0 ? "" : out.slice(nl));
   });
 }
@@ -344,7 +348,7 @@ export function byteSpansToChar(content: string, spans: { start: number; end: nu
  *  with the claim and evidence cards), so "the plain-text form" has one rule only. */
 export function taskText(content: string): string {
   return plainText(
-    content
+    stripFields(content) // `[key:: value]` metadata is a chip on the card, not part of the words
       .replace(/^\s*[-*+]\s+\[[ /xX]\]\s*/, "")
       .replace(MARKER_STRIP_RE, "") // the date markers
       .replace(STAMP_RE, ""), // the memo or clip signature

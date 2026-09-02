@@ -155,6 +155,7 @@ pub fn run() {
             commands::provenance_accept,
             commands::provenance_record,
             commands::provenance_pending,
+            commands::fields_list,
             commands::settings_get,
             commands::settings_set,
             commands::agent_start,

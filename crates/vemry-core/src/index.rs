@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::UNIX_EPOCH;
 
+use crate::block::BlockKind;
 use crate::block::Block;
 use crate::note::{Note, NoteId};
 
@@ -58,6 +59,16 @@ pub struct LinkEdge {
     pub raw_target: String,
     pub resolved: Option<NoteId>,
     pub from_block: String,
+}
+
+/// One inline-field key across the vault (see `BlockIndex::field_stats`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FieldStat {
+    pub key: String,
+    /// Notes carrying the key (in a block or in frontmatter).
+    pub count: usize,
+    /// The most frequent values, most frequent first.
+    pub values: Vec<String>,
 }
 
 pub(crate) struct NoteEntry {
@@ -347,6 +358,56 @@ impl BlockIndex {
         let mut v: Vec<NoteId> = self.backlinks.get(id).map(|s| s.iter().cloned().collect()).unwrap_or_default();
         v.sort();
         v
+    }
+
+    /// Every inline-field key in use (blocks' fields plus frontmatter scalars),
+    /// with how many notes carry it and its most frequent values — the editor's
+    /// `key::` value completion and the views' group-by menus read this. `skip`
+    /// drops notes the caller must not expose (a privacy zone); keys compare
+    /// case-insensitively and keep their first-seen spelling.
+    pub fn field_stats(&self, skip: impl Fn(&NoteId) -> bool, top: usize) -> Vec<FieldStat> {
+        struct Acc {
+            key: String,
+            notes: usize,
+            values: HashMap<String, usize>,
+        }
+        let mut acc: HashMap<String, Acc> = HashMap::new();
+        for (id, e) in &self.notes {
+            if skip(id) {
+                continue;
+            }
+            let mut seen_here: Vec<String> = Vec::new();
+            let mut bump = |key: &str, value: &str| {
+                let lower = key.to_lowercase();
+                let a = acc.entry(lower.clone()).or_insert_with(|| Acc { key: key.to_string(), notes: 0, values: HashMap::new() });
+                if !seen_here.contains(&lower) {
+                    seen_here.push(lower);
+                    a.notes += 1;
+                }
+                *a.values.entry(value.to_string()).or_insert(0) += 1;
+            };
+            for b in &e.blocks {
+                if matches!(b.kind, BlockKind::Private) {
+                    continue;
+                }
+                for f in &b.fields {
+                    bump(&f.key, &f.value);
+                }
+            }
+            for (k, v) in &e.fm_fields {
+                bump(k, v);
+            }
+        }
+        let mut out: Vec<FieldStat> = acc
+            .into_values()
+            .map(|a| {
+                let mut values: Vec<(String, usize)> = a.values.into_iter().collect();
+                values.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+                FieldStat { key: a.key, count: a.notes, values: values.into_iter().take(top).map(|(v, _)| v).collect() }
+            })
+            .collect();
+        out.sort_by(|a, b| b.count.cmp(&a.count).then(a.key.cmp(&b.key)));
+        out
     }
 
     pub fn tags(&self) -> Vec<(String, usize)> {

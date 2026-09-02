@@ -207,6 +207,13 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   through edits by the field) and draws the pending bar and the origin overlay
   as line decorations — see "Block provenance" below. `flash.ts` is the one-shot
   landing highlight after a jump (a citation, a query card, a fragment link).
+  `src/lib/fields.ts` mirrors the Rust inline-field scanner (the same three
+  forms and boundary rule, replayed against the Rust example table by the
+  batch's harness): livepreview draws `key:: value` as a chip, a date-valued
+  chip opens the same date menu the task chips use, `setFieldValue` rewrites a
+  field in place, and `fieldCompletions` offers a key's values (from
+  `fields_list`, the vault-wide key and value counts) after `key:: ` and the
+  known keys after `key:`.
 - `components/`: the activity bar and the three-column layout (both side panels
   collapse, resize and swap sides as a unit, with UI state in localStorage; the
   right side's two panels stay mounted and switch by CSS, so changing tab loses

@@ -6,7 +6,8 @@ import { type Completion, type CompletionContext, type CompletionResult, type Co
 import type { EditorView } from "@codemirror/view";
 import { t } from "$lib/i18n/i18n.svelte";
 import { localDate } from "$lib/views/tasks";
-import { blockAt } from "./blocks";
+import type { FieldStat } from "$lib/api";
+import { blockAt, frontmatterEnd } from "./blocks";
 import { inCode } from "./livepreview";
 import { CALLOUT_GROUP } from "./livepreview";
 
@@ -72,6 +73,75 @@ export function atCompletions(targets: () => string[]): CompletionSource {
       });
     }
     return { from: atPos + 1, options, validFor: /^[^\s@]*$/ };
+  };
+}
+
+/** Inline-field completion, two sources. Values: after `key:: ` the key's values seen
+ *  across the vault (most frequent first) plus today/tomorrow for a date-valued key.
+ *  Keys: a word followed by one `:` offers the known keys it prefixes, and accepting
+ *  writes `key:: ` — so a field is typed as `author:` + Enter. A `::` not followed by
+ *  a space or a digit is not a field (the parser's rule), so `std::vector` gets
+ *  nothing; code, frontmatter and an unclosed `[[` are left alone. */
+export function fieldCompletions(stats: () => FieldStat[]): CompletionSource {
+  const DATE_KEYS = new Set(["due", "scheduled", "date", "start", "end", "created", "deadline"]);
+  return (context: CompletionContext): CompletionResult | null => {
+    const line = context.state.doc.lineAt(context.pos);
+    if (line.from < frontmatterEnd(context.state.doc)) return null;
+    if (inCode(context.state, context.pos)) return null;
+    if (/\[\[[^\]\n]*$/.test(context.state.sliceDoc(line.from, context.pos))) return null;
+    const value = context.matchBefore(/(^|[\s[(])([\p{L}\p{N}_-]+)::( ?)([^\s\])]*)$/u);
+    if (value) {
+      const m = /(^|[\s[(])([\p{L}\p{N}_-]+)::( ?)([^\s\])]*)$/u.exec(value.text)!;
+      const key = m[2];
+      const spaced = m[3] === " ";
+      const typed = m[4];
+      if (/^\d+$/.test(key)) return null;
+      // `std::vector`: no space and a non-digit value is not a field
+      if (!spaced && typed !== "" && !/^\d/.test(typed)) return null;
+      const stat = stats().find((s) => s.key.toLowerCase() === key.toLowerCase());
+      const options: Completion[] = [];
+      const seen = new Set<string>();
+      const push = (label: string, detail?: string, boost = 0) => {
+        if (seen.has(label)) return;
+        seen.add(label);
+        options.push({
+          label,
+          detail,
+          type: "text",
+          boost,
+          section: { name: t("field.sectionValues"), rank: 0 },
+          apply: spaced ? undefined : ` ${label}`,
+        });
+      };
+      const dateKey = DATE_KEYS.has(key.toLowerCase()) || (stat?.values.some((v) => /^\d{4}-\d{2}-\d{2}$/.test(v)) ?? false);
+      if (dateKey) {
+        push(localDate(0), t("field.today"), 2);
+        push(localDate(1), t("field.tomorrow"), 1);
+      }
+      for (const v of stat?.values ?? []) push(v);
+      if (!options.length) return null;
+      return { from: value.from + m[1].length + key.length + 2 + (spaced ? 1 : 0), options, validFor: /^[^\s\])]*$/ };
+    }
+    const keyMatch = context.matchBefore(/(^|[\s[(])([\p{L}\p{N}_-]+):$/u);
+    if (!keyMatch) return null;
+    const km = /(^|[\s[(])([\p{L}\p{N}_-]+):$/u.exec(keyMatch.text)!;
+    const typed = km[2].toLowerCase();
+    const keys = stats().filter((s) => s.key.toLowerCase().startsWith(typed) && !/^\d+$/.test(s.key));
+    if (!keys.length) return null;
+    const from = keyMatch.from + km[1].length;
+    return {
+      from,
+      options: keys.map((s) => ({
+        label: `${s.key}:`,
+        detail: t("field.notesWithKey", { n: s.count }),
+        type: "text",
+        section: { name: t("field.sectionKeys"), rank: 0 },
+        apply: (view: EditorView, _c, applyFrom: number, applyTo: number) => {
+          view.dispatch({ changes: { from: applyFrom, to: applyTo, insert: `${s.key}:: ` }, selection: { anchor: applyFrom + s.key.length + 3 } });
+        },
+      })),
+      validFor: /^[\p{L}\p{N}_-]*:?$/u,
+    };
   };
 }
 

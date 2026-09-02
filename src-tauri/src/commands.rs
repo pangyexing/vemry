@@ -375,6 +375,13 @@ pub fn link_targets(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     with_vault(&state, |v| Ok(v.index().link_targets()))
 }
 
+/// Inline-field keys and their frequent values for the editor's `key::` completion;
+/// notes in a privacy zone contribute nothing (the same courtesy as the tag list).
+#[tauri::command]
+pub fn fields_list(state: State<'_, AppState>) -> Result<Vec<vemry_core::FieldStat>, String> {
+    with_vault(&state, |v| Ok(v.index().field_stats(|id| v.is_private(id), 20)))
+}
+
 #[tauri::command]
 pub fn folders_list(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     with_vault(&state, |v| Ok(v.list_folders()))

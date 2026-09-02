@@ -44,6 +44,10 @@
   } from "$lib/editor/provenance";
   import { byteSpansToChar } from "$lib/views/tasks";
   import { flashRange } from "$lib/editor/flash";
+  import { setFieldValue, fieldValueKind } from "$lib/fields";
+  import { DATE_FIELDS, rescheduleLine, type DateField } from "$lib/views/tasks";
+  import TaskDateMenu from "./views/TaskDateMenu.svelte";
+  import type { FieldStat } from "$lib/api";
   import "katex/dist/katex.min.css";
 
   let container = $state<HTMLDivElement | null>(null);
@@ -51,6 +55,34 @@
   let knownTargets = new Set<string>();
   let targetList: string[] = [];
   let tagList: string[] = [];
+  /** Inline-field keys and values across the vault (for `key::` completion), refreshed with the index. */
+  let fieldStats: FieldStat[] = [];
+  /** The date menu raised by a chip: which line and key it edits. */
+  let fieldMenu = $state<{ x: number; y: number; pos: number; key: string; current: string; field: DateField } | null>(null);
+
+  $effect(() => {
+    void vault.indexVersion;
+    if (!vault.currentPath?.endsWith(".md")) return;
+    api
+      .fieldsList()
+      .then((v) => (fieldStats = v))
+      .catch(() => undefined);
+  });
+
+  const TASK_LINE_RE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+\[[ xX/]\]/;
+  /** The date menu's pick: a task's due/scheduled goes through rescheduleLine (it knows
+   *  the emoji spellings); any other field is rewritten in place by setFieldValue. */
+  function applyFieldDate(date: string | null) {
+    const m = fieldMenu;
+    fieldMenu = null;
+    if (!m || !view) return;
+    const line = view.state.doc.lineAt(Math.min(m.pos, view.state.doc.length));
+    const isTaskDate = TASK_LINE_RE.test(line.text) && m.key in DATE_FIELDS;
+    const next = isTaskDate ? rescheduleLine(line.text, m.key as DateField, date) : setFieldValue(line.text, m.key, date);
+    if (next === line.text) return;
+    view.dispatch({ changes: { from: line.from, to: line.to, insert: next }, userEvent: "input.field" });
+    view.focus();
+  }
   let loadedFor = -1;
 
   // ---- Autosave: it writes to disk 1s after typing pauses. Notes and plain text files share
@@ -859,6 +891,11 @@
       loadAsset,
       copyImage,
       tags: () => tagList,
+      fieldStats: () => fieldStats,
+      onFieldChip: (_v: EditorView, pos: number, key: string, value: string, e: MouseEvent) => {
+        if (!(key in DATE_FIELDS) && fieldValueKind(value) !== "date") return;
+        fieldMenu = { x: e.clientX, y: e.clientY, pos, key, current: value, field: key === "scheduled" ? "scheduled" : "due" };
+      },
       blockHost: isNote ? blockHost : null,
       embedHost: isNote ? embedHost : null,
       queryHost: isNote
@@ -1003,6 +1040,18 @@
   <div class="empty">
     <p>{t("editor.welcomeKeys", { open: k("Mod+O"), palette: k("Mod+P") })}</p>
   </div>
+{/if}
+
+{#if fieldMenu}
+  <TaskDateMenu
+    x={fieldMenu.x}
+    y={fieldMenu.y}
+    field={fieldMenu.field}
+    title={fieldMenu.key in DATE_FIELDS ? undefined : fieldMenu.key}
+    current={fieldMenu.current}
+    onpick={applyFieldDate}
+    onclose={() => (fieldMenu = null)}
+  />
 {/if}
 
 <style>

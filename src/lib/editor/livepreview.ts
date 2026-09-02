@@ -11,7 +11,7 @@
 // headings and quotes reveal by whole line).
 import { t } from "$lib/i18n/i18n.svelte";
 import { privacyGlyphSvg } from "$lib/privacyGlyph";
-import { CALLOUT_RE } from "./blocks";
+import { CALLOUT_RE, frontmatterEnd } from "./blocks";
 import { syntaxTree } from "@codemirror/language";
 import {
   Decoration,
@@ -27,6 +27,7 @@ import { revealArmed, revealRanges, selectionReveals, selectionTouches } from ".
 import { tableField } from "./table";
 import { LINK_RE as WIKI_RE } from "./wikilink";
 import { DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, localDate, scanTaskDates, STAMP_RE } from "$lib/views/tasks";
+import { fieldValueKind, scanFields } from "$lib/fields";
 import { openImageLightbox } from "$lib/lightbox";
 import { copyText } from "$lib/copytext";
 
@@ -188,21 +189,71 @@ class DateChipWidget extends WidgetType {
     readonly kind: DateField,
     readonly date: string,
     readonly overdue: boolean,
+    readonly onChip?: FieldChipHandler,
   ) {
     super();
   }
   eq(other: DateChipWidget) {
     return other.kind === this.kind && other.date === this.date && other.overdue === this.overdue;
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const el = document.createElement("span");
-    el.className = `cm-lp-datechip${this.overdue ? " cm-lp-datechip-overdue" : ""}`;
+    el.className = `cm-lp-datechip${this.onChip ? " cm-lp-chip-click" : ""}${this.overdue ? " cm-lp-datechip-overdue" : ""}`;
     el.title = dateFieldLabel(this.kind);
     el.innerHTML = dateIconSvg(this.kind);
     el.append(this.date);
+    wireChipClick(el, view, this.onChip, this.kind, this.date);
     return el;
   }
 }
+
+/** A chip's click: the host opens the date menu for the field at that position. */
+export type FieldChipHandler = (view: EditorView, pos: number, key: string, value: string, e: MouseEvent) => void;
+
+function wireChipClick(el: HTMLElement, view: EditorView, onChip: FieldChipHandler | undefined, key: string, value: string) {
+  if (!onChip) return;
+  el.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pos = view.posAtDOM(el);
+    onChip(view, pos, key, value, e);
+  });
+}
+
+/** An inline `key:: value` field as a chip: the key muted, the value plain; a date
+ *  value is clickable (the date menu, the same one the task chips use). The source is
+ *  shown once the cursor touches the chip's range. */
+class FieldChipWidget extends WidgetType {
+  constructor(
+    readonly key: string,
+    readonly value: string,
+    readonly onChip?: FieldChipHandler,
+  ) {
+    super();
+  }
+  eq(other: FieldChipWidget) {
+    return other.key === this.key && other.value === this.value;
+  }
+  toDOM(view: EditorView) {
+    const el = document.createElement("span");
+    const date = fieldValueKind(this.value) === "date";
+    el.className = `cm-lp-field${date && this.onChip ? " cm-lp-chip-click" : ""}`;
+    const k = document.createElement("span");
+    k.className = "cm-lp-field-key";
+    k.textContent = this.key;
+    const v = document.createElement("span");
+    v.className = "cm-lp-field-val";
+    v.textContent = this.value;
+    el.append(k, v);
+    el.title = `${this.key}:: ${this.value}`;
+    if (date) wireChipClick(el, view, this.onChip, this.key, this.value);
+    return el;
+  }
+}
+
+const fieldSrcDeco = Decoration.mark({ class: "cm-lp-field-src" });
+const TASK_LINE_RE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+\[[ xX/]\]/;
 
 /* The copy button is always an icon (stacked squares), with the words demoted to a
    hover tip (data-tip → CSS ::after); after a click it briefly swaps to a result icon
@@ -639,7 +690,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
                 from: dFrom,
                 to: dTo,
                 deco: Decoration.replace({
-                  widget: new DateChipWidget(dm.field, dm.date, dm.field === "due" && !checked && dm.date < today),
+                  widget: new DateChipWidget(dm.field, dm.date, dm.field === "due" && !checked && dm.date < today, opts.onFieldChip),
                 }),
               });
             }
@@ -851,6 +902,30 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
       if (isCode(start)) continue;
       marks.push({ from: start, to: start + m[0].length, deco: stampDeco });
     }
+
+    // Inline fields `key:: value` → chips (line by line: the scanner's rules are per
+    // line, and a fenced block or the frontmatter is skipped whole). A task line's
+    // due::/scheduled:: are the date chips above and are not drawn twice.
+    if (text.includes("::")) {
+      const fmEnd = frontmatterEnd(doc);
+      for (let pos = range.from; pos <= range.to; ) {
+        const line = doc.lineAt(pos);
+        if (line.to > range.to && line.from > range.from) break;
+        if (line.text.includes("::") && line.from >= fmEnd && !isCode(line.from)) {
+          const task = TASK_LINE_RE.test(line.text);
+          for (const f of scanFields(line.text, line.from)) {
+            if (task && f.key in DATE_FIELDS) continue;
+            if (revealedEl(f.from, f.to)) {
+              marks.push({ from: f.from, to: f.to, deco: fieldSrcDeco });
+              continue;
+            }
+            hides.push({ from: f.from, to: f.to, deco: Decoration.replace({ widget: new FieldChipWidget(f.key, f.value, opts.onFieldChip) }) });
+          }
+        }
+        if (line.to >= range.to) break;
+        pos = line.to + 1;
+      }
+    }
   }
 
   // Replace decorations may not partially overlap: after sorting by from ascending and to descending, the larger range that came first is kept
@@ -953,6 +1028,8 @@ const frontmatterField = StateField.define<DecorationSet>({
 export interface LivePreviewOptions {
   loadAsset?: AssetLoader;
   copyImage?: ImageCopier;
+  /** A click on a date chip (a task's due/scheduled, or any `key:: YYYY-MM-DD` field). */
+  onFieldChip?: FieldChipHandler;
 }
 
 export function livePreview(opts: LivePreviewOptions = {}): Extension {

@@ -25,7 +25,7 @@ pub use attach_migrate::MigrationReport;
 pub use block::{Block, BlockKind, Field, TaskState, WikiLink};
 pub use blockid::{plan_block_id, BlockIdInsert, BlockIdPlan, BlockSelector, PlanTarget};
 pub use event::VaultEvent;
-pub use index::{BlockIndex, GraphData, GraphEdge, GraphNode, NoteSummary, ResolvedLink};
+pub use index::{BlockIndex, GraphData, GraphEdge, GraphNode, NoteSummary, ResolvedLink, FieldStat};
 pub use note::{Frontmatter, Note, NoteId, VemryMeta};
 pub use privacy::{
     blank_private_blocks, has_private_blocks, private_spans, public_occurrences, redact_private_blocks, PrivacyScope,

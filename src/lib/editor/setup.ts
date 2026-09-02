@@ -1,3 +1,4 @@
+import type { FieldStat } from "$lib/api";
 // CodeMirror assembly for the note editor and the plain/code file editor.
 import { t } from "$lib/i18n/i18n.svelte";
 import { EditorState, type Extension } from "@codemirror/state";
@@ -12,8 +13,8 @@ import { tags } from "@lezer/highlight";
 import { wikilinkExtension, type WikilinkHost } from "./wikilink";
 import { mdlinkExtension } from "./mdlink";
 import { linkAt } from "./linkat";
-import { livePreview, type AssetLoader, type ImageCopier } from "./livepreview";
-import { tagCompletions, calloutCompletions, atCompletions } from "./completions";
+import { livePreview, type AssetLoader, type ImageCopier, type FieldChipHandler } from "./livepreview";
+import { tagCompletions, calloutCompletions, atCompletions, fieldCompletions } from "./completions";
 import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
 import { embedAt, embedExtension, openEmbedSource, type EmbedHost } from "./embed";
@@ -108,6 +109,10 @@ export interface EditorOptions {
   copyImage?: ImageCopier;
   /** note mode: vault tag universe for `#` completion (kept fresh by caller) */
   tags?: () => string[];
+  /** note mode: inline-field keys and values for `key::` completion (kept fresh by the caller) */
+  fieldStats?: () => FieldStat[];
+  /** note mode: a click on a date chip (a task date or a `key:: YYYY-MM-DD` field) */
+  onFieldChip?: FieldChipHandler;
   /** note mode: live `vemry-query` blocks (query + result-row navigation) */
   queryHost?: QueryHost | null;
   /** note mode: run button on `js` blocks (one-shot read-only sandbox) */
@@ -183,7 +188,7 @@ function buildState(opts: EditorOptions): EditorState {
       placeholder(t("editor.placeholder")),
       markdown({ base: markdownLanguage, extensions: [Highlight] }),
       syntaxHighlighting(mdHighlight),
-      livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage }),
+      livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage, onFieldChip: opts.onFieldChip }),
       foldExtension(),
       blockSelection(),
       flashField,
@@ -193,6 +198,7 @@ function buildState(opts: EditorOptions): EditorState {
           wikilink.completions,
           atCompletions(host.targets),
           slashCompletions(),
+          fieldCompletions(opts.fieldStats ?? (() => [])),
           tagCompletions(opts.tags ?? (() => [])),
           calloutCompletions,
         ],

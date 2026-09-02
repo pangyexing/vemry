@@ -75,6 +75,15 @@ export interface Block {
   explicit_id?: boolean;
 }
 
+/** One inline-field key across the vault (mirrors vemry-core's `FieldStat`). */
+export interface FieldStat {
+  key: string;
+  /** Notes carrying the key. */
+  count: number;
+  /** The most frequent values, most frequent first. */
+  values: string[];
+}
+
 export type FieldOp = "eq" | "ne" | "has" | "lt" | "gt" | "contains";
 
 /** One inline-field condition; the flat string form (`author = X`, `due < 2026-09-10`, `rating`) is parsed in Rust. */
@@ -630,6 +639,8 @@ export const api = {
   queryBlocks: (query: BlockQuery) => invoke<BlockHit[]>("query_blocks", { query }),
   graphGet: () => invoke<GraphData>("graph_get"),
   linkTargets: () => invoke<string[]>("link_targets"),
+  /** Inline-field keys in use and their frequent values (for `key::` completion and group-by menus). */
+  fieldsList: () => invoke<FieldStat[]>("fields_list"),
   foldersList: () => invoke<string[]>("folders_list"),
   folderCreate: (path: string) => invoke<string>("folder_create", { path }),
   filesList: () => invoke<string[]>("files_list"),

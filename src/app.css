@@ -581,6 +581,33 @@ button:focus-visible,
 .cm-lp-datechip-overdue {
   color: var(--danger);
 }
+/* An inline `key:: value` field as a chip (the key muted, the value plain); the source
+   `key::` is faint while the cursor is on it */
+.cm-lp-field {
+  display: inline;
+  white-space: nowrap;
+  background: var(--bg-hover);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 1px 6px 2px;
+  font-size: 0.85em;
+}
+.cm-lp-field-key {
+  color: var(--fg-faint);
+  margin-right: 4px;
+}
+.cm-lp-field-key::after {
+  content: ":";
+}
+.cm-lp-field-src {
+  color: var(--fg-muted);
+}
+.cm-lp-chip-click {
+  cursor: pointer;
+}
+.cm-lp-chip-click:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-hover));
+}
 /* The *(timestamp)* signature a memo or a clip writes: demoted to a metadata footnote */
 .cm-lp-stamp {
   color: var(--fg-faint);

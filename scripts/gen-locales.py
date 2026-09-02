@@ -1433,6 +1433,14 @@ add("prov.", {
     "overlayOff": ("Origin overlay off", "已隐藏出处"),
 })
 
+add("field.", {
+    "sectionValues": ("Values", "取值"),
+    "sectionKeys": ("Fields", "字段"),
+    "today": ("today", "今天"),
+    "tomorrow": ("tomorrow", "明天"),
+    "notesWithKey": ("{n} notes", "{n} 篇笔记"),
+})
+
 add("embed.", {
     "loading": ("Loading…", "加载中…"),
     "notFound": ("Block not found", "未找到该块"),
