@@ -967,13 +967,27 @@ function livePreviewPlugin(opts: LivePreviewOptions) {
     class {
       decorations: DecorationSet;
       key: string;
+      /** Decorations were held still through an IME composition and must be rebuilt once it ends. */
+      held = false;
       constructor(view: EditorView) {
         this.key = revealKey(view.state);
         this.decorations = buildDecorations(view, opts);
       }
       update(update: ViewUpdate) {
+        // An open IME composition: nothing may be hidden or replaced on the line the
+        // browser is composing in. The first composed letter turns `[[|]]` into the
+        // wikilink `[[c]]`; folding its brackets at that moment overlaps the text node
+        // the IME holds, the line shows `[c]`, and from then on the DOM and the
+        // document disagree (WebKit keeps composing into a node the editor no longer
+        // owns). The decorations only travel with the changes until compositionend
+        if (update.view.composing) {
+          if (update.docChanged) this.decorations = this.decorations.map(update.changes);
+          this.held = true;
+          return;
+        }
         const treeChanged = syntaxTree(update.state) !== syntaxTree(update.startState);
-        if (update.docChanged || update.viewportChanged || treeChanged) {
+        if (update.docChanged || update.viewportChanged || treeChanged || this.held) {
+          this.held = false;
           this.key = revealKey(update.state);
           this.decorations = buildDecorations(update.view, opts);
         } else if (update.selectionSet) {
@@ -1032,9 +1046,20 @@ export interface LivePreviewOptions {
   onFieldChip?: FieldChipHandler;
 }
 
+/** After a composition ends without a document change (a cancelled one), no
+ *  transaction follows to release the held decorations: an empty one does. */
+const compositionRelease = EditorView.domEventHandlers({
+  compositionend(_e, view) {
+    setTimeout(() => {
+      if (!view.composing) view.dispatch({});
+    }, 0);
+    return false;
+  },
+});
+
 export function livePreview(opts: LivePreviewOptions = {}): Extension {
   // revealArmed is registered here (rather than in setup.ts): every consumer of the
   // reveal predicates (livepreview/table/queryblock/frontmatter/clickopen) lives in
   // note mode alone, and note mode always carries livePreview()
-  return [revealArmed, livePreviewPlugin(opts), frontmatterField, tableField];
+  return [revealArmed, livePreviewPlugin(opts), compositionRelease, frontmatterField, tableField];
 }
