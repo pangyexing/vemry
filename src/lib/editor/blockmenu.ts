@@ -180,7 +180,8 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
     { separator: true },
     {
       label: t("block.duplicate"),
-      hint: k("Mod+D"),
+      // The key that works in both modes (block mode also takes a bare ⌘D, text mode does not)
+      hint: k("Mod+Shift+D"),
       action: act(view, b, (now) => {
         const spec = duplicateBlocks(state, [now]);
         if (spec) view.dispatch(spec);
