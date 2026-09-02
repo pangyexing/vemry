@@ -341,9 +341,37 @@ export function moveBlocks(state: EditorState, run: EditorBlock[], dir: -1 | 1):
   const beforeKindLast = beforeLine >= 1 ? (() => { const b = blockAtLazy(state, doc.line(beforeLine).to, { top: true }); return b ? kindOfLastDescendant(b) : null; })() : null;
   const needBefore = beforeKindLast != null && beforeGap.length === 0 && seamSeparator(beforeKindLast, lFirst) === "\n";
   const needAfter = afterKind != null && afterGap.length === 0 && seamSeparator(eLast, afterKind) === "\n";
-  const lead = needBefore ? "\n" : "";
+  let from = eStart;
+  let to = lEnd;
+  let lead = needBefore ? "\n" : "";
+  let tail = needAfter ? "\n" : "";
+  // The slot the run leaves behind: a single blank line that was there only as the
+  // run's own separator (the new neighbours may touch, the run could not) goes with
+  // it — otherwise every trip of a bullet item through an ordered list would leave a
+  // blank line between the ordered items. Two or more blank lines are the user's
+  // spacing and stay.
+  if (
+    dir > 0 &&
+    beforeGap.length === 1 &&
+    beforeKindLast != null &&
+    seamSeparator(beforeKindLast, lFirst) === "" &&
+    seamSeparator(beforeKindLast, eFirst) === "\n"
+  ) {
+    from = doc.line(doc.lineAt(eStart).number - 1).from;
+    lead = "";
+  }
+  if (
+    dir < 0 &&
+    afterGap.length === 1 &&
+    afterKind != null &&
+    seamSeparator(eLast, afterKind) === "" &&
+    seamSeparator(lLast, afterKind) === "\n"
+  ) {
+    to = doc.line(doc.lineAt(lEnd).number + 1).to;
+    tail = "";
+  }
   const mid = separator(lLast, eFirst, gapEL);
-  let text = lead + lText + mid + eText + (needAfter ? "\n" : "");
+  let text = lead + lText + mid + eText + tail;
   const indent = first.indentCols ?? 0;
   const eNumber = orderedNumber(dir < 0 ? neighbor : first);
   const lNumber = orderedNumber(dir < 0 ? first : neighbor);
@@ -352,11 +380,11 @@ export function moveBlocks(state: EditorState, run: EditorBlock[], dir: -1 | 1):
   const head = state.selection.main.head;
   const runStart = first.from;
   const runEnd = extentTo(state, last);
-  const newRunStart = dir < 0 ? eStart + lead.length : eStart + lead.length + lText.length + mid.length;
+  const newRunStart = dir < 0 ? from + lead.length : from + lead.length + lText.length + mid.length;
   const anchor = head >= runStart && head <= runEnd ? newRunStart + (head - runStart) : head;
   return {
-    changes: { from: eStart, to: lEnd, insert: text },
-    selection: { anchor: Math.min(anchor, eStart + text.length) },
+    changes: { from, to, insert: text },
+    selection: { anchor: Math.min(anchor, from + text.length) },
     annotations: annotations("block.move"),
   };
 }
@@ -381,6 +409,25 @@ export function moveBlockTo(
       ? { from: chunk.from, to: Math.min(doc.length, chunk.to + 1) }
       : { from: Math.max(0, chunk.from - 1), to: chunk.to };
   const lastKind = kindOfLastDescendant(b);
+  // The same rule as moveBlocks: a single blank line above the block that was only
+  // its separator goes with it when the blocks on either side may touch
+  {
+    const above = blankRunBefore(state, chunk.from);
+    const afterLineNo = doc.lineAt(Math.min(del.to, doc.length)).number;
+    const afterLine = del.to < doc.length ? doc.line(afterLineNo) : null;
+    const after = afterLine && afterLine.text.trim() !== "" ? blockAtLazy(state, afterLine.from) : null;
+    const aboveLineNo = doc.lineAt(chunk.from).number - above.length - 1;
+    const aboveBlock = aboveLineNo >= 1 ? blockAtLazy(state, doc.line(aboveLineNo).to, { top: true }) : null;
+    if (
+      above.length === 1 &&
+      aboveBlock &&
+      after &&
+      seamSeparator(kindOfLastDescendant(aboveBlock), seamKindOf(after)) === "" &&
+      seamSeparator(kindOfLastDescendant(aboveBlock), seamKindOf(b)) === "\n"
+    ) {
+      del.from = doc.line(doc.lineAt(chunk.from).number - 1).from;
+    }
+  }
   let insert: string;
   let at: number;
   if (targetPos == null) {
