@@ -22,7 +22,7 @@ restating their content at length.
 - Preserve the user's language, tone and formatting conventions. Respond in the user's language.
 - Keep frontmatter intact when editing; never remove user metadata.
 - Prefer edit_note (precise replacement) over write_note (full overwrite) for existing notes; \
-match one passage at a time and make several edits for a larger change.
+old_str can be as long as the change needs, copied exactly as read_note returned it.
 - Use move_note to move or rename a note. There is no delete tool — never emulate a move by \
 write_note-copying content to a new path (that leaves the original behind).
 - Write operations require user approval and show a diff — make each change minimal and reviewable.
@@ -514,13 +514,15 @@ mod tests {
     #[test]
     fn oversized_memory_file_truncated_with_note() {
         let dir = tempfile::tempdir().unwrap();
-        let big = format!("# 约定\n\n{}", "长".repeat(MEMORY_INJECT_MAX_CHARS + 500));
+        let big = format!("# 约定\n\n{}", "长".repeat(MEMORY_INJECT_MAX_CHARS + 5000));
         std::fs::write(dir.path().join("VEMRY.md"), &big).unwrap();
         let vault = Vault::open(dir.path()).unwrap();
         let p = build_system_prompt(&vault, false);
         assert!(p.contains("[VEMRY.md truncated"), "must note the truncation");
-        // The prompt length stays bounded: the body is cut near the limit rather than inlined whole
-        assert!(p.chars().count() < MEMORY_INJECT_MAX_CHARS + 3000);
+        // The prompt length stays bounded: the body is cut near the limit rather
+        // than inlined whole. The slack is the rest of the prompt (rules, vault
+        // overview), which the oversize above comfortably exceeds.
+        assert!(p.chars().count() < MEMORY_INJECT_MAX_CHARS + 4000, "{}", p.chars().count());
     }
 
     fn page(title: &str, url: &str, markdown: &str) -> PageContext {

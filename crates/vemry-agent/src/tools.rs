@@ -464,22 +464,21 @@ pub fn prepare_write(
             // the agent)
             let id = existing_note_id(vault, path)?;
             let content = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
-            // old_str must match exactly once in what the model could see: an
-            // occurrence inside (or straddling) a private block does not count,
-            // and the same "not found" wording covers it. That wording asks for a
-            // shorter passage rather than a re-copy: a span straddling a hidden
-            // block matches the model's view verbatim and would fail the same way
-            // again. The replacement is applied to the raw text; the diff the user
-            // sees is over the raw text.
+            // old_str is matched in the model's view of the note — the text
+            // read_note returned, private blocks cut out — so a passage the
+            // model copied always matches, a span across a hidden block
+            // included. The replacement is applied to the raw text with the
+            // hidden blocks kept (privacy.rs), and refused when what the model
+            // wrote around a block would stop it parsing as one. The diff the
+            // user sees is over the raw text.
             let blocks = vemry_core::parser::parse_note(&content).blocks;
             let redacted = vemry_core::redact_private_blocks(&content, &blocks);
-            let occurrences = vemry_core::public_occurrences(&content, old_str, &redacted.removed);
+            let occurrences: Vec<usize> =
+                if old_str.is_empty() { vec![] } else { redacted.text.match_indices(old_str).map(|(p, _)| p).collect() };
             let count = occurrences.len();
             if count == 0 {
                 return Err(ToolError::Other(
-                    "old_str not found in note — re-read it and copy a shorter passage exactly \
-                     (a paragraph rather than the whole note); for a larger change make several edits"
-                        .into(),
+                    "old_str not found in note — read the note again and copy the text exactly as returned".into(),
                 ));
             }
             if count > 1 {
@@ -488,7 +487,13 @@ pub fn prepare_write(
                 )));
             }
             let at = occurrences[0];
-            let new_content = format!("{}{}{}", &content[..at], new_str, &content[at + old_str.len()..]);
+            let new_content = vemry_core::apply_redacted_edit(&content, &redacted, at..at + old_str.len(), new_str);
+            if !vemry_core::private_blocks_preserved(&content, &new_content) {
+                return Err(ToolError::Other(
+                    "this edit cannot be applied as written — keep fences and frontmatter balanced within old_str and new_str"
+                        .into(),
+                ));
+            }
             let diff = unified_diff(&content, &new_content, id.as_str());
             Ok(WriteRequest {
                 id: request_id,
@@ -576,6 +581,14 @@ pub fn execute_write(
     if req.tool == "write_note" && vemry_core::has_private_blocks(&vemry_core::parser::parse_note(&old).blocks) {
         return Err(format!("write_note is not available for {}; use edit_note for changes to this note", req.path));
     }
+    // The same for an edit: prepared against the note as it was, it would
+    // overwrite a private block that appeared during the gate. A proposal the
+    // user rewrote in the dialog is their own view of the raw text and is not
+    // second-guessed.
+    if req.tool == "edit_note" && content_override.is_none() && !vemry_core::private_blocks_preserved(&old, &req.new_content)
+    {
+        return Err(format!("{} changed while the edit was awaiting review — read it again and retry", req.path));
+    }
     let content = content_override.unwrap_or(&req.new_content);
     vault.write_note(&id, content).map_err(|e| e.to_string())?;
     // Provenance is computed from the applied bytes (an AllowEdited override
@@ -592,7 +605,10 @@ pub fn execute_write(
             vemry_core::ProvenanceEntry::Agent { ts, session, path, blocks: added }
         });
     }
-    Ok(format!("wrote {id} ({} bytes)", content.len()))
+    // The size reported is the model's view of the note: a private block it
+    // never saw is not counted, so nothing about it shows in the arithmetic
+    let seen = vemry_core::redact_private_blocks(content, &vemry_core::parser::parse_note(content).blocks).text.len();
+    Ok(format!("wrote {id} ({seen} bytes)"))
 }
 
 /// move_note's execution side: both the index and privacy can change while the
@@ -855,40 +871,63 @@ mod tests {
     }
 
     #[test]
-    fn edit_note_matches_public_text_and_applies_to_raw() {
+    fn edit_note_matches_the_models_view_and_keeps_private_blocks() {
         let (_d, vault) = fixture_with_private_block();
+        let edit = |old: &str, new: &str| {
+            prepare_write(
+                &vault,
+                "r".into(),
+                "edit_note",
+                &json!({"path": "Mixed.md", "old_str": old, "new_str": new}),
+                None,
+            )
+        };
         // "apple" occurs three times in the raw text, twice where the model can see
-        let err = prepare_write(
-            &vault,
-            "r".into(),
-            "edit_note",
-            &json!({"path": "Mixed.md", "old_str": "apple", "new_str": "pear"}),
-            None,
-        )
-        .unwrap_err();
+        let err = edit("apple", "pear").unwrap_err();
         assert!(err.to_string().starts_with("old_str matches 2 times"), "{err}");
+        let req = edit("tail apple", "tail pear").unwrap();
+        assert!(req.new_content.contains("BLOCKSECRET"), "the raw text keeps the private block");
+        assert!(req.new_content.contains("tail pear") && req.diff.contains("tail pear"));
+        // text the model never saw is "not found"
+        for old in ["banana", "apple\n\n> [!private]", "> [!private] BLOCKSECRET"] {
+            let err = edit(old, "x").unwrap_err();
+            assert!(err.to_string().starts_with("old_str not found"), "{old:?}: {err}");
+        }
+        // a span across the hidden block matches the view as read_note returned
+        // it; the block survives, right after the replacement
+        let req = edit("public apple\n\ntail apple", "TEST").unwrap();
+        assert!(
+            req.new_content.starts_with("# Mixed\n\nTEST\n\n> [!private] BLOCKSECRET banana apple\n"),
+            "{:?}",
+            req.new_content
+        );
+        assert!(!req.new_content.contains("tail apple"));
+        // the whole view at once — what "rewrite this note" comes down to
+        let req = edit("# Mixed\n\npublic apple\n\ntail apple\n", "TEST\n").unwrap();
+        assert_eq!(req.new_content, "TEST\n\n> [!private] BLOCKSECRET banana apple\n");
+        // an edit whose surroundings would swallow the block is refused
+        let err = edit("public apple", "```\npublic apple").unwrap_err();
+        assert!(err.to_string().starts_with("this edit cannot be applied"), "{err}");
+    }
+
+    #[test]
+    fn edit_note_refuses_at_execute_when_a_private_block_appeared() {
+        let (_d, mut vault) = fixture_with_private_block();
         let req = prepare_write(
             &vault,
             "r".into(),
             "edit_note",
-            &json!({"path": "Mixed.md", "old_str": "tail apple", "new_str": "tail pear"}),
+            &json!({"path": "Plain.md", "old_str": "plain", "new_str": "plain edited"}),
             None,
         )
         .unwrap();
-        assert!(req.new_content.contains("BLOCKSECRET"), "the raw text keeps the private block");
-        assert!(req.new_content.contains("tail pear") && req.diff.contains("tail pear"));
-        // a match only inside the private block, or straddling its boundary, is "not found"
-        for old in ["banana", "apple\n\n> [!private]", "> [!private] BLOCKSECRET"] {
-            let err = prepare_write(
-                &vault,
-                "r".into(),
-                "edit_note",
-                &json!({"path": "Mixed.md", "old_str": old, "new_str": "x"}),
-                None,
-            )
-            .unwrap_err();
-            assert!(err.to_string().starts_with("old_str not found"), "{old:?}: {err}");
-        }
+        vault.write_note(&NoteId::new("Plain.md"), "plain\n\n> [!private] late\n").unwrap();
+        let err = execute_write(&mut vault, &req, None, None, false).unwrap_err();
+        assert!(err.contains("changed while the edit was awaiting review"), "{err}");
+        assert!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap().contains("late"));
+        // the user's own rewrite of the proposal is applied as they wrote it
+        execute_write(&mut vault, &req, Some("plain edited\n\n> [!private] late\n"), None, false).unwrap();
+        assert_eq!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap(), "plain edited\n\n> [!private] late\n");
     }
 
     #[test]

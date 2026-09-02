@@ -1036,7 +1036,7 @@ paths):
 
 6. **Private blocks are cut out of every read, by one set of functions**
    (`privacy.rs`: `redact_private_blocks`, `blank_private_blocks`,
-   `public_occurrences`; the vault names the agent's reads `read_note_for_agent`,
+   `apply_redacted_edit`, `private_blocks_preserved`; the vault names the agent's reads `read_note_for_agent`,
    `search_for_agent`, `memory_file_for_agent`, `resolve_ref_for_agent` so the
    choke points can be grepped, and the raw `read_note` its many UI callers use is
    never handed to the agent by a wrong default). The table:
@@ -1053,7 +1053,7 @@ paths):
    | a block reference or embed for the agent (seam) | `resolve_ref_for_agent` | a private target is a missing anchor; a section or subtree is handed over redacted |
    | scripts under `hide_private` | the same three vault functions | the same |
    | `write_note` | `prepare_write`, re-checked in `execute_write` | refused outright for a note holding a private block ("use edit_note"): the model never saw the block, so its "full content" would delete it |
-   | `edit_note` | `public_occurrences` | `old_str` must occur exactly once in what the model could see; an occurrence inside or straddling a private block does not count, with the same "not found" wording; that wording asks for a shorter passage rather than a re-copy, since a span straddling a hidden block matches the model's view verbatim and would fail again; the replacement lands in the raw text and the diff the user approves is over the raw text |
+   | `edit_note` | `apply_redacted_edit`, `private_blocks_preserved` | `old_str` is matched in the model's view of the note — the text `read_note` returned, private blocks cut out — so a passage the model copied always matches, even one spanning a hidden block; the replacement lands in the raw text, a private block that sat inside the replaced span is kept and re-inserted right after the replacement on lines of its own, a block at the edge stays put, and the edit is refused when what the model wrote around a block would stop it parsing as one (a fence opened above it and never closed, its line glued onto a quote); the diff the user approves is over the raw text, and the size in the "wrote" result is the view's |
 
 Auditing: when filtering happens the runner writes
 `{"kind":"privacy","tool":…,"filtered":N}` into the session JSONL — a count only, no
@@ -1143,8 +1143,12 @@ Known limitations (deliberate):
   private block in the permission dialog and the replay, the model never does.
 - A `> [!private]` block's tags and links are absent from the graph, backlinks
   and tag counts for the user too — the price of not indexing them anywhere.
-- A private block typed into a note between `edit_note`'s prepare and execute is
-  the general concurrent-edit hazard, unchanged.
+- A private block typed into a note between `edit_note`'s prepare and execute makes
+  the execute refuse ("changed while the edit was awaiting review" — the same
+  `private_blocks_preserved` check, against the note as it is then), unless the user
+  rewrote the proposal in the dialog, which is their own view of the raw text; a
+  change to the public text in that window is the general concurrent-edit hazard,
+  unchanged.
 - The UI does not filter: an embed of a private block (`![[Note#^id]]`) renders in
   the editor, and the status bar names the block when the cursor is inside it.
 - `.vemry/skills/` is a deliberate exception the agent can read (the `read_skill`

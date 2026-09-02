@@ -29,8 +29,8 @@ pub use event::VaultEvent;
 pub use index::{BlockIndex, GraphData, GraphEdge, GraphNode, NoteSummary, ResolvedLink, FieldStat};
 pub use note::{Frontmatter, Note, NoteId, VemryMeta};
 pub use privacy::{
-    blank_private_blocks, has_private_blocks, private_spans, public_occurrences, redact_private_blocks, PrivacyScope,
-    Redacted,
+    apply_redacted_edit, blank_private_blocks, has_private_blocks, private_blocks_preserved, private_spans,
+    redact_private_blocks, PrivacyScope, Redacted,
 };
 pub use provenance::{
     added_blocks, stamps_of, BlockProvenance, BlockStamp, InsertOrigin, Origin, ProvenanceEntry, ProvenanceLedger,

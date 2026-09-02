@@ -172,16 +172,88 @@ pub fn blank_private_blocks(raw: &str, blocks: &[Block]) -> String {
     String::from_utf8(bytes).unwrap_or_else(|_| raw.to_string())
 }
 
-/// Byte offsets of the occurrences of `needle` in `raw` that lie entirely
-/// outside the `removed` ranges — what the agent could have seen and quoted.
-pub fn public_occurrences(raw: &str, needle: &str, removed: &[Range<usize>]) -> Vec<usize> {
-    if needle.is_empty() {
-        return vec![];
+/// An edit the model made in its view of a note — `redacted.text`, the note
+/// as `read_note` returned it — applied to the raw text. `range` and
+/// `replacement` are in terms of that view. A private block whose cut point
+/// lies strictly inside the replaced span sat among the replaced lines: it is
+/// kept, re-inserted right after the replacement on lines of its own (a blank
+/// line on each side, blocks in their order). A block at either edge of the
+/// span stays where it is — the replaced text starts after a block at its
+/// start and ends before a block at its end — and the line break in front of
+/// it is restored when the edit took it, so it still begins a line. Whether
+/// the surroundings still let every block parse as private is
+/// `private_blocks_preserved`'s job.
+pub fn apply_redacted_edit(raw: &str, redacted: &Redacted, range: Range<usize>, replacement: &str) -> String {
+    let nl = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    // Each removed range's cut point in view coordinates: where the text on
+    // both sides of the block meets once the block is gone
+    let mut cuts = Vec::with_capacity(redacted.removed.len());
+    let mut shift = 0;
+    for r in &redacted.removed {
+        cuts.push(r.start - shift);
+        shift += r.end - r.start;
     }
-    raw.match_indices(needle)
-        .map(|(p, _)| p)
-        .filter(|&p| !removed.iter().any(|r| p < r.end && p + needle.len() > r.start))
-        .collect()
+    let width = |keep: &dyn Fn(usize) -> bool| -> usize {
+        redacted.removed.iter().zip(&cuts).filter(|&(_, &c)| keep(c)).map(|(r, _)| r.end - r.start).sum()
+    };
+    let raw_start = range.start + width(&|c| c <= range.start);
+    let raw_end = if range.is_empty() { raw_start } else { range.end + width(&|c| c < range.end) };
+    let mut out = String::with_capacity(raw.len() + replacement.len());
+    out.push_str(&raw[..raw_start]);
+    out.push_str(replacement);
+    let mut reinserted = false;
+    for (r, &c) in redacted.removed.iter().zip(&cuts) {
+        if range.start < c && c < range.end {
+            ensure_blank_line(&mut out, nl);
+            out.push_str(raw[r.clone()].trim_matches(['\n', '\r']));
+            out.push_str(nl);
+            reinserted = true;
+        }
+    }
+    let tail = &raw[raw_end..];
+    let block_follows = redacted.removed.iter().any(|r| r.start == raw_end);
+    if (reinserted && !tail.is_empty() && !tail.starts_with(['\n', '\r']))
+        || (block_follows && !out.is_empty() && !out.ends_with('\n'))
+    {
+        out.push_str(nl);
+    }
+    out.push_str(tail);
+    out
+}
+
+/// Makes `out` end in a blank line (unless it is empty), so what follows
+/// starts a block of its own.
+fn ensure_blank_line(out: &mut String, nl: &str) {
+    if out.is_empty() {
+        return;
+    }
+    let blank = format!("{nl}{nl}");
+    if out.ends_with(&blank) {
+        return;
+    }
+    if !out.ends_with(nl) {
+        out.push_str(nl);
+    }
+    out.push_str(nl);
+}
+
+/// Whether `new` still holds every private block of `old`, byte for byte and
+/// still parsed as a private block (as multisets, so a moved block passes).
+/// An edit confined to the public text can otherwise swallow a block it was
+/// made around: a fence opened above it and never closed, its first line
+/// glued onto a quote line before it.
+pub fn private_blocks_preserved(old: &str, new: &str) -> bool {
+    fn slices(raw: &str) -> Vec<String> {
+        let blocks = crate::parser::parse_note(raw).blocks;
+        let mut v: Vec<String> = blocks
+            .iter()
+            .filter(|b| matches!(b.kind, BlockKind::Private))
+            .map(|b| raw[b.span.start.min(raw.len())..b.span.end.min(raw.len())].to_string())
+            .collect();
+        v.sort_unstable();
+        v
+    }
+    slices(old) == slices(new)
 }
 
 #[cfg(test)]
@@ -209,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn blanking_keeps_length_lines_and_public_occurrences() {
+    fn blanking_keeps_length_and_lines() {
         let src = "a\n> [!private] secret word\nb word\n";
         let blocks = parse_note(src).blocks;
         let blanked = blank_private_blocks(src, &blocks);
@@ -217,12 +289,59 @@ mod tests {
         assert_eq!(blanked.lines().count(), src.lines().count());
         assert!(!blanked.contains("secret"));
         assert_eq!(blanked.lines().nth(2), Some("b word"));
-        let red = redact_private_blocks(src, &blocks);
-        assert_eq!(public_occurrences(src, "word", &red.removed), vec![src.rfind("word").unwrap()]);
-        assert_eq!(public_occurrences(src, "secret", &red.removed), Vec::<usize>::new());
-        // an occurrence straddling the boundary is not public either
-        assert!(public_occurrences(src, "word\nb", &red.removed).is_empty());
-        assert!(public_occurrences(src, "", &red.removed).is_empty());
+    }
+
+    fn edit(src: &str, old: &str, new: &str) -> String {
+        let r = redact(src);
+        let at = r.text.find(old).expect("old_str is in the view");
+        apply_redacted_edit(src, &r, at..at + old.len(), new)
+    }
+
+    #[test]
+    fn edits_made_in_the_view_land_around_the_private_blocks() {
+        // no private block: a plain splice
+        assert_eq!(edit("a\n\nb\n", "b", "c"), "a\n\nc\n");
+        let src = "a\n\n> [!private] s\n\nb\n";
+        assert_eq!(redact(src).text, "a\n\nb\n");
+        // on either side of the block, the block is untouched
+        assert_eq!(edit(src, "a", "A"), "A\n\n> [!private] s\n\nb\n");
+        assert_eq!(edit(src, "b", "B"), "a\n\n> [!private] s\n\nB\n");
+        // the edit takes the line break before the block: the block still begins a line
+        assert_eq!(edit(src, "a\n\n", "a"), "a\n> [!private] s\n\nb\n");
+        // a span across the block: the block is kept right after the replacement
+        assert_eq!(edit(src, "a\n\nb", "TEST"), "TEST\n\n> [!private] s\n\n");
+        assert_eq!(edit(src, "a\n\nb\n", "TEST\n"), "TEST\n\n> [!private] s\n");
+        assert_eq!(edit(src, "a\n\nb\n", ""), "> [!private] s\n");
+        // content right after the span gets a blank line between it and the block
+        assert_eq!(edit("a\n\n> [!private] s\n\nb c\n", "a\n\nb", "X"), "X\n\n> [!private] s\n\n c\n");
+        // two blocks keep their order and their separation
+        let two = "x\n\n> [!private] one\n\n> [!private] two\n\ny\n";
+        assert_eq!(edit(two, "x\n\ny", "Z"), "Z\n\n> [!private] one\n\n> [!private] two\n\n");
+        // a block that opens the note: the edit lands after it
+        assert_eq!(edit("> [!private] s\n\na\n", "a", "b"), "> [!private] s\n\nb\n");
+        // an indented block inside a list keeps its indentation
+        assert_eq!(edit("- x\n  > [!private] s\n- y\n", "- x\n- y", "- z"), "- z\n\n  > [!private] s\n\n");
+        // CRLF text gets CRLF separators
+        assert_eq!(edit("a\r\n\r\n> [!private] s\r\n\r\nb\r\n", "a\r\n\r\nb", "T"), "T\r\n\r\n> [!private] s\r\n\r\n");
+        // every result above still holds its blocks
+        for (s, o, n) in [(src, "a\n\nb", "TEST"), (src, "a\n\n", "a"), (two, "x\n\ny", "Z")] {
+            assert!(private_blocks_preserved(s, &edit(s, o, n)), "{o:?}");
+        }
+    }
+
+    #[test]
+    fn preserved_means_every_private_block_still_parses_as_one() {
+        let src = "a\n\n> [!private] s\n\nb\n";
+        assert!(private_blocks_preserved(src, src));
+        assert!(private_blocks_preserved(src, "b\n\n> [!private] s\n\na\n"), "moved is fine");
+        assert!(private_blocks_preserved("no\n", "still no\n"));
+        assert!(!private_blocks_preserved(src, "a\n\nb\n"), "gone");
+        assert!(!private_blocks_preserved(src, "a> [!private] s\n\nb\n"), "glued onto the line before");
+        // (a `> [!private]` line under a plain quote line still opens a private
+        // block for the parser, which detects callouts line by line — the
+        // index's view is what the agent gets, so that one stays hidden)
+        assert!(!private_blocks_preserved(src, "```\na\n\n> [!private] s\n\nb\n"), "inside an unclosed fence");
+        assert!(!private_blocks_preserved(src, &edit(src, "a", "```\na")), "the edit helper does not prevent it");
     }
 
     #[test]
