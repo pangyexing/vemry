@@ -15,7 +15,18 @@
     updateTask,
     type TaskEdit,
   } from "$lib/views/tasks";
-  import { activeField, cardsOf, COLUMNS, columnsOf, columnTitle, dropEdit, quickTaskPayload, type Card, type ColumnId } from "$lib/views/kanban";
+  import {
+    activeField,
+    cardCol,
+    cardsOf,
+    columnDefsFor,
+    columnsOf,
+    dropEdit,
+    fieldKeysOf,
+    quickTaskPayload,
+    type Card,
+    type GroupMode,
+  } from "$lib/views/kanban";
   import { t } from "$lib/i18n/i18n.svelte";
   import { k as kbd } from "$lib/shortcut";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
@@ -57,7 +68,6 @@
    *  once per block rather than on every keystroke. */
   const allCards = $derived(cardsOf(hits, localDate()));
   const shown = $derived(fuzzyKeep(allCards, query, taskFilterKey));
-  const cols = $derived(columnsOf(shown));
   const total = $derived(shown.length);
 
   /** The guard every write shares (the same as Agenda's): the note being edited is saved
@@ -101,7 +111,7 @@
   // swallow the click after a drag, Escape to cancel) ----
   let pressed: { card: Card; x: number; y: number } | null = null;
   let drag = $state<{ card: Card; x: number; y: number } | null>(null);
-  let dropTarget = $state<ColumnId | null>(null);
+  let dropTarget = $state<string | null>(null);
   let suppressClick = false;
   /** The date menu has two origins: drop = dragged into the "scheduled" column (which needs a
    *  concrete date, since any default would be arbitrary, and cancelling cancels the whole
@@ -129,9 +139,9 @@
     drag.x = e.clientX;
     drag.y = e.clientY;
     const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-drop-col]");
-    const col = (el?.dataset.dropCol ?? null) as ColumnId | null;
+    const col = el?.dataset.dropCol ?? null;
     // Dropping back in the same column means nothing happens, so it is not highlighted misleadingly
-    dropTarget = col !== null && col !== drag.card.col ? col : null;
+    dropTarget = col !== null && col !== cardCol(drag.card, groupBy) ? col : null;
   }
 
   function dragEnd(e: PointerEvent) {
@@ -143,7 +153,7 @@
     dropTarget = null;
     suppressClick = true;
     if (target === null) return;
-    if (target === "scheduled") {
+    if (target === "scheduled" && groupBy.by === "state") {
       // The date menu pops up at the drop point and only writes once a date is chosen (Esc or a click outside cancels)
       menu = { mode: "drop", x: e.clientX, y: e.clientY, card: d };
       return;
@@ -161,7 +171,7 @@
     suppressClick = false;
   }
 
-  const dropOf = (card: Card, col: ColumnId, date?: string) => dropEdit(card, col, localDate(), date);
+  const dropOf = (card: Card, col: string, date?: string) => dropEdit(card, col, localDate(), date, groupBy);
 
   /** Clicking a date chip or the scheduling ghost chip: the menu pops up at the chip and reschedules directly, without dragging */
   function openChipMenu(e: MouseEvent, card: Card, field: DateField) {
@@ -228,14 +238,29 @@
   // buckets). The component is rebuilt wholesale by {#key vault.root}, so reading the bucket
   // once at initialisation is enough and there is no cross-vault timing trap ----
   const KANBAN_UI_KEY = "vemry-kanban-ui";
-  type KanbanUi = { collapsed: ColumnId[]; target: string };
+  type KanbanUi = { collapsed: string[]; target: string; groupBy?: GroupMode };
   const savedUi = vault.root ? loadBucketMap<KanbanUi>(KANBAN_UI_KEY)[vault.root] : undefined;
   // A record rather than a Set: a toggle is one assignment (a Set would need a whole
   // copy-on-write), and an unfamiliar column name restored from storage is harmless and need
-  // not be filtered through COL_IDS again
-  let collapsed = $state<Partial<Record<ColumnId, boolean>>>(
+  // not be filtered through the column list again
+  let collapsed = $state<Record<string, boolean>>(
     Object.fromEntries((savedUi?.collapsed ?? []).map((c) => [c, true])),
   );
+  /** The grouping (persisted per vault with the rest of the board's UI state). */
+  let groupBy = $state<GroupMode>(
+    savedUi?.groupBy?.by === "field" && savedUi.groupBy.key ? { by: "field", key: savedUi.groupBy.key } : { by: "state" },
+  );
+  /** The columns follow the grouping: the five state columns, or one per value of the chosen field plus "none". */
+  const defs = $derived(columnDefsFor(groupBy, shown));
+  const cols = $derived(columnsOf(shown, defs, groupBy));
+  /** The field keys the tasks carry, for the group-by menu. */
+  const fieldKeys = $derived(fieldKeysOf(allCards));
+  const groupSel = $derived(groupBy.by === "state" ? "state" : `field:${groupBy.key}`);
+  function setGroup(v: string) {
+    groupBy = v === "state" ? { by: "state" } : { by: "field", key: v.slice("field:".length) };
+    collapsed = {};
+    persistUi();
+  }
   /** The note a quick create lands in; it defaults to inbox.md, the same as a quick memo's. */
   let addTarget = $state(savedUi?.target || "inbox.md");
 
@@ -244,12 +269,12 @@
     saveBucket(
       KANBAN_UI_KEY,
       vault.root,
-      { collapsed: COLUMNS.map((c) => c.id).filter((id) => collapsed[id]), target: addTarget },
+      { collapsed: Object.keys(collapsed).filter((id) => collapsed[id]), target: addTarget, groupBy: $state.snapshot(groupBy) },
       vault.recentLoaded ? vault.recent : null,
     );
   }
 
-  function toggleCollapse(id: ColumnId) {
+  function toggleCollapse(id: string) {
     collapsed[id] = !collapsed[id];
     persistUi();
   }
@@ -257,7 +282,7 @@
   // ---- Quick create inside a column: the payload goes through quickTaskPayload and lands
   // through vault.insertBlock (the same funnel as clipping and quick memos: when the target is
   // the note that is open it goes through the buffer, avoiding a dirty-write conflict) ----
-  let adding = $state<ColumnId | null>(null);
+  let adding = $state<string | null>(null);
   let addText = $state("");
   let addDate = $state(localDate(1));
   let addBusy = false;
@@ -267,7 +292,7 @@
   // The same matcher as the command palette's and the @ candidates': one query has to give the same set of candidates in all three places
   const targetChoices = $derived(fuzzyFilter(vault.notes, targetQuery, noteKey).slice(0, 8));
 
-  function openAdd(col: ColumnId) {
+  function openAdd(col: string) {
     adding = col;
     addText = "";
     addDate = localDate(1);
@@ -282,7 +307,7 @@
   async function submitAdd() {
     const col = adding;
     if (!col || addBusy) return;
-    const payload = quickTaskPayload(col, addText, localDate(), addDate);
+    const payload = quickTaskPayload(col, addText, localDate(), addDate, groupBy);
     if (!payload) return;
     // A destination restored from localStorage may have been deleted or renamed: note_insert
     // means "create and write" for a missing note, and without checking it would silently
@@ -354,7 +379,20 @@
     total={countLabel(total, hits.length, "task.count")}
     filterPlaceholder={t("task.filterPlaceholder")}
     bind:filter={query}
-  />
+  >
+    {#snippet right()}
+      <!-- The grouping: the time axis, or any inline field the tasks carry (one column per value) -->
+      <label class="group-by">
+        <span>{t("kanban.groupBy")}</span>
+        <select value={groupSel} onchange={(e) => setGroup(e.currentTarget.value)}>
+          <option value="state">{t("kanban.groupByState")}</option>
+          {#each fieldKeys as key (key)}
+            <option value={`field:${key}`}>{key}</option>
+          {/each}
+        </select>
+      </label>
+    {/snippet}
+  </ViewHeader>
   {#if total === 0}
     <div class="empty-pad">
       {#if hits.length === 0}
@@ -369,7 +407,7 @@
   {:else}
     <!-- dragging: while dragging, an empty column grows back to full size so a drop target does not shrink -->
     <div class="board" class:dragging={!!drag}>
-      {#each COLUMNS as colDef (colDef.id)}
+      {#each defs as colDef (colDef.id)}
         {@const cards = cols[colDef.id]}
         <section
           class="col"
@@ -383,11 +421,11 @@
             Clicking collapses and expands it; collapsed into a strip it is still a valid drop target -->
           <button
             class="col-head"
-            class:overdue-title={colDef.id === "overdue"}
+            class:overdue-title={colDef.id === "overdue" && groupBy.by === "state"}
             title={collapsed[colDef.id] ? t("kanban.expand") : t("kanban.collapse")}
             onclick={() => toggleCollapse(colDef.id)}
           >
-            <i class="dot" data-tone={colDef.tone}></i><span class="col-title">{columnTitle(colDef.id)}</span><span class="count"
+            <i class="dot" data-tone={colDef.tone}></i><span class="col-title">{colDef.title}</span><span class="count"
               >{cards.length}</span
             >
           </button>
@@ -433,6 +471,9 @@
                     {#each card.tags as tag (tag)}
                       <span class="chip tag-chip">#{tag}</span>
                     {/each}
+                    {#each card.fieldChips as [key, value] (key)}
+                      <span class="chip field-chip" title={`${key}:: ${value}`}><span class="fk">{key}</span>{value}</span>
+                    {/each}
                     <span class="chip note-chip">{card.hit.note_title}</span>
                     {#if !card.due && !card.scheduled && card.state !== "done"}
                       <!-- A card with no date shows a calendar ghost chip on hover: a new field
@@ -476,7 +517,7 @@
                         }
                       }}
                     />
-                    {#if colDef.id === "scheduled"}
+                    {#if colDef.id === "scheduled" && groupBy.by === "state"}
                       <input type="date" class="add-date" title={t("kanban.scheduleDate")} bind:value={addDate} />
                     {/if}
                   </div>
@@ -966,5 +1007,27 @@
     box-shadow: var(--shadow);
     padding: 4px 10px;
     font-size: var(--fs-xs);
+  }
+  .group-by {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--fs-xs);
+    color: var(--fg-faint);
+  }
+  .group-by select {
+    font-size: var(--fs-xs);
+    padding: 2px 4px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  .field-chip .fk {
+    color: var(--fg-faint);
+    margin-right: 3px;
+  }
+  .field-chip .fk::after {
+    content: ":";
   }
 </style>
