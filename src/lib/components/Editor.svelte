@@ -134,6 +134,10 @@
       // have a document switch silently throw those edits away
       if (agent.running) return scheduleAutosave();
       if (!docExists(docPath)) return scheduleAutosave();
+      // Not while an IME composition is open: the save's echo (dirty cleared, the index
+      // bumped) dispatches into the editor, and WebKit re-plants the composition at
+      // wherever the selection ends up — text lands at the line's start
+      if (view.composing) return scheduleAutosave();
       void vault.saveCurrent(withEol(view.state.doc.toString())).then(() => {
         // A failed save keeps dirty: it reschedules and retries, so the dirty signal is not lost to one failure
         if (vault.dirty && autosaveTimer == null && docPath === vault.currentPath) scheduleAutosave();
@@ -833,7 +837,7 @@
     } catch {
       return;
     }
-    if (!view || docPath !== path) return;
+    if (!view || docPath !== path || view.composing) return;
     const text = view.state.doc.toString();
     const ranges = byteSpansToChar(
       text,
@@ -949,10 +953,27 @@
     finishLoad(path, !isNote && content.includes("\r\n") ? "\r\n" : "\n", 0);
   }
 
+  /** Run `fn` now, or — while an IME composition is open — once it has ended. Every
+   *  programmatic dispatch that is not part of the composition goes through here:
+   *  WebKit treats a DOM or selection update under marked text as a reason to abandon
+   *  the composition and re-plant it at the current caret. */
+  function whenNotComposing(fn: () => void) {
+    if (!view || !view.composing) return fn();
+    const v = view;
+    const run = () => {
+      v.contentDOM.removeEventListener("compositionend", run);
+      // the browser settles its own DOM first
+      setTimeout(() => {
+        if (view === v) fn();
+      }, 0);
+    };
+    v.contentDOM.addEventListener("compositionend", run);
+  }
+
   // An index update → the query blocks requery (sharing indexVersion, the one refresh signal, with the projection views)
   $effect(() => {
     const version = vault.indexVersion;
-    if (view && docPath?.endsWith(".md")) view.dispatch({ effects: queryRefresh.of(version) });
+    if (view && docPath?.endsWith(".md")) whenNotComposing(() => view?.dispatch({ effects: queryRefresh.of(version) }));
   });
 
   // Provenance is disk truth: re-read when the index moves or an accept lands, and only
@@ -964,12 +985,12 @@
     const path = vault.currentPath;
     const dirty = vault.dirty;
     if (!view || dirty || !path?.endsWith(".md") || docPath !== path) return;
-    void loadProvenance(path);
+    whenNotComposing(() => void loadProvenance(path));
   });
   $effect(() => {
     const overlay = vault.provenanceOverlay;
     const marks = prefs.provenanceMarks;
-    if (view && docPath?.endsWith(".md")) view.dispatch({ effects: [provOverlayEffect.of(overlay), provMarksEffect.of(marks)] });
+    if (view && docPath?.endsWith(".md")) whenNotComposing(() => view?.dispatch({ effects: [provOverlayEffect.of(overlay), provMarksEffect.of(marks)] }));
   });
 
   // Changing the body font size or the readable line width in the settings (CM cannot notice a CSS variable change) → remeasure the line heights and coordinates
