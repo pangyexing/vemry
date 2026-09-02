@@ -124,6 +124,9 @@ pnpm tauri dev        # 需要先 source ~/.cargo/env
 
 > [!evidence] Walker 2017 的剥夺实验
 > supports:[[睡眠与记忆#^c1]]                    ← 证据，指向那条断言
+
+![[睡眠与记忆#^c1]]                               ← 只读嵌入那个块
+- 再读 [author:: 勒古恩] [status:: reading]      ← 行内字段：可查询、可分组
 ```
 
 上面每一条在别处都渲染成一个列表项或一段引用。完整方言与逐条降级形态见

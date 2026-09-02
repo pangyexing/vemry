@@ -140,6 +140,9 @@ Semantics are ordinary Markdown that other tools already understand:
 
 > [!evidence] Walker 2017, deprivation study
 > supports:[[Sleep and Memory#^c1]]             ← evidence, pointing at the claim
+
+![[Sleep and Memory#^c1]]                        ← the block, embedded read-only
+- 再读 [author:: Le Guin] [status:: reading]    ← inline fields: queryable, groupable
 ```
 
 Every construct above renders as a list item or a blockquote anywhere else. The
