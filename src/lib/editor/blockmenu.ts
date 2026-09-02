@@ -79,6 +79,11 @@ export function isAnchorable(b: EditorBlock): boolean {
 
 export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMenuHost, opts: { compact: boolean }): MenuEntry[] {
   const state = view.state;
+  // The block the caller holds may belong to an earlier state (the grip's hover
+  // resolved it, and selecting it on the click made a new one): the enabled/disabled
+  // decisions below compare block objects by identity, so resolve it against the
+  // state the menu is built for first
+  b = fresh(view, b) ?? b;
   const anchorable = isAnchorable(b);
   const isList = b.kind === "list_item" || b.kind === "task";
   const line = state.doc.lineAt(b.from);
@@ -136,7 +141,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
       hint: k("Mod+Shift+↑"),
       disabled: !prevSibling(state, b),
       action: act(view, b, (now) => {
-        const spec = moveBlocks(state, [now], -1);
+        const spec = moveBlocks(view.state, [now], -1);
         if (spec) {
           view.dispatch(spec);
           const moved = blockAt(view.state, view.state.selection.main.head);
@@ -149,7 +154,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
       hint: k("Mod+Shift+↓"),
       disabled: !nextSibling(state, b),
       action: act(view, b, (now) => {
-        const spec = moveBlocks(state, [now], 1);
+        const spec = moveBlocks(view.state, [now], 1);
         if (spec) {
           view.dispatch(spec);
           const moved = blockAt(view.state, view.state.selection.main.head);
@@ -163,7 +168,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
             label: t("block.indent"),
             disabled: !indentBlock(state, b),
             action: act(view, b, (now) => {
-              const spec = indentBlock(state, now);
+              const spec = indentBlock(view.state, now);
               if (spec) view.dispatch(spec);
             }),
           },
@@ -171,7 +176,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
             label: t("block.outdent"),
             disabled: !outdentBlock(state, b),
             action: act(view, b, (now) => {
-              const spec = outdentBlock(state, now);
+              const spec = outdentBlock(view.state, now);
               if (spec) view.dispatch(spec);
             }),
           },

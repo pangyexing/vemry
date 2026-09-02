@@ -73,19 +73,8 @@ const headingLines = [1, 2, 3, 4, 5, 6].map((n) => Decoration.line({ class: `cm-
 // callout type → colour and icon group (the common alias table plus vemry's
 // claim/evidence)
 // exported: the completion source uses it as the list of callout type candidates
-export const CALLOUT_GROUP: Record<string, string> = {
-  note: "info", info: "info", todo: "info", abstract: "info", summary: "info", tldr: "info",
-  tip: "tip", hint: "tip", important: "tip",
-  success: "success", check: "success", done: "success",
-  question: "question", help: "question", faq: "question",
-  warning: "warn", caution: "warn", attention: "warn",
-  danger: "danger", error: "danger", failure: "danger", fail: "danger", missing: "danger", bug: "danger",
-  example: "example",
-  quote: "quote", cite: "quote",
-  claim: "claim", evidence: "evidence",
-  // the block-level privacy zone: its own colour and the privacy badge for an icon
-  private: "private",
-};
+import { CALLOUT_GROUP } from "$lib/callout";
+export { CALLOUT_GROUP };
 
 // lucide-style stroke icons (a 24 viewBox)
 const CALLOUT_ICONS: Record<string, string> = {

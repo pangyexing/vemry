@@ -53,6 +53,8 @@ export function isAnchorableHit(h: BlockHit): boolean {
 export function blockLabel(content: string): string {
   const first = (content.split("\n")[0] ?? "")
     .replace(/^[\s>]*(?:[-*+]\s+(?:\[[ xX/]\]\s*)?|\d+[.)]\s+)?(?:\[![\w-]+\][+-]?\s*)?/, "")
+    // the trailing ` ^id` is shown by the caller, next to the text, not inside it
+    .replace(/\s*\^[A-Za-z0-9-]+$/, "")
     .replace(/\s+/g, " ")
     .trim();
   return first.length > 80 ? first.slice(0, 80) + "…" : first;

@@ -1319,6 +1319,50 @@ button:focus-visible,
   border-left: 2px solid var(--border);
   color: var(--fg-muted);
 }
+/* A callout in a read-only rendering (an embed, the reading projection, chat): the
+   editor's tint groups on the same variables, the head in the group's colour */
+.md-body .md-callout {
+  --co-color: var(--co-info);
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--co-color);
+  border-radius: 0 4px 4px 0;
+  background: color-mix(in srgb, var(--co-color) 7%, transparent);
+}
+.md-body .md-callout > p {
+  margin: 2px 0 0;
+}
+.md-body .md-co-head {
+  color: var(--co-color);
+  font-weight: 600;
+}
+.md-body .md-co-tip { --co-color: var(--co-tip); }
+.md-body .md-co-success { --co-color: var(--co-success); }
+.md-body .md-co-question { --co-color: var(--co-question); }
+.md-body .md-co-warn { --co-color: var(--co-warn); }
+.md-body .md-co-danger { --co-color: var(--co-danger); }
+.md-body .md-co-example { --co-color: var(--co-example); }
+.md-body .md-co-quote { --co-color: var(--co-quote); }
+.md-body .md-co-claim { --co-color: var(--co-claim); }
+.md-body .md-co-evidence { --co-color: var(--co-evidence); }
+.md-body .md-co-private { --co-color: var(--accent); }
+/* An inline field, the same chip as the editor's */
+.md-body .md-field {
+  display: inline;
+  white-space: nowrap;
+  background: var(--bg-hover);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 1px 6px 2px;
+  font-size: 0.85em;
+}
+.md-body .md-field-key {
+  color: var(--fg-faint);
+  margin-right: 4px;
+}
+.md-body .md-field-key::after {
+  content: ":";
+}
 .md-body code {
   font-family: var(--font-mono);
   font-size: 0.92em;

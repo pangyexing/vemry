@@ -351,7 +351,8 @@ export function taskText(content: string): string {
     stripFields(content) // `[key:: value]` metadata is a chip on the card, not part of the words
       .replace(/^\s*[-*+]\s+\[[ /xX]\]\s*/, "")
       .replace(MARKER_STRIP_RE, "") // the date markers
-      .replace(STAMP_RE, ""), // the memo or clip signature
+      .replace(STAMP_RE, "") // the memo or clip signature
+      .replace(/\s+\^[A-Za-z0-9-]+$/, ""), // a block id minted on the line: a badge in the editor, not a word
   );
 }
 

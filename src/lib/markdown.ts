@@ -22,6 +22,8 @@ import { t } from "$lib/i18n/i18n.svelte";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import katex from "katex";
 import { toast } from "$lib/stores/toast.svelte";
+import { CALLOUT_GROUP, CALLOUT_HEAD_RE } from "$lib/callout";
+import { scanFields } from "$lib/fields";
 
 export interface Citation {
   title: string;
@@ -118,6 +120,24 @@ export function extractCitations(text: string): Citation[] {
   return [...seen.values()];
 }
 
+/** Inline fields (`key:: value`, `[key:: value]`) as the chip the editor shows — a
+ *  read-only rendering must not expose the markup the editor hides. Runs after code
+ *  spans are stashed (a field never sits in code) and before links, since scanFields
+ *  skips `[[…]]` by itself. */
+function stashFields(s: string, stash: (html: string) => string): string {
+  if (!s.includes("::")) return s;
+  const marks = scanFields(s);
+  if (!marks.length) return s;
+  let out = "";
+  let at = 0;
+  for (const m of marks) {
+    const chip = `<span class="md-field"><span class="md-field-key">${escapeHtml(m.key)}</span>${escapeHtml(m.value)}</span>`;
+    out += s.slice(at, m.from) + stash(chip);
+    at = m.to;
+  }
+  return out + s.slice(at);
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -178,6 +198,7 @@ function renderInline(raw: string, cite: (url: string, title: string, standalone
   // Any sentinel code points the model's own text carries are removed first, or they would be filled back in as placeholders (as in renderReadingInline)
   let s = raw.replace(/[]/g, "");
   s = s.replace(/`([^`\n]+)`/g, (_, code: string) => stash(`<code>${escapeHtml(code)}</code>`));
+  s = stashFields(s, stash);
   // Formulas before images and links (the same pair of rules as renderReadingInline):
   // a $E=mc^2$ the model wrote used to be plain text in chat — KaTeX renders it
   // locally, with trust:false
@@ -385,8 +406,19 @@ function renderBlockList(
     if (para.length) out.push(`<p>${para.join("<br>")}</p>`);
     para = [];
   };
+  // A quote whose first line is a callout head renders as the callout the editor
+  // shows (tinted, the title as its head), not as a blockquote wearing `[!type]`
   const flushQuote = () => {
-    if (quote.length) out.push(`<blockquote>${quote.join("<br>")}</blockquote>`);
+    if (!quote.length) return;
+    const head = CALLOUT_HEAD_RE.exec(quote[0]);
+    if (head) {
+      const group = CALLOUT_GROUP[head[1].toLowerCase()] ?? "info";
+      const title = head[3].trim() ? inline(head[3].trim()) : escapeHtml(head[1]);
+      const body = quote.slice(1).map(inline).join("<br>");
+      out.push(`<div class="md-callout md-co-${group}"><div class="md-co-head">${title}</div>${body ? `<p>${body}</p>` : ""}</div>`);
+    } else {
+      out.push(`<blockquote>${quote.map(inline).join("<br>")}</blockquote>`);
+    }
     quote = [];
   };
   const closeTopList = () => {
@@ -536,7 +568,7 @@ function renderBlockList(
     if (q) {
       flushPara();
       flushList();
-      quote.push(inline(q[1]));
+      quote.push(q[1]);
       continue;
     }
     if (!line.trim()) {
