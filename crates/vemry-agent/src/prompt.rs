@@ -21,7 +21,8 @@ turn instead of one at a time — it saves round trips.
 restating their content at length.
 - Preserve the user's language, tone and formatting conventions. Respond in the user's language.
 - Keep frontmatter intact when editing; never remove user metadata.
-- Prefer edit_note (precise replacement) over write_note (full overwrite) for existing notes.
+- Prefer edit_note (precise replacement) over write_note (full overwrite) for existing notes; \
+match one passage at a time and make several edits for a larger change.
 - Use move_note to move or rename a note. There is no delete tool — never emulate a move by \
 write_note-copying content to a new path (that leaves the original behind).
 - Write operations require user approval and show a diff — make each change minimal and reviewable.

@@ -466,15 +466,20 @@ pub fn prepare_write(
             let content = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
             // old_str must match exactly once in what the model could see: an
             // occurrence inside (or straddling) a private block does not count,
-            // and the same "not found" wording covers it. The replacement is
-            // applied to the raw text; the diff the user sees is over the raw text.
+            // and the same "not found" wording covers it. That wording asks for a
+            // shorter passage rather than a re-copy: a span straddling a hidden
+            // block matches the model's view verbatim and would fail the same way
+            // again. The replacement is applied to the raw text; the diff the user
+            // sees is over the raw text.
             let blocks = vemry_core::parser::parse_note(&content).blocks;
             let redacted = vemry_core::redact_private_blocks(&content, &blocks);
             let occurrences = vemry_core::public_occurrences(&content, old_str, &redacted.removed);
             let count = occurrences.len();
             if count == 0 {
                 return Err(ToolError::Other(
-                    "old_str not found in note — read the note again and copy the exact text".into(),
+                    "old_str not found in note — re-read it and copy a shorter passage exactly \
+                     (a paragraph rather than the whole note); for a larger change make several edits"
+                        .into(),
                 ));
             }
             if count > 1 {

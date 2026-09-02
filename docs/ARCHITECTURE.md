@@ -1053,7 +1053,7 @@ paths):
    | a block reference or embed for the agent (seam) | `resolve_ref_for_agent` | a private target is a missing anchor; a section or subtree is handed over redacted |
    | scripts under `hide_private` | the same three vault functions | the same |
    | `write_note` | `prepare_write`, re-checked in `execute_write` | refused outright for a note holding a private block ("use edit_note"): the model never saw the block, so its "full content" would delete it |
-   | `edit_note` | `public_occurrences` | `old_str` must occur exactly once in what the model could see; an occurrence inside or straddling a private block does not count, with the same "not found" wording; the replacement lands in the raw text and the diff the user approves is over the raw text |
+   | `edit_note` | `public_occurrences` | `old_str` must occur exactly once in what the model could see; an occurrence inside or straddling a private block does not count, with the same "not found" wording; that wording asks for a shorter passage rather than a re-copy, since a span straddling a hidden block matches the model's view verbatim and would fail again; the replacement lands in the raw text and the diff the user approves is over the raw text |
 
 Auditing: when filtering happens the runner writes
 `{"kind":"privacy","tool":…,"filtered":N}` into the session JSONL — a count only, no
