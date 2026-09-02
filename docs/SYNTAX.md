@@ -139,6 +139,12 @@ becomes a paragraph. `- - -` and `* * *` are thematic breaks, not items.
 - The index records the indent and whether the list is ordered
 - Checkbox items are [tasks](#tasks), not list items; `1. [ ] x` is a list item
 - Tables, plain quotes and thematic breaks stay paragraphs
+- Keep a blank line between a bullet list and an ordered list. In CommonMark an
+  ordered marker other than `1.` cannot interrupt a paragraph, so `2. x` written
+  right under a bullet item's text is a lazy continuation of that item in a
+  standard renderer and in the editor's block model, while the index (which does
+  not recognise lazy continuation) reads it as an item. The editor's block moves
+  and drops always separate the two list types with a blank line
 
 **Fallback**: standard Markdown lists. This is indexing granularity, not
 syntax — nothing is written differently.

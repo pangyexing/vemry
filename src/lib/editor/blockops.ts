@@ -39,15 +39,29 @@ export type TurnTarget =
 
 const LIST_KINDS: EditorBlockKind[] = ["list_item", "task"];
 
+/** What a seam looks at: a block's kind, except that a list item is its list's
+ *  type — a bullet item (tasks included) or an ordered item. Two items of the
+ *  same type may touch; a bullet item and an ordered item are two lists and
+ *  need a blank line between them, because an ordered marker other than `1.`
+ *  cannot interrupt a paragraph in CommonMark — placed right under a bullet
+ *  item's text it becomes a lazy continuation of that text and rides along with
+ *  the item from then on. */
+export type SeamKind = EditorBlockKind | "ulist" | "olist";
+
+export function seamKindOf(b: EditorBlock): SeamKind {
+  if (LIST_KINDS.includes(b.kind)) return b.ordered ? "olist" : "ulist";
+  return b.kind;
+}
+
 function annotations(op: string, keepReveal = false) {
   return keepReveal ? [Transaction.userEvent.of(op)] : [Transaction.userEvent.of(op), suppressReveal.of(true)];
 }
 
 /** "" when `next` may follow `prev` directly, "\n" when a blank line is wanted. */
-export function seamSeparator(prev: EditorBlockKind | null, next: EditorBlockKind | null): "" | "\n" {
+export function seamSeparator(prev: SeamKind | null, next: SeamKind | null): "" | "\n" {
   if (prev == null || next == null) return "";
   if (prev === "heading") return "";
-  if (LIST_KINDS.includes(prev) && LIST_KINDS.includes(next)) return "";
+  if ((prev === "ulist" || prev === "olist") && prev === next) return "";
   return "\n";
 }
 
@@ -229,10 +243,10 @@ export function turnInto(
 
 // ---------------------------------------------------------------- moving
 
-function kindOfLastDescendant(b: EditorBlock): EditorBlockKind {
+function kindOfLastDescendant(b: EditorBlock): SeamKind {
   let cur = b;
   while (cur.children.length) cur = cur.children[cur.children.length - 1];
-  return cur.kind;
+  return seamKindOf(cur);
 }
 
 /** Blank lines (their texts) between the end of one block's subtree and the
@@ -266,7 +280,7 @@ function blankRunBefore(state: EditorState, pos: number): string[] {
 /** The separator to write between two pieces: the line break ending the first,
  *  then the blank lines that were there — plus one when the seam wants a blank
  *  line and there was none. */
-function separator(prev: EditorBlockKind, next: EditorBlockKind, gap: string[]): string {
+function separator(prev: SeamKind, next: SeamKind, gap: string[]): string {
   const lines = [...gap];
   if (seamSeparator(prev, next) === "\n" && lines.length === 0) lines.push("");
   return "\n" + lines.map((l) => l + "\n").join("");
@@ -310,9 +324,9 @@ export function moveBlocks(state: EditorState, run: EditorBlock[], dir: -1 | 1):
   const eEnd = dir < 0 ? extentTo(state, neighbor) : extentTo(state, last);
   const lStart = dir < 0 ? first.from : neighbor.from;
   const lEnd = dir < 0 ? extentTo(state, last) : extentTo(state, neighbor);
-  const eFirst = dir < 0 ? neighbor.kind : first.kind;
+  const eFirst = seamKindOf(dir < 0 ? neighbor : first);
   const eLast = kindOfLastDescendant(dir < 0 ? neighbor : last);
-  const lFirst = dir < 0 ? first.kind : neighbor.kind;
+  const lFirst = seamKindOf(dir < 0 ? first : neighbor);
   const lLast = kindOfLastDescendant(dir < 0 ? last : neighbor);
   const eText = doc.sliceString(eStart, eEnd);
   const lText = doc.sliceString(lStart, lEnd);
@@ -322,7 +336,8 @@ export function moveBlocks(state: EditorState, run: EditorBlock[], dir: -1 | 1):
   const beforeLine = doc.lineAt(eStart).number - beforeGap.length - 1;
   const beforeKind = beforeLine >= 1 ? (blockAtLazy(state, doc.line(beforeLine).to)?.kind ?? null) : null;
   const afterLine = doc.lineAt(lEnd).number + afterGap.length + 1;
-  const afterKind = afterLine <= doc.lines ? (blockAtLazy(state, doc.line(afterLine).from)?.kind ?? null) : null;
+  const afterBlock = afterLine <= doc.lines ? blockAtLazy(state, doc.line(afterLine).from) : null;
+  const afterKind = afterBlock ? seamKindOf(afterBlock) : null;
   const beforeKindLast = beforeLine >= 1 ? (() => { const b = blockAtLazy(state, doc.line(beforeLine).to, { top: true }); return b ? kindOfLastDescendant(b) : null; })() : null;
   const needBefore = beforeKindLast != null && beforeGap.length === 0 && seamSeparator(beforeKindLast, lFirst) === "\n";
   const needAfter = afterKind != null && afterGap.length === 0 && seamSeparator(eLast, afterKind) === "\n";
@@ -374,12 +389,13 @@ export function moveBlockTo(
     let line = doc.line(lastContent);
     while (line.number > 1 && line.text.trim() === "") line = doc.line(line.number - 1);
     at = line.to;
-    const prevKind = blockAtLazy(state, line.from)?.kind ?? null;
+    const prevBlock = blockAtLazy(state, line.from);
+    const prevKind = prevBlock ? seamKindOf(prevBlock) : null;
     if (at >= del.from && at <= del.to) {
       // the block is already the last one
       return null;
     }
-    insert = "\n" + (prevKind && seamSeparator(prevKind, b.kind) === "\n" ? "\n" : "") + text;
+    insert = "\n" + (prevKind && seamSeparator(prevKind, seamKindOf(b)) === "\n" ? "\n" : "") + text;
   } else {
     const targetLine = doc.lineAt(targetPos);
     const target = blockAtLazy(state, targetLine.from);
@@ -394,8 +410,8 @@ export function moveBlockTo(
     const atLine = doc.lineAt(at);
     const prevLine = atLine.number > 1 ? doc.line(atLine.number - 1) : null;
     const prevKind = prevLine && prevLine.text.trim() !== "" ? (blockAtLazy(state, prevLine.from, { top: true }) ? kindOfLastDescendant(blockAtLazy(state, prevLine.from, { top: true })!) : null) : null;
-    const sepBefore = prevKind && seamSeparator(prevKind, b.kind) === "\n" ? "\n" : "";
-    const sepAfter = keptBlanks === 0 && seamSeparator(lastKind, target?.kind ?? null) === "\n" ? "\n" : "";
+    const sepBefore = prevKind && seamSeparator(prevKind, seamKindOf(b)) === "\n" ? "\n" : "";
+    const sepAfter = keptBlanks === 0 && seamSeparator(lastKind, target ? seamKindOf(target) : null) === "\n" ? "\n" : "";
     insert = sepBefore + text + "\n" + sepAfter;
   }
   const changes = state.changes([del, { from: at, insert }]);
@@ -446,7 +462,7 @@ export function duplicateBlocks(state: EditorState, run: EditorBlock[]): Transac
   const last = sorted[sorted.length - 1];
   const sub = extentTo(state, last);
   const text = state.doc.sliceString(first.from, sub);
-  const sep = seamSeparator(kindOfLastDescendant(last), first.kind);
+  const sep = seamSeparator(kindOfLastDescendant(last), seamKindOf(first));
   const insert = "\n" + sep + text;
   return {
     changes: { from: sub, insert },
