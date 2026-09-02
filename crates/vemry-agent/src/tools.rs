@@ -536,11 +536,16 @@ pub fn prepare_write(
 /// Execute an approved WriteRequest (possibly with user-edited content). The
 /// blocks the write adds are recorded in the provenance ledger under
 /// `session` (the audit log's id), pending the user's review.
+/// `reviewed`: the user saw this very diff and allowed it (Allow / AllowEdited on the
+/// dialog) — its blocks are recorded as accepted, since the gate was the review; a
+/// write that passed on a standing grant (allow for the session / always) nobody
+/// looked at, and its blocks stay pending until accepted in the editor.
 pub fn execute_write(
     vault: &mut Vault,
     req: &WriteRequest,
     content_override: Option<&str>,
     session: Option<&str>,
+    reviewed: bool,
 ) -> Result<String, String> {
     if req.tool == "move_note" {
         // AllowEdited means nothing for a move (there is no content to edit), so
@@ -573,11 +578,13 @@ pub fn execute_write(
     // merely moved is not new, a block it changed is
     let added = vemry_core::added_blocks(&old, content);
     if !added.is_empty() {
-        vault.record_provenance(vemry_core::ProvenanceEntry::Agent {
-            ts: vemry_core::provenance::now_ts(),
-            session: session.map(String::from),
-            path: id.to_string(),
-            blocks: added,
+        let ts = vemry_core::provenance::now_ts();
+        let session = session.map(String::from);
+        let path = id.to_string();
+        vault.record_provenance(if reviewed {
+            vemry_core::ProvenanceEntry::Insert { ts, origin: vemry_core::InsertOrigin::Agent, session, url: None, path, blocks: added }
+        } else {
+            vemry_core::ProvenanceEntry::Agent { ts, session, path, blocks: added }
         });
     }
     Ok(format!("wrote {id} ({} bytes)", content.len()))
@@ -837,7 +844,7 @@ mod tests {
         let req =
             prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Plain.md", "content": "new"}), None).unwrap();
         vault.write_note(&NoteId::new("Plain.md"), "plain\n\n> [!private] late\n").unwrap();
-        let err = execute_write(&mut vault, &req, None, None).unwrap_err();
+        let err = execute_write(&mut vault, &req, None, None, false).unwrap_err();
         assert!(err.starts_with("write_note is not available for Plain.md"), "{err}");
         assert!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap().contains("late"));
     }
@@ -880,6 +887,17 @@ mod tests {
     }
 
     #[test]
+    fn a_reviewed_write_is_recorded_as_accepted() {
+        let (_d, mut vault) = fixture();
+        let req = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Rev.md", "content": "reviewed text"}), Some("s1")).unwrap();
+        execute_write(&mut vault, &req, None, Some("s1"), true).unwrap();
+        let id = vault.note_id("Rev.md").unwrap();
+        let rows = vault.provenance(&id).unwrap();
+        assert!(matches!(rows[0].origin, vemry_core::Origin::Agent { pending: false, .. }), "{:?}", rows[0].origin);
+        assert_eq!(vault.pending_count(&id), 0);
+    }
+
+    #[test]
     fn writes_record_provenance_under_the_session() {
         let (_d, mut vault) = fixture_with_private_block();
         let req = prepare_write(
@@ -891,7 +909,7 @@ mod tests {
         )
         .unwrap();
         assert!(req.new_content.starts_with("---\nvemry:\n  origin: agent\n  agent_session: 20260902-100000.000\n---\n"));
-        execute_write(&mut vault, &req, None, Some("20260902-100000.000")).unwrap();
+        execute_write(&mut vault, &req, None, Some("20260902-100000.000"), false).unwrap();
         let prov = vault.provenance(&NoteId::new("New.md")).unwrap();
         assert!(
             matches!(prov[0].origin, vemry_core::Origin::Agent { pending: true, session: Some(ref s), .. } if s == "20260902-100000.000"),
@@ -907,7 +925,7 @@ mod tests {
             Some("s2"),
         )
         .unwrap();
-        execute_write(&mut vault, &req, Some("plain edited by hand\n"), Some("s2")).unwrap();
+        execute_write(&mut vault, &req, Some("plain edited by hand\n"), Some("s2"), false).unwrap();
         let prov = vault.provenance(&NoteId::new("Plain.md")).unwrap();
         assert_eq!(prov.len(), 1);
         assert!(matches!(prov[0].origin, vemry_core::Origin::Agent { pending: true, .. }));
@@ -1025,7 +1043,7 @@ mod tests {
         // The note turns private during the permission-gate await.
         vault.add_privacy_rule("Hello.md").unwrap();
         // Execute must refuse and leave the file untouched (TOCTOU closed).
-        let err = execute_write(&mut vault, &req, None, None).unwrap_err();
+        let err = execute_write(&mut vault, &req, None, None, false).unwrap_err();
         assert!(err.contains("not found"), "stale-approval write must be refused: {err}");
         let content = vault.read_note(&vault.note_id("Hello.md").unwrap()).unwrap();
         assert!(content.contains("# Hello"), "original content must survive");
@@ -1102,17 +1120,17 @@ mod tests {
             .unwrap();
         // The source turns private while the gate is awaited: refused, and the disk is untouched
         vault.add_privacy_rule("Hello.md").unwrap();
-        let err = execute_write(&mut vault, &req, None, None).unwrap_err();
+        let err = execute_write(&mut vault, &req, None, None, false).unwrap_err();
         assert_eq!(err, "note not found: Hello.md");
         assert!(vault.root().join("Hello.md").exists());
         vault.remove_privacy_rule("Hello.md").unwrap();
         // The destination turns private while the gate is awaited: refused the same way
         vault.add_privacy_rule("moved/").unwrap();
-        let err = execute_write(&mut vault, &req, None, None).unwrap_err();
+        let err = execute_write(&mut vault, &req, None, None, false).unwrap_err();
         assert_eq!(err, "invalid path: moved/Hi.md");
         vault.remove_privacy_rule("moved/").unwrap();
         // Allowed: a real rename plus a rebuilt index (AllowEdited's override is ignored)
-        let out = execute_write(&mut vault, &req, Some("IGNORED"), None).unwrap();
+        let out = execute_write(&mut vault, &req, Some("IGNORED"), None, false).unwrap();
         assert_eq!(out, "moved Hello.md -> moved/Hi.md");
         assert!(!vault.root().join("Hello.md").exists());
         assert!(vault.root().join("moved/Hi.md").exists());

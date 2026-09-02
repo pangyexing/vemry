@@ -781,7 +781,11 @@ impl AgentRunner {
         }
         log.append("write_prepared", prepared);
 
-        let decision = if *session_allow_writes {
+        // A standing grant answers without a dialog: nobody looked at this diff, so
+        // its blocks stay pending in the editor; a decision made on the dialog is the
+        // review itself (the grant a user issues on it covers the next writes, not this one)
+        let automatic = *session_allow_writes;
+        let decision = if automatic {
             PermissionDecision::Allow
         } else {
             on_event(AgentEvent::PermissionRequest { request: write_req.clone() });
@@ -832,7 +836,7 @@ impl AgentRunner {
             }],
             (_, Err(_)) => vec![],
         };
-        let text = execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id))?;
+        let text = execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id), !automatic)?;
         drop(guard);
         if !events.is_empty() {
             on_event(AgentEvent::VaultChanged { events });
@@ -1485,11 +1489,12 @@ mod tests {
         // provenance frontmatter stamped on agent-created notes, naming the session
         assert!(content.starts_with("---\nvemry:\n  origin: agent\n  agent_session: "), "{content}");
         let session = content.lines().nth(3).unwrap().trim().trim_start_matches("agent_session: ").to_string();
-        // and the ledger holds the new blocks under that session, pending review
+        // and the ledger holds the new blocks under that session — accepted, since the
+        // user allowed this diff on the dialog (only a standing grant leaves blocks pending)
         let ledger = std::fs::read_to_string(vault.root().join(".vemry/provenance.jsonl")).unwrap();
         assert!(ledger.contains(&format!("\"session\":\"{session}\"")), "{ledger}");
         let prov = vault.provenance(&vault.note_id("New.md").unwrap()).unwrap();
-        assert!(prov.iter().all(|p| matches!(p.origin, vemry_core::Origin::Agent { pending: true, .. })));
+        assert!(prov.iter().all(|p| matches!(p.origin, vemry_core::Origin::Agent { pending: false, .. })));
     }
 
     /// The full move_note chain: through the permission gate, a write_prepared line

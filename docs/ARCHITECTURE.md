@@ -367,6 +367,13 @@ ledger written at the moment text lands (`vemry-core/src/provenance.rs`):
 - `{"kind":"accept","hashes":[…]}` — flips pending blocks to accepted; a later
   agent write of the same hash makes it pending again.
 
+Which agent writes are pending: only those a **standing grant** let through
+without a dialog (allow for the session, allow always) — nobody looked at
+that diff. A write the user allowed on the dialog, seen and approved (Allow,
+or "edit, then apply"), is recorded as an `insert` line with origin `agent`:
+accepted, because the gate was the review. Asking twice for the same diff
+was the first thing the manual test flagged.
+
 A block's identity is a hash of its **normalized** text: markers, checkbox,
 callout head, trailing ` ^id` and capture stamps are stripped, whitespace folded
 (a fenced block keeps its lines and loses only the fences). Provenance therefore
