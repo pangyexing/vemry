@@ -696,6 +696,7 @@
     font-size: var(--fs-xs);
     color: var(--fg-faint);
     letter-spacing: 0.08em;
+    -webkit-user-select: none;
     user-select: none;
   }
 </style>

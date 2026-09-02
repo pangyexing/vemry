@@ -262,6 +262,7 @@
     padding: 6px 4px;
     font-size: var(--fs-sm);
     font-weight: 600;
+    -webkit-user-select: none;
     user-select: none;
   }
   /* The same collapse language as the file tree's and the outline panel's: collapsed points right, expanded turns 90° */

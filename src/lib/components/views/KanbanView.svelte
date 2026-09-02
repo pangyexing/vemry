@@ -623,6 +623,10 @@
       min-width 0.15s ease;
     /* The drop highlight uses outline: it does not squeeze the content */
   }
+  .board.dragging,
+  .board.dragging .card {
+    cursor: grabbing;
+  }
   /* An empty column narrows (its header "Scheduled 0" stays fully readable); while dragging it
     grows back to full size so a drop target does not shrink. A collapsed column is excluded —
     collapsing wins over the empty narrowing */
@@ -739,6 +743,7 @@
     padding: 8px 10px;
     font-size: var(--fs-sm);
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
   }
   /* Hover changes the colour and not the shape: a shadow is too heavy, and a transform would disturb the drag's elementFromPoint lookup */

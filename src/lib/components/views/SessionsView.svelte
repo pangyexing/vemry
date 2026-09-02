@@ -479,12 +479,14 @@
     font-size: 10px;
     color: var(--fg-faint);
     text-align: right;
+    -webkit-user-select: none;
     user-select: none;
   }
   .msg {
     font-size: 15px;
     line-height: 1.65;
     word-break: break-word;
+    -webkit-user-select: text;
     user-select: text;
     min-width: 0;
   }
@@ -557,6 +559,7 @@
     overflow-x: auto;
     max-height: 240px;
     overflow-y: auto;
+    -webkit-user-select: text;
     user-select: text;
     margin: 4px 0 0 12px;
     white-space: pre-wrap;
@@ -591,6 +594,7 @@
     line-height: 1.6;
     max-height: 260px;
     overflow: auto;
+    -webkit-user-select: text;
     user-select: text;
   }
   .diff span {
@@ -696,6 +700,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    -webkit-user-select: text;
     user-select: text;
   }
   .raw {

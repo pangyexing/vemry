@@ -1849,6 +1849,7 @@
   .msg {
     font-size: 15px;
     line-height: 1.65;
+    -webkit-user-select: text;
     user-select: text;
     word-break: break-word;
   }
@@ -2065,6 +2066,7 @@
     padding: 8px;
     overflow-x: auto;
     max-height: 200px;
+    -webkit-user-select: text;
     user-select: text;
     margin-left: 12px;
   }
@@ -2737,6 +2739,7 @@
     white-space: pre-wrap;
     max-height: 240px;
     overflow-y: auto;
+    -webkit-user-select: text;
     user-select: text;
     margin: 0;
   }

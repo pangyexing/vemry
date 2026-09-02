@@ -163,6 +163,7 @@
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
     line-height: 1.6;
+    -webkit-user-select: text;
     user-select: text;
     min-height: 120px;
   }

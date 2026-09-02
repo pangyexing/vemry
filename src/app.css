@@ -128,6 +128,13 @@ body {
   color: var(--fg);
   background: var(--bg);
   text-rendering: optimizeLegibility;
+  /* The chrome is not selectable; content regions opt back in with user-select: text (the
+     editor, chat bubbles, the reading projection, diffs). Every user-select in the tree is
+     written twice: the WebKit shipped with macOS only parses the -webkit- form (measured on
+     WebKit 605.1.15: CSS.supports("user-select", "none") is false), so without the prefix the
+     unprefixed rule is silently dropped there and a drag across the kanban or the file tree
+     paints a text selection over everything it passes. */
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -206,6 +213,7 @@ button:focus-visible,
 }
 .cm-content {
   caret-color: var(--accent);
+  -webkit-user-select: text;
   user-select: text;
 }
 /* CM injects .ͼx .cm-content { margin: 0; padding: 4px 0 } at runtime (specificity 0,2,0)
@@ -482,6 +490,7 @@ button:focus-visible,
   font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   color: var(--fg);
 }
@@ -744,8 +753,8 @@ button:focus-visible,
   max-height: calc(100vh - 64px);
   border-radius: var(--radius);
   cursor: grab;
-  user-select: none;
   -webkit-user-select: none;
+  user-select: none;
   transition: transform 0.08s ease-out;
 }
 .imgbox.dragging img {
@@ -1007,6 +1016,7 @@ button:focus-visible,
   vertical-align: baseline;
   cursor: pointer;
   opacity: 0.65;
+  -webkit-user-select: none;
   user-select: none;
 }
 .cm-prov-review:hover {
@@ -1049,6 +1059,7 @@ button:focus-visible,
   color: var(--fg-muted);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 .cm-embed-head:hover {
@@ -1215,6 +1226,7 @@ button:focus-visible,
 }
 .cm-editor.cm-block-drag .cm-content {
   cursor: grabbing;
+  -webkit-user-select: none;
   user-select: none;
 }
 .cm-block-ghost {
@@ -1279,6 +1291,7 @@ button:focus-visible,
   border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 .cm-fold-chip:hover {

@@ -466,6 +466,9 @@
     padding: 24px 32px 48px;
   }
   article {
+    /* Selectable: "selection → quote" reads window.getSelection() from here, and body turns selection off */
+    -webkit-user-select: text;
+    user-select: text;
     max-width: var(--content-width);
     margin: 0 auto;
     font-size: var(--fs-note);

@@ -362,6 +362,7 @@
     font-size: 10px;
     color: var(--fg-faint);
     letter-spacing: 0.04em;
+    -webkit-user-select: none;
     user-select: none;
     min-width: 0;
   }

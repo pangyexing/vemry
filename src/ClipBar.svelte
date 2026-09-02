@@ -417,6 +417,7 @@
     border-top: 1px solid var(--border);
     border-radius: 0 0 10px 10px;
     color: var(--fg);
+    -webkit-user-select: none;
     user-select: none;
   }
   .clipbar.expanded {

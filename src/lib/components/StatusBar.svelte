@@ -65,6 +65,7 @@
     color: var(--fg-muted);
     background: var(--bg-panel);
     border-top: 1px solid var(--border-strong);
+    -webkit-user-select: none;
     user-select: none;
     overflow: hidden;
     white-space: nowrap;

@@ -312,6 +312,7 @@
     font-size: var(--fs-sm);
     color: var(--fg-muted);
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
   }
   .tab:hover {
