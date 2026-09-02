@@ -991,8 +991,8 @@ button:focus-visible,
 /* The one-click review control after an unreviewed block's first line */
 .cm-prov-review {
   display: inline-block;
-  margin-left: 10px;
-  padding: 0 7px;
+  margin-left: 8px;
+  padding: 0 5px;
   border: 1px solid color-mix(in srgb, var(--prov-agent) 55%, transparent);
   border-radius: 999px;
   background: none;

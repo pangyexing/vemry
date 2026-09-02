@@ -48,7 +48,8 @@ class ReviewWidget extends WidgetType {
     const el = document.createElement("button");
     el.className = "cm-prov-review";
     el.type = "button";
-    el.textContent = `✓ ${t("prov.acceptBlock")}`;
+    // a bare check: the amber bar already says what the block is, the tooltip says what the click does
+    el.textContent = "✓";
     el.title = t("prov.acceptBlock");
     el.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
@@ -75,8 +76,10 @@ function when(ts?: string): string | null {
 
 /** One line of text for a tooltip, the status bar and the block menu. Times are
  *  local; the session is named by its local start time (its id is a UTC stamp that
- *  reads like a time and is not one the user recognises). */
-export function originLabel(o: Origin): string {
+ *  reads like a time and is not one the user recognises). `withState` adds the
+ *  unreviewed word — off where a count badge already says it (the status bar). */
+export function originLabel(o: Origin, opts: { withState?: boolean } = {}): string {
+  const withState = opts.withState ?? true;
   switch (o.origin) {
     case "you":
       return t("prov.origin.you");
@@ -86,7 +89,7 @@ export function originLabel(o: Origin): string {
       if (w) parts.push(w);
       else if (o.session) parts.push(t("prov.session", { id: formatSessionId(o.session) }));
       else parts.push(t("prov.sessionUnknown"));
-      if (o.pending) parts.push(t("prov.pending"));
+      if (o.pending && withState) parts.push(t("prov.pending"));
       return parts.join(" · ");
     }
     case "clip": {

@@ -29,7 +29,7 @@
     </span>
   {/if}
   {#if vault.editorOrigin && vault.editorOrigin.origin !== "you"}
-    <span class="origin origin-{vault.editorOrigin.origin}" title={originLabel(vault.editorOrigin)}>{originLabel(vault.editorOrigin)}</span>
+    <span class="origin origin-{vault.editorOrigin.origin}" title={originLabel(vault.editorOrigin)}>{originLabel(vault.editorOrigin, { withState: false })}</span>
   {/if}
   {#if vault.pendingCount > 0 && prefs.provenanceMarks}
     <button class="pending" title={t("prov.pendingHint")} onclick={() => vault.nextPending?.()}>{t("prov.pendingCount", { n: vault.pendingCount })}</button>
