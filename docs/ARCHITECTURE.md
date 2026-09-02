@@ -623,10 +623,10 @@ of someone reinventing the filtering.
   as the backstop for writes).
 ## Projections (v0.2, implemented)
 
-All eight views are frontend rendering of "a view is a query", opened equivalently
+All seven views are frontend rendering of "a view is a query", opened equivalently
 three ways — an activity-bar icon, the menu bar, or the `view-*` commands in the
 palette — and left with Escape or the ✕ in the view header
-(`views/ViewClose.svelte`, shared by all eight). The host mechanism:
+(`views/ViewClose.svelte`, shared by all seven). The host mechanism:
 `vault.mainView` switches the main area while the Editor stays mounted and is
 hidden by CSS — CodeMirror holds the unsaved buffer and the undo stack, and
 unmounting would lose edits. `vault.indexVersion` increments on every `VaultEvent`
@@ -641,7 +641,6 @@ forward/back history. Components live in `src/lib/components/views/`, pure logic
 | Agenda | one `query_blocks {kind:task}` for everything, grouped in the frontend | Overdue / today / next 7 days / later / in progress / no date / done. A checkbox rewrites disk precisely by the block's span (a span is a UTF-8 byte offset, sliced through TextEncoder; a stale span refuses the write and re-queries) |
 | Board | the same `query_blocks {kind:task}` as Agenda | Five columns: in state mode, or — grouped by any inline field the tasks carry — one column per value plus "none", where a drop writes `[key:: value]` and a quick create carries it; the state columns are overdue / today / scheduled / unscheduled / done (the grouping mirrors Agenda's `whenOf`; `doing` is orthogonal to dates and gets a marker plus a pin to the top rather than a column of its own). Dragging a card between columns is one merged `updateTask` span write — state and date written at once, because two writes would leave the second span stale. Dropping into "scheduled" opens the date menu first. Clicking a card converts through `byteToChar` and jumps to the task line. Dragging is pointer events plus the suppressClick contract (the same as FileTree; no HTML5 DnD) |
 | Timeline | `vault.notes` (no new IPC) | Frontmatter `created` is used when it parses (`NoteSummary.created` exists for this), otherwise mtime; grouped by day, newest first |
-| Blocks | one `query_blocks` with the kind and the field condition (Rust stays the authority on the field grammar; a bad condition shows its message inline) | Any block as a row: kind glyph, words (prefixes, ornaments and fields stripped), note, field chips; grouped by note, kind or a field and sorted by note, kind, words or a field; a row lands on the block; capped at 2000 rows with a "more" line. The view state persists per vault. Deliberately absent from the activity bar and the native menu: a power tool opened from the palette (`view-blocks`) |
 | Claims / Evidence | two `query_blocks` plus `resolve_link` for the supports join | Resolution goes through the index's own resolver (aliases, shortest path), so the join necessarily agrees with Backlinks and with the agent. Only claims with an `explicit_id` match; unresolved and no-matching-^id are shown distinctly |
 | Graph | a new IPC, `graph_get` (`BlockIndex::graph()` aggregates resolved edges) | d3-force layout with hand-drawn Canvas; an incremental refresh keeps old node coordinates by id so the layout stays put; zoom, pan and drag are hand-written rather than pulling in d3-zoom; private nodes get a dashed outline. UI-only — it is not an agent tool |
 | Session replay | `sessions_list` / `session_read` (no new IPC) | Replays seven JSONL row kinds: user, assistant, tool_call, tool_result, write_prepared (diff colouring reuses `views/diff.ts`), a permission badge and a highlighted privacy row; a bad row falls back to raw rather than crashing. The one refresh path that does not use `indexVersion`: the agent store's `activity` counter counts discrete events (tool start and end, permissions, turns — not per-token deltas) and the view re-reads after a 300 ms trailing debounce, so a replay grows along with a running session (Rust appends line by line), keeps expansion state across re-reads (the log only appends, so indices are stable), and follows the newest session unless the user picked an older one. A title can be renamed by hand (the audit appends a title override row, last one wins), and a forked session carries a ⑂ marker in the list (it shares the source's first user message, so derived titles are necessarily identical) |
@@ -661,8 +660,7 @@ new feature registered as a command is instantly present in all three plus the
 palette.
 
 - **Activity bar** (`ActivityBar.svelte`, a 44 px vertical rail): the file-tree
-  toggle and full-text search at the top, seven of the eight projections in the
-  middle (Blocks is reached from the palette alone — see the views table),
+  toggle and full-text search at the top, the seven projections in the middle,
   settings pinned to the bottom. A full-height 2 px accent bar marks only the
   current view (the file-tree button is a toggle and merely brightens).
   Structurally it is a flex sibling **outside** `.layout` (a grid), both inside the

@@ -50,7 +50,6 @@ add("view.", {
     "agenda": ("Agenda", "Agenda(任务日程)"),
     "kanban": ("Board", "看板"),
     "timeline": ("Timeline", "时间线"),
-    "blocks": ("Blocks", "块"),
     "graph": ("Graph", "图谱"),
     "claims": ("Claims", "断言"),
     "evidence": ("Evidence", "证据"),
@@ -275,10 +274,6 @@ CMD = {
     "view-evidence": (
         ("View: Evidence", "视图:证据"),
         ("Every piece of evidence and what it supports", "全库 evidence 及其支撑关系"),
-    ),
-    "view-blocks": (
-        ("View: Blocks", "视图:块"),
-        ("Every block of the vault as a row: filter by kind and field, group and sort", "全库的块逐行列出：按 kind 与字段过滤、分组、排序"),
     ),
     "view-graph": (
         ("View: Graph", "视图:图谱"),
@@ -570,37 +565,6 @@ add("kanban.", {
     "noMatchingNote": ("No matching note", "无匹配笔记"),
     "newTask": ("+ New task", "+ 新建任务"),
     "dropWhen": ("Schedule for which day", "排到哪天"),
-})
-
-add("blocks.", {
-    "count_one": ("{n} block", "{n} 个块"),
-    "count_other": ("{n} blocks", "{n} 个块"),
-    "filterPlaceholder": ("Filter: words / note / field", "过滤:文字 / 笔记 / 字段"),
-    "kind": ("Kind", "块类型"),
-    "anyKind": ("Any kind", "任意类型"),
-    "fieldPlaceholder": ("field, e.g. author = X", "字段条件，如 author = X"),
-    "fieldHint": ("A field condition: key · key = v · key != v · key < v · key > v · key ~ v", "字段条件：key · key = v · key != v · key < v · key > v · key ~ v"),
-    "groupBy": ("Group", "分组"),
-    "sortBy": ("Sort", "排序"),
-    "groupNone": ("No grouping", "不分组"),
-    "byNote": ("Note", "笔记"),
-    "byKind": ("Kind", "类型"),
-    "byText": ("Words", "文字"),
-    "ascending": ("Ascending (click for descending)", "升序（点击改为降序）"),
-    "descending": ("Descending (click for ascending)", "降序（点击改为升序）"),
-    "none": ("None", "无"),
-    "more_one": ("{n} more block not shown — narrow the filter", "还有 {n} 个块未显示——请收窄条件"),
-    "more_other": ("{n} more blocks not shown — narrow the filter", "还有 {n} 个块未显示——请收窄条件"),
-    "empty": ("No blocks match. Pick a kind or loosen the field condition.", "没有匹配的块。换个类型，或放宽字段条件。"),
-    "noMatch": ("No blocks match “{query}”.", "没有匹配「{query}」的块。"),
-    "kind.paragraph": ("Paragraph", "段落"),
-    "kind.heading": ("Heading", "标题"),
-    "kind.list_item": ("List item", "列表项"),
-    "kind.task": ("Task", "任务"),
-    "kind.claim": ("Claim", "断言"),
-    "kind.evidence": ("Evidence", "证据"),
-    "kind.code_block": ("Code block", "代码块"),
-    "kind.private": ("Private block", "私密块"),
 })
 
 add("timeline.", {

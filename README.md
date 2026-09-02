@@ -47,7 +47,7 @@ Markdown on disk  →  block index  →  agenda · board · timeline · graph
                       layer)          your JS scripts · the agent's tools
 ```
 
-Eight projections, all queries. Write a `vemry-query` fence inside a note and it
+Seven projections, all queries. Write a `vemry-query` fence inside a note and it
 renders live results that follow the index. Because the agent queries the same
 `query()` your views do, anything you can see it can compute, and nothing is
 computed for it alone.
@@ -159,7 +159,7 @@ complete dialect and each fallback: [docs/SYNTAX.md](docs/SYNTAX.md).
 
 ## Status
 
-Working today on `main`: the editor and its live preview, eight projections, the
+Working today on `main`: the editor and its live preview, seven projections, the
 block index and query API, the agent with nine domain tools behind a write gate,
 privacy zones, the scripting sandbox, the built-in browser with clipping and a
 reading projection, and an interface that speaks English and Chinese.

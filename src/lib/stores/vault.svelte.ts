@@ -20,7 +20,7 @@ import type { OutlineItem } from "$lib/outline";
  *  projection" (READING_ENTRY) and not each page inside it (following v0.4's position
  *  that browsing history does not mix into document history). */
 export type MainView =
-  | "editor" | "agenda" | "kanban" | "timeline" | "blocks" | "claims" | "evidence" | "graph" | "sessions" | "reading";
+  | "editor" | "agenda" | "kanban" | "timeline" | "claims" | "evidence" | "graph" | "sessions" | "reading";
 
 /** An editor tab. The id is an incrementing stable identity (the path changes on a
  *  rename, and both the caches and the keyed each go by id); pinned=false means the
@@ -120,7 +120,7 @@ export type ProjectionView = Exclude<MainView, "editor" | "reading">;
  *  and the command palette share the catalog's `view.<id>`, so a view has one display
  *  name. */
 export const PROJECTION_VIEWS: Record<ProjectionView, true> = {
-  agenda: true, kanban: true, timeline: true, blocks: true, claims: true,
+  agenda: true, kanban: true, timeline: true, claims: true,
   evidence: true, graph: true, sessions: true,
 };
 /** A tab path → a view name. A non-view tab returns null; bad data with an unknown view

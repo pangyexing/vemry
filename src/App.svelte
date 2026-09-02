@@ -35,7 +35,6 @@
   import AgendaView from "$lib/components/views/AgendaView.svelte";
   import KanbanView from "$lib/components/views/KanbanView.svelte";
   import TimelineView from "$lib/components/views/TimelineView.svelte";
-  import BlocksView from "$lib/components/views/BlocksView.svelte";
   import ClaimsView from "$lib/components/views/ClaimsView.svelte";
   import EvidenceView from "$lib/components/views/EvidenceView.svelte";
   import GraphView from "$lib/components/views/GraphView.svelte";
@@ -829,10 +828,6 @@
     run: () => void vault.openView("graph"),
   });
   registerCommand({
-    id: "view-blocks", group: "view",
-    run: () => void vault.openView("blocks"),
-  });
-  registerCommand({
     // The same data no longer has three names: the sidebar tab "Research" is the panel, and this is "Session replay"
     id: "view-sessions", group: "view",
     run: () => void vault.openView("sessions"),
@@ -1076,8 +1071,6 @@
               <KanbanView />
             {:else if vault.mainView === "timeline"}
               <TimelineView />
-            {:else if vault.mainView === "blocks"}
-              <BlocksView />
             {:else if vault.mainView === "claims"}
               <ClaimsView />
             {:else if vault.mainView === "evidence"}

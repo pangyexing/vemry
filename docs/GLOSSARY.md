@@ -54,14 +54,13 @@ three months later, and each translation drifts on its own. A new user-visible t
 
 The interface uses the word that reads best (**Reader**); architecture prose uses the concept word (**reading projection**). That is a division of labour, not an inconsistency.
 
-## The eight projections
+## The seven projections
 
 | Chinese | English |
 |---|---|
 | 日程 | Agenda |
 | 看板 | Board |
 | 时间线 | Timeline |
-| 块 | Blocks |
 | 图谱 | Graph |
 | 断言 | Claims |
 | 证据 | Evidence |
