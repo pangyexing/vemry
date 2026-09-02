@@ -220,6 +220,12 @@ const TRIGGER_BEFORE_RE = /\[\[[^\]\n]*$|(?:^|[\s(（【[:])@[^\s@]*$|^[ \t]*(?:
  *  once the composition has ended and the browser has settled. */
 export function imeCompletionGuard(): Extension {
   return EditorView.domEventHandlers({
+    // The IME's first keydown (keyCode 229) precedes compositionstart: closing here
+    // keeps the aria attribute change out of the composition altogether
+    keydown(e, view) {
+      if ((e.keyCode === 229 || e.isComposing) && completionStatus(view.state) != null) closeCompletion(view);
+      return false;
+    },
     compositionstart(_e, view) {
       if (completionStatus(view.state) != null) closeCompletion(view);
       return false;
