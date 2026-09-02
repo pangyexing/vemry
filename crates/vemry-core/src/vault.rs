@@ -738,9 +738,16 @@ impl Vault {
                 let slice = &raw[b.span.clone()];
                 let hash = provenance::block_hash(slice, &b.kind);
                 let record = hash.as_deref().and_then(|h| self.provenance.lookup(h));
+                // The lines the pending write added, when its hunk can be found
+                let changed = record
+                    .filter(|r| !r.accepted && matches!(r.source, provenance::ProvSource::Agent { .. }))
+                    .and_then(|r| provenance::hunk_of_block(&raw, r, &b.span))
+                    .map(|(r, _)| r.start.max(b.span.start)..r.end.min(b.span.end))
+                    .filter(|c| c.start < c.end);
                 BlockProvenance {
                     local_id: b.local_id.clone(),
                     span: b.span.clone(),
+                    changed,
                     origin: provenance::derive_origin(slice, record, &facts, known),
                     hash: hash.unwrap_or_default(),
                 }

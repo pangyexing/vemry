@@ -1044,6 +1044,26 @@ mod tests {
     }
 
     #[test]
+    fn a_block_the_model_extended_marks_only_its_added_lines() {
+        let (_d, mut vault) = fixture_with_private_block();
+        let req = prepare_write(
+            &vault,
+            "r".into(),
+            "edit_note",
+            &json!({"path": "Plain.md", "old_str": "plain", "new_str": "plain\nmore"}),
+            Some("s1"),
+        )
+        .unwrap();
+        execute_write(&mut vault, &req, None, Some("s1"), false).unwrap();
+        let rows = vault.provenance(&NoteId::new("Plain.md")).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0].origin, vemry_core::Origin::Agent { pending: true, .. }));
+        assert_eq!(rows[0].changed, Some(6..10));
+        let plan = vault.revert_plan("plain\nmore\n", None).unwrap();
+        assert_eq!(plan.replacements, vec![vemry_core::Replacement { from: 6, to: 11, insert: String::new() }]);
+    }
+
+    #[test]
     fn a_reviewed_write_is_recorded_as_accepted() {
         let (_d, mut vault) = fixture();
         let req = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Rev.md", "content": "reviewed text"}), Some("s1")).unwrap();

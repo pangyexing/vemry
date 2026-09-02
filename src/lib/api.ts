@@ -191,6 +191,8 @@ export interface BlockProvenance {
   local_id: string;
   /** Byte range like `Block.span`. */
   span: { start: number; end: number };
+  /** For an unreviewed block: the part of it the write added, when the ledger's hunk can be found (a block the model extended keeps its reviewed lines out of the mark). */
+  changed?: { start: number; end: number };
   hash: string;
   origin: Origin;
 }

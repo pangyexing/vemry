@@ -260,10 +260,14 @@ pub struct RevertPlan {
 /// Where a hunk's added lines sit in `text` now: with their context when the
 /// context still matches, the added lines alone when the user edited nearby;
 /// None when they are gone or occur more than once. A hunk that only removed
-/// lines has nothing to locate — and left no pending block to revert from.
+/// lines is the point where its context meets (an empty range), found by that
+/// context alone.
 pub fn locate_hunk(text: &str, h: &Hunk) -> Option<std::ops::Range<usize>> {
     if h.new.is_empty() {
-        return None;
+        let join = format!("{}{}", h.before, h.after);
+        let r = unique_match(text, &join)?;
+        let at = r.start + h.before.len();
+        return Some(at..at);
     }
     let full = format!("{}{}{}", h.before, h.new, h.after);
     if let Some(r) = unique_match(text, &full) {
@@ -279,6 +283,24 @@ fn unique_match(text: &str, needle: &str) -> Option<std::ops::Range<usize>> {
         return None;
     }
     Some(at..at + needle.len())
+}
+
+/// The hunk of a pending record that produced the block at `span` in `text`:
+/// each of the record's hunks located in the text, the one touching the block.
+/// A block the write merely extended is matched by the lines it added, not by
+/// the block as a whole. None for a record older than the hunks, or when no
+/// hunk can be found exactly once.
+pub fn hunk_of_block<'a>(
+    text: &str,
+    rec: &'a ProvRecord,
+    span: &std::ops::Range<usize>,
+) -> Option<(std::ops::Range<usize>, &'a Hunk)> {
+    rec.hunks.iter().find_map(|h| {
+        let r = locate_hunk(text, h)?;
+        let touches =
+            if r.is_empty() { r.start > span.start && r.start < span.end } else { r.start < span.end && r.end > span.start };
+        touches.then_some((r, h))
+    })
 }
 
 /// The revert plan for `text`: the pending block with `local_id`, or every
@@ -308,8 +330,7 @@ pub fn plan_revert<'a>(
         if rec.accepted || !matches!(rec.source, ProvSource::Agent { .. }) {
             continue;
         }
-        let hunk = rec.hunks.iter().find(|h| h.new.contains(slice));
-        let Some((range, hunk)) = hunk.and_then(|h| locate_hunk(text, h).map(|r| (r, h))) else {
+        let Some((range, hunk)) = hunk_of_block(text, rec, &b.span) else {
             plan.missed += 1;
             continue;
         };
@@ -619,6 +640,11 @@ pub struct BlockProvenance {
     pub local_id: String,
     /// Byte range in the note's raw text (`Block.span`).
     pub span: std::ops::Range<usize>,
+    /// For a pending block whose write the ledger holds as hunks: the part of
+    /// the block that write added (a block the model extended keeps its
+    /// reviewed lines out of the mark). None when the ledger cannot say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changed: Option<std::ops::Range<usize>>,
     /// Empty for a block whose normalized text is empty.
     pub hash: String,
     pub origin: Origin,
@@ -797,8 +823,28 @@ mod tests {
         // copied: ambiguous; gone: nothing
         assert_eq!(locate_hunk("NEW\nx\nNEW\n", &h), None);
         assert_eq!(locate_hunk("a\nb\n", &h), None);
-        let del = Hunk { before: "a\n".into(), old: "gone\n".into(), new: String::new(), after: String::new() };
-        assert_eq!(locate_hunk("a\n", &del), None);
+        // a deletion is the point where its context meets
+        let del = Hunk { before: "a\n".into(), old: "gone\n".into(), new: String::new(), after: "b\n".into() };
+        assert_eq!(locate_hunk("a\nb\n", &del), Some(2..2));
+        assert_eq!(locate_hunk("a\nx\nb\n", &del), None);
+    }
+
+    #[test]
+    fn the_hunk_of_an_extended_block_is_the_lines_it_added() {
+        let rec = |h: Hunk| ProvRecord { source: ProvSource::Agent { session: None }, ts: "t".into(), accepted: false, hunks: vec![h] };
+        // TEST6 appended to the reviewed line TEST4 without a blank line: one block
+        let text = "TEST4\nTEST6\n";
+        let ext = rec(Hunk { before: "TEST4\n".into(), old: String::new(), new: "TEST6\n".into(), after: String::new() });
+        let (r, _) = hunk_of_block(text, &ext, &(0..11)).unwrap();
+        assert_eq!(r, 6..12);
+        let plan = plan_revert(text, |_| Some(&ext), None).unwrap();
+        assert_eq!(plan.replacements, vec![Replacement { from: 6, to: 12, insert: String::new() }]);
+        // a line deleted inside a block is restored at the point its context meets
+        let del = rec(Hunk { before: "a\n".into(), old: "gone\n".into(), new: String::new(), after: "b\n".into() });
+        let plan = plan_revert("a\nb\n", |_| Some(&del), None).unwrap();
+        assert_eq!(plan.replacements, vec![Replacement { from: 2, to: 2, insert: "gone\n".into() }]);
+        // a hunk elsewhere in the note does not belong to this block
+        assert!(hunk_of_block("x\n\nTEST6\n", &ext, &(0..1)).is_none());
     }
 
     #[test]

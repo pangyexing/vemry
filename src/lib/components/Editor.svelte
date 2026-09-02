@@ -888,7 +888,16 @@
       text,
       items.map((p) => p.span),
     );
-    const rows = items.map((p, i) => ({ ...ranges[i], local_id: p.local_id, origin: p.origin }));
+    const changed = byteSpansToChar(
+      text,
+      items.map((p) => p.changed ?? p.span),
+    );
+    const rows = items.map((p, i) => ({
+      ...ranges[i],
+      local_id: p.local_id,
+      origin: p.origin,
+      changed: p.changed ? changed[i] : undefined,
+    }));
     view.dispatch({ effects: provenanceSet.of(rows) });
     vault.pendingCount = rows.filter((r) => isPending(r.origin)).length;
     vault.editorOrigin = originAt(view.state, view.state.selection.main.head)?.origin ?? null;

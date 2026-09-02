@@ -430,8 +430,12 @@ hunk that cannot be found exactly once (moved, copied, or from a line older
 than the hunks) is reported as missed rather than guessed at. The command
 writes nothing: the editor applies the plan as one undoable edit
 (`prov.revert`) and saves as it does any edit, so the mark disappears with the
-block's hash. The control on an unreviewed block's first line is therefore a
-pair, ✓ and ✕; the status bar has "✓ All" and "✕ All"; the block menu and the
+block's hash. The mark itself follows the hunk: `provenance_get` reports, for
+a pending block whose hunk can be found, the part of the block that write
+added (`changed`), and the amber bar and the controls sit on those lines — a
+block the model merely extended keeps its reviewed lines bare, the block stays
+the unit of accepting, the line the unit of showing. The control on an
+unreviewed block's first changed line is therefore a pair, ✓ and ✕; the status bar has "✓ All" and "✕ All"; the block menu and the
 command palette carry both. Independently of the ledger, a reload of the open
 note from disk — an agent write landing, an edit in another app — is applied to
 the buffer as one edit rather than a fresh state (`Editor.svelte`'s `loadDoc`):

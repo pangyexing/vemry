@@ -16,6 +16,8 @@ export interface ProvRow {
   /** Character positions (the editor's), covering the block's lines. */
   from: number;
   to: number;
+  /** The lines the pending write added, when known: the bar and the controls sit there. */
+  changed?: { from: number; to: number };
   local_id: string;
   origin: Origin;
 }
@@ -128,20 +130,28 @@ interface ProvState {
 function build(state: EditorState, rows: ProvRow[], overlay: boolean, marks: boolean, host: ProvenanceHost | null): DecorationSet {
   const doc = state.doc;
   const decos: ReturnType<Decoration["range"]>[] = [];
+  const lines = (from: number, to: number) => {
+    const f = Math.min(from, doc.length);
+    const t = Math.min(Math.max(to, f), doc.length);
+    return { first: doc.lineAt(f).number, last: doc.lineAt(t > f ? t - 1 : t).number };
+  };
   for (const r of rows) {
-    const cls: string[] = [];
     const pending = marks && isPending(r.origin);
-    if (overlay) cls.push(`cm-prov-${r.origin.origin}`);
-    if (pending) cls.push("cm-prov-pending");
-    if (!cls.length) continue;
-    const from = Math.min(r.from, doc.length);
-    const to = Math.min(Math.max(r.to, from), doc.length);
-    const first = doc.lineAt(from).number;
-    const last = doc.lineAt(to > from ? to - 1 : to).number;
-    const deco = Decoration.line({ class: cls.join(" "), attributes: { title: originLabel(r.origin) } });
-    for (let n = first; n <= last; n++) decos.push(deco.range(doc.line(n).from));
-    // the one-click review control, after the first line's text
-    if (pending) decos.push(Decoration.widget({ widget: new ReviewWidget(r.local_id, host), side: 1 }).range(doc.line(first).to));
+    if (!overlay && !pending) continue;
+    const block = lines(r.from, r.to);
+    // The pending bar sits on the lines the write changed when the ledger knows them (a
+    // block the model extended keeps its reviewed lines bare), else on the whole block;
+    // the block stays the unit of accepting, the line is the unit of showing
+    const pend = pending ? lines(r.changed?.from ?? r.from, r.changed?.to ?? r.to) : null;
+    const title = originLabel(r.origin);
+    for (let n = block.first; n <= block.last; n++) {
+      const cls: string[] = [];
+      if (overlay) cls.push(`cm-prov-${r.origin.origin}`);
+      if (pend && n >= pend.first && n <= pend.last) cls.push("cm-prov-pending");
+      if (cls.length) decos.push(Decoration.line({ class: cls.join(" "), attributes: { title } }).range(doc.line(n).from));
+    }
+    // the one-click review controls, after the first changed line's text
+    if (pend) decos.push(Decoration.widget({ widget: new ReviewWidget(r.local_id, host), side: 1 }).range(doc.line(pend.first).to));
   }
   return Decoration.set(decos, true);
 }
@@ -154,9 +164,13 @@ const field = StateField.define<ProvState>({
     let { rows, overlay, marks } = v;
     let changed = false;
     if (tr.docChanged) {
-      // A block that was deleted outright maps to an empty range and is dropped
+      // A block that was deleted outright maps to an empty range and is dropped; a
+      // changed span that collapses falls back to the block
       rows = rows
-        .map((r) => ({ ...r, from: tr.changes.mapPos(r.from, 1), to: tr.changes.mapPos(r.to, -1) }))
+        .map((r) => {
+          const c = r.changed && { from: tr.changes.mapPos(r.changed.from, 1), to: tr.changes.mapPos(r.changed.to, -1) };
+          return { ...r, from: tr.changes.mapPos(r.from, 1), to: tr.changes.mapPos(r.to, -1), changed: c && c.to > c.from ? c : undefined };
+        })
         .filter((r) => r.to > r.from);
       changed = true;
     }
@@ -206,5 +220,5 @@ export function nextPending(state: EditorState, pos: number): number | null {
   if (!pend.length) return null;
   const line = state.doc.lineAt(pos);
   const next = pend.find((r) => r.from > line.to) ?? pend[0];
-  return next.from;
+  return next.changed?.from ?? next.from;
 }
