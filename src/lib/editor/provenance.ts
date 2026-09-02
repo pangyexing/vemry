@@ -8,6 +8,7 @@
 // overlay (a command toggles it). Labels come from the catalog.
 import { t } from "$lib/i18n/i18n.svelte";
 import type { Origin } from "$lib/api";
+import { formatSessionId } from "$lib/views/session";
 import { type EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 
@@ -30,16 +31,28 @@ export function isPending(o: Origin): boolean {
   return o.origin === "agent" && o.pending;
 }
 
-/** One line of text for a tooltip, the status bar and the block menu. */
+/** The ledger's RFC3339 (UTC) stamp as local `YYYY-MM-DD HH:MM`. */
+function when(ts?: string): string | null {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts.slice(0, 16).replace("T", " ");
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** One line of text for a tooltip, the status bar and the block menu. Times are
+ *  local; the session is named by its local start time (its id is a UTC stamp that
+ *  reads like a time and is not one the user recognises). */
 export function originLabel(o: Origin): string {
-  const when = (ts?: string) => (ts ? ts.slice(0, 16).replace("T", " ") : null);
   switch (o.origin) {
     case "you":
       return t("prov.origin.you");
     case "agent": {
-      const parts = [t("prov.origin.agent"), o.session ? t("prov.session", { id: o.session }) : t("prov.sessionUnknown")];
+      const parts = [t("prov.origin.agent")];
       const w = when(o.ts);
       if (w) parts.push(w);
+      else if (o.session) parts.push(t("prov.session", { id: formatSessionId(o.session) }));
+      else parts.push(t("prov.sessionUnknown"));
       if (o.pending) parts.push(t("prov.pending"));
       return parts.join(" · ");
     }
