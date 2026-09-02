@@ -477,9 +477,16 @@ pub fn prepare_write(
                 if old_str.is_empty() { vec![] } else { redacted.text.match_indices(old_str).map(|(p, _)| p).collect() };
             let count = occurrences.len();
             if count == 0 {
-                return Err(ToolError::Other(
-                    "old_str not found in note — read the note again and copy the text exactly as returned".into(),
-                ));
+                // The one mistake worth naming: a backslash-n typed as two
+                // characters where a line break was meant
+                let hint = if old_str.contains("\\n") && !redacted.text.contains("\\n") {
+                    " (old_str contains a literal backslash-n; line breaks must be real line breaks)"
+                } else {
+                    ""
+                };
+                return Err(ToolError::Other(format!(
+                    "old_str not found in note — read the note again and copy the text exactly as returned{hint}"
+                )));
             }
             if count > 1 {
                 return Err(ToolError::Other(format!(
@@ -493,6 +500,14 @@ pub fn prepare_write(
                     "this edit cannot be applied as written — keep fences and frontmatter balanced within old_str and new_str"
                         .into(),
                 ));
+            }
+            // An edit that changes nothing is refused rather than approved and
+            // "written": the model would read the note back unchanged and try
+            // again. It happens when old_str equals new_str, and when the only
+            // difference is a line break that has to stay because a hidden block
+            // begins on the next line.
+            if new_content == content {
+                return Err(ToolError::Other("this edit leaves the note unchanged".into()));
             }
             let diff = unified_diff(&content, &new_content, id.as_str());
             Ok(WriteRequest {
@@ -908,6 +923,27 @@ mod tests {
         // an edit whose surroundings would swallow the block is refused
         let err = edit("public apple", "```\npublic apple").unwrap_err();
         assert!(err.to_string().starts_with("this edit cannot be applied"), "{err}");
+        // a backslash-n typed as two characters is named in the error
+        let err = edit("public apple\\n\\ntail apple", "x").unwrap_err();
+        assert!(err.to_string().contains("literal backslash-n"), "{err}");
+        assert!(!edit("banana", "x").unwrap_err().to_string().contains("backslash"));
+    }
+
+    #[test]
+    fn edit_note_refuses_an_edit_that_changes_nothing() {
+        let (_d, vault) = fixture_with_private_block();
+        std::fs::write(vault.root().join("Tight.md"), "a\n> [!private] s\n").unwrap();
+        let vault = Vault::open(vault.root()).unwrap();
+        let edit = |path: &str, old: &str, new: &str| {
+            prepare_write(&vault, "r".into(), "edit_note", &json!({"path": path, "old_str": old, "new_str": new}), None)
+        };
+        let err = edit("Plain.md", "plain", "plain").unwrap_err();
+        assert_eq!(err.to_string(), "this edit leaves the note unchanged");
+        // the line break before a hidden block cannot be taken away: the model's
+        // view is "a\n", and "a" is not a change it can make
+        let err = edit("Tight.md", "a\n", "a").unwrap_err();
+        assert_eq!(err.to_string(), "this edit leaves the note unchanged");
+        assert!(edit("Tight.md", "a\n", "b\n").is_ok());
     }
 
     #[test]
