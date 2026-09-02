@@ -27,13 +27,16 @@ export const provenanceOverlay = StateEffect.define<boolean>();
 /** The pending bar on or off (the `provenance_marks` setting). */
 export const provenanceMarks = StateEffect.define<boolean>();
 
-/** What the editor needs from its host to act on a block: marking it reviewed. */
+/** What the editor needs from its host to act on a block: marking it reviewed, or
+ *  putting the write behind it back. */
 export interface ProvenanceHost {
   acceptProvenance(localId: string | null): void;
+  rejectProvenance(localId: string | null): void;
 }
 
-/** The one-click control on an unreviewed block's first line — reviewing is one
- *  gesture, the way an inline diff is accepted, instead of grip → menu → item. */
+/** The one-click controls on an unreviewed block's first line — reviewing is one
+ *  gesture either way, the way an inline diff is accepted or rejected, instead of
+ *  grip → menu → item. */
 class ReviewWidget extends WidgetType {
   constructor(
     readonly localId: string,
@@ -45,19 +48,26 @@ class ReviewWidget extends WidgetType {
     return other.localId === this.localId;
   }
   toDOM() {
-    const el = document.createElement("button");
-    el.className = "cm-prov-review";
-    el.type = "button";
-    // a bare check: the amber bar already says what the block is, the tooltip says what the click does
-    el.textContent = "✓";
-    el.title = t("prov.acceptBlock");
-    el.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      this.host?.acceptProvenance(this.localId);
-    });
-    return el;
+    const wrap = document.createElement("span");
+    wrap.className = "cm-prov-controls";
+    const button = (glyph: string, title: string, cls: string, act: () => void) => {
+      const el = document.createElement("button");
+      el.className = cls;
+      el.type = "button";
+      el.textContent = glyph;
+      el.title = title;
+      el.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        act();
+      });
+      wrap.appendChild(el);
+    };
+    // bare glyphs: the amber bar already says what the block is, the tooltips say what a click does
+    button("✓", t("prov.acceptBlock"), "cm-prov-review", () => this.host?.acceptProvenance(this.localId));
+    button("✕", t("prov.rejectBlock"), "cm-prov-review cm-prov-reject", () => this.host?.rejectProvenance(this.localId));
+    return wrap;
   }
 }
 

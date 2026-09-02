@@ -37,6 +37,8 @@ export interface BlockMenuHost {
   pendingCount(): number;
   /** Accept one pending block (a local id) or, with null, every one in the note. */
   acceptProvenance(localId: string | null): void;
+  /** Put the write behind one pending block (a local id) or, with null, every one in the note back. */
+  rejectProvenance(localId: string | null): void;
   /** The vault's enabled block types ("turn into ›" lists them after the kinds). */
   blockTypes(): BlockType[];
 }
@@ -106,8 +108,14 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
   // Provenance review: shown only when there is something to accept
   const prov: MenuEntry[] = [];
   const pend = host.pendingBlock(view, b);
-  if (pend) prov.push({ label: t("prov.acceptBlock"), action: () => host.acceptProvenance(pend) });
-  if (host.pendingCount() > 0) prov.push({ label: t("prov.acceptAll"), action: () => host.acceptProvenance(null) });
+  if (pend) {
+    prov.push({ label: t("prov.acceptBlock"), action: () => host.acceptProvenance(pend) });
+    prov.push({ label: t("prov.rejectBlock"), action: () => host.rejectProvenance(pend) });
+  }
+  if (host.pendingCount() > 0) {
+    prov.push({ label: t("prov.acceptAll"), action: () => host.acceptProvenance(null) });
+    prov.push({ label: t("prov.rejectAll"), action: () => host.rejectProvenance(null) });
+  }
   if (prov.length) prov.unshift({ separator: true });
   if (opts.compact) return [{ title: t("block.title") }, copyLink, copyEmbed, turn, ask, ...prov];
   return [

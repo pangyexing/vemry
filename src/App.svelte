@@ -765,6 +765,27 @@
     },
   });
   registerCommand({
+    id: "provenance-reject", group: "note",
+    run: () => {
+      const id = vault.pendingAtCursor?.();
+      if (!id) {
+        toast.push(t("prov.noPendingHere"), "error");
+        return;
+      }
+      void vault.rejectProvenance?.(id);
+    },
+  });
+  registerCommand({
+    id: "provenance-reject-all", group: "note",
+    run: () => {
+      if (!vault.pendingCount) {
+        toast.push(t("prov.noPending"), "error");
+        return;
+      }
+      void vault.rejectProvenance?.(null);
+    },
+  });
+  registerCommand({
     id: "provenance-next-pending", group: "note",
     run: () => {
       if (!vault.nextPending?.()) toast.push(t("prov.noPending"), "error");

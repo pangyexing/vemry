@@ -357,10 +357,12 @@ and an agent-written block stays visibly **pending** until the user accepts it.
 Nothing is added to the notes. `.vemry/provenance.jsonl` is an append-only
 ledger written at the moment text lands (`vemry-core/src/provenance.rs`):
 
-- `{"kind":"agent","ts","session","path","blocks":[{hash,kind}]}` — an agent
-  write that passed the gate (`execute_write` records the blocks the applied
-  bytes added, so an "edit, then apply" counts what the user applied, not what
-  the model proposed); these are pending.
+- `{"kind":"agent","ts","session","path","blocks":[{hash,kind}],"hunks":[…]}` —
+  an agent write that passed the gate (`execute_write` records the blocks the
+  applied bytes added, so an "edit, then apply" counts what the user applied,
+  not what the model proposed); these are pending. `hunks` are the write's
+  changed regions — the lines it removed and added, with up to three unchanged
+  lines on either side — kept so the write can be put back (below).
 - `{"kind":"insert","origin":"agent|clip|capture",…}` — text the user placed
   themselves (a chat answer inserted or pinned, a clip, a capture): accepted from
   the start, since the user saw it going in.
@@ -380,9 +382,10 @@ callout head, trailing ` ^id` and capture stamps are stripped, whitespace folded
 survives a block being moved, indented or turned into another kind, and is
 dropped the moment its words change — an edited AI block is the user's. Which
 blocks a write added is a multiset difference of hashes, so a block the model
-merely moved is not "new". The ledger never stores text (hashes and kinds only)
-and skips private paths; a damaged line is skipped on load, and above 5000 lines
-the file is compacted to the hashes that still exist.
+merely moved is not "new". The ledger stores no note text beyond a pending
+line's hunks (compaction drops them once the write is accepted) and skips
+private paths; a damaged line is skipped on load, and above 5000 lines the file
+is compacted to the hashes that still exist.
 
 Origins that need no ledger: a `*(YYYY-MM-DD HH:MM)*` capture stamp, a
 selection clip's `> — [title](url) · date` credit line, a whole-page clip's
@@ -393,7 +396,8 @@ a block without a record is the user's). New agent-created notes now carry
 `applied_diff` of an "edit, then apply". IPC: `provenance_get` (every block's
 origin), `provenance_accept` (one block or the whole note; not broadcast, since
 accepting is not a note event), `provenance_record` (the user-placed inserts),
-`provenance_pending` (notes with pending blocks). Known limits: a pending block
+`provenance_pending` (notes with pending blocks), `provenance_revert_plan`
+(below). Known limits: a pending block
 moved into another note keeps its state but escapes the per-note count; the
 overlay is disk truth with the autosave lag; similarity matching ("yours,
 edited") is a seam.
@@ -414,6 +418,25 @@ their landing points — a chat answer inserted or pinned (`host.ts`, with the
 session id), a selection clip (`clipTarget.deliver`, with the URL), a quick
 capture (`vault.capture`), and "save as note" (which now also writes
 `vemry.agent_session`) — all as accepted lines: the placing was the review.
+
+Putting a write back. Marking reviewed is one half of review; the other is
+undoing what the model wrote, block by block. `provenance_revert_plan(text,
+local_id?)` takes the editor's buffer and returns byte replacements
+(`provenance::plan_revert`): a pending block's write is the ledger hunk whose
+added lines hold the block, located in the buffer by its context first and by
+its added lines alone when the user has edited nearby, and put back to the
+lines it replaced — blocks that arrived in one hunk go back together, and a
+hunk that cannot be found exactly once (moved, copied, or from a line older
+than the hunks) is reported as missed rather than guessed at. The command
+writes nothing: the editor applies the plan as one undoable edit
+(`prov.revert`) and saves as it does any edit, so the mark disappears with the
+block's hash. The control on an unreviewed block's first line is therefore a
+pair, ✓ and ✕; the status bar has "✓ All" and "✕ All"; the block menu and the
+command palette carry both. Independently of the ledger, a reload of the open
+note from disk — an agent write landing, an edit in another app — is applied to
+the buffer as one edit rather than a fresh state (`Editor.svelte`'s `loadDoc`):
+the undo stack survives it, the cursor stays, and ⌘Z takes an agent write back
+the moment it lands.
 
 ## Seams left for later
 

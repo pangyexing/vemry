@@ -235,6 +235,14 @@ CMD = {
         ("Mark all AI blocks in this note as reviewed", "本篇 AI 块全部标为已审阅"),
         ("Mark every unreviewed AI block of the current note as reviewed", "把当前笔记所有未审阅的 AI 块标为已审阅"),
     ),
+    "provenance-reject": (
+        ("Revert AI change", "撤回 AI 修改"),
+        ("Put the AI block at the cursor back to what the write replaced", "把光标所在的 AI 块恢复成写入前的内容"),
+    ),
+    "provenance-reject-all": (
+        ("Revert all unreviewed AI changes in this note", "撤回本篇全部未审阅的 AI 修改"),
+        ("Put every unreviewed AI block of the current note back to what the writes replaced", "把当前笔记所有未审阅的 AI 块恢复成写入前的内容"),
+    ),
     "provenance-next-pending": (
         ("Next unreviewed AI block", "下一个未审阅的 AI 块"),
         ("Jump to the next AI block you have not looked at", "跳到下一个还没看过的 AI 块"),
@@ -1446,6 +1454,13 @@ add("prov.", {
     "acceptAllShort": ("✓ All", "✓ 全部"),
     "accepted": ("Marked as reviewed", "已标为已审阅"),
     "acceptedAll": ("Marked {n} blocks as reviewed", "已把 {n} 个块标为已审阅"),
+    "rejectBlock": ("Revert AI change", "撤回 AI 修改"),
+    "rejectAll": ("Revert all unreviewed AI changes in this note", "撤回本篇全部未审阅的 AI 修改"),
+    "rejectAllShort": ("✕ All", "✕ 全部"),
+    "reverted": ("Reverted {n} changes", "已撤回 {n} 处修改"),
+    "revertedPartly": ("Reverted {n} changes; {m} could not be located", "已撤回 {n} 处修改，{m} 处找不到原位"),
+    "revertMissed": ("Cannot locate what this write replaced (the text around it has moved on); edit by hand", "找不到这处写入替换前的内容（周围文字已变动），请手动处理"),
+    "revertStale": ("The note changed meanwhile; try again", "笔记刚刚有变动，请重试"),
     "noPending": ("No unreviewed AI blocks in this note", "本篇没有未审阅的 AI 块"),
     "noPendingHere": ("The block at the cursor is not an unreviewed AI block", "光标所在块不是未审阅的 AI 块"),
     "overlayOn": ("Origin overlay on", "已显示出处"),

@@ -617,7 +617,9 @@ pub fn execute_write(
         vault.record_provenance(if reviewed {
             vemry_core::ProvenanceEntry::Insert { ts, origin: vemry_core::InsertOrigin::Agent, session, url: None, path, blocks: added }
         } else {
-            vemry_core::ProvenanceEntry::Agent { ts, session, path, blocks: added }
+            // The write's changed regions go with the pending line: they are what a
+            // revert puts back, block by block
+            vemry_core::ProvenanceEntry::Agent { ts, session, path, blocks: added, hunks: diff_hunks(&old, content) }
         });
     }
     // The size reported is the model's view of the note: a private block it
@@ -659,6 +661,39 @@ fn with_agent_provenance(content: &str, session: Option<&str>) -> String {
         Some(s) => format!("---\nvemry:\n  origin: agent\n  agent_session: {s}\n---\n{content}"),
         None => format!("---\nvemry:\n  origin: agent\n---\n{content}"),
     }
+}
+
+/// The changed regions of a write as ledger hunks: each maximal run of changed
+/// lines, with up to three unchanged lines of context on either side (see
+/// `Hunk`). Lines carry their breaks, so a hunk pasted back reproduces the text.
+pub fn diff_hunks(old: &str, new: &str) -> Vec<vemry_core::Hunk> {
+    use similar::ChangeTag;
+    let diff = TextDiff::from_lines(old, new);
+    let changes: Vec<(ChangeTag, &str)> = diff.iter_all_changes().map(|c| (c.tag(), c.value())).collect();
+    let mut hunks = Vec::new();
+    let mut i = 0;
+    while i < changes.len() {
+        if changes[i].0 == ChangeTag::Equal {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let (mut old_text, mut new_text) = (String::new(), String::new());
+        while i < changes.len() && changes[i].0 != ChangeTag::Equal {
+            match changes[i].0 {
+                ChangeTag::Delete => old_text.push_str(changes[i].1),
+                ChangeTag::Insert => new_text.push_str(changes[i].1),
+                ChangeTag::Equal => {}
+            }
+            i += 1;
+        }
+        let mut before: Vec<&str> =
+            changes[..start].iter().rev().take_while(|c| c.0 == ChangeTag::Equal).take(3).map(|c| c.1).collect();
+        before.reverse();
+        let after: String = changes[i..].iter().take_while(|c| c.0 == ChangeTag::Equal).take(3).map(|c| c.1).collect();
+        hunks.push(vemry_core::Hunk { before: before.concat(), old: old_text, new: new_text, after });
+    }
+    hunks
 }
 
 pub fn unified_diff(old: &str, new: &str, path: &str) -> String {
@@ -964,6 +999,48 @@ mod tests {
         // the user's own rewrite of the proposal is applied as they wrote it
         execute_write(&mut vault, &req, Some("plain edited\n\n> [!private] late\n"), None, false).unwrap();
         assert_eq!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap(), "plain edited\n\n> [!private] late\n");
+    }
+
+    #[test]
+    fn diff_hunks_are_runs_of_changed_lines_with_context() {
+        let h = diff_hunks("a\nb\nc\nd\ne\nf\n", "a\nb\nC\nd\ne\nF\n");
+        assert_eq!(h.len(), 2, "{h:?}");
+        assert_eq!((h[0].before.as_str(), h[0].old.as_str(), h[0].new.as_str(), h[0].after.as_str()), ("a\nb\n", "c\n", "C\n", "d\ne\n"));
+        assert_eq!((h[1].before.as_str(), h[1].old.as_str(), h[1].new.as_str(), h[1].after.as_str()), ("d\ne\n", "f\n", "F\n", ""));
+        // an insertion has nothing old; a last line without its break keeps that too
+        let h = diff_hunks("a\n", "a\nnew");
+        assert_eq!(h, vec![vemry_core::Hunk { before: "a\n".into(), old: String::new(), new: "new".into(), after: String::new() }]);
+        assert!(diff_hunks("same\n", "same\n").is_empty());
+    }
+
+    #[test]
+    fn an_unreviewed_write_can_be_planned_back() {
+        let (_d, mut vault) = fixture_with_private_block();
+        let req = prepare_write(
+            &vault,
+            "r".into(),
+            "edit_note",
+            &json!({"path": "Plain.md", "old_str": "plain", "new_str": "plain\n\nadded by the model"}),
+            Some("s1"),
+        )
+        .unwrap();
+        execute_write(&mut vault, &req, None, Some("s1"), false).unwrap();
+        let text = std::fs::read_to_string(vault.root().join("Plain.md")).unwrap();
+        assert_eq!(text, "plain\n\nadded by the model\n");
+        let plan = vault.revert_plan(&text, None).unwrap();
+        assert_eq!(plan.missed, 0);
+        let mut out = text.clone();
+        for r in plan.replacements.iter().rev() {
+            out.replace_range(r.from..r.to, &r.insert);
+        }
+        assert_eq!(out, "plain\n");
+        // the user's own rewrite of the proposal is what the hunks record
+        let req = prepare_write(&vault, "r".into(), "edit_note", &json!({"path": "Plain.md", "old_str": "model", "new_str": "MODEL"}), Some("s1")).unwrap();
+        execute_write(&mut vault, &req, Some("plain\n\nadded by the user\n"), Some("s1"), false).unwrap();
+        let text = std::fs::read_to_string(vault.root().join("Plain.md")).unwrap();
+        let plan = vault.revert_plan(&text, Some("b1")).unwrap();
+        assert_eq!(plan.replacements.len(), 1);
+        assert_eq!(plan.replacements[0].insert, "added by the model\n");
     }
 
     #[test]

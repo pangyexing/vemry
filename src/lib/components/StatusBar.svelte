@@ -35,6 +35,7 @@
     <button class="pending" title={t("prov.pendingHint")} onclick={() => vault.nextPending?.()}>{t("prov.pendingCount", { n: vault.pendingCount })}</button>
     <!-- one click for the whole note (the palette command carries the toast) -->
     <button class="pending" title={t("prov.acceptAll")} onclick={() => void executeCommand("provenance-accept-all")}>{t("prov.acceptAllShort")}</button>
+    <button class="pending" title={t("prov.rejectAll")} onclick={() => void executeCommand("provenance-reject-all")}>{t("prov.rejectAllShort")}</button>
   {/if}
   <span class="right">
     {#if vault.editorLoc}

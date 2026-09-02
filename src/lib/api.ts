@@ -200,6 +200,14 @@ export interface PendingNote {
   count: number;
 }
 
+/** How to undo the agent writes behind unreviewed blocks (mirrors vemry-core's `RevertPlan`):
+ *  byte ranges of the text the plan was made for. */
+export interface RevertPlan {
+  replacements: { from: number; to: number; insert: string }[];
+  /** Unreviewed blocks whose write could not be located (a ledger line older than the hunks, or surroundings that moved on). */
+  missed: number;
+}
+
 export interface BacklinkEntry {
   source: string;
   source_title: string;
@@ -786,6 +794,8 @@ export const api = {
   provenanceGet: (path: string) => invoke<BlockProvenance[]>("provenance_get", { path }),
   /** Accept pending agent blocks (one by local id, or all); resolves to the count still pending. */
   provenanceAccept: (path: string, localId?: string) => invoke<number>("provenance_accept", { path, localId }),
+  /** The revert plan for `text` (the editor's buffer): one unreviewed block by local id, or all; the editor applies it as one undoable edit. */
+  provenanceRevertPlan: (text: string, localId?: string) => invoke<RevertPlan>("provenance_revert_plan", { text, localId }),
   /** Record text the user placed themselves (lands accepted); a private path or text without blocks records nothing. */
   provenanceRecord: (path: string, text: string, origin: "agent" | "clip" | "capture", session?: string, url?: string) =>
     invoke<void>("provenance_record", { path, text, origin, session, url }),

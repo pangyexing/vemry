@@ -804,6 +804,14 @@ impl Vault {
         Ok(self.pending_count(id))
     }
 
+    /// How to undo the agent writes behind the pending blocks of the note in
+    /// `text` (the editor's buffer) — one block by local id, or all of them —
+    /// as byte replacements in that text (`provenance::plan_revert`). Nothing
+    /// is written here.
+    pub fn revert_plan(&self, text: &str, local_id: Option<&str>) -> Result<provenance::RevertPlan> {
+        provenance::plan_revert(text, |h| self.provenance.lookup(h), local_id)
+    }
+
     /// Append text (with separating newline) — used by quick capture.
     pub fn append_note(&mut self, id: &NoteId, text: &str) -> Result<VaultEvent> {
         let existing = self.read_note(id).unwrap_or_default();
@@ -1598,7 +1606,7 @@ mod tests {
         vault.write_note(&n, &new).unwrap();
         let added = crate::provenance::added_blocks(&old, &new);
         assert_eq!(added.len(), 1);
-        vault.record_provenance(ProvenanceEntry::Agent { ts: "t".into(), session: Some("s1".into()), path: "n.md".into(), blocks: added });
+        vault.record_provenance(ProvenanceEntry::Agent { ts: "t".into(), session: Some("s1".into()), path: "n.md".into(), blocks: added, hunks: vec![] });
         let prov = vault.provenance(&n).unwrap();
         assert!(matches!(prov[3].origin, Origin::Agent { pending: true, session: Some(ref s), .. } if s == "s1"));
         assert_eq!(vault.pending_count(&n), 1);

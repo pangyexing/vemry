@@ -220,6 +220,116 @@ pub struct BlockStamp {
     pub kind: String,
 }
 
+/// One changed region of an agent write, kept with the ledger line so the
+/// write can be put back block by block: `old` and `new` are the lines the
+/// write removed and added (each line with its break), `before` and `after`
+/// up to three unchanged lines on either side, to find the region again by
+/// its surroundings once the note has moved on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hunk {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub before: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub old: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub new: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub after: String,
+}
+
+/// One replacement of a revert plan: a byte range of the text the plan was
+/// made for, and what goes in its place.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Replacement {
+    pub from: usize,
+    pub to: usize,
+    pub insert: String,
+}
+
+/// How to undo the agent writes behind a note's pending blocks, as
+/// replacements in the text handed to `plan_revert` — the editor's buffer,
+/// which may be ahead of disk. `missed` counts pending blocks whose write
+/// could not be located: a ledger line older than the hunks, or surroundings
+/// that have moved on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct RevertPlan {
+    pub replacements: Vec<Replacement>,
+    pub missed: usize,
+}
+
+/// Where a hunk's added lines sit in `text` now: with their context when the
+/// context still matches, the added lines alone when the user edited nearby;
+/// None when they are gone or occur more than once. A hunk that only removed
+/// lines has nothing to locate — and left no pending block to revert from.
+pub fn locate_hunk(text: &str, h: &Hunk) -> Option<std::ops::Range<usize>> {
+    if h.new.is_empty() {
+        return None;
+    }
+    let full = format!("{}{}{}", h.before, h.new, h.after);
+    if let Some(r) = unique_match(text, &full) {
+        return Some(r.start + h.before.len()..r.end - h.after.len());
+    }
+    unique_match(text, &h.new)
+}
+
+fn unique_match(text: &str, needle: &str) -> Option<std::ops::Range<usize>> {
+    let mut it = text.match_indices(needle);
+    let (at, _) = it.next()?;
+    if it.next().is_some() {
+        return None;
+    }
+    Some(at..at + needle.len())
+}
+
+/// The revert plan for `text`: the pending block with `local_id`, or every
+/// pending block when None. A block's write is the ledger hunk whose added
+/// lines hold the block; the plan puts that hunk back to what it replaced, so
+/// blocks that arrived in one hunk go back together. Replacements come sorted
+/// and disjoint; a hunk that cannot be found once is missed, never guessed at.
+pub fn plan_revert<'a>(
+    text: &str,
+    lookup: impl Fn(&str) -> Option<&'a ProvRecord>,
+    local_id: Option<&str>,
+) -> crate::Result<RevertPlan> {
+    let parsed = parse_note(text);
+    let targets: Vec<&Block> = match local_id {
+        Some(lid) => vec![parsed
+            .blocks
+            .iter()
+            .find(|b| b.local_id == lid)
+            .ok_or_else(|| crate::VemryError::BlockNotFound { local_id: lid.to_string() })?],
+        None => parsed.blocks.iter().collect(),
+    };
+    let mut plan = RevertPlan::default();
+    for b in targets {
+        let slice = &text[b.span.start.min(text.len())..b.span.end.min(text.len())];
+        let Some(hash) = block_hash(slice, &b.kind) else { continue };
+        let Some(rec) = lookup(&hash) else { continue };
+        if rec.accepted || !matches!(rec.source, ProvSource::Agent { .. }) {
+            continue;
+        }
+        let hunk = rec.hunks.iter().find(|h| h.new.contains(slice));
+        let Some((range, hunk)) = hunk.and_then(|h| locate_hunk(text, h).map(|r| (r, h))) else {
+            plan.missed += 1;
+            continue;
+        };
+        if plan.replacements.iter().any(|r| r.from == range.start && r.to == range.end) {
+            continue;
+        }
+        plan.replacements.push(Replacement { from: range.start, to: range.end, insert: hunk.old.clone() });
+    }
+    plan.replacements.sort_by_key(|r| r.from);
+    let mut end = 0;
+    plan.replacements.retain(|r| {
+        let keep = r.from >= end;
+        if keep {
+            end = r.to;
+        }
+        keep
+    });
+    Ok(plan)
+}
+
 /// Where an inserted text came from, for writes that do not pass the
 /// permission gate (they are the user's own act, so they land accepted).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,6 +352,10 @@ pub enum ProvenanceEntry {
         session: Option<String>,
         path: String,
         blocks: Vec<BlockStamp>,
+        /// The write's changed regions, so it can be put back (`plan_revert`);
+        /// absent on lines older than the field.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hunks: Vec<Hunk>,
     },
     /// Text the user put in place themselves (chat insert, clip, capture).
     Insert {
@@ -272,6 +386,8 @@ pub struct ProvRecord {
     pub source: ProvSource,
     pub ts: String,
     pub accepted: bool,
+    /// The write's changed regions (an `agent` line's; empty otherwise).
+    pub hunks: Vec<Hunk>,
 }
 
 /// The ledger in memory: the latest record per block hash, plus which notes
@@ -311,11 +427,16 @@ impl ProvenanceLedger {
 
     fn apply(&mut self, entry: &ProvenanceEntry) {
         match entry {
-            ProvenanceEntry::Agent { ts, session, path, blocks } => {
+            ProvenanceEntry::Agent { ts, session, path, blocks, hunks } => {
                 for b in blocks {
                     self.by_hash.insert(
                         b.hash.clone(),
-                        ProvRecord { source: ProvSource::Agent { session: session.clone() }, ts: ts.clone(), accepted: false },
+                        ProvRecord {
+                            source: ProvSource::Agent { session: session.clone() },
+                            ts: ts.clone(),
+                            accepted: false,
+                            hunks: hunks.clone(),
+                        },
                     );
                     self.by_path.entry(path.clone()).or_default().insert(b.hash.clone());
                 }
@@ -327,7 +448,8 @@ impl ProvenanceLedger {
                     InsertOrigin::Capture => ProvSource::Capture,
                 };
                 for b in blocks {
-                    self.by_hash.insert(b.hash.clone(), ProvRecord { source: source.clone(), ts: ts.clone(), accepted: true });
+                    self.by_hash
+                        .insert(b.hash.clone(), ProvRecord { source: source.clone(), ts: ts.clone(), accepted: true, hunks: vec![] });
                     self.by_path.entry(path.clone()).or_default().insert(b.hash.clone());
                 }
             }
@@ -392,6 +514,7 @@ impl ProvenanceLedger {
                         session: session.clone(),
                         path: path.clone(),
                         blocks: vec![stamp],
+                        hunks: rec.hunks.clone(),
                     },
                     ProvSource::Agent { session } => ProvenanceEntry::Insert {
                         ts: rec.ts.clone(),
@@ -639,6 +762,7 @@ mod tests {
             session: Some("s1".into()),
             path: "n.md".into(),
             blocks: vec![BlockStamp { hash: "aaaa".into(), kind: "paragraph".into() }],
+            hunks: vec![],
         });
         ledger.append(ProvenanceEntry::Insert {
             ts: "t2".into(),
@@ -660,8 +784,70 @@ mod tests {
         assert!(again.lookup("aaaa").unwrap().accepted);
         // an agent write of the same hash makes it pending again
         let mut again = again;
-        again.append(ProvenanceEntry::Agent { ts: "t4".into(), session: None, path: "n.md".into(), blocks: vec![BlockStamp { hash: "aaaa".into(), kind: "paragraph".into() }] });
+        again.append(ProvenanceEntry::Agent { ts: "t4".into(), session: None, path: "n.md".into(), blocks: vec![BlockStamp { hash: "aaaa".into(), kind: "paragraph".into() }], hunks: vec![] });
         assert!(!again.lookup("aaaa").unwrap().accepted);
+    }
+
+    #[test]
+    fn hunks_locate_by_context_then_by_their_lines() {
+        let h = Hunk { before: "a\n".into(), old: String::new(), new: "NEW\n".into(), after: "b\n".into() };
+        assert_eq!(locate_hunk("a\nNEW\nb\n", &h), Some(2..6));
+        // the user edited the context: the added lines alone still locate it
+        assert_eq!(locate_hunk("A\nNEW\nB\n", &h), Some(2..6));
+        // copied: ambiguous; gone: nothing
+        assert_eq!(locate_hunk("NEW\nx\nNEW\n", &h), None);
+        assert_eq!(locate_hunk("a\nb\n", &h), None);
+        let del = Hunk { before: "a\n".into(), old: "gone\n".into(), new: String::new(), after: String::new() };
+        assert_eq!(locate_hunk("a\n", &del), None);
+    }
+
+    #[test]
+    fn a_plan_puts_the_hunks_back_and_the_ledger_keeps_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let text = "a\n\nNEW one\n\nb\n\nNEW two\n";
+        let stamps = stamps_of(text);
+        let mut ledger = ProvenanceLedger::empty(root);
+        ledger.append(ProvenanceEntry::Agent {
+            ts: "t".into(),
+            session: Some("s".into()),
+            path: "n.md".into(),
+            blocks: vec![stamps[1].clone(), stamps[3].clone()],
+            hunks: vec![
+                Hunk { before: "a\n\n".into(), old: "old one\n\n".into(), new: "NEW one\n\n".into(), after: "b\n".into() },
+                Hunk { before: "b\n\n".into(), old: String::new(), new: "NEW two\n".into(), after: String::new() },
+            ],
+        });
+        // the hunks survive the file
+        let ledger = ProvenanceLedger::load(root, HashSet::new);
+        assert_eq!(ledger.lookup(&stamps[1].hash).unwrap().hunks.len(), 2);
+        let plan = plan_revert(text, |h| ledger.lookup(h), Some("b1")).unwrap();
+        assert_eq!(plan.replacements, vec![Replacement { from: 3, to: 12, insert: "old one\n\n".into() }]);
+        assert_eq!(plan.missed, 0);
+        let all = plan_revert(text, |h| ledger.lookup(h), None).unwrap();
+        assert_eq!(all.replacements.len(), 2);
+        let mut out = text.to_string();
+        for r in all.replacements.iter().rev() {
+            out.replace_range(r.from..r.to, &r.insert);
+        }
+        assert_eq!(out, "a\n\nold one\n\nb\n\n");
+        // a user block plans nothing; an unknown local id is an error
+        assert!(plan_revert(text, |h| ledger.lookup(h), Some("b0")).unwrap().replacements.is_empty());
+        assert!(plan_revert(text, |h| ledger.lookup(h), Some("b9")).is_err());
+        // accepted blocks are out of the plan
+        let mut ledger = ledger;
+        ledger.append(ProvenanceEntry::Accept { ts: "t".into(), hashes: vec![stamps[3].hash.clone()] });
+        assert_eq!(plan_revert(text, |h| ledger.lookup(h), None).unwrap().replacements.len(), 1);
+        // a line older than the hunks: pending, but not revertible
+        ledger.append(ProvenanceEntry::Agent {
+            ts: "t".into(),
+            session: None,
+            path: "n.md".into(),
+            blocks: vec![stamps[1].clone()],
+            hunks: vec![],
+        });
+        let p = plan_revert(text, |h| ledger.lookup(h), Some("b1")).unwrap();
+        assert!(p.replacements.is_empty() && p.missed == 1);
     }
 
     #[test]
@@ -675,6 +861,7 @@ mod tests {
                 session: Some("s".into()),
                 path: "n.md".into(),
                 blocks: vec![BlockStamp { hash: format!("h{i}"), kind: "paragraph".into() }],
+                hunks: vec![],
             });
         }
         ledger.append(ProvenanceEntry::Accept { ts: "t".into(), hashes: vec!["h1".into()] });
@@ -701,7 +888,7 @@ mod tests {
         let agent = NoteFacts { origin: Some("agent"), agent_session: Some("s9"), source: None, clipped: None };
         assert_eq!(derive_origin("body", None, &agent, false), Origin::Agent { session: Some("s9".into()), ts: None, pending: false });
         assert_eq!(derive_origin("body", None, &agent, true), Origin::You, "a ledger-known note: unrecorded blocks are the user's");
-        let rec = ProvRecord { source: ProvSource::Agent { session: Some("s1".into()) }, ts: "t".into(), accepted: false };
+        let rec = ProvRecord { source: ProvSource::Agent { session: Some("s1".into()) }, ts: "t".into(), accepted: false, hunks: vec![] };
         assert_eq!(derive_origin("body", Some(&rec), &facts, false), Origin::Agent { session: Some("s1".into()), ts: Some("t".into()), pending: true });
     }
 }

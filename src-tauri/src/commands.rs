@@ -14,7 +14,7 @@ use vemry_agent::session::{
 };
 use vemry_agent::{HttpTransport, PermissionDecision};
 use vemry_core::{
-    BacklinkEntry, BlockHit, BlockIdPlan, BlockProvenance, BlockQuery, BlockSelector, GraphData, InsertLanded, InsertOrigin, MigrationReport, NoteSummary, ProvenanceEntry, RefResolution, SearchHit, Vault, VaultEvent,
+    BacklinkEntry, BlockHit, BlockIdPlan, BlockProvenance, BlockQuery, BlockSelector, GraphData, InsertLanded, InsertOrigin, MigrationReport, NoteSummary, ProvenanceEntry, RefResolution, RevertPlan, SearchHit, Vault, VaultEvent,
 };
 
 use crate::agent_bridge::{resolve_permission, ChannelGate};
@@ -673,6 +673,15 @@ pub fn provenance_accept(state: State<'_, AppState>, path: String, local_id: Opt
         let id = v.note_id(&path).map_err(crate::i18n::err)?;
         v.accept_provenance(&id, local_id.as_deref()).map_err(crate::i18n::err)
     })
+}
+
+/// How to undo the agent writes behind the unreviewed blocks of the note in
+/// `text` (the editor's buffer) — one block by local id, or all of them — as
+/// byte replacements in that text. Nothing is written: the editor applies the
+/// plan as one undoable edit and saves as it does any edit.
+#[tauri::command]
+pub fn provenance_revert_plan(state: State<'_, AppState>, text: String, local_id: Option<String>) -> Result<RevertPlan, String> {
+    with_vault(&state, |v| v.revert_plan(&text, local_id.as_deref()).map_err(crate::i18n::err))
 }
 
 /// Record text the user placed themselves (a chat answer inserted, a clip, a

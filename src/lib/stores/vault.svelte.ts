@@ -349,6 +349,8 @@ class VaultStore {
   nextPending: (() => boolean) | null = null;
   /** Editor hook: the pending block under the cursor (its local id), or null. */
   pendingAtCursor: (() => string | null) | null = null;
+  /** Put the write behind one unreviewed block (a local id) or, with null, every one of the current note back (set by the editor). */
+  rejectProvenance: ((localId: string | null) => Promise<void>) | null = null;
   /** The selection's statistics (for the status line). chars is computed from the doc
    *  (in UTF-16 units) — editorSelection.text is truncated at SELECTION_MAX_CHARS and
    *  cannot be counted. */

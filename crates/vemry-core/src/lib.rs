@@ -33,7 +33,8 @@ pub use privacy::{
     redact_private_blocks, PrivacyScope, Redacted,
 };
 pub use provenance::{
-    added_blocks, stamps_of, BlockProvenance, BlockStamp, InsertOrigin, Origin, ProvenanceEntry, ProvenanceLedger,
+    added_blocks, plan_revert, stamps_of, BlockProvenance, BlockStamp, Hunk, InsertOrigin, Origin, ProvenanceEntry,
+    ProvenanceLedger, Replacement, RevertPlan,
 };
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};

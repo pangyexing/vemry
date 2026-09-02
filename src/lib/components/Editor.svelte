@@ -3,7 +3,7 @@
   import { onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { EditorView } from "@codemirror/view";
-  import type { EditorState } from "@codemirror/state";
+  import { type EditorState, Text, Transaction } from "@codemirror/state";
   import { createEditor, resetDoc, languageFor } from "$lib/editor/setup";
   import { foldOnLoad } from "$lib/editor/fold";
   import { type EditorBlock, blockAt, blockContentStart, extentTo } from "$lib/editor/blocks";
@@ -48,7 +48,7 @@
   import { DATE_FIELDS, rescheduleLine, type DateField } from "$lib/views/tasks";
   import TaskDateMenu from "./views/TaskDateMenu.svelte";
   import { types } from "$lib/stores/types.svelte";
-  import type { FieldStat } from "$lib/api";
+  import type { FieldStat, RevertPlan } from "$lib/api";
   import "katex/dist/katex.min.css";
 
   let container = $state<HTMLDivElement | null>(null);
@@ -347,6 +347,42 @@
     const row = originAt(view.state, view.state.selection.main.head);
     return row && isPending(row.origin) ? row.local_id : null;
   };
+  /** Put the agent write behind one unreviewed block (a local id) or, with null, every
+   *  unreviewed block of the note back: the ledger's record of what the write replaced goes
+   *  in again, as one undoable edit in the buffer, which then saves like any edit (the mark
+   *  goes with the block's hash). The buffer flushes first so the local ids the marks carry
+   *  are disk's; the plan is made against the buffer and applied only if it is unchanged. */
+  async function revertProvenance(localId: string | null) {
+    const v = view;
+    const path = docPath;
+    if (!v || !path) return;
+    if (vault.dirty) await flushAutosave();
+    if (view !== v || docPath !== path) return;
+    const text = v.state.doc.toString();
+    let plan: RevertPlan;
+    try {
+      plan = await api.provenanceRevertPlan(text, localId ?? undefined);
+    } catch (e) {
+      toast.push(String(e), "error");
+      return;
+    }
+    if (view !== v || docPath !== path || v.state.doc.toString() !== text) {
+      toast.push(t("prov.revertStale"), "error");
+      return;
+    }
+    if (!plan.replacements.length) {
+      toast.push(t(plan.missed ? "prov.revertMissed" : "prov.noPendingHere"), "error");
+      return;
+    }
+    const changes = plan.replacements.map((r) => ({ from: byteToChar(text, r.from), to: byteToChar(text, r.to), insert: r.insert }));
+    const missed = plan.missed;
+    whenNotComposing(() => {
+      if (view !== v) return;
+      v.dispatch({ changes, annotations: Transaction.userEvent.of("prov.revert") });
+      toast.push(missed ? t("prov.revertedPartly", { n: changes.length, m: missed }) : t("prov.reverted", { n: changes.length }));
+    });
+  }
+  vault.rejectProvenance = revertProvenance;
 
   /** The snapshot source of `@ current selection`: with a non-empty main selection it updates
    *  vault.editorSelection with the line numbers (1-based, inclusive) and the text, and an
@@ -485,6 +521,7 @@
     },
     pendingCount: () => vault.pendingCount,
     blockTypes: () => types.enabled,
+    rejectProvenance: (localId) => void revertProvenance(localId),
     acceptProvenance: (localId) => {
       vault
         .acceptProvenance(localId)
@@ -887,6 +924,36 @@
       });
       return;
     }
+    // ---- The document already open, reloaded from disk (an agent write landing, an edit in
+    // another app, reloadCurrent): applied as one edit instead of a fresh state. The undo
+    // stack survives it and ⌘Z takes the change back — the buffer's own history is the first
+    // "undo the AI" — and the cursor and the scroll stay put. Only the changed span is
+    // touched (the longest common prefix and suffix), so the marks the fields map through it
+    // stay on their lines. The transaction's docChanged fires the same false onDirty as
+    // resetDoc; finishLoad kills that timer the same way ----
+    if (view && docPath === path) {
+      const v = view;
+      const cur = v.state.doc.toString();
+      const next = Text.of(content.split(/\r\n?|\n/)).toString();
+      if (cur !== next) {
+        const max = Math.min(cur.length, next.length);
+        let head = 0;
+        while (head < max && cur.charCodeAt(head) === next.charCodeAt(head)) head++;
+        let tail = 0;
+        while (tail < max - head && cur.charCodeAt(cur.length - 1 - tail) === next.charCodeAt(next.length - 1 - tail)) tail++;
+        loadingDoc = true;
+        try {
+          v.dispatch({
+            changes: { from: head, to: cur.length - tail, insert: next.slice(head, next.length - tail) },
+            annotations: Transaction.userEvent.of("external"),
+          });
+        } finally {
+          loadingDoc = false;
+        }
+      }
+      finishLoad(path, docEol, v.state.selection.main.head);
+      return;
+    }
     // notes get markdown+wikilinks; other files get their language by extension
     const isNote = path.endsWith(".md");
     const language = isNote ? null : await languageFor(path);
@@ -1044,6 +1111,7 @@
     vault.blockCommand = null;
     vault.nextPending = null;
     vault.pendingAtCursor = null;
+    vault.rejectProvenance = null;
     vault.locateText = null;
     vault.copyBlockRef = null;
     clearDocSignals();
