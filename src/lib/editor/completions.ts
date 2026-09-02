@@ -2,8 +2,18 @@
 // The wikilink completion source lives in wikilink.ts (it needs the host); the
 // sources sit side by side in setup.ts's autocompletion({override}), and each returns
 // null to make way when its matchBefore does not hit.
-import { type Completion, type CompletionContext, type CompletionResult, type CompletionSource, pickedCompletion } from "@codemirror/autocomplete";
-import type { EditorView } from "@codemirror/view";
+import {
+  type Completion,
+  type CompletionContext,
+  type CompletionResult,
+  type CompletionSource,
+  closeCompletion,
+  completionStatus,
+  pickedCompletion,
+  startCompletion,
+} from "@codemirror/autocomplete";
+import { EditorView } from "@codemirror/view";
+import type { Extension } from "@codemirror/state";
 import { t } from "$lib/i18n/i18n.svelte";
 import { localDate } from "$lib/views/tasks";
 import type { FieldStat } from "$lib/api";
@@ -195,4 +205,33 @@ export function calloutCompletions(context: CompletionContext): CompletionResult
     }),
   );
   return { from: typeFrom, options, validFor: /^[\w-]*$/ };
+}
+
+/** The triggers of the typed completions, as the text before the cursor shows them:
+ *  an unclosed `[[`, an `@` token, a `/` command at the line's start, a `key::` value. */
+const TRIGGER_BEFORE_RE = /\[\[[^\]\n]*$|(?:^|[\s(（【[:])@[^\s@]*$|^[ \t]*(?:>[ \t]*|[-*+][ \t]+(?:\[[ xX/]\][ \t]+)?|\d+[.)][ \t]+)*\/[^\s/]*$|[\p{L}\p{N}_-]+:: ?[^\s\])]*$/u;
+
+/** Keep the completion popup out of an IME composition. A popup that is open when a
+ *  composition starts keeps re-filtering on every composition update and rewriting
+ *  the content element's aria-activedescendant, and WebKit treats attribute changes
+ *  on the editing host during marked-text input as a reason to abandon the
+ *  composition — the editor then looks wedged. So the popup closes the moment a
+ *  composition starts and comes back, if a trigger still sits before the cursor,
+ *  once the composition has ended and the browser has settled. */
+export function imeCompletionGuard(): Extension {
+  return EditorView.domEventHandlers({
+    compositionstart(_e, view) {
+      if (completionStatus(view.state) != null) closeCompletion(view);
+      return false;
+    },
+    compositionend(_e, view) {
+      setTimeout(() => {
+        if (view.composing || completionStatus(view.state) != null) return;
+        const head = view.state.selection.main.head;
+        const line = view.state.doc.lineAt(head);
+        if (TRIGGER_BEFORE_RE.test(view.state.sliceDoc(line.from, head))) startCompletion(view);
+      }, 30);
+      return false;
+    },
+  });
 }

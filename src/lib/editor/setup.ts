@@ -14,7 +14,7 @@ import { wikilinkExtension, type WikilinkHost } from "./wikilink";
 import { mdlinkExtension } from "./mdlink";
 import { linkAt } from "./linkat";
 import { livePreview, type AssetLoader, type ImageCopier, type FieldChipHandler } from "./livepreview";
-import { tagCompletions, calloutCompletions, atCompletions, fieldCompletions } from "./completions";
+import { tagCompletions, calloutCompletions, atCompletions, fieldCompletions, imeCompletionGuard } from "./completions";
 import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
 import { embedAt, embedExtension, openEmbedSource, type EmbedHost } from "./embed";
@@ -194,6 +194,7 @@ function buildState(opts: EditorOptions): EditorState {
       foldExtension(),
       blockSelection(),
       flashField,
+      imeCompletionGuard(),
       autocompletion({
         override: [
           refCompletions(host),
