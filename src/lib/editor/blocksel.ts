@@ -171,8 +171,10 @@ const escape: Command = (view) => {
     return true;
   }
   // A completion popup (open or still being computed) owns Escape; and an IME
-  // composition must not be turned into a block selection under the user's fingers
-  if (completionStatus(view.state) != null || view.composing) return false;
+  // composition must not be turned into a block selection under the user's fingers —
+  // including the Escape that cancelled a candidate window, which WebKit delivers
+  // only after compositionend
+  if (completionStatus(view.state) != null || view.composing || Date.now() - lastCompositionEnd < 300) return false;
   const main = view.state.selection.main;
   if (!main.empty) return false;
   if (!ensureParsed(view.state, Math.min(view.state.doc.length, main.head + 5000))) view.dispatch({});
@@ -352,8 +354,15 @@ const handlers = Prec.highest(
       if (isBlockMode(view.state)) view.dispatch({ effects: setBlockSel.of(null), annotations: blockSelTx.of(true) });
       return false;
     },
+    compositionend() {
+      lastCompositionEnd = Date.now();
+      return false;
+    },
   }),
 );
+
+/** When the last IME composition ended (an Escape that cancelled it arrives after this). */
+let lastCompositionEnd = 0;
 
 const input = EditorView.inputHandler.of((view, _from, _to, text) => {
   // Never rewrite a composition's text: the DOM already holds it
