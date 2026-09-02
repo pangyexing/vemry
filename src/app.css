@@ -988,6 +988,26 @@ button:focus-visible,
   box-shadow: inset 3px 0 0 var(--prov-agent);
   padding-left: 6px;
 }
+/* The one-click review control after an unreviewed block's first line */
+.cm-prov-review {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--prov-agent) 55%, transparent);
+  border-radius: 999px;
+  background: none;
+  color: var(--prov-agent);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  vertical-align: baseline;
+  cursor: pointer;
+  opacity: 0.65;
+  user-select: none;
+}
+.cm-prov-review:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--prov-agent) 14%, transparent);
+}
 .cm-editor .cm-scroller .cm-line.cm-prov-you {
   background: color-mix(in srgb, var(--prov-you) 9%, transparent);
 }

@@ -18,7 +18,7 @@ import { tagCompletions, calloutCompletions, atCompletions, fieldCompletions, im
 import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
 import { embedAt, embedExtension, openEmbedSource, type EmbedHost } from "./embed";
-import { provenanceExtension } from "./provenance";
+import { provenanceExtension, type ProvenanceHost } from "./provenance";
 import { flashField } from "./flash";
 import { Highlight, highlightTag } from "./markdown-ext";
 import { queryBlockExtension, type QueryHost } from "./queryblock";
@@ -119,8 +119,8 @@ export interface EditorOptions {
   queryHost?: QueryHost | null;
   /** note mode: run button on `js` blocks (one-shot read-only sandbox) */
   runHost?: RunHost | null;
-  /** note mode: the hover block handle and its menu (null: no handle) */
-  blockHost?: BlockHost | null;
+  /** note mode: the hover block handle and its menu, which also marks AI blocks reviewed (null: no handle) */
+  blockHost?: (BlockHost & ProvenanceHost) | null;
   /** note mode: cross-note embeds `![[Note#^id]]` rendered read-only (null: plain links) */
   embedHost?: EmbedHost | null;
   onSave: (content: string) => void;
@@ -246,7 +246,7 @@ function buildState(opts: EditorOptions): EditorState {
     if (opts.runHost) mode.push(runBlockExtension(opts.runHost));
     if (opts.blockHost) mode.push(blockHandle(opts.blockHost), dragSourceField);
     if (opts.embedHost) mode.push(embedExtension(opts.embedHost));
-    if (opts.blockHost) mode.push(provenanceExtension());
+    if (opts.blockHost) mode.push(provenanceExtension(opts.blockHost));
   } else {
     if (opts.language) mode.push(opts.language);
     mode.push(codeFont, syntaxHighlighting(codeHighlight));

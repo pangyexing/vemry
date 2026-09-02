@@ -10,7 +10,7 @@ import { t } from "$lib/i18n/i18n.svelte";
 import type { Origin } from "$lib/api";
 import { formatSessionId } from "$lib/views/session";
 import { type EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
+import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 
 export interface ProvRow {
   /** Character positions (the editor's), covering the block's lines. */
@@ -26,6 +26,39 @@ export const provenanceSet = StateEffect.define<ProvRow[]>();
 export const provenanceOverlay = StateEffect.define<boolean>();
 /** The pending bar on or off (the `provenance_marks` setting). */
 export const provenanceMarks = StateEffect.define<boolean>();
+
+/** What the editor needs from its host to act on a block: marking it reviewed. */
+export interface ProvenanceHost {
+  acceptProvenance(localId: string | null): void;
+}
+
+/** The one-click control on an unreviewed block's first line — reviewing is one
+ *  gesture, the way an inline diff is accepted, instead of grip → menu → item. */
+class ReviewWidget extends WidgetType {
+  constructor(
+    readonly localId: string,
+    readonly host: ProvenanceHost | null,
+  ) {
+    super();
+  }
+  eq(other: ReviewWidget) {
+    return other.localId === this.localId;
+  }
+  toDOM() {
+    const el = document.createElement("button");
+    el.className = "cm-prov-review";
+    el.type = "button";
+    el.textContent = `✓ ${t("prov.acceptBlock")}`;
+    el.title = t("prov.acceptBlock");
+    el.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.host?.acceptProvenance(this.localId);
+    });
+    return el;
+  }
+}
 
 export function isPending(o: Origin): boolean {
   return o.origin === "agent" && o.pending;
@@ -79,13 +112,14 @@ interface ProvState {
   decos: DecorationSet;
 }
 
-function build(state: EditorState, rows: ProvRow[], overlay: boolean, marks: boolean): DecorationSet {
+function build(state: EditorState, rows: ProvRow[], overlay: boolean, marks: boolean, host: ProvenanceHost | null): DecorationSet {
   const doc = state.doc;
   const decos: ReturnType<Decoration["range"]>[] = [];
   for (const r of rows) {
     const cls: string[] = [];
+    const pending = marks && isPending(r.origin);
     if (overlay) cls.push(`cm-prov-${r.origin.origin}`);
-    if (marks && isPending(r.origin)) cls.push("cm-prov-pending");
+    if (pending) cls.push("cm-prov-pending");
     if (!cls.length) continue;
     const from = Math.min(r.from, doc.length);
     const to = Math.min(Math.max(r.to, from), doc.length);
@@ -93,9 +127,13 @@ function build(state: EditorState, rows: ProvRow[], overlay: boolean, marks: boo
     const last = doc.lineAt(to > from ? to - 1 : to).number;
     const deco = Decoration.line({ class: cls.join(" "), attributes: { title: originLabel(r.origin) } });
     for (let n = first; n <= last; n++) decos.push(deco.range(doc.line(n).from));
+    // the one-click review control, after the first line's text
+    if (pending) decos.push(Decoration.widget({ widget: new ReviewWidget(r.local_id, host), side: 1 }).range(doc.line(first).to));
   }
   return Decoration.set(decos, true);
 }
+
+let currentHost: ProvenanceHost | null = null;
 
 const field = StateField.define<ProvState>({
   create: () => ({ rows: [], overlay: false, marks: true, decos: Decoration.none }),
@@ -122,12 +160,14 @@ const field = StateField.define<ProvState>({
       }
     }
     if (!changed) return v;
-    return { rows, overlay, marks, decos: build(tr.state, rows, overlay, marks) };
+    return { rows, overlay, marks, decos: build(tr.state, rows, overlay, marks, currentHost) };
   },
   provide: (f) => EditorView.decorations.from(f, (v) => v.decos),
 });
 
-export function provenanceExtension(): Extension {
+/** The host is module-level: one editor instance at a time, and a StateField cannot carry a closure. */
+export function provenanceExtension(host: ProvenanceHost | null = null): Extension {
+  currentHost = host;
   return field;
 }
 
