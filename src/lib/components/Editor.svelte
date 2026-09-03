@@ -44,9 +44,10 @@
   } from "$lib/editor/provenance";
   import { byteSpansToChar } from "$lib/views/tasks";
   import { flashRange } from "$lib/editor/flash";
-  import { setFieldValue, fieldValueKind } from "$lib/fields";
+  import { fieldValueKind, scanFields, setFieldValue } from "$lib/fields";
   import { DATE_FIELDS, rescheduleLine, type DateField } from "$lib/views/tasks";
   import TaskDateMenu from "./views/TaskDateMenu.svelte";
+  import FieldValueMenu from "./FieldValueMenu.svelte";
   import { types } from "$lib/stores/types.svelte";
   import type { FieldStat, RevertPlan } from "$lib/api";
   import "katex/dist/katex.min.css";
@@ -59,7 +60,12 @@
   /** Inline-field keys and values across the vault (for `key::` completion), refreshed with the index. */
   let fieldStats: FieldStat[] = [];
   /** The date menu raised by a chip: which line and key it edits. */
-  let fieldMenu = $state<{ x: number; y: number; pos: number; key: string; current: string; field: DateField } | null>(null);
+  let fieldMenu = $state<{ x: number; y: number; pos: number; key: string; current?: string; field: DateField } | null>(null);
+  /** The value menu raised by any other chip: the candidates (the block types' declared
+   *  values first, then the vault's), and whether the input is numeric. */
+  let valueMenu = $state<{ x: number; y: number; pos: number; key: string; current: string; values: string[]; number: boolean } | null>(null);
+  /** How many candidate values the menu lists at most. */
+  const MENU_VALUES_MAX = 12;
 
   $effect(() => {
     void vault.indexVersion;
@@ -71,18 +77,45 @@
   });
 
   const TASK_LINE_RE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+\[[ xX/]\]/;
-  /** The date menu's pick: a task's due/scheduled goes through rescheduleLine (it knows
-   *  the emoji spellings); any other field is rewritten in place by setFieldValue. */
+  /** A menu's pick lands on the line: a task's due/scheduled goes through rescheduleLine
+   *  (it knows the emoji spellings); any other field is rewritten in place by
+   *  setFieldValue, at the clicked chip (null removes it). An empty placeholder of a
+   *  date key (`[due:: ]`, from a block type) is filled in place too: the task-date
+   *  rewriter cannot see it and would leave it behind next to a fresh 📅. */
+  function writeField(m: { pos: number; key: string }, value: string | null) {
+    if (!view) return;
+    const line = view.state.doc.lineAt(Math.min(m.pos, view.state.doc.length));
+    const lower = m.key.toLowerCase();
+    const placeholder = scanFields(line.text, 0, { empty: true }).some((f) => f.value === "" && f.key.toLowerCase() === lower);
+    const isTaskDate = !placeholder && TASK_LINE_RE.test(line.text) && m.key in DATE_FIELDS;
+    const next = isTaskDate ? rescheduleLine(line.text, m.key as DateField, value) : setFieldValue(line.text, m.key, value, m.pos - line.from);
+    view.focus();
+    if (next === line.text) return;
+    view.dispatch({ changes: { from: line.from, to: line.to, insert: next }, userEvent: "input.field" });
+  }
   function applyFieldDate(date: string | null) {
     const m = fieldMenu;
     fieldMenu = null;
-    if (!m || !view) return;
-    const line = view.state.doc.lineAt(Math.min(m.pos, view.state.doc.length));
-    const isTaskDate = TASK_LINE_RE.test(line.text) && m.key in DATE_FIELDS;
-    const next = isTaskDate ? rescheduleLine(line.text, m.key as DateField, date) : setFieldValue(line.text, m.key, date);
-    if (next === line.text) return;
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: next }, userEvent: "input.field" });
-    view.focus();
+    if (m) writeField(m, date);
+  }
+  function applyFieldValue(value: string | null) {
+    const m = valueMenu;
+    valueMenu = null;
+    if (m) writeField(m, value);
+  }
+  /** What the enabled block types declare for a key: every value in order, and the
+   *  value kind (`date` / `number`) the first spec naming one gives it. */
+  function declaredField(key: string): { values: string[]; kind?: string } {
+    const lower = key.toLowerCase();
+    const values: string[] = [];
+    let kind: string | undefined;
+    for (const ty of types.enabled)
+      for (const f of ty.fields) {
+        if (f.key.toLowerCase() !== lower) continue;
+        values.push(...(f.values ?? []));
+        kind ??= f.type;
+      }
+    return { values, kind };
   }
   let loadedFor = -1;
 
@@ -983,9 +1016,19 @@
       tags: () => tagList,
       fieldStats: () => fieldStats,
       blockTypes: () => types.enabled,
-      onFieldChip: (_v: EditorView, pos: number, key: string, value: string, e: MouseEvent) => {
-        if (!(key in DATE_FIELDS) && fieldValueKind(value) !== "date") return;
-        fieldMenu = { x: e.clientX, y: e.clientY, pos, key, current: value, field: key === "scheduled" ? "scheduled" : "due" };
+      // A chip's click: a date (a task date, a date-typed key, a YYYY-MM-DD value) gets the
+      // date menu; everything else the value menu — the declared values first, then the
+      // vault's, deduplicated, and a numeric input when the type says number or the value is one
+      onFieldChip: (_v: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }) => {
+        const spec = declaredField(key);
+        if (key in DATE_FIELDS || spec.kind === "date" || fieldValueKind(value) === "date") {
+          fieldMenu = { x: at.x, y: at.y, pos, key, current: value || undefined, field: key === "scheduled" ? "scheduled" : "due" };
+          return;
+        }
+        const seen = fieldStats.find((s) => s.key.toLowerCase() === key.toLowerCase())?.values ?? [];
+        const values = [...new Set([...spec.values, ...seen])].slice(0, MENU_VALUES_MAX);
+        const number = spec.kind === "number" || (value !== "" && fieldValueKind(value) === "number");
+        valueMenu = { x: at.x, y: at.y, pos, key, current: value, values, number };
       },
       blockHost: isNote ? blockHost : null,
       embedHost: isNote ? embedHost : null,
@@ -1160,6 +1203,18 @@
     current={fieldMenu.current}
     onpick={applyFieldDate}
     onclose={() => (fieldMenu = null)}
+  />
+{/if}
+{#if valueMenu}
+  <FieldValueMenu
+    x={valueMenu.x}
+    y={valueMenu.y}
+    key={valueMenu.key}
+    current={valueMenu.current}
+    values={valueMenu.values}
+    number={valueMenu.number}
+    onpick={applyFieldValue}
+    onclose={() => (valueMenu = null)}
   />
 {/if}
 

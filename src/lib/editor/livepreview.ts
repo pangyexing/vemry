@@ -27,7 +27,7 @@ import { revealArmed, revealRanges, selectionReveals, selectionTouches } from ".
 import { tableField } from "./table";
 import { LINK_RE as WIKI_RE } from "./wikilink";
 import { DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, localDate, scanTaskDates, STAMP_RE } from "$lib/views/tasks";
-import { fieldValueKind, scanFields } from "$lib/fields";
+import { scanFields } from "$lib/fields";
 import { openImageLightbox } from "$lib/lightbox";
 import { copyText } from "$lib/copytext";
 
@@ -196,8 +196,10 @@ class DateChipWidget extends WidgetType {
   }
 }
 
-/** A chip's click: the host opens the date menu for the field at that position. */
-export type FieldChipHandler = (view: EditorView, pos: number, key: string, value: string, e: MouseEvent) => void;
+/** A chip's click: the host opens the menu for the field at that position (`pos` is
+ *  where the field's source starts; `value` is "" for an empty placeholder; `at` is
+ *  where the menu anchors — the click, or the caret for a typed close). */
+export type FieldChipHandler = (view: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }) => void;
 
 function wireChipClick(el: HTMLElement, view: EditorView, onChip: FieldChipHandler | undefined, key: string, value: string) {
   if (!onChip) return;
@@ -206,13 +208,51 @@ function wireChipClick(el: HTMLElement, view: EditorView, onChip: FieldChipHandl
     e.preventDefault();
     e.stopPropagation();
     const pos = view.posAtDOM(el);
-    onChip(view, pos, key, value, e);
+    onChip(view, pos, key, value, { x: e.clientX, y: e.clientY });
   });
 }
 
-/** An inline `key:: value` field as a chip: the key muted, the value plain; a date
- *  value is clickable (the date menu, the same one the task chips use). The source is
- *  shown once the cursor touches the chip's range. */
+/** Typing the `]` (or `)`) that closes an empty bracket field raises its menu at the
+ *  caret at once, the way a click on the chip would: the user has just declined to
+ *  type the value, and while the caret touches the field it is source, not a chip —
+ *  without this the route is click away, click back. Only a typed close counts
+ *  (input.type: an inserted bracket, or the type-over of an auto-closed one), and
+ *  only with the caret coming from just inside; an arrow across the bracket, a paste
+ *  or an undo do not. The menu is raised after the update settles — it is the host's,
+ *  and it takes the focus. */
+function emptyFieldCloser(onChip?: FieldChipHandler): Extension {
+  if (!onChip) return [];
+  const open = onChip;
+  return EditorView.updateListener.of((update) => {
+    if (!update.selectionSet || !update.transactions.some((tr) => tr.isUserEvent("input.type"))) return;
+    const { state, startState } = update;
+    const sel = state.selection.main;
+    const prev = startState.selection.main;
+    if (!sel.empty || !prev.empty || update.changes.mapPos(prev.head, -1) !== sel.head - 1) return;
+    const head = sel.head;
+    const closer = state.sliceDoc(head - 1, head);
+    if (closer !== "]" && closer !== ")") return;
+    if (head < frontmatterEnd(state.doc) || inCode(state, head)) return;
+    const line = state.doc.lineAt(head);
+    const mark = scanFields(line.text, line.from, { empty: true }).find(
+      (f) => f.to === head && f.value === "" && (f.form === "bracket" || f.form === "paren"),
+    );
+    if (!mark) return;
+    const view = update.view;
+    setTimeout(() => {
+      if (view.state.doc !== state.doc || view.state.selection.main.head !== head) return;
+      const c = view.coordsAtPos(mark.from);
+      if (!c) return;
+      open(view, mark.from, mark.key, "", { x: c.left, y: c.bottom + 2 });
+    }, 0);
+  });
+}
+
+/** An inline `key:: value` field as a chip: the key muted, the value plain. A click
+ *  hands it to the host, which raises the value menu (a date value gets the date
+ *  menu, the same one the task chips use). An empty placeholder — the `[key:: ]` a
+ *  block type leaves behind — draws a faint "empty" slot so it can be filled by a
+ *  click. The source is shown once the cursor touches the chip's range. */
 class FieldChipWidget extends WidgetType {
   constructor(
     readonly key: string,
@@ -226,17 +266,17 @@ class FieldChipWidget extends WidgetType {
   }
   toDOM(view: EditorView) {
     const el = document.createElement("span");
-    const date = fieldValueKind(this.value) === "date";
-    el.className = `cm-lp-field${date && this.onChip ? " cm-lp-chip-click" : ""}`;
+    const empty = this.value === "";
+    el.className = `cm-lp-field${this.onChip ? " cm-lp-chip-click" : ""}${empty ? " cm-lp-field-empty" : ""}`;
     const k = document.createElement("span");
     k.className = "cm-lp-field-key";
     k.textContent = this.key;
     const v = document.createElement("span");
     v.className = "cm-lp-field-val";
-    v.textContent = this.value;
+    v.textContent = empty ? t("field.empty") : this.value;
     el.append(k, v);
-    el.title = `${this.key}:: ${this.value}`;
-    if (date) wireChipClick(el, view, this.onChip, this.key, this.value);
+    el.title = empty ? t("field.fillHint") : `${this.key}:: ${this.value}`;
+    wireChipClick(el, view, this.onChip, this.key, this.value);
     return el;
   }
 }
@@ -894,7 +934,9 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
 
     // Inline fields `key:: value` → chips (line by line: the scanner's rules are per
     // line, and a fenced block or the frontmatter is skipped whole). A task line's
-    // due::/scheduled:: are the date chips above and are not drawn twice.
+    // due::/scheduled:: are the date chips above and are not drawn twice. An empty
+    // placeholder is a chip too (the index does not hold it; the chip is how it gets
+    // filled) — an empty `[due:: ]` included, which the date scanner cannot see.
     if (text.includes("::")) {
       const fmEnd = frontmatterEnd(doc);
       for (let pos = range.from; pos <= range.to; ) {
@@ -902,8 +944,8 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
         if (line.to > range.to && line.from > range.from) break;
         if (line.text.includes("::") && line.from >= fmEnd && !isCode(line.from)) {
           const task = TASK_LINE_RE.test(line.text);
-          for (const f of scanFields(line.text, line.from)) {
-            if (task && f.key in DATE_FIELDS) continue;
+          for (const f of scanFields(line.text, line.from, { empty: true })) {
+            if (task && f.key in DATE_FIELDS && f.value !== "") continue;
             if (revealedEl(f.from, f.to)) {
               marks.push({ from: f.from, to: f.to, deco: fieldSrcDeco });
               continue;
@@ -1031,7 +1073,7 @@ const frontmatterField = StateField.define<DecorationSet>({
 export interface LivePreviewOptions {
   loadAsset?: AssetLoader;
   copyImage?: ImageCopier;
-  /** A click on a date chip (a task's due/scheduled, or any `key:: YYYY-MM-DD` field). */
+  /** A click on a chip: a task's due/scheduled date, or any inline `key:: value` field. */
   onFieldChip?: FieldChipHandler;
 }
 
@@ -1050,5 +1092,5 @@ export function livePreview(opts: LivePreviewOptions = {}): Extension {
   // revealArmed is registered here (rather than in setup.ts): every consumer of the
   // reveal predicates (livepreview/table/queryblock/frontmatter/clickopen) lives in
   // note mode alone, and note mode always carries livePreview()
-  return [revealArmed, livePreviewPlugin(opts), compositionRelease, frontmatterField, tableField];
+  return [revealArmed, livePreviewPlugin(opts), compositionRelease, frontmatterField, tableField, emptyFieldCloser(opts.onFieldChip)];
 }

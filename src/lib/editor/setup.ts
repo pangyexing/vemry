@@ -113,7 +113,7 @@ export interface EditorOptions {
   fieldStats?: () => FieldStat[];
   /** note mode: the vault's enabled block types (the `/` menu's "types" section) */
   blockTypes?: () => BlockType[];
-  /** note mode: a click on a date chip (a task date or a `key:: YYYY-MM-DD` field) */
+  /** note mode: a click on a chip (a task date, or any inline `key:: value` field) */
   onFieldChip?: FieldChipHandler;
   /** note mode: live `vemry-query` blocks (query + result-row navigation) */
   queryHost?: QueryHost | null;
@@ -201,7 +201,7 @@ function buildState(opts: EditorOptions): EditorState {
           wikilink.completions,
           atCompletions(host.targets),
           slashCompletions(opts.blockTypes ?? (() => [])),
-          fieldCompletions(opts.fieldStats ?? (() => [])),
+          fieldCompletions(opts.fieldStats ?? (() => []), opts.blockTypes ?? (() => []), opts.onFieldChip),
           tagCompletions(opts.tags ?? (() => [])),
           calloutCompletions,
         ],

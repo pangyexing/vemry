@@ -1484,6 +1484,12 @@ add("field.", {
     "today": ("today", "今天"),
     "tomorrow": ("tomorrow", "明天"),
     "notesWithKey": ("{n} notes", "{n} 篇笔记"),
+    "fromType": ("type {name}", "类型 {name}"),
+    "pickDate": ("Pick a date…", "选一个日期…"),
+    "empty": ("empty", "未填"),
+    "fillHint": ("Click to fill in", "点击填写"),
+    "enterValue": ("Type a value", "输入取值"),
+    "remove": ("Remove field", "移除字段"),
 })
 
 add("embed.", {

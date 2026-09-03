@@ -638,6 +638,16 @@ button:focus-visible,
 .cm-lp-field-src {
   color: var(--fg-muted);
 }
+/* An empty field (`[key:: ]`, the placeholder a block type leaves): an outlined slot with a
+   faint "empty" for the value, filled by a click on the chip */
+.cm-lp-field-empty {
+  background: transparent;
+  border: 1px dashed var(--border);
+}
+.cm-lp-field-empty .cm-lp-field-val {
+  color: var(--fg-faint);
+  font-style: italic;
+}
 .cm-lp-chip-click {
   cursor: pointer;
 }

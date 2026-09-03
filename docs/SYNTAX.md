@@ -178,6 +178,14 @@ whitespace, a digit or the end of the line — so `std::vector`, `C++::foo`,
 - Frontmatter scalars (and `created`) are the note's fields: a field filter
   falls back to them when a block has no field of that key (`title`, `tags`,
   `aliases`, `private` and `vemry` are metadata, not fields)
+- An empty value (`[key:: ]` or `[key::]`: the placeholder a block type leaves
+  behind, or a bracket closed with nothing typed) is not a field to the index;
+  the editor shows it as an empty chip to fill in; the `key:: ` completion of
+  a date key offers "Pick a date…", which raises the date menu at the caret,
+  and typing the `]` that closes an empty field raises its menu right away
+- In the editor a field renders as a chip; a click on it opens a value menu —
+  a free input, the values the vault already uses, and "remove field"; a date
+  value gets the date menu instead
 
 **Fallback**: `key:: value` is readable plain text; `[key:: value]` shows as a
 bracketed span (it is not a link, having no `(url)`); `(key:: value)` is a
@@ -262,9 +270,12 @@ paired-delimiter extension modelled on `@lezer/markdown`'s own strikethrough.
 (`{{key}}` a field's default, `{{date}}` today, `{{cursor}}` the caret). The `/`
 menu and "turn into ›" list the enabled types; applying one turns the block into
 the kind and appends the fields it lacks as `[key:: value]` with the tag. A
-typed block is ordinary Markdown with inline fields — nothing in a note points
-at the type, and deleting a type file changes no note. The agent's system
-prompt names the types so it writes such blocks the same way.
+field's `values` are what its chip's menu and the `key:: ` completion offer
+first; `type: number` makes the menu's input numeric and `type: date` sends
+the chip to the date menu. A typed block is ordinary Markdown with inline
+fields — nothing in a note points at the type, and deleting a type file
+changes no note. The agent's system prompt names the types so it writes such
+blocks the same way.
 
 **Fallback**: a typed block is a normal block with `[key:: value]` text.
 

@@ -16,10 +16,11 @@ import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { t } from "$lib/i18n/i18n.svelte";
 import { localDate } from "$lib/views/tasks";
-import type { FieldStat } from "$lib/api";
+import type { BlockType, FieldStat } from "$lib/api";
 import { blockAt, frontmatterEnd } from "./blocks";
-import { inCode } from "./livepreview";
+import { type FieldChipHandler, inCode } from "./livepreview";
 import { CALLOUT_GROUP } from "./livepreview";
+import { scanFields } from "$lib/fields";
 
 /** `@` at the start of a line or after whitespace / an opening bracket / `:` (the
  *  `supports:@` of an evidence block); mirrors the agent composer's AT_RE. */
@@ -86,14 +87,35 @@ export function atCompletions(targets: () => string[]): CompletionSource {
   };
 }
 
-/** Inline-field completion, two sources. Values: after `key:: ` the key's values seen
- *  across the vault (most frequent first) plus today/tomorrow for a date-valued key.
- *  Keys: a word followed by one `:` offers the known keys it prefixes, and accepting
- *  writes `key:: ` — so a field is typed as `author:` + Enter. A `::` not followed by
- *  a space or a digit is not a field (the parser's rule), so `std::vector` gets
- *  nothing; code, frontmatter and an unclosed `[[` are left alone. */
-export function fieldCompletions(stats: () => FieldStat[]): CompletionSource {
+/** Inline-field completion, two sources. Values: after `key:: ` the values a block
+ *  type declares for the key come first, then today/tomorrow and "Pick a date…" for
+ *  a date-valued key (the last raises the date menu at the caret — the one step from
+ *  `[due::` to the calendar, since the bracket auto-closes and the field is source,
+ *  not a clickable chip, while the caret is in it), then the key's values seen across
+ *  the vault (most frequent first). Keys: a word followed by one `:` offers the keys
+ *  it prefixes — the types' declared keys, then the vault's — and accepting writes
+ *  `key:: `, so a field is typed as `author:` + Enter. A `::` not followed by a space
+ *  or a digit is not a field (the parser's rule), so `std::vector` gets nothing;
+ *  code, frontmatter and an unclosed `[[` are left alone. */
+export function fieldCompletions(
+  stats: () => FieldStat[],
+  blockTypes: () => BlockType[] = () => [],
+  onFieldChip?: FieldChipHandler,
+): CompletionSource {
   const DATE_KEYS = new Set(["due", "scheduled", "date", "start", "end", "created", "deadline"]);
+  /** What the enabled types declare for a key: each value with the type naming it, and whether one calls the key a date. */
+  const declared = (key: string) => {
+    const lower = key.toLowerCase();
+    const values: { value: string; type: string }[] = [];
+    let date = false;
+    for (const ty of blockTypes())
+      for (const f of ty.fields) {
+        if (f.key.toLowerCase() !== lower) continue;
+        if (f.type === "date") date = true;
+        for (const value of f.values ?? []) values.push({ value, type: ty.name });
+      }
+    return { values, date };
+  };
   return (context: CompletionContext): CompletionResult | null => {
     const line = context.state.doc.lineAt(context.pos);
     if (line.from < frontmatterEnd(context.state.doc)) return null;
@@ -123,27 +145,74 @@ export function fieldCompletions(stats: () => FieldStat[]): CompletionSource {
           apply: spaced ? undefined : ` ${label}`,
         });
       };
-      const dateKey = DATE_KEYS.has(key.toLowerCase()) || (stat?.values.some((v) => /^\d{4}-\d{2}-\d{2}$/.test(v)) ?? false);
+      const decl = declared(key);
+      for (const d of decl.values) push(d.value, t("field.fromType", { name: d.type }), 3);
+      const dateKey = decl.date || DATE_KEYS.has(key.toLowerCase()) || (stat?.values.some((v) => /^\d{4}-\d{2}-\d{2}$/.test(v)) ?? false);
       if (dateKey) {
         push(localDate(0), t("field.today"), 2);
         push(localDate(1), t("field.tomorrow"), 1);
       }
+      const from = value.from + m[1].length + key.length + 2 + (spaced ? 1 : 0);
+      if (dateKey && onFieldChip) {
+        const open = onFieldChip;
+        options.push({
+          label: t("field.pickDate"),
+          type: "text",
+          boost: 0.5,
+          section: { name: t("field.sectionValues"), rank: 0 },
+          // The menu edits the field in place, so there has to be one: an auto-closed
+          // `[due::]` or a whole-line `due::` already is; an unclosed `[due::` (auto-close
+          // off) gets its bracket first. The menu is anchored under the field's start.
+          apply: (view: EditorView, _c, applyFrom: number, applyTo: number) => {
+            const lower = key.toLowerCase();
+            const find = () => {
+              const line = view.state.doc.lineAt(applyFrom);
+              return scanFields(line.text, line.from, { empty: true }).find((f) => f.key.toLowerCase() === lower && f.from <= applyFrom && applyFrom <= f.to);
+            };
+            let mark = find();
+            if (!mark) {
+              const line = view.state.doc.lineAt(applyFrom);
+              const opener = /([[(])[\p{L}\p{N}_-]+::\s?$/u.exec(view.state.sliceDoc(line.from, applyFrom));
+              if (!opener) return;
+              view.dispatch({ changes: { from: applyTo, insert: opener[1] === "[" ? "]" : ")" }, selection: { anchor: applyTo } });
+              mark = find();
+              if (!mark) return;
+            }
+            const c = view.coordsAtPos(mark.from);
+            if (c) open(view, mark.from, mark.key, "", { x: c.left, y: c.bottom + 2 });
+          },
+        });
+      }
       for (const v of stat?.values ?? []) push(v);
       if (!options.length) return null;
-      return { from: value.from + m[1].length + key.length + 2 + (spaced ? 1 : 0), options, validFor: /^[^\s\])]*$/ };
+      return { from, options, validFor: /^[^\s\])]*$/ };
     }
     const keyMatch = context.matchBefore(/(^|[\s[(])([\p{L}\p{N}_-]+):$/u);
     if (!keyMatch) return null;
     const km = /(^|[\s[(])([\p{L}\p{N}_-]+):$/u.exec(keyMatch.text)!;
     const typed = km[2].toLowerCase();
-    const keys = stats().filter((s) => s.key.toLowerCase().startsWith(typed) && !/^\d+$/.test(s.key));
+    const keys: { key: string; detail: string }[] = [];
+    const seenKeys = new Set<string>();
+    for (const ty of blockTypes())
+      for (const f of ty.fields) {
+        const lower = f.key.toLowerCase();
+        if (!lower.startsWith(typed) || seenKeys.has(lower)) continue;
+        seenKeys.add(lower);
+        keys.push({ key: f.key, detail: t("field.fromType", { name: ty.name }) });
+      }
+    for (const s of stats()) {
+      const lower = s.key.toLowerCase();
+      if (!lower.startsWith(typed) || /^\d+$/.test(s.key) || seenKeys.has(lower)) continue;
+      seenKeys.add(lower);
+      keys.push({ key: s.key, detail: t("field.notesWithKey", { n: s.count }) });
+    }
     if (!keys.length) return null;
     const from = keyMatch.from + km[1].length;
     return {
       from,
       options: keys.map((s) => ({
         label: `${s.key}:`,
-        detail: t("field.notesWithKey", { n: s.count }),
+        detail: s.detail,
         type: "text",
         section: { name: t("field.sectionKeys"), rank: 0 },
         apply: (view: EditorView, _c, applyFrom: number, applyTo: number) => {

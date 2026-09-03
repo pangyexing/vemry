@@ -123,6 +123,8 @@ author:: Ursula K. Le Guin
 - 任务的 `due::` / `scheduled::` 既是任务日期也是普通字段；`📅` / `⏳` 写法只是任务日期
 - 行内代码、`[[wikilink]]`、围栏代码与 frontmatter 内不扫描
 - frontmatter 的标量（以及 `created`）是笔记级字段：块没有该键时字段过滤会回退到它们（`title`、`tags`、`aliases`、`private`、`vemry` 是元数据，不算字段）
+- 空值（`[key:: ]` 或 `[key::]`：块类型留下的占位，或没打值就闭合的括号）对索引而言不是字段；编辑器把它显示为一个待填的空 chip；日期键的 `key:: ` 补全里有「选一个日期…」，回车即在光标处弹出日期菜单，手动打出闭合空字段的 `]` 也会立刻弹出它的菜单
+- 编辑器里字段渲染为 chip；点击弹出取值菜单——自由输入框、知识库里已用过的值、「移除字段」；日期值改弹日期菜单
 
 **降级**：`key:: value` 是可读的纯文本；`[key:: value]` 显示为方括号文本（没有 `(url)`，不是链接）；`(key:: value)` 是括号文本。不会吞掉内容，也不会打断列表。
 
@@ -167,7 +169,7 @@ author:: Ursula K. Le Guin
 
 ## 块类型
 
-`.vemry/types/<名称>.md` 声明一种常写的块：frontmatter 里 `name`、`description`、`kind`（转换目标：`paragraph`、`bullet`、`task`、`quote`、`callout` 等）、`tag`、`icon`、`fields`（键列表，或 `{key, default, values, type}` 映射），正文是模板（`{{key}}` = 字段默认值，`{{date}}` = 今天，`{{cursor}}` = 光标落点）。`/` 菜单与「转换为 ›」列出启用的类型；应用一个类型 = 把块转成该 kind，并把缺失的字段以 `[key:: value]` 连同标签补到行尾。类型化的块就是带行内字段的普通 Markdown——笔记里没有任何东西指向类型，删除类型文件不改任何笔记。agent 的系统提示会列出类型，使它以同样方式写这类块。
+`.vemry/types/<名称>.md` 声明一种常写的块：frontmatter 里 `name`、`description`、`kind`（转换目标：`paragraph`、`bullet`、`task`、`quote`、`callout` 等）、`tag`、`icon`、`fields`（键列表，或 `{key, default, values, type}` 映射），正文是模板（`{{key}}` = 字段默认值，`{{date}}` = 今天，`{{cursor}}` = 光标落点）。`/` 菜单与「转换为 ›」列出启用的类型；应用一个类型 = 把块转成该 kind，并把缺失的字段以 `[key:: value]` 连同标签补到行尾。字段的 `values` 是它的 chip 菜单与 `key:: ` 补全优先给出的候选；`type: number` 让菜单的输入框变成数字输入，`type: date` 让 chip 改弹日期菜单。类型化的块就是带行内字段的普通 Markdown——笔记里没有任何东西指向类型，删除类型文件不改任何笔记。agent 的系统提示会列出类型，使它以同样方式写这类块。
 
 **降级**：类型化的块就是带 `[key:: value]` 文本的普通块。
 

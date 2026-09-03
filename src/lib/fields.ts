@@ -64,8 +64,18 @@ export function blockContentStart(line: string): number {
   }
 }
 
+export interface ScanOptions {
+  /** Also report a field whose value is empty — `[key:: ]` or `[key::]`, or `key::`
+   *  alone on its line — the placeholder a block type leaves behind, or a bracket the
+   *  user closed with nothing typed. The index never holds one
+   *  (the Rust scanner drops it, and so does this one by default: the mirror stays
+   *  exact); only the editor's chip and setFieldValue's in-place fill ask for it. A
+   *  bare `key::` at the end of a line is never reported: an empty token is nothing. */
+  empty?: boolean;
+}
+
 /** Every field of a text (one or more lines), offsets relative to `base`. */
-export function scanFields(text: string, base = 0): FieldMark[] {
+export function scanFields(text: string, base = 0, opts: ScanOptions = {}): FieldMark[] {
   const out: FieldMark[] = [];
   if (!text.includes("::")) return out;
   let inCode = false;
@@ -95,15 +105,19 @@ export function scanFields(text: string, base = 0): FieldMark[] {
         continue;
       }
       const after = line.slice(i + 2);
-      const afterOk = after === "" || /^[\s\d]/.test(after);
       let keyStart = i;
       while (keyStart > 0 && KEY_CHAR.test(line[keyStart - 1])) keyStart--;
       const key = line.slice(keyStart, i);
+      const before = keyStart > 0 ? line[keyStart - 1] : undefined;
+      // `[key::]` — closed with nothing after the colons — is no field to the index (the
+      // rule wants whitespace, a digit or the line's end after `::`) but is an empty
+      // placeholder to the editor, like `[key:: ]`
+      const closedEmpty = !!opts.empty && (before === "[" ? after.startsWith("]") : before === "(" && after.startsWith(")"));
+      const afterOk = after === "" || /^[\s\d]/.test(after) || closedEmpty;
       if (!afterOk || !isFieldKey(key)) {
         i += 2;
         continue;
       }
-      const before = keyStart > 0 ? line[keyStart - 1] : undefined;
       let found: { from: number; to: number; valueFrom: number; valueTo: number; value: string; form: FieldForm } | null = null;
       if (before === "[" || before === "(") {
         const close = before === "[" ? "]" : ")";
@@ -149,7 +163,7 @@ export function scanFields(text: string, base = 0): FieldMark[] {
           form: "bare",
         };
       }
-      if (found && found.value !== "") {
+      if (found && (found.value !== "" || (opts.empty && found.form !== "bare"))) {
         out.push({
           key,
           value: found.value,
@@ -182,14 +196,17 @@ export function fieldValueKind(value: string): FieldValueKind {
   return "text";
 }
 
-/** Set, replace or (with null) remove a field on one line. The first field with that
- *  key is rewritten in place, keeping the form the user wrote; a new field is appended
- *  as `[key:: value]` before any trailing ` ^id` (appending after it would kill the
+/** Set, replace or (with null) remove a field on one line. The field with that key is
+ *  rewritten in place, keeping the form the user wrote — an empty placeholder `[key:: ]`
+ *  is filled rather than doubled; with several of the key, `at` (an offset into the
+ *  line, the clicked chip) picks one, else the first. A new field is appended as
+ *  `[key:: value]` before any trailing ` ^id` (appending after it would kill the
  *  anchor). A task line's due/scheduled dates are not this function's business — the
  *  caller routes those to rescheduleLine, which knows the emoji spellings. */
-export function setFieldValue(line: string, key: string, value: string | null): string {
+export function setFieldValue(line: string, key: string, value: string | null, at?: number): string {
   const lower = key.toLowerCase();
-  const mark = scanFields(line).find((f) => f.key.toLowerCase() === lower);
+  const marks = scanFields(line, 0, { empty: true }).filter((f) => f.key.toLowerCase() === lower);
+  const mark = (at === undefined ? undefined : marks.find((f) => f.from <= at && at <= f.to)) ?? marks[0];
   if (mark) {
     if (value === null) {
       let before = line.slice(0, mark.from);
@@ -197,7 +214,9 @@ export function setFieldValue(line: string, key: string, value: string | null): 
       if (/\s$/.test(before) && (after === "" || /^\s/.test(after))) before = before.replace(/\s+$/, "");
       return before + after;
     }
-    return line.slice(0, mark.valueFrom) + value + line.slice(mark.valueTo);
+    // an empty `key::` has no space after the colons yet, and `key::value` is not a field
+    const sep = line.slice(mark.from, mark.valueFrom).endsWith("::") ? " " : "";
+    return line.slice(0, mark.valueFrom) + sep + value + line.slice(mark.valueTo);
   }
   if (value === null) return line;
   const anchor = /[ \t]\^[A-Za-z0-9-]+[ \t]*$/.exec(line);
