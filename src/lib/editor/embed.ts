@@ -8,6 +8,9 @@
 // resolved through `resolve_ref` (UI semantics: private notes are not
 // filtered, like every view) and cached per index version; heights are cached
 // per target so a widget mounts at its last size and scrolling does not jump.
+// A widget is equal to itself shifted by an edit elsewhere (eq ignores where it
+// stands), so typing above an embed keeps its DOM; whatever needs its position
+// reads it at event time with posAtDOM.
 import { t } from "$lib/i18n/i18n.svelte";
 import { syntaxTree } from "@codemirror/language";
 import { type EditorState, type Extension, type Line, StateField } from "@codemirror/state";
@@ -104,14 +107,16 @@ function crumbOf(target: string, label: string | null, r?: RefResolution): { tit
   return { title, sep: "", sub: "" };
 }
 
-function wire(view: EditorView, el: HTMLElement, host: EmbedHost, inner: string, lineFrom: number) {
+function wire(view: EditorView, el: HTMLElement, host: EmbedHost, inner: string) {
   el.addEventListener("mousedown", (e) => {
     const target = e.target as HTMLElement;
     e.preventDefault();
     e.stopPropagation();
     if (e.button !== 0) return;
     if (target.closest(".cm-embed-edit")) {
-      view.dispatch({ selection: { anchor: lineFrom } });
+      // the widget's current line: it outlives position shifts, so a position baked
+      // in at creation would go stale
+      view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
       view.focus();
       return;
     }
@@ -136,19 +141,22 @@ function wire(view: EditorView, el: HTMLElement, host: EmbedHost, inner: string,
 }
 
 class EmbedWidget extends WidgetType {
+  /** The height cache's key: the embed text within this note, wherever it stands. */
+  readonly key: string;
   constructor(
     readonly inner: string,
+    /** Where the embed stood when built; only the recursion check reads it (an
+     *  edit that changes the answer also bumps the index version and rebuilds). */
     readonly lineFrom: number,
     readonly version: number,
     readonly host: EmbedHost,
   ) {
     super();
+    this.key = `${host.currentNote() ?? ""}|${inner}`;
   }
   eq(other: EmbedWidget) {
-    return other.inner === this.inner && other.lineFrom === this.lineFrom && other.version === this.version;
-  }
-  get key() {
-    return `${this.lineFrom}\0${this.inner}`;
+    // not lineFrom: the same embed shifted by an edit elsewhere keeps its DOM
+    return other.inner === this.inner && other.version === this.version;
   }
   get estimatedHeight() {
     return heights.get(this.key) ?? 72;
@@ -192,11 +200,8 @@ class EmbedWidget extends WidgetType {
       sub.hidden = !c.sub;
     };
     setCrumb();
-    const known = heights.get(this.key);
-    if (known) body.style.minHeight = `${Math.max(0, known - 40)}px`;
-    wire(view, wrap, this.host, this.inner, this.lineFrom);
-    const finish = (r: RefResolution) => {
-      if (!wrap.isConnected) return;
+    wire(view, wrap, this.host, this.inner);
+    const fill = (r: RefResolution) => {
       setCrumb(r);
       body.style.minHeight = "";
       if (r.state === "note_missing") {
@@ -225,12 +230,25 @@ class EmbedWidget extends WidgetType {
           note.remove();
         }
       }
-      heights.set(this.key, wrap.offsetHeight);
-      view.requestMeasure();
     };
     const entry = lookup(this.host, target, this.version);
-    if (entry.value) finish(entry.value);
-    else entry.promise.then(finish).catch(() => finish({ state: "note_missing" }));
+    if (entry.value) {
+      // A cached resolution (the target embedded twice, a widget scrolled back into the
+      // viewport, a re-mounted tab): fill the DOM now, before CodeMirror mounts it. No
+      // placeholder, and no isConnected guard here — the element is not attached yet,
+      // and a guard at this point would leave the placeholder up for good.
+      fill(entry.value);
+    } else {
+      const known = heights.get(this.key);
+      if (known) body.style.minHeight = `${Math.max(0, known - 40)}px`;
+      const finish = (r: RefResolution) => {
+        if (!wrap.isConnected) return; // dropped before the source arrived
+        fill(r);
+        heights.set(this.key, wrap.offsetHeight);
+        view.requestMeasure();
+      };
+      entry.promise.then(finish, () => finish({ state: "note_missing" }));
+    }
     return wrap;
   }
 }
@@ -238,7 +256,6 @@ class EmbedWidget extends WidgetType {
 class EmbedChipWidget extends WidgetType {
   constructor(
     readonly inner: string,
-    readonly lineFrom: number,
     readonly version: number,
     readonly host: EmbedHost,
   ) {
@@ -257,18 +274,19 @@ class EmbedChipWidget extends WidgetType {
     const c = crumbOf(target, label);
     el.textContent = `⧉ ${c.title}${c.sep ? ` ${c.sep} ${c.sub}` : ""}`.trim();
     el.title = t("embed.open");
-    wire(view, el, this.host, this.inner, this.lineFrom);
+    wire(view, el, this.host, this.inner);
     const entry = lookup(this.host, target, this.version);
     const mark = (r: RefResolution) => {
-      if (!el.isConnected) return;
       if (r.state !== "resolved") el.classList.add("cm-embed-chip-missing");
       else {
         const cc = crumbOf(target, label, r);
         el.textContent = `⧉ ${cc.title}${cc.sep ? ` ${cc.sep} ${cc.sub}` : ""}`.trim();
       }
     };
+    // a cached resolution is applied before the chip is mounted (no isConnected
+    // guard, as for EmbedWidget); a late one only if the chip is still there
     if (entry.value) mark(entry.value);
-    else entry.promise.then(mark).catch(() => undefined);
+    else entry.promise.then((r) => void (el.isConnected && mark(r))).catch(() => undefined);
     return el;
   }
 }
@@ -298,7 +316,7 @@ function build(state: EditorState, version: number, host: EmbedHost): BuildResul
       decos.push(Decoration.replace({ widget: new EmbedWidget(m[1], line.from, version, host), block: true }).range(line.from, line.to));
     } else {
       if (selectionReveals(state, start, end)) continue;
-      decos.push(Decoration.replace({ widget: new EmbedChipWidget(m[1], line.from, version, host) }).range(start, end));
+      decos.push(Decoration.replace({ widget: new EmbedChipWidget(m[1], version, host) }).range(start, end));
     }
   }
   return { decos: Decoration.set(decos, true), hasEmbed };
