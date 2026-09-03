@@ -7,12 +7,13 @@ import {
   type CompletionContext,
   type CompletionResult,
   type CompletionSource,
+  acceptCompletion,
   closeCompletion,
   completionStatus,
   pickedCompletion,
   startCompletion,
 } from "@codemirror/autocomplete";
-import { EditorView } from "@codemirror/view";
+import { type Command, EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { t } from "$lib/i18n/i18n.svelte";
 import { localDate } from "$lib/views/tasks";
@@ -21,6 +22,26 @@ import { blockAt, frontmatterEnd } from "./blocks";
 import { type FieldChipHandler, inCode } from "./livepreview";
 import { CALLOUT_GROUP } from "$lib/callout";
 import { declaredField, fieldValueKind, scanFields } from "$lib/fields";
+
+/** Tab accepts the selected completion, like Enter; with none open it falls through
+ *  to indentation. The difference is what a note name does with it: Enter finishes
+ *  the link and lands after `]]`, Tab completes the stem and keeps the caret inside
+ *  the brackets, so the target can go on being typed — `#` opens the headings and
+ *  blocks of that note, `|` an alias. The same convention as the `@` picker and the
+ *  palette, where Tab on a note row drills into it. `acceptCompletion` calls the
+ *  option's apply synchronously, which is what lets a flag carry the key to it. */
+let tabAccepting = false;
+export function acceptedByTab(): boolean {
+  return tabAccepting;
+}
+export const acceptWithTab: Command = (view) => {
+  tabAccepting = true;
+  try {
+    return acceptCompletion(view);
+  } finally {
+    tabAccepting = false;
+  }
+};
 
 /** `@` at the start of a line or after whitespace / an opening bracket / `:` (the
  *  `supports:@` of an evidence block); mirrors the agent composer's AT_RE. */

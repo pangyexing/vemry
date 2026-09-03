@@ -11,6 +11,7 @@ import {
 import { type EditorState } from "@codemirror/state";
 import { type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { linkClickHandlers, matchAt, type LinkHit } from "./clickopen";
+import { acceptedByTab } from "./completions";
 import type { RefHost } from "./blockref";
 
 /** What the editor supplies: link resolution and completion candidates, plus the
@@ -98,9 +99,11 @@ export function wikilinkExtension(host: WikilinkHost, singleClick: () => boolean
         // nothing more is inserted, or a static apply would double-close into [[name]]]]
         apply: (view: EditorView, _completion, applyFrom: number, applyTo: number) => {
           const closed = view.state.sliceDoc(applyTo, applyTo + 2) === "]]";
+          // Enter lands after the ]]; Tab stays before it, for a `#` or `|` to follow
+          const past = acceptedByTab() ? 0 : 2;
           view.dispatch({
             changes: { from: applyFrom, to: applyTo, insert: closed ? name : `${name}]]` },
-            selection: { anchor: applyFrom + name.length + 2 }, // land after the ]]
+            selection: { anchor: applyFrom + name.length + past },
           });
         },
       })),

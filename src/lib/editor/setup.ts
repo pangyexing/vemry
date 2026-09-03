@@ -14,7 +14,7 @@ import { wikilinkExtension, type WikilinkHost } from "./wikilink";
 import { mdlinkExtension } from "./mdlink";
 import { linkAt } from "./linkat";
 import { livePreview, type AssetLoader, type ImageCopier, type FieldChipHandler } from "./livepreview";
-import { tagCompletions, calloutCompletions, atCompletions, fieldCompletions, imeCompletionGuard } from "./completions";
+import { tagCompletions, calloutCompletions, atCompletions, fieldCompletions, imeCompletionGuard, acceptWithTab } from "./completions";
 import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
 import { embedAt, embedExtension, openEmbedSource, type EmbedHost } from "./embed";
@@ -211,7 +211,8 @@ function buildState(opts: EditorOptions): EditorState {
         activateOnCompletion: (c) => c.type === "chain",
       }),
       wikilink.extension,
-      keymap.of(completionKeymap),
+      // Tab accepts too (before the base keymap's indentWithTab, which it falls through to)
+      keymap.of([...completionKeymap, { key: "Tab", run: acceptWithTab }]),
       // Open the link at the cursor: in the raw state (while editing) a mouse click
       // means editing, and this is the keyboard exit.
       // With no link it falls through to defaultKeymap's Mod-Enter (insertBlankLine)

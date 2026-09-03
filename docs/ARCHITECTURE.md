@@ -944,7 +944,10 @@ the group shown as detail; a bare `[!` at the start of a line triggers too, and
 accepting inserts the `> ` prefix). Cooperating with `closeBrackets()` is a
 question every apply function has to answer: if `]]` or `]` already follows the
 cursor, insert only the name, otherwise insert the closer too — a static apply
-double-closes into `[[name]]]]`. Completion candidates (link targets, tags) filter
+double-closes into `[[name]]]]`. Enter and Tab both accept; for a note name Enter
+lands after the `]]` while Tab keeps the caret inside the brackets, so `#` goes on
+to the note's headings and blocks (`blockref.ts`) and `|` to an alias — the drill-in
+convention the `@` picker and the palette use. Completion candidates (link targets, tags) filter
 out private notes in the frontend; the resolved test (`knownTargets`) still uses the
 full set, because an existing link pointing at a private note should not be shown as
 unresolved.
