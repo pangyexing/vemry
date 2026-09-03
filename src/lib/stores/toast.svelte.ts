@@ -1,6 +1,6 @@
-// Transient notification stack (scripts' vemry.toast, script errors). Info
-// toasts auto-dismiss; error toasts stay until clicked so failures in
-// background workflows are never missed.
+// Transient notification stack (the app's own notices, scripts' vemry.toast, script
+// errors). An info toast dismisses itself after a reading time scaled to its length; an
+// error toast stays until dismissed, so failures in background workflows are never missed.
 
 export interface ToastItem {
   id: number;
@@ -10,29 +10,61 @@ export interface ToastItem {
   count: number;
 }
 
-const AUTO_DISMISS_MS = 4000;
+/** A base reading time plus an allowance per character, capped: a four-word confirmation is
+ *  gone before it nags, a path with a sentence around it stays long enough to be read. */
+const DISMISS_BASE_MS = 3500;
+const DISMISS_PER_CHAR_MS = 40;
+const DISMISS_MAX_MS = 9000;
+/** A toast the pointer has just left gets a short grace, not its whole time again. */
+const RELEASE_GRACE_MS = 1500;
 /** Errors stick around, and without a cap a script that fails on every event would paper over the viewport; past this the oldest is dropped. */
 const MAX_ITEMS = 6;
+
+function readingTime(message: string): number {
+  return Math.min(DISMISS_MAX_MS, DISMISS_BASE_MS + DISMISS_PER_CHAR_MS * message.length);
+}
 
 class ToastStore {
   items = $state<ToastItem[]>([]);
   #next = 1;
+  #timers = new Map<number, ReturnType<typeof setTimeout>>();
 
   push(message: string, level: "info" | "error" = "info") {
     const dup = this.items.find((t) => t.message === message && t.level === level);
     if (dup) {
       dup.count += 1;
+      this.#arm(dup.id, level, readingTime(message)); // a repeat is news too: its clock restarts
       return;
     }
     const id = this.#next++;
     this.items = [...this.items, { id, message, level, count: 1 }].slice(-MAX_ITEMS);
-    if (level === "info") {
-      setTimeout(() => this.dismiss(id), AUTO_DISMISS_MS);
-    }
+    this.#arm(id, level, readingTime(message));
+  }
+
+  /** The pointer over a toast holds it: it is being read, or its text is being selected to copy. */
+  hold(id: number) {
+    this.#disarm(id);
+  }
+
+  release(id: number) {
+    const it = this.items.find((t) => t.id === id);
+    if (it) this.#arm(id, it.level, RELEASE_GRACE_MS);
   }
 
   dismiss(id: number) {
+    this.#disarm(id);
     this.items = this.items.filter((t) => t.id !== id);
+  }
+
+  #arm(id: number, level: "info" | "error", ms: number) {
+    this.#disarm(id);
+    if (level === "info") this.#timers.set(id, setTimeout(() => this.dismiss(id), ms));
+  }
+
+  #disarm(id: number) {
+    const t = this.#timers.get(id);
+    if (t !== undefined) clearTimeout(t);
+    this.#timers.delete(id);
   }
 }
 

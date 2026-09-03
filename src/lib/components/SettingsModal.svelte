@@ -204,12 +204,8 @@
     vault.revealInTree();
   }
 
-  /** The store's dirty guard writes vault.error, which the overlay may cover — say it here as a toast */
+  /** The store's own dirty guard applies (its vault.error is announced above every overlay). */
   function unmarkNote(id: string) {
-    if (id === vault.currentPath && vault.dirty) {
-      toast.push(t("vaultStore.dirtyBeforePrivacy", { key: k("Mod+S") }), "error");
-      return;
-    }
     void vault.unmarkPrivate(id, "note");
   }
 

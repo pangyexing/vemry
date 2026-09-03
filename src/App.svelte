@@ -326,6 +326,17 @@
     if (!vault.root) return;
     void types.refresh();
   });
+  // The store's sticky error slot is announced through the same stack as every other notice,
+  // so there is one place at the bottom of the window to look at, not a second strip in a
+  // second place. The slot is cleared once shown: the same text failing twice is said twice,
+  // and no later reader mistakes an old failure for the result of its own operation. The
+  // welcome page (no vault yet) keeps rendering the slot inline.
+  $effect(() => {
+    if (vault.root && vault.error) {
+      toast.push(vault.error, "error");
+      vault.error = null;
+    }
+  });
 
   async function pickVault() {
     const dir = await openDialog({ directory: true, title: t("app.pickVaultFolder") });
@@ -1150,16 +1161,11 @@
       across the window and suppresses the hover feedback of whatever it passes over -->
     <div class="resize-veil" aria-hidden="true"></div>
   {/if}
-  {#if vault.error}
-    <div class="toast" role="alert">
-      {vault.error}
-      <button onclick={() => (vault.error = null)}>✕</button>
-    </div>
-  {/if}
 {/if}
 
-<!-- With the main layout's bottom status bar the toast is raised; the welcome page has none and keeps the default -->
-<ToastStack lift={vault.root ? "var(--statusbar-h)" : "0px"} />
+<!-- With the main layout's bottom status bar the toast is raised; the welcome page has none and keeps
+  the default. A docked browser window covers the right edge, so the stack centres in what is left -->
+<ToastStack lift={vault.root ? "var(--statusbar-h)" : "0px"} inset={Math.max(browser.overlayInset, 0)} />
 <CommandPalette bind:mode={paletteMode} onPickNote={deliverPicked} onCaptureToNote={pickNoteForCapture} />
 <ContextMenu />
 <PermissionDialog />
@@ -1437,24 +1443,5 @@
   .reopen:hover {
     background: var(--bg-hover);
     color: var(--fg-muted);
-  }
-  .toast {
-    position: fixed;
-    /* It clears the bottom status bar, on the same baseline as ToastStack */
-    bottom: calc(16px + var(--statusbar-h));
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--bg-panel);
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--danger);
-    border-radius: 6px;
-    padding: 8px 12px;
-    font-size: var(--fs-sm);
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    box-shadow: var(--shadow);
-    z-index: 300;
-    max-width: 80vw;
   }
 </style>

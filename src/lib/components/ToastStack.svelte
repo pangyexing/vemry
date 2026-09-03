@@ -1,21 +1,38 @@
 <script lang="ts">
-  // The toast stack in the bottom-right corner: the main window and the detached chat
-  // window each mount one (the toast store belongs to each window).
-  // lift: a window that has to clear the bottom status bar passes
-  // var(--statusbar-h); a window without one (the detached chat window, the welcome
-  // page) uses the default 0. The 16px baseline is collected here, so the caller does
-  // not do the addition.
+  // The notice stack, bottom centre of the window: the editor and the composer end just
+  // above it, so it lands where the eye already is — a corner shared with a panel of the
+  // same colour was passed over. The surface is inverted (the theme's ink as ground) so it
+  // stands out from whatever it lies over. The main window and the detached chat window
+  // each mount one (the toast store belongs to each window).
+  // lift: a window with a bottom status bar passes var(--statusbar-h); the detached chat
+  // window and the welcome page keep the default 0. The 16px baseline is added here.
+  // inset: the width a docked browser window covers on the right (a native child window is
+  // always above the DOM), so the stack centres in the part of the window that can be seen.
+  import { fade, fly } from "svelte/transition";
+  import { t } from "$lib/i18n/i18n.svelte";
   import { toast } from "$lib/stores/toast.svelte";
 
-  let { lift = "0px" }: { lift?: string } = $props();
+  let { lift = "0px", inset = 0 }: { lift?: string; inset?: number } = $props();
+  /** Motion is skipped, not slowed, for someone who asked the system for less of it. */
+  const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = (ms: number) => (reduced ? 0 : ms);
 </script>
 
 {#if toast.items.length}
-  <div class="toast-stack" style:bottom="calc(16px + {lift})">
-    {#each toast.items as t (t.id)}
-      <div class="toast-item" class:error={t.level === "error"} role="status">
-        {t.count > 1 ? `${t.message} ×${t.count}` : t.message}
-        <button onclick={() => toast.dismiss(t.id)}>✕</button>
+  <div class="toast-stack" style:bottom="calc(16px + {lift})" style:right="{inset}px">
+    {#each toast.items as it (it.id)}
+      <div
+        class="toast-item"
+        class:error={it.level === "error"}
+        role={it.level === "error" ? "alert" : "status"}
+        in:fly={{ y: 10, duration: dur(180) }}
+        out:fade={{ duration: dur(120) }}
+        onmouseenter={() => toast.hold(it.id)}
+        onmouseleave={() => toast.release(it.id)}
+      >
+        <span class="dot" aria-hidden="true"></span>
+        <span class="text">{it.count > 1 ? `${it.message} ×${it.count}` : it.message}</span>
+        <button onclick={() => toast.dismiss(it.id)} aria-label={t("common.close")}>✕</button>
       </div>
     {/each}
   </div>
@@ -24,34 +41,55 @@
 <style>
   .toast-stack {
     position: fixed;
-    right: 16px;
+    left: 0;
+    padding: 0 16px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    align-items: center;
+    gap: 8px;
     z-index: 300;
-    max-width: min(360px, 70vw);
+    /* The stack spans the width so its items can centre; only the items take the pointer */
+    pointer-events: none;
   }
   .toast-item {
-    background: var(--bg-panel);
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--accent);
-    border-radius: 6px;
-    padding: 8px 12px;
-    font-size: var(--fs-sm);
+    pointer-events: auto;
+    max-width: min(560px, 100%);
     display: flex;
-    gap: 10px;
     align-items: baseline;
+    gap: 10px;
+    padding: 10px 12px 10px 14px;
+    border-radius: 8px;
+    background: var(--fg);
+    color: var(--bg);
+    font-size: var(--fs-md);
+    line-height: 1.45;
     box-shadow: var(--shadow);
-    word-break: break-all;
+    /* A vault-relative path breaks where it must, not letter by letter */
+    overflow-wrap: anywhere;
   }
-  .toast-item.error {
-    border-left-color: var(--danger);
+  .dot {
+    flex: none;
+    align-self: center;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-inverse);
+  }
+  .toast-item.error .dot {
+    background: var(--danger-inverse);
+  }
+  .text {
+    flex: 1 1 auto;
+    min-width: 0;
   }
   .toast-item button {
-    color: var(--fg-faint);
-    flex-shrink: 0;
+    flex: none;
+    color: var(--bg);
+    opacity: 0.55;
+    font-size: var(--fs-sm);
+    padding: 0 2px;
   }
   .toast-item button:hover {
-    color: var(--fg);
+    opacity: 1;
   }
 </style>

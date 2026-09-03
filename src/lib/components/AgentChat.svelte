@@ -1253,9 +1253,7 @@
     }
     const paths = picked == null ? [] : Array.isArray(picked) ? picked : [picked];
     if (!paths.length) return;
-    vault.error = null; // a sticky field: an earlier, unrelated error must not be taken for this import's result
-    const rels = await vault.importFiles(paths, bucket);
-    if (vault.error) toast.push(vault.error, "error");
+    const rels = await vault.importFiles(paths, bucket); // a failure lands in vault.error, which the app announces
     addRefs(rels);
     composerEl?.focus();
   }
@@ -1270,9 +1268,7 @@
     if (!dt || !isFileLikePaste(dt)) return;
     const text = dt.getData("text/plain");
     e.preventDefault();
-    vault.error = null; // as in pickFiles: a sticky error must not pose as this paste's result
-    const rels = await vault.pasteIntoNote(Array.from(dt.files), bucket);
-    if (vault.error) toast.push(vault.error, "error");
+    const rels = await vault.pasteIntoNote(Array.from(dt.files), bucket); // as in pickFiles, a failure is announced by the app
     if (rels.length) addRefs(rels);
     else if (text) insertAtCaret(text);
   }

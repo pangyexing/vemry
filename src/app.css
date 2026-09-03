@@ -21,6 +21,10 @@
   --accent: #0f766e;
   --accent-soft: rgba(15, 118, 110, 0.1);
   --danger: #b91c1c;
+  /* The ink of an inverted surface (a notice): the other theme's accent and danger, since the
+     ground under them is the other theme's ground */
+  --accent-inverse: #38b2a3;
+  --danger-inverse: #e06c6c;
   --diff-add-bg: rgba(15, 118, 110, 0.08);
   --diff-del-bg: rgba(185, 28, 28, 0.07);
 
@@ -62,7 +66,7 @@
   --content-width: clamp(42em, 66%, 54em);
 
   /* The single source of truth for the bottom status bar's height: StatusBar's own height
-     and every fixed overlay that has to clear it (the error toast, ToastStack) derive from
+     and every fixed overlay that has to clear it (ToastStack) derive from
      here, so one change is enough */
   --statusbar-h: 22px;
 
@@ -90,6 +94,8 @@
     --accent: #38b2a3;
     --accent-soft: rgba(56, 178, 163, 0.13);
     --danger: #e06c6c;
+    --accent-inverse: #0f766e;
+    --danger-inverse: #b91c1c;
     --diff-add-bg: rgba(56, 178, 163, 0.1);
     --diff-del-bg: rgba(224, 108, 108, 0.09);
     --mark-bg: rgba(250, 204, 21, 0.22);
