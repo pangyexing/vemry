@@ -12,6 +12,7 @@
 // stands), so typing above an embed keeps its DOM; whatever needs its position
 // reads it at event time with posAtDOM.
 import { t } from "$lib/i18n/i18n.svelte";
+import { blockRoot } from "./blockwidget";
 import { syntaxTree } from "@codemirror/language";
 import { type EditorState, type Extension, type Line, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
@@ -168,6 +169,7 @@ class EmbedWidget extends WidgetType {
     const { target, label } = parseEmbed(this.inner);
     const wrap = document.createElement("div");
     wrap.className = "cm-embed";
+    const root = blockRoot(wrap);
     const head = document.createElement("div");
     head.className = "cm-embed-head";
     const title = document.createElement("span");
@@ -244,12 +246,12 @@ class EmbedWidget extends WidgetType {
       const finish = (r: RefResolution) => {
         if (!wrap.isConnected) return; // dropped before the source arrived
         fill(r);
-        heights.set(this.key, wrap.offsetHeight);
+        heights.set(this.key, root.offsetHeight);
         view.requestMeasure();
       };
       entry.promise.then(finish, () => finish({ state: "note_missing" }));
     }
-    return wrap;
+    return root;
   }
 }
 

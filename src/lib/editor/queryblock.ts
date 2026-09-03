@@ -12,6 +12,7 @@
 // In any standard Markdown renderer it degrades to an ordinary code block, with zero
 // lock-in.
 import { t } from "$lib/i18n/i18n.svelte";
+import { blockRoot } from "./blockwidget";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { type EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
@@ -158,7 +159,7 @@ class QueryWidget extends WidgetType {
     if (parsed.error) {
       wrap.classList.add("cm-queryblock-error");
       wrap.textContent = `vemry-query: ${parsed.error}`;
-      return wrap;
+      return blockRoot(wrap);
     }
     wrap.textContent = t("queryBlock.querying");
     // As in livepreview's ImageWidget: requestMeasure corrects the line height once the asynchronous load finishes
@@ -227,7 +228,7 @@ class QueryWidget extends WidgetType {
         wrap.classList.add("cm-queryblock-error");
         wrap.textContent = String(e);
       });
-    return wrap;
+    return blockRoot(wrap);
   }
 }
 

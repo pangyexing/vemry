@@ -5,6 +5,7 @@
 // when the document closes. This button is the only entry point of the whole chain:
 // there is no automatic execution path at all (opening a note is not running code).
 import { t } from "$lib/i18n/i18n.svelte";
+import { blockRoot } from "./blockwidget";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { type EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
@@ -120,7 +121,7 @@ class OutputWidget extends WidgetType {
       }
     };
     wrap.appendChild(clear);
-    return wrap;
+    return blockRoot(wrap);
   }
 }
 

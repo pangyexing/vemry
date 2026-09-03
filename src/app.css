@@ -1073,6 +1073,12 @@ button:focus-visible,
 
 /* ---- Cross-note embeds (embed.ts): a block widget with a header row and a rendered
    body sharing the .md-body contract; a chip inside a line ---- */
+/* The element CodeMirror measures a block widget by (blockwidget.ts): a formatting
+   context, so the card's vertical margins are inside its box and count towards the
+   height map — outside it they would not, and every line below would drift */
+.cm-block-root {
+  display: flow-root;
+}
 .cm-embed {
   margin: 4px 0;
   border: 1px solid var(--border);

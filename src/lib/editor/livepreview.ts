@@ -29,6 +29,7 @@ import { LINK_RE as WIKI_RE } from "./wikilink";
 import { DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, localDate, scanTaskDates, STAMP_RE, TASK_LINE_RE } from "$lib/views/tasks";
 import { scanFields } from "$lib/fields";
 import { privateRangeAt } from "./privateblock";
+import { blockRoot } from "./blockwidget";
 import { openImageLightbox } from "$lib/lightbox";
 import { copyText } from "$lib/copytext";
 
@@ -490,7 +491,7 @@ class FrontmatterWidget extends WidgetType {
       view.dispatch({ selection: { anchor } });
       view.focus();
     };
-    return el;
+    return blockRoot(el);
   }
 }
 
