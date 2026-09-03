@@ -56,7 +56,13 @@
     const seq = ++loadSeq;
     try {
       const res = await api.queryBlocks({ kind: "task", limit: 5000 });
-      if (seq === loadSeq) hits = res;
+      if (seq === loadSeq) {
+        hits = res;
+        // The reload after a drop's write carries the date the card was given, so the
+        // provisional placement gives way to the real one. A reload from elsewhere clears
+        // it a moment early; the write's own reload then lands the card anyway
+        if (pendingDrop?.date) pendingDrop = null;
+      }
     } catch (e) {
       vault.error = String(e);
     }
@@ -72,6 +78,9 @@
    *  so the two views give the same answer to the same keystroke; and building a card happens
    *  once per block rather than on every keystroke. */
   const allCards = $derived(cardsOf(hits, localDate()));
+  /** A card's identity across reloads: the note plus the block's byte span start (physically
+   *  unique within a note). The list key and the pending drop's lookup read this one. */
+  const cardKey = (c: Card) => c.hit.note + ":" + c.hit.block.span.start;
   const shown = $derived(fuzzyKeep(allCards, query, taskFilterKey));
   const total = $derived(shown.length);
 
@@ -88,15 +97,18 @@
 
   /** The shared write funnel: dirtyGuard, a requery on a stale span (false) and error
    *  reporting. Every write path (a drag's updateTask, a chip's rescheduleTask) has to come
-   *  through here. */
-  async function commit(hit: BlockHit, act: string, write: () => Promise<boolean>) {
-    if (!dirtyGuard(hit, act)) return;
+   *  through here. true only when the write went to disk: a drop's provisional card waits
+   *  for that write's reload, and every other outcome has no reload coming. */
+  async function commit(hit: BlockHit, act: string, write: () => Promise<boolean>): Promise<boolean> {
+    if (!dirtyGuard(hit, act)) return false;
     try {
       // A stale span (the note changed after the query): nothing is written, and after a requery the user retries on the new data
-      if (!(await write())) await load();
+      if (await write()) return true;
+      await load();
     } catch (err) {
       vault.error = String(err);
     }
+    return false;
   }
 
   const applyEdit = (hit: BlockHit, edit: TaskEdit, act: string) => commit(hit, act, () => updateTask(hit, edit));
@@ -120,11 +132,18 @@
   let suppressClick = false;
   /** The date menu has two origins: drop = dragged into the "scheduled" column (which needs a
    *  concrete date, since any default would be arbitrary, and cancelling cancels the whole
-   *  drop); chip = clicking a card's date or scheduling chip to reschedule directly. */
+   *  drop — the card already sits in that column meanwhile, see pendingDrop); chip = clicking
+   *  a card's date or scheduling chip to reschedule directly. */
   type MenuState =
     | { mode: "drop"; x: number; y: number; card: Card }
     | { mode: "chip"; x: number; y: number; card: Card; field: DateField; current?: string };
   let menu = $state<MenuState | null>(null);
+  /** A card dropped into "scheduled" shows there at once, at the top of the column, rather
+   *  than only after its date is picked: date null while the menu is open (Esc or a click
+   *  outside puts the card back where it was), then the picked date until the write's reload
+   *  lands the card in its real place. The card is looked up by key in whatever hits are
+   *  current, so a reload while the menu is open does not lose it. */
+  let pendingDrop = $state<{ card: Card; date: string | null } | null>(null);
 
   function pressCard(e: PointerEvent, card: Card) {
     if (e.button !== 0) return;
@@ -137,7 +156,7 @@
     if (pressed && !drag) {
       if (Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) < 5) return;
       drag = { card: pressed.card, x: e.clientX, y: e.clientY };
-      menu = null;
+      cancelMenu();
     }
     if (!drag) return;
     e.preventDefault();
@@ -157,14 +176,30 @@
     drag = null;
     dropTarget = null;
     suppressClick = true;
+    // The click that follows the release comes within the same task as the pointerup, and
+    // the capture handler below consumes the flag then. It comes only when the card's
+    // element is still in the document: a drop into "scheduled" moves the card to another
+    // column in the render right after this handler, and no click is sent for a detached
+    // element. The flag must not live on past that task, or it swallows the user's next
+    // click — the first one on the date menu
+    setTimeout(() => (suppressClick = false), 0);
     if (target === null) return;
     if (target === "scheduled" && groupBy.by === "state") {
-      // The date menu pops up at the drop point and only writes once a date is chosen (Esc or a click outside cancels)
+      // The date menu pops up at the drop point and only writes once a date is chosen (Esc or
+      // a click outside cancels); the card moves into the column right away, not after the choice
       menu = { mode: "drop", x: e.clientX, y: e.clientY, card: d };
+      pendingDrop = { card: d, date: null };
       return;
     }
     const edit = dropOf(d, target);
     if (edit) void applyEdit(d.hit, edit, t("task.act.move"));
+  }
+
+  /** Closing the menu without a choice: a drop still waiting for its date is undone (the
+   *  card returns to its column); a write already in flight is left to land. */
+  function cancelMenu() {
+    menu = null;
+    if (pendingDrop?.date === null) pendingDrop = null;
   }
 
   function dragCancel() {
@@ -193,9 +228,18 @@
     menu = null;
     if (!m) return;
     if (m.mode === "drop") {
-      if (date === null) return; // the drop menu passes no current, so no "remove" item appears; this is the defensive branch
-      const edit = dropOf(m.card, "scheduled", date);
-      if (edit) void applyEdit(m.card.hit, edit, t("task.act.editDate"));
+      // The drop menu passes no current, so no "remove" item appears; null is the defensive branch
+      const edit = date === null ? null : dropOf(m.card, "scheduled", date);
+      if (!edit) {
+        pendingDrop = null;
+        return;
+      }
+      // The provisional card carries the date now, until the write's reload; a refused, stale
+      // or failed write has no reload coming, so the card goes back at once
+      pendingDrop = { card: m.card, date };
+      void applyEdit(m.card.hit, edit, t("task.act.editDate")).then((ok) => {
+        if (!ok) pendingDrop = null;
+      });
     } else {
       const { hit } = m.card;
       void commit(hit, t("task.act.editDate"), () => rescheduleTask(hit, m.field, date));
@@ -264,7 +308,21 @@
   }
   /** The columns follow the grouping: the five state columns, or one per value of the chosen field plus "none". */
   const defs = $derived(columnDefsFor(groupBy, shown));
-  const cols = $derived(columnsOf(shown, defs, groupBy, order));
+  const cols = $derived.by(() => {
+    const cols = columnsOf(shown, defs, groupBy, order);
+    // The card of a drop still landing sits at the top of "scheduled" (it has no date yet to
+    // sort by), whichever column its data still puts it in; the write's reload sorts it in
+    if (pendingDrop && groupBy.by === "state") {
+      const key = cardKey(pendingDrop.card);
+      for (const list of Object.values(cols)) {
+        const i = list.findIndex((c) => cardKey(c) === key);
+        if (i < 0) continue;
+        cols.scheduled.unshift(...list.splice(i, 1));
+        break;
+      }
+    }
+    return cols;
+  });
   /** The field keys the tasks carry, for the group-by menu. */
   const fieldKeys = $derived(fieldKeysOf(allCards));
   /** The keys the two menus list: the ones the tasks carry, plus a restored key no task
@@ -510,12 +568,17 @@
           {:else}
             <ul class="cards">
             <!-- The key is the block's byte span: physically unique within a note, so a drag or a requery does not rebuild the DOM -->
-            {#each cards as card (card.hit.note + ":" + card.hit.block.span.start)}
+            {#each cards as card (cardKey(card))}
+              {@const pend = pendingDrop && cardKey(pendingDrop.card) === cardKey(card) ? pendingDrop : null}
+              <!-- The field the pending drop writes: activeField, the same one dropEdit picks -->
+              {@const pendField = pend ? activeField(card) : null}
               <li>
+                <!-- A done card dragged out is reopened by the drop, and the provisional card already shows it so -->
                 <div
                   class="card"
                   class:doing={card.state === "doing"}
-                  class:done={card.state === "done"}
+                  class:done={card.state === "done" && !pend}
+                  class:pending={!!pend}
                   role="button"
                   tabindex="0"
                   onpointerdown={(e) => pressCard(e, card)}
@@ -531,16 +594,22 @@
                       onpointerdown={(e) => e.stopPropagation()}
                       onclick={(e) => void onToggle(e, card)}
                     >
-                      {@html taskStateIconSvg(card.state)}
+                      {@html taskStateIconSvg(pend && card.state === "done" ? "todo" : card.state)}
                     </button>
                     <span class="text">{card.text}</span>
                   </div>
                   <div class="card-meta">
-                    {#if card.due}
+                    {#if pend}
+                      <!-- The provisional date chip stands in for the chip of the field the drop
+                        writes: an ellipsis while the day is being picked, the day itself until
+                        the write lands. A label, not a button — the menu is already open -->
+                      <span class="chip pending-chip">{@html dateIconSvg(pendField ?? "due")}{pend.date ?? "…"}</span>
+                    {/if}
+                    {#if card.due && pendField !== "due"}
                       {@const od = card.col === "overdue"}
                       {@render dateChip(card, "due", t("task.editDateWith", { field: dateFieldLabel("due"), date: card.due }), dueLabel(card.due, od, "short"), od ? "overdue" : "")}
                     {/if}
-                    {#if card.scheduled}
+                    {#if card.scheduled && pendField !== "scheduled"}
                       {@render dateChip(card, "scheduled", t("task.editDate", { field: dateFieldLabel("scheduled") }), card.scheduled)}
                     {/if}
                     {#each card.tags as tag (tag)}
@@ -550,7 +619,7 @@
                       <span class="chip field-chip" title={`${key}:: ${value}`}><span class="fk">{key}</span>{value}</span>
                     {/each}
                     <span class="chip note-chip">{card.hit.note_title}</span>
-                    {#if !card.due && !card.scheduled && card.state !== "done"}
+                    {#if !card.due && !card.scheduled && card.state !== "done" && !pend}
                       <!-- A card with no date shows a calendar ghost chip on hover: a new field
                         goes through activeField = due. It is absolutely positioned over the
                         checkbox's indent gap in the meta row (26px, structurally always empty)
@@ -659,7 +728,7 @@
     title={menu.mode === "drop" ? t("kanban.dropWhen") : undefined}
     current={menu.mode === "chip" ? menu.current : undefined}
     onpick={onMenuPick}
-    onclose={() => (menu = null)}
+    onclose={cancelMenu}
   />
 {/if}
 
@@ -841,6 +910,13 @@
     color: var(--fg-faint);
     text-decoration: line-through;
   }
+  /* The card of a drop still landing (pendingDrop): a dashed accent frame says "provisional",
+     kept through the write's few milliseconds until the reload draws the card plain */
+  .card.pending,
+  .card.pending:hover {
+    border-color: var(--accent);
+    border-style: dashed;
+  }
   .card-main {
     display: flex;
     align-items: flex-start;
@@ -898,6 +974,13 @@
   }
   .chip.overdue {
     color: var(--danger);
+  }
+  /* The provisional date chip: the ghost chip's dashed style, in accent */
+  .chip.pending-chip {
+    border: 1px dashed var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 0 5px;
   }
   .chip :global(svg) {
     width: 0.9em;
