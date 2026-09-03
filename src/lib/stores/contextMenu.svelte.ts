@@ -14,6 +14,8 @@ export interface MenuItem {
   disabled?: boolean;
   /** A second confirmation: the first click turns the item's wording into this string and only another click runs it; a click outside or Esc resets it. */
   confirm?: string;
+  /** A tick in the left gutter: the item is the one currently chosen (the tab bar's list of open tabs marks the active tab). */
+  checked?: boolean;
   /** Absent on a parent item that only opens its `submenu`. */
   action?: () => void;
   /** A second level, opened by hovering or clicking the item (the block menu's "turn into ›"). */
@@ -30,8 +32,14 @@ class ContextMenuStore {
    *  matter for nested hosts, not for the menu). */
   open(e: MouseEvent, entries: MenuEntry[]) {
     e.preventDefault();
+    this.openAt(e.clientX, e.clientY, entries);
+  }
+
+  /** Open it at a point of the caller's choosing — a dropdown hanging under the button
+   *  that raised it, rather than under the pointer. */
+  openAt(x: number, y: number, entries: MenuEntry[]) {
     this.entries = entries;
-    this.pos = { x: e.clientX, y: e.clientY };
+    this.pos = { x, y };
   }
 
   close() {

@@ -10,8 +10,70 @@
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { t } from "$lib/i18n/i18n.svelte";
   import { k } from "$lib/shortcut";
+  import { tick } from "svelte";
 
   let stripEl = $state<HTMLElement | null>(null);
+
+  // ---- overflow ----
+  // The strip hides its scrollbar, so with many tabs open nothing would say that more sit
+  // beyond an edge. Two signals stand in: the overflowing edge fades out (a mask on the
+  // strip), and a list button appears at the right end that names every open tab. Both
+  // follow the measured scroll state, refreshed on scroll, on a resize of the strip and
+  // after the tab list itself changes (the widths settle only once the DOM has).
+  let overflowLeft = $state(false);
+  let overflowRight = $state(false);
+  const overflowing = $derived(overflowLeft || overflowRight);
+
+  function measureOverflow() {
+    const el = stripEl;
+    if (!el) return;
+    overflowLeft = el.scrollLeft > 1;
+    overflowRight = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+  }
+
+  $effect(() => {
+    const el = stripEl;
+    if (!el) return;
+    const ro = new ResizeObserver(measureOverflow);
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
+  $effect(() => {
+    // read what changes a tab's width: the set of tabs, and the italic of the preview slot
+    void vault.tabs.map((t) => t.pinned);
+    void tick().then(measureOverflow);
+  });
+
+  /** The list of every open tab, hung under the button at the right end: the active one is
+   *  ticked, a view tab reads as "View: …" (the same wording as its tooltip), and "Close
+   *  all" sits below — the one place to empty a crowded bar in one go. */
+  function listTabs(btn: HTMLElement) {
+    const r = btn.getBoundingClientRect();
+    const active = vault.activeTabId;
+    contextMenu.openAt(r.left, r.bottom + 4, [
+      ...vault.tabs.map((tab) => {
+        const view = viewOfTab(tab.path);
+        return {
+          label: view ? t("tabBar.viewTab", { name: t(`view.${view}`) }) : tabName(tab.path),
+          checked: tab.id === active,
+          action: () => activate(tab, tab.id === active),
+        };
+      }),
+      { separator: true },
+      {
+        label: t("tabBar.closeAll"),
+        action: async () => {
+          // two existing funnels instead of a third: the others go first, then the survivor
+          // closes to empty (flush, the mainView fallback) exactly as a single close does
+          const id = vault.activeTabId;
+          if (id == null) return;
+          await vault.closeOtherTabs(id);
+          if (vault.activeTabId === id) await vault.closeTab(id);
+        },
+      },
+    ]);
+  }
 
   /** A tab's display name: a view tab shows the view's name (the sentinel path never leaks
    *  out); a note drops the .md (the same rule as the file tree's) and everything else keeps
@@ -171,7 +233,7 @@
     </button>
   </div>
   <!-- A vertical wheel becomes horizontal scrolling: the tab bar only scrolls sideways (the listener is attached non-passive by hand in the script) -->
-  <div class="tabstrip" bind:this={stripEl}>
+  <div class="tabstrip" class:fade-left={overflowLeft} class:fade-right={overflowRight} bind:this={stripEl} onscroll={measureOverflow}>
     {#each vault.tabs as tab (tab.id)}
       {@const isActive = tab.id === vault.activeTabId}
       {@const view = viewOfTab(tab.path)}
@@ -227,6 +289,20 @@
       </div>
     {/each}
   </div>
+  {#if overflowing}
+    <button
+      class="list-btn"
+      title={t("tabBar.listTabs", { n: vault.tabs.length })}
+      aria-label={t("tabBar.listTabs", { n: vault.tabs.length })}
+      aria-haspopup="menu"
+      onclick={(e) => listTabs(e.currentTarget)}
+    >
+      <span class="count">{vault.tabs.length}</span>
+      <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 8 L10 13 L15 8" />
+      </svg>
+    </button>
+  {/if}
 </div>
 
 <style>
@@ -296,15 +372,50 @@
     overflow-x: auto;
     /* The thin scrollbar is hidden: the wheel or a drag moves it sideways, and an always-visible bar would lower the bar's height */
     scrollbar-width: none;
+    /* scrollIntoView lands the active tab clear of the faded edge, not under it */
+    scroll-padding-inline: 28px;
   }
   .tabstrip::-webkit-scrollbar {
     display: none;
+  }
+  /* The overflowing edge fades out: the one cue, with the scrollbar hidden, that tabs continue past it */
+  .tabstrip.fade-left {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px);
+    mask-image: linear-gradient(to right, transparent 0, #000 28px);
+  }
+  .tabstrip.fade-right {
+    -webkit-mask-image: linear-gradient(to left, transparent 0, #000 28px);
+    mask-image: linear-gradient(to left, transparent 0, #000 28px);
+  }
+  .tabstrip.fade-left.fade-right {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  }
+  .list-btn {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    height: 22px;
+    padding: 0 5px 0 7px;
+    border-radius: 5px;
+    color: var(--fg-muted);
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+  }
+  .list-btn:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
   }
   .tab {
     display: flex;
     align-items: center;
     gap: 4px;
-    flex-shrink: 0;
+    /* Content-sized while the bar has room; once it is short of room every tab gives way in
+       proportion down to the minimum, and only then does the strip scroll — a dozen tabs
+       stay in sight as narrow ones rather than half of them slipping off the edge */
+    flex: 0 1 auto;
+    min-width: 96px;
     max-width: 180px;
     padding: 5px 6px 5px 10px;
     border-radius: 5px 5px 0 0;
@@ -322,6 +433,8 @@
   .tab.active {
     color: var(--fg);
     border-bottom-color: var(--accent);
+    /* The one tab whose name must stay readable in a crowded bar keeps its natural width */
+    flex-shrink: 0;
   }
   .tab.dragging {
     opacity: 0.6;

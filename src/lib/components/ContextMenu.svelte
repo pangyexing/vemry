@@ -7,6 +7,8 @@
 
   const pos = $derived(contextMenu.pos);
   const entries = $derived(contextMenu.entries);
+  /** A menu with a checkable item reserves the left gutter on every row, so the ticked and unticked labels stay in one column. */
+  const hasChecks = $derived(entries.some((e) => "checked" in e && e.checked != null));
 
   let el = $state<HTMLElement | null>(null);
   let confirming = $state<number | null>(null);
@@ -121,11 +123,18 @@
         <button
           class:danger={entry.danger || (entry.confirm != null && confirming === i)}
           class:open={sub?.index === i}
+          class:checkable={hasChecks}
           disabled={entry.disabled}
           onclick={(e) => onItemClick(entry, i, e.currentTarget)}
           onmouseenter={(e) => onItemEnter(entry, i, e.currentTarget)}
-          role="menuitem"
+          role={hasChecks ? "menuitemcheckbox" : "menuitem"}
+          aria-checked={hasChecks ? entry.checked === true : undefined}
         >
+          {#if entry.checked}
+            <svg class="check" width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 10.5 L8.5 15 L16 6" />
+            </svg>
+          {/if}
           {confirming === i && entry.confirm ? entry.confirm : entry.label}
           {#if entry.submenu}<span class="key-hint">›</span>{:else if entry.hint}<span class="key-hint">{entry.hint}</span>{/if}
         </button>
@@ -165,6 +174,10 @@
     padding: 4px;
     display: flex;
     flex-direction: column;
+    /* A long list (every open tab) scrolls inside the panel rather than running off the
+       viewport; the flyout is position: fixed and is not clipped by this */
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
   }
   .menu-title {
     font-size: var(--fs-xs);
@@ -195,6 +208,17 @@
   .menu button:hover:not(:disabled),
   .menu button.open {
     background: var(--bg-hover);
+  }
+  .menu button.checkable {
+    position: relative;
+    padding-left: 26px;
+  }
+  .check {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent);
   }
   /* the flyout is a child of the root menu so the outside-click and Esc handling cover it unchanged */
   .menu-sub {

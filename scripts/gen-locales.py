@@ -372,6 +372,8 @@ add("tabBar.", {
     "viewTab": ("View: {name}", "视图:{name}"),
     "backWithKey": ("Back ({key})", "后退 ({key})"),
     "forwardWithKey": ("Forward ({key})", "前进 ({key})"),
+    "listTabs": ("All open tabs ({n})", "全部打开的标签页（{n}）"),
+    "closeAll": ("Close all", "关闭全部"),
 })
 
 # ---------------------------------------------------------------- command palette
