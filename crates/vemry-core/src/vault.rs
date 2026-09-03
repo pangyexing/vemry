@@ -17,6 +17,7 @@ use crate::index::BlockIndex;
 use crate::note::{Note, NoteId};
 use crate::parser::{extract_frontmatter, parse_note};
 use crate::privacy::{PrivacyScope, PRIVACY_FILE};
+use crate::blocktimes::BlockTimes;
 use crate::provenance::{self, BlockProvenance, NoteFacts, Origin, ProvenanceEntry, ProvenanceLedger};
 use crate::search::{InMemorySearch, SearchHit, SearchProvider};
 use crate::{Result, VemryError};
@@ -106,6 +107,10 @@ pub struct Vault {
     privacy: PrivacyScope,
     /// Who wrote which block (see provenance.rs); loaded at open, appended on writes.
     provenance: ProvenanceLedger,
+    /// When each block's text appeared (see blocktimes.rs): every note is stamped
+    /// before it is indexed, and the table is saved after the vault's own writes
+    /// and after external changes once `.vemry/` exists.
+    times: BlockTimes,
 }
 
 impl Vault {
@@ -128,7 +133,7 @@ impl Vault {
             .filter_map(|e| e.path().strip_prefix(&root).ok().map(|p| p.to_path_buf()))
             .collect();
 
-        let notes: Vec<Note> = rel_paths
+        let mut notes: Vec<Note> = rel_paths
             .par_iter()
             .filter_map(|rel| load_note(&root, rel).ok())
             .collect();
@@ -136,13 +141,17 @@ impl Vault {
         let mut vault = Vault {
             privacy: PrivacyScope::load(&root),
             provenance: ProvenanceLedger::empty(&root),
+            times: BlockTimes::load(&root),
             root,
             index: BlockIndex::new(),
             search: Box::new(InMemorySearch::new()),
             self_writes: HashMap::new(),
             self_file_writes: HashMap::new(),
         };
-        for note in &notes {
+        // Stamped but not saved: opening leaves no trace in a directory that is
+        // merely being browsed, and the stamps are recomputed identically next time
+        for note in &mut notes {
+            vault.times.stamp(note);
             vault.index.upsert(note);
             vault.search.index_note(&note.id, note.effective_title(), &note.raw);
         }
@@ -414,6 +423,8 @@ impl Vault {
             fs::create_dir_all(parent)?;
         }
         fs::rename(&from_abs, &to_abs)?;
+        // A rename touches no content: the stamps travel with the note (or the folder)
+        self.times.rename(&from_rel, &to_rel);
         self.rescan()?;
         Ok(to_rel)
     }
@@ -442,13 +453,16 @@ impl Vault {
             .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|x| x == "md"))
             .filter_map(|e| e.path().strip_prefix(&self.root).ok().map(|p| p.to_path_buf()))
             .collect();
-        let notes: Vec<Note> = rel_paths.par_iter().filter_map(|rel| load_note(&self.root, rel).ok()).collect();
+        let mut notes: Vec<Note> = rel_paths.par_iter().filter_map(|rel| load_note(&self.root, rel).ok()).collect();
         self.index = BlockIndex::new();
         self.search = Box::new(InMemorySearch::new());
-        for note in &notes {
+        for note in &mut notes {
+            self.times.stamp(note);
             self.index.upsert(note);
             self.search.index_note(&note.id, note.effective_title(), &note.raw);
         }
+        self.times.retain(|id| self.index.contains(&NoteId::new(id)));
+        self.times.save(false);
         self.reload_privacy();
         Ok(())
     }
@@ -593,6 +607,7 @@ impl Vault {
         fs::write(&path, content)?;
         self.self_writes.insert(id.clone(), Instant::now());
         self.reindex_note(id)?;
+        self.times.save(true);
         Ok(if existed { VaultEvent::NoteModified { id: id.clone() } } else { VaultEvent::NoteAdded { id: id.clone() } })
     }
 
@@ -854,14 +869,21 @@ impl Vault {
         self.self_writes.insert(id.clone(), Instant::now());
         self.index.remove(id);
         self.search.remove_note(id);
+        self.times.remove(id.as_str());
+        self.times.save(true);
         Ok(VaultEvent::NoteRemoved { id: id.clone() })
     }
 
+    /// Re-read one note from disk into the index. The block stamps are saved only
+    /// where `.vemry/` already exists — an external change to a directory merely
+    /// being browsed must not leave one; the vault's own writes save with `create`.
     fn reindex_note(&mut self, id: &NoteId) -> Result<()> {
         let rel = PathBuf::from(id.as_str());
-        let note = load_note(&self.root, &rel)?;
+        let mut note = load_note(&self.root, &rel)?;
+        self.times.stamp(&mut note);
         self.search.index_note(&note.id, note.effective_title(), &note.raw);
         self.index.upsert(&note);
+        self.times.save(false);
         Ok(())
     }
 
@@ -937,6 +959,8 @@ impl Vault {
             } else if self.index.contains(&id) {
                 self.index.remove(&id);
                 self.search.remove_note(&id);
+                self.times.remove(id.as_str());
+                self.times.save(false);
                 events.push(VaultEvent::NoteRemoved { id });
             }
         }
@@ -1752,6 +1776,34 @@ mod tests {
         let sleep = NoteId::new("Sleep.md");
         assert_eq!(vault.backlinks(&sleep).len(), 0);
         assert_eq!(vault.search("anymore", 5).len(), 1);
+    }
+
+    #[test]
+    fn block_times_follow_the_content_and_survive_a_reopen() {
+        let (_d, mut vault) = fixture_vault();
+        let n = NoteId::new("Tasks.md");
+        vault.write_note(&n, "- [ ] one\n- [ ] two\n").unwrap();
+        let first: Vec<u64> = vault.index().blocks(&n).unwrap().iter().map(|b| b.modified_ms).collect();
+        assert!(first[0] > 0 && first[0] == first[1], "both stamped with the note's mtime");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        // toggling a checkbox is a change, an untouched line keeps its stamp
+        vault.write_note(&n, "- [ ] one\n- [x] two\n").unwrap();
+        let second: Vec<u64> = vault.index().blocks(&n).unwrap().iter().map(|b| b.modified_ms).collect();
+        assert_eq!(second[0], first[0]);
+        assert!(second[1] > first[1]);
+        // the stamps persist: reopened, the untouched line is still older than the file
+        let reopened = Vault::open(vault.root()).unwrap();
+        let again: Vec<u64> = reopened.index().blocks(&n).unwrap().iter().map(|b| b.modified_ms).collect();
+        assert_eq!(again, second);
+        // minting an id is bookkeeping, not an edit
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        vault.write_note(&n, "- [ ] one ^a1\n- [x] two\n").unwrap();
+        assert_eq!(vault.index().blocks(&n).unwrap()[0].modified_ms, first[0]);
+        // a rename carries the stamps over
+        vault.rename_path("Tasks.md", "sub/Tasks.md").unwrap();
+        let moved = vault.index().blocks(&NoteId::new("sub/Tasks.md")).unwrap();
+        assert_eq!(moved[0].modified_ms, first[0]);
+        assert_eq!(moved[1].modified_ms, second[1]);
     }
 
     #[test]

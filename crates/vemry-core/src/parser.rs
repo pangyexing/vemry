@@ -156,6 +156,7 @@ pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
                 links: vec![],
                 fields: vec![],
                 explicit_id: false,
+                modified_ms: 0,
             };
             assign_id(&mut b, blocks.len());
             blocks.push(b);
@@ -246,6 +247,7 @@ pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
                 links,
                 fields,
                 explicit_id: false,
+                modified_ms: 0,
             };
             assign_id(&mut b, blocks.len());
             blocks.push(b);
@@ -309,6 +311,7 @@ fn make_block(raw: &str, kind: BlockKind, span: std::ops::Range<usize>) -> Block
         links,
         fields,
         explicit_id: false,
+        modified_ms: 0,
     }
 }
 

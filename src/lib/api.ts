@@ -73,6 +73,8 @@ export interface Block {
   tags?: string[];
   fields?: Field[];
   explicit_id?: boolean;
+  /** When the block's current text appeared: its note's mtime (ms) at the first indexing that saw it — the nearest thing a line has to a modification time of its own (vemry-core's blocktimes.rs) */
+  modified_ms?: number;
 }
 
 /** One inline field a block type carries (mirrors vemry-core's `FieldSpec`). */

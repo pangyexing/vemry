@@ -442,6 +442,33 @@ the buffer as one edit rather than a fresh state (`Editor.svelte`'s `loadDoc`):
 the undo stack survives it, the cursor stays, and ⌘Z takes an agent write back
 the moment it lands.
 
+## Block change times (a cache of observations)
+
+A note has a modification time; a block does not, and a task line carries no
+creation or completion date. The board's unscheduled and done columns (and
+Agenda's matching groups) still want "most recently changed first", and "the
+note's mtime" would move every task of a touched note together. So the vault
+remembers when each block's current text appeared (`vemry-core/src/blocktimes.rs`):
+before a note is indexed, every block gets a change key — FNV-1a over its trimmed
+lines, a trailing ` ^id` dropped — and a block whose key was seen before keeps its
+stamp while a new key is stamped with the note's mtime. The note's mtime rather
+than the clock, so a change made while the app was closed is dated when the file
+actually changed. A toggled checkbox, an edited word, a changed date all count as
+a change; minting an id, re-indenting or moving a block does not. This is
+deliberately not provenance's identity hash, which strips the checkbox so a block
+keeps its authorship across a toggle — here the toggle is the point.
+
+The table lives in `.vemry/block-times.json` and is a **cache, not state**:
+without it every block falls back to its note's mtime, which is what the views
+showed before it existed, so deleting the file loses nothing but precision.
+Opening a vault stamps but never saves (a directory merely being browsed must not
+grow a `.vemry`, the rule `Vault::meta_dir` states); the vault's own writes save
+and may create the directory, an external change seen by the watcher saves only
+where `.vemry/` already exists, a rename carries the stamps over, and a rescan
+prunes the notes that are gone. The stamp reaches every consumer as
+`Block.modified_ms` through the same `query()` as everything else; the agent's
+`query_blocks` renders its own fields and does not print it.
+
 ## Seams left for later
 
 | Future capability | The seam today |

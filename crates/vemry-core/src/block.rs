@@ -128,4 +128,9 @@ pub struct Block {
     /// True when the id came from an explicit `^id` marker.
     #[serde(default)]
     pub explicit_id: bool,
+    /// When this block's current text appeared: its note's mtime (ms since the
+    /// epoch) at the first indexing that saw it (see blocktimes.rs). 0 straight
+    /// out of the parser; the vault stamps it before indexing.
+    #[serde(default)]
+    pub modified_ms: u64,
 }

@@ -8,6 +8,7 @@
 pub mod attach_migrate;
 pub mod block;
 pub mod blockid;
+pub mod blocktimes;
 pub mod event;
 pub mod index;
 pub mod insert;
