@@ -181,6 +181,8 @@ mod tests {
         "ipc.runningNoDelete",
         "ipc.contentEmpty",
         "ipc.typeNameEmpty",
+        "ipc.typeNotFound",
+        "ipc.typeFrontmatterBroken",
         "ipc.memoryExists",
         "ipc.rulesUpdateRunning",
         "ipc.noRuleSource",

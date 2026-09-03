@@ -445,6 +445,34 @@ pub fn type_create(app: AppHandle, state: State<'_, AppState>, name: String) -> 
     Ok(Scaffolded { path: format!("{}/{stem}.md", vemry_core::vault::TYPES_DIR), created })
 }
 
+/// The "block type…" row's disable/enable: the file's `disabled:` line is rewritten
+/// (`set_type_disabled`) and written through `Vault::write_meta` like an editor save.
+/// `file` must be one of `types_list`'s — the listing is what refuses a symlink — and a
+/// frontmatter too damaged to carry the key is reported rather than left as it was.
+/// `TypesChanged` is broadcast here too, so the row flips ahead of the watcher's echo.
+#[tauri::command]
+pub fn type_set_disabled(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    file: String,
+    disabled: bool,
+) -> Result<(), String> {
+    let lang = crate::i18n::current();
+    with_vault_mut(&state, |v| {
+        if !vemry_core::list_block_types(&v.meta_dir()).iter().any(|t| t.file == file) {
+            return Err(crate::i18n::t(lang, "ipc.typeNotFound"));
+        }
+        let id = v.note_id(&format!("{}/{file}", vemry_core::vault::TYPES_DIR)).map_err(crate::i18n::err)?;
+        let next = vemry_core::set_type_disabled(&v.read_note(&id).map_err(crate::i18n::err)?, disabled);
+        if vemry_core::parse_block_type(&file, &next).disabled != disabled {
+            return Err(crate::i18n::t(lang, "ipc.typeFrontmatterBroken"));
+        }
+        v.write_meta(&id, &next).map_err(crate::i18n::err)
+    })?;
+    broadcast(&app, &VaultEvent::TypesChanged);
+    Ok(())
+}
+
 /// Inline-field keys and their frequent values for the editor's `key::` completion;
 /// notes in a privacy zone contribute nothing (the same courtesy as the tag list).
 #[tauri::command]

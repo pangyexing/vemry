@@ -159,6 +159,7 @@ pub fn run() {
             commands::fields_list,
             commands::types_list,
             commands::type_create,
+            commands::type_set_disabled,
             commands::settings_get,
             commands::settings_set,
             commands::agent_start,

@@ -393,7 +393,9 @@ add("palette.", {
     "createType": ("Create block type “{name}”", "创建块类型「{name}」"),
     "createTypeHint": ("A skeleton with status and due fields, opened for editing", "按骨架（status/due 字段）新建并打开"),
     "typeExample": ("The example: a bullet with author, status and rating fields", "示例：带 author/status/rating 字段的列表项"),
-    "typeDisabled": ("Disabled — set disabled: false in the file to list it again", "已停用——把文件里的 disabled 改为 false 即恢复"),
+    "typeDisabled": ("Disabled", "已停用"),
+    "typeDisable": ("Disable", "停用"),
+    "typeEnable": ("Enable", "启用"),
 })
 
 # ---------------------------------------------------------------- shared view chrome
@@ -1736,6 +1738,9 @@ add("ipc.", {
     "runningNoDelete": ("The agent is running — cannot delete the current session", "agent 运行中,无法删除当前会话"),
     "contentEmpty": ("The content is empty", "内容为空"),
     "typeNameEmpty": ("A block type needs a name", "块类型需要一个名字"),
+    "typeNotFound": ("That block type no longer exists", "该块类型已不存在"),
+    "typeFrontmatterBroken": ("The type's frontmatter is not valid YAML, so it cannot be switched — open the file and fix it",
+                              "该类型的 frontmatter 不是有效的 YAML，无法切换，请打开文件修正"),
     "memoryExists": ("VEMRY.md already exists", "VEMRY.md 已存在"),
     "trashFailed": ("Could not move it to the trash: {error}", "移入废纸篓失败: {error}"),
     "rulesUpdateRunning": ("A rule update is already running", "拦截规则更新正在进行中"),

@@ -281,6 +281,12 @@
         title: x.icon ? `${x.icon} ${x.name}` : x.name,
         hint: x.disabled ? t("palette.typeDisabled") : x.description || `.vemry/types/${x.file}`,
         run: () => vault.openFile(`.vemry/types/${x.file}`),
+        // The row's toggle (the button, or ⌘↩): the file's disabled line flips and types_changed
+        // redraws the row, the palette staying open like url mode's unbookmark
+        action: {
+          label: t(x.disabled ? "palette.typeEnable" : "palette.typeDisable"),
+          run: () => void api.typeSetDisabled(x.file, !x.disabled).catch((e) => toast.push(String(e), "error")),
+        },
       }));
       if (!has("book") && fuzzyFilter(["book"], query, (s) => s).length > 0) {
         list.push({
@@ -480,6 +486,12 @@
       return;
     }
     const item = items[selected];
+    // ⌘↩ on a row with a secondary action runs that instead, the palette staying open (url
+    // mode's ⌘↩ is its new-window modifier and returned above)
+    if (modifier && item?.action) {
+      item.action.run();
+      return;
+    }
     if (item?.run) {
       close();
       await item.run();

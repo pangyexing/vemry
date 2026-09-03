@@ -642,7 +642,10 @@ watcher emits `TypesChanged` for the directory, which refreshes the menus and
 invalidates the prompt snapshot. IPC: `types_list`, `type_create` (the "block
 type…" command's open-or-create: a name with no file gets the skeleton, `book`
 the full example, and an existing file is opened in the editor, never
-overwritten).
+overwritten), `type_set_disabled` (the same command's row button, or ⌘↩ on
+the row: the file's top-level `disabled:` line is rewritten in place and
+written through `write_meta`, so the menus and the prompt drop the type while
+"block type…" keeps listing it for re-enabling).
 A type file opens through the same `note_read`/`note_write` as a note, but
 `note_write` routes a `.vemry/` path to `Vault::write_meta`: configuration is
 never indexed, and the watcher's `TypesChanged` (own writes included) is how

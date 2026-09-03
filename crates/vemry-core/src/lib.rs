@@ -39,7 +39,10 @@ pub use provenance::{
 };
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
-pub use types::{list_block_types, type_skeleton, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE, TYPES_SUBDIR};
+pub use types::{
+    list_block_types, parse_block_type, set_type_disabled, type_skeleton, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE,
+    TYPES_SUBDIR,
+};
 pub use vault::{is_meta_id, sanitize_filename, BacklinkEntry, InsertLanded, RefHit, RefResolution, RefTarget, Vault};
 
 #[derive(thiserror::Error, Debug)]

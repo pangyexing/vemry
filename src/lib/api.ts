@@ -694,6 +694,8 @@ export const api = {
   /** Open-or-create for "block type…": `.vemry/types/<name>.md` is written when there is none (`book`
    *  gets the full example, any other name a skeleton); one already there is left as it is. */
   typeCreate: (name: string) => invoke<Scaffolded>("type_create", { name }),
+  /** Flip a block type's `disabled:` line (`file` as typesList reports it); types_changed follows. */
+  typeSetDisabled: (file: string, disabled: boolean) => invoke<void>("type_set_disabled", { file, disabled }),
   foldersList: () => invoke<string[]>("folders_list"),
   folderCreate: (path: string) => invoke<string>("folder_create", { path }),
   filesList: () => invoke<string[]>("files_list"),
