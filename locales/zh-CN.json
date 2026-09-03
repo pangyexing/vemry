@@ -98,6 +98,8 @@
   "atPicker.heading": "添加上下文",
   "atPicker.headingWithQuery": "添加上下文:{query}",
   "atPicker.keys": "↑↓ 选择 · ↵ 确认 · esc 关闭",
+  "atPicker.keysDrill": "↑↓ 选择 · ↵ 确认 · ⇥ 选块 · esc 关闭",
+  "atPicker.keysStage": "↑↓ 选择 · ↵ 确认 · ⌫ 返回 · esc 关闭",
   "atPicker.pageBrowserSub": "当前网页",
   "atPicker.pageReadingSub": "当前阅读页",
   "atPicker.selectionSub": "当前选区",

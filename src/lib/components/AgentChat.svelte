@@ -1004,8 +1004,12 @@
   let atStart = -1;
   /** The @ only triggers at the start of a line or after whitespace or a common opening bracket,
    *  and the token is a run of non-whitespace — triggering mid-string, it does not interfere with
-   *  the URL and # memo dual modes, which test the whole string as a prefix. */
-  const AT_RE = /(^|[\s(（【[])@([^\s@]*)$/;
+   *  the URL and # memo dual modes, which test the whole string as a prefix.
+   *  The one exception is a token Tab completed to `@Note name#…`: a note part with single
+   *  spaces inside is accepted when a `#` follows it directly, since otherwise the completed
+   *  token would close the candidate layer on the spot. Without the `#` a space still ends the
+   *  token, so typing on in prose after an @ is unchanged. */
+  const AT_RE = /(^|[\s(（【[])@([^\s@#]+(?: [^\s@#]+)*#[^\s@]*|[^\s@]*)$/;
   function detectAt() {
     const el = composerEl;
     if (!el) return;
@@ -1154,6 +1158,21 @@
   function onAtPick(ref: DraftRef) {
     consumeAtToken();
     pushRef(ref);
+  }
+  /** Tab on a note row: the typed note part (the text between the @ and the caret) is replaced
+   *  by the completed one plus a `#`, the caret lands after the `#`, and detectAt reads the
+   *  token back as `@Note#` — the same text a hand-typed `#` would have left. */
+  async function onAtStage(notePart: string) {
+    const el = composerEl;
+    if (!el || atStart < 0) return;
+    const caret = el.selectionStart ?? agent.draft.length;
+    const text = `${notePart}#`;
+    agent.draft = agent.draft.slice(0, atStart + 1) + text + agent.draft.slice(caret);
+    await tick();
+    el.focus();
+    const at = atStart + 1 + text.length;
+    el.setSelectionRange(at, at);
+    detectAt();
   }
   function onAtPickFiles() {
     consumeAtToken();
@@ -1697,7 +1716,7 @@
       </div>
     {/if}
     {#if atQuery != null}
-      <AtPicker bind:this={picker} query={atQuery} anchor={composerEl} {curSel} onPick={onAtPick} onPickFiles={onAtPickFiles} onClose={closeAt} />
+      <AtPicker bind:this={picker} query={atQuery} anchor={composerEl} {curSel} onPick={onAtPick} onPickFiles={onAtPickFiles} onStage={onAtStage} onClose={closeAt} />
     {/if}
     <div class="input-wrap">
       {#if agent.draft === ""}

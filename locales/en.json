@@ -98,6 +98,8 @@
   "atPicker.heading": "Add context",
   "atPicker.headingWithQuery": "Add context: {query}",
   "atPicker.keys": "↑↓ move · ↵ confirm · esc close",
+  "atPicker.keysDrill": "↑↓ move · ↵ confirm · ⇥ blocks · esc close",
+  "atPicker.keysStage": "↑↓ move · ↵ confirm · ⌫ back · esc close",
   "atPicker.pageBrowserSub": "Current web page",
   "atPicker.pageReadingSub": "Current reader page",
   "atPicker.selectionSub": "Current selection",

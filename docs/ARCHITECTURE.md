@@ -1605,7 +1605,14 @@ The guard lives in `src/lib/citation.ts` next to the shared block cache.
 The other direction — the user handing one block to the model — is the
 composer's `@Note#` stage: typing `#` after a note name lists the whole note,
 its headings and its anchorable blocks, and a pick becomes
-`ContextRef::Block { path, local_id }`. Rust resolves it at send time through
+`ContextRef::Block { path, local_id }`. Tab on a highlighted note row enters the
+stage the same way, completing the token to the note's stem (`@手测` becomes
+`@手测夹具#`) and remembering the row, so a note moved to with ↓ is the one
+staged rather than the first fuzzy hit of the typed text — the same convention
+as the palette's pick-note stage; on any other row Tab confirms like Enter, and
+deleting the `#` returns to the notes. The trigger regex accepts single inner
+spaces in the note part only when a `#` follows, so a completed `@block 方案#`
+stays a token while a space after a plain `@word` still ends one. Rust resolves it at send time through
 `Vault::block_for_agent` (a heading hands over its section, a list item its
 subtree, private blocks removed from the slice, a private block nonexistent;
 the path goes through the same privacy gate as every attachment, worded like

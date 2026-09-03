@@ -788,6 +788,8 @@ add("atPicker.", {
     "heading": ("Add context", "添加上下文"),
     "headingWithQuery": ("Add context: {query}", "添加上下文:{query}"),
     "keys": ("↑↓ move · ↵ confirm · esc close", "↑↓ 选择 · ↵ 确认 · esc 关闭"),
+    "keysDrill": ("↑↓ move · ↵ confirm · ⇥ blocks · esc close", "↑↓ 选择 · ↵ 确认 · ⇥ 选块 · esc 关闭"),
+    "keysStage": ("↑↓ move · ↵ confirm · ⌫ back · esc close", "↑↓ 选择 · ↵ 确认 · ⌫ 返回 · esc 关闭"),
     "empty": ("No match — Enter sends the text as-is", "无匹配——回车按原文发送"),
     "extracting": ("Extracting…", "抽取中…"),
 })

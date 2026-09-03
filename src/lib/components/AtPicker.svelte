@@ -40,6 +40,7 @@
     curSel,
     onPick,
     onPickFiles,
+    onStage,
     onClose,
   }: {
     query: string;
@@ -60,6 +61,10 @@
     onPick: (ref: DraftRef) => void;
     /** The candidates' first row, "add a file from this computer…": the native file dialog is opened by AgentChat (which owns the writing and the chips). */
     onPickFiles: () => void;
+    /** Tab (or `#`) on a note row: AgentChat rewrites the @token to `@<notePart>#`, which
+     *  opens that note's block stage (the picker remembers which row was highlighted, see
+     *  `staged`). notePart is the note's stem when it can live in a token, else what was typed. */
+    onStage: (notePart: string) => void;
     onClose: () => void;
   } = $props();
 
@@ -153,10 +158,22 @@
   // ---- the `@Note#` stage: a `#` in the query switches to the blocks of one note ----
   type PathCand = Extract<Cand, { path: string }>;
   const hashAt = $derived(query.indexOf("#"));
-  /** The note the stage is about: an exact stem or title match, else the best fuzzy one;
-   *  an empty note part (`@#`) means the current note. null = no such note. */
+  /** The row that Tab or `#` took into the stage: the highlighted note, remembered together
+   *  with the note part written into the token. As long as that note part stays as written,
+   *  the stage is about this note — a row moved to with ↓ has to be honoured, and the same
+   *  stem can exist in two folders (or, when the stem could not be written, the note part is
+   *  still the typed `手测`), so deriving it from the text again could bite another note.
+   *  Editing the note part falls back to the derivation, and leaving the stage (deleting the
+   *  `#`) forgets it. */
+  let staged = $state<{ notePart: string; path: string } | null>(null);
+  $effect(() => {
+    if (hashAt < 0) staged = null;
+  });
+  /** The note the stage is about: the staged row, else an exact stem or title match, else
+   *  the best fuzzy one; an empty note part (`@#`) means the current note. null = no such note. */
   const stageNote = $derived.by(() => {
     if (hashAt < 0) return null;
+    if (staged && query.slice(0, hashAt) === staged.notePart) return staged.path;
     const q = query.slice(0, hashAt).trim().toLowerCase();
     if (!q) return vault.currentPath && !vault.privatePaths.has(vault.currentPath) ? vault.currentPath : null;
     const notes = base.filter((e) => e.c.kind === "note");
@@ -213,6 +230,14 @@
     sel = 0; // after typing more of the filter, the selection starts from the top again
   });
   const selIdx = $derived(Math.max(0, Math.min(sel, cands.length - 1)));
+  /** The highlighted row when it is a note outside the stage — the one kind Tab can drill into. */
+  const drillable = $derived.by(() => {
+    const c = cands[selIdx];
+    return hashAt < 0 && c?.kind === "note" ? c : null;
+  });
+  /** The key legend follows what the keys do right now: ⇥ is offered on a note row, and the
+   *  stage says how to get back (deleting the `#` returns to the notes). */
+  const keysHint = $derived(stageNote ? t("atPicker.keysStage") : drillable ? t("atPicker.keysDrill") : t("atPicker.keys"));
 
   let listEl = $state<HTMLDivElement | null>(null);
   $effect(() => {
@@ -284,6 +309,23 @@
       onClose();
       return true;
     }
+    // Tab on a note row drills into its blocks rather than confirming — the same convention as
+    // the palette's pick-note stage; on any other row (a leaf: a folder, a file, the disk entry,
+    // a block in the stage) there is nothing to drill into and Tab confirms like Enter.
+    // Typing `#` after moving to a note row takes that row along too — otherwise the stage would
+    // be derived from the text alone and open the first fuzzy hit.
+    if ((e.key === "Tab" || e.key === "#") && drillable) {
+      e.preventDefault();
+      // The token is completed to the note's stem (`@手测` → `@手测夹具#`), like a shell
+      // completion, so the composer shows which note the blocks belong to. A stem AT_RE cannot
+      // hold — a `@` or `#` in it, or whitespace other than single inner spaces — leaves the
+      // typed text in place; the stage is still right through `staged`.
+      const stem = baseOf(drillable.path).replace(/\.md$/i, "");
+      const notePart = /^[^\s@#]+(?: [^\s@#]+)*$/.test(stem) ? stem : query;
+      staged = { notePart, path: drillable.path };
+      onStage(notePart);
+      return true;
+    }
     if ((e.key === "Enter" || e.key === "Tab") && cands.length) {
       e.preventDefault();
       void pick(cands[selIdx]);
@@ -313,7 +355,7 @@
           ? t("atPicker.headingWithQuery", { query })
           : t("atPicker.heading")}</span
     >
-    <span class="at-keys">{t("atPicker.keys")}</span>
+    <span class="at-keys">{keysHint}</span>
   </div>
   <div class="at-list" bind:this={listEl}>
     {#if cands.length === 0}
