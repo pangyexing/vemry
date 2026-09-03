@@ -27,6 +27,7 @@ import { blockSelection } from "./blocksel";
 import { foldExtension } from "./fold";
 import { blockHandle, type BlockHost } from "./blockhandle";
 import { dragSourceField } from "./blockdrag";
+import { clickGuard } from "./clickguard";
 
 // The font and line height have to be declared in the theme layer: CM's baseTheme
 // injects monospace and a 1.4 line height at .ͼx .cm-scroller (0,2,0), which app.css's
@@ -256,6 +257,7 @@ function buildState(opts: EditorOptions): EditorState {
     extensions: [
       history(),
       drawSelection(),
+      clickGuard(),
       highlightSpecialChars(),
       EditorView.lineWrapping,
       closeBrackets(),
