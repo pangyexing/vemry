@@ -6,11 +6,13 @@
   import { fetchHeadings, noteKey, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
   import { vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
+  import { types } from "$lib/stores/types.svelte";
+  import { scaffold } from "$lib/scaffold";
   import { toast } from "$lib/stores/toast.svelte";
   import { isImeKeydown } from "$lib/ime";
   import { k } from "$lib/shortcut";
 
-  export type PaletteMode = "commands" | "notes" | "pick-note" | "search" | "capture" | "vaults" | "url";
+  export type PaletteMode = "commands" | "notes" | "pick-note" | "search" | "capture" | "vaults" | "url" | "types";
 
   /** A URL's display and filter form: the scheme is dropped and the percent encoding decoded
    *  (so a non-ASCII path is readable and can be matched by a query in that script); a failed
@@ -81,6 +83,7 @@
     capture: t("palette.capture", { key: k("Mod+Enter") }),
     vaults: t("palette.vaults"),
     url: t("palette.url", { key: k("Mod+Enter") }),
+    types: t("palette.types"),
   };
   const placeholder = $derived(
     mode === "pick-note" && pickStage
@@ -263,6 +266,36 @@
               toast.push(String(e), "error");
             }
           },
+        });
+      }
+      return list;
+    }
+    if (mode === "types") {
+      // The vault's block types, disabled ones included (the file is what opens, and a
+      // disabled one is exactly the one to edit). A name with no file yet gets a create row,
+      // and while there is no `book` the example is offered under that name
+      const q = query.trim();
+      const has = (name: string) => types.list.some((x) => x.name.toLowerCase() === name.toLowerCase());
+      const list: Item[] = fuzzyFilter(types.list, query, (x) => `${x.name} ${x.description}`).map((x) => ({
+        id: x.file,
+        title: x.icon ? `${x.icon} ${x.name}` : x.name,
+        hint: x.disabled ? t("palette.typeDisabled") : x.description || `.vemry/types/${x.file}`,
+        run: () => vault.openFile(`.vemry/types/${x.file}`),
+      }));
+      if (!has("book") && fuzzyFilter(["book"], query, (s) => s).length > 0) {
+        list.push({
+          id: "__example__",
+          title: "book",
+          hint: t("palette.typeExample"),
+          run: () => scaffold(() => api.typeCreate("book")),
+        });
+      }
+      if (q && !has(q) && q.toLowerCase() !== "book") {
+        list.push({
+          id: "__create__",
+          title: t("palette.createType", { name: q }),
+          hint: t("palette.createTypeHint"),
+          run: () => scaffold(() => api.typeCreate(q)),
         });
       }
       return list;

@@ -158,7 +158,7 @@ pub fn run() {
             commands::provenance_pending,
             commands::fields_list,
             commands::types_list,
-            commands::types_init,
+            commands::type_create,
             commands::settings_get,
             commands::settings_set,
             commands::agent_start,

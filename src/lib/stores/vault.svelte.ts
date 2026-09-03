@@ -974,7 +974,29 @@ class VaultStore {
       }
     }
     if (e.type === "types_changed") {
-      void types.refresh();
+      await types.refresh();
+      // A block type open in a tab follows its directory the way a note follows
+      // note_modified and note_removed: a file gone from the list closes its tab (the
+      // autosave's existence guard has already stopped writing it), and an external edit
+      // lands in a clean current buffer. The echo of the editor's own save compares equal
+      // and is left alone, as with a note.
+      for (const tab of this.tabs.filter((x) => typeFileOf(x.path) !== null)) {
+        if (!metaDocExists(tab.path)) {
+          if (tab.path === this.currentPath && this.dirty) toast.push(t("vaultStore.deletedExternally", { path: tab.path }));
+          this.pruneHistory((p) => p === tab.path);
+          await this.dropTabs((x) => x.path === tab.path);
+        } else if (tab.path === this.currentPath && !this.dirty) {
+          try {
+            const { content } = await api.noteRead(tab.path);
+            if (content !== this.currentContent) {
+              this.currentContent = content;
+              this.reloadCounter++;
+            }
+          } catch {
+            /* gone between the listing and the read: the next types_changed closes it */
+          }
+        }
+      }
       return;
     }
     if (e.type === "files_changed") {
@@ -1680,6 +1702,28 @@ export function fileKind(path: string): "note" | "text" | "image" | "pdf" {
   if (IMAGE_EXTS.has(ext)) return "image";
   if (ext === "pdf") return "pdf";
   return "text";
+}
+
+/** A path under the meta directory (`.vemry/`): a block type or a skill. It opens in the note
+ *  editor like a note, but it is configuration — absent from the notes list and the index, and
+ *  written through the meta path in Rust. */
+export function isMetaPath(path: string): boolean {
+  return path.startsWith(".vemry/");
+}
+
+/** The file name of a block type path (`.vemry/types/book.md` → `book.md`), or null. */
+function typeFileOf(path: string): string | null {
+  const prefix = ".vemry/types/";
+  const rest = path.slice(prefix.length);
+  return path.startsWith(prefix) && rest !== "" && !rest.includes("/") ? rest : null;
+}
+
+/** The existence guard for a meta document (the autosave must not resurrect a deleted file). A
+ *  block type is checked against the types list, which types_changed keeps fresh; the rest of
+ *  the directory has no list and no watcher event, so it is taken to exist. */
+export function metaDocExists(path: string): boolean {
+  const file = typeFileOf(path);
+  return file === null || types.list.some((x) => x.file === file);
 }
 
 export const vault = new VaultStore();

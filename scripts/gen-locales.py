@@ -185,9 +185,10 @@ CMD = {
         ("Open VEMRY.md", "打开 VEMRY.md"),
         ("Edit the agent's vault-level instructions", "编辑 agent 的 vault 级指令"),
     ),
-    "types-init": (
-        ("Create an example block type", "创建示例块类型"),
-        ("Write .vemry/types/book.md — a bullet with author, status and rating fields — to start from", "写入 .vemry/types/book.md（带 author/status/rating 字段的列表项）作为起点"),
+    "block-type": (
+        ("Block type…", "块类型…"),
+        ("Open one of the vault's block types (.vemry/types/*.md), or type a new name to create it — book gets the full example",
+         "打开知识库里的块类型（.vemry/types/*.md），或输入新名字创建——book 会得到完整示例"),
     ),
     "init-research-skill": (
         ("Install research skill", "初始化研究方法论 skill"),
@@ -388,6 +389,11 @@ add("palette.", {
     "pickHeading": ("Pick a section of “{title}”… (Enter to confirm, Esc to go back)",
                     "选择「{title}」的小节…（Enter 确认,Esc 返回）"),
     "wholeNote": ("End of note", "整篇末尾"),
+    "types": ("Open a block type… (type a new name to create it)", "打开块类型…（输入新名字可创建）"),
+    "createType": ("Create block type “{name}”", "创建块类型「{name}」"),
+    "createTypeHint": ("A skeleton with status and due fields, opened for editing", "按骨架（status/due 字段）新建并打开"),
+    "typeExample": ("The example: a bullet with author, status and rating fields", "示例：带 author/status/rating 字段的列表项"),
+    "typeDisabled": ("Disabled — set disabled: false in the file to list it again", "已停用——把文件里的 disabled 改为 false 即恢复"),
 })
 
 # ---------------------------------------------------------------- shared view chrome
@@ -1302,6 +1308,8 @@ add("app.", {
                            "for you to edit by hand",
                            "未配置 API Key,无法调研改进;已打开 VEMRY.md 供手动编辑"),
     "wroteFile": ("Wrote {path}", "已写入 {path}"),
+    # A scaffold command whose file is already there opens it instead of failing
+    "existsOpened": ("{path} already exists — opened it", "{path} 已存在,已打开"),
     "noReaderPageYet": ("No web page has been read yet — try clicking a citation in an AI answer",
                         "还没有打开过网页投影——点击 AI 回答里的引用试试"),
     "attachmentsAlreadyMigrated": ("Attachment folders are already bucketed by note path — nothing to migrate",
@@ -1677,6 +1685,7 @@ add("err.", {
     "exists": ("Already exists: {path}", "已存在: {path}"),
     "attachmentIsMd": ("An attachment cannot be a .md file: {path}", "附件不能是 .md: {path}"),
     "mdNeedsNoteApi": (".md must be written through the note API: {path}", ".md 须通过笔记接口写入: {path}"),
+    "metaNotANote": ("A file under .vemry/ is configuration, not a note: {path}", ".vemry/ 下的文件是配置,不是笔记: {path}"),
     "isTheVaultItself": ("Cannot import the vault itself: {path}", "不能导入知识库自身: {path}"),
     "folderIntoItself": ("Cannot copy a folder into itself: {path}", "不能把文件夹复制到它自身内部: {path}"),
     "reservedName": ("{path} — the name uses characters or a reserved word Windows forbids",
@@ -1726,9 +1735,8 @@ add("ipc.", {
     "runningNoSwitch": ("The agent is running — cannot switch sessions", "agent 运行中,无法切换会话"),
     "runningNoDelete": ("The agent is running — cannot delete the current session", "agent 运行中,无法删除当前会话"),
     "contentEmpty": ("The content is empty", "内容为空"),
+    "typeNameEmpty": ("A block type needs a name", "块类型需要一个名字"),
     "memoryExists": ("VEMRY.md already exists", "VEMRY.md 已存在"),
-    "researchSkillExists": ("The research skill already exists", "research skill 已存在"),
-    "typeExampleExists": ("The example block type already exists (.vemry/types/book.md)", "示例块类型已存在（.vemry/types/book.md）"),
     "trashFailed": ("Could not move it to the trash: {error}", "移入废纸篓失败: {error}"),
     "rulesUpdateRunning": ("A rule update is already running", "拦截规则更新正在进行中"),
     "noRuleSource": ("No rule subscription source is configured", "没有配置拦截规则订阅源"),

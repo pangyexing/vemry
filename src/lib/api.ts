@@ -86,6 +86,14 @@ export interface FieldSpec {
   type?: string;
 }
 
+/** What a scaffold command (`typeCreate`, `initResearchSkill`) hands back (mirrors commands.rs
+ *  `Scaffolded`): the file's vault-relative path, and whether it was written just now —
+ *  `false` means it was already there and was left untouched. */
+export interface Scaffolded {
+  path: string;
+  created: boolean;
+}
+
 /** A block type from `.vemry/types/<file>` (mirrors vemry-core's `BlockType`). */
 export interface BlockType {
   file: string;
@@ -683,8 +691,9 @@ export const api = {
   fieldsList: () => invoke<FieldStat[]>("fields_list"),
   /** The vault's block types (`.vemry/types/*.md`), disabled ones included. */
   typesList: () => invoke<BlockType[]>("types_list"),
-  /** Write the example block type; returns its vault-relative path (an error when it exists). */
-  typesInit: () => invoke<string>("types_init"),
+  /** Open-or-create for "block type…": `.vemry/types/<name>.md` is written when there is none (`book`
+   *  gets the full example, any other name a skeleton); one already there is left as it is. */
+  typeCreate: (name: string) => invoke<Scaffolded>("type_create", { name }),
   foldersList: () => invoke<string[]>("folders_list"),
   folderCreate: (path: string) => invoke<string>("folder_create", { path }),
   filesList: () => invoke<string[]>("files_list"),
@@ -878,7 +887,8 @@ export const api = {
   initMemoryFile: () => invoke<string>("init_memory_file"),
   /** The `#` quick-memory convention: one bullet lands in VEMRY.md's conventions section. */
   memoryAppend: (text: string) => invoke<void>("memory_append", { text }),
-  initResearchSkill: () => invoke<string>("init_research_skill"),
+  /** Write the research skill (`.vemry/skills/research.md`); one already there is left as it is. */
+  initResearchSkill: () => invoke<Scaffolded>("init_research_skill"),
   /** Install the research methodology skill automatically the first time the research
    *  panel is opened (idempotent; deleting it does not resurrect it); returns whether it
    *  was installed just now. */

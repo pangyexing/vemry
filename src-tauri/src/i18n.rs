@@ -165,7 +165,6 @@ mod tests {
         // `ipc.trashFailed` is missing on purpose: the frontend is what looks that
         // one up.
         "ipc.fileExists",
-        "ipc.typeExampleExists",
         "ipc.dirNotEmpty",
         "ipc.imageFormatUnsupported",
         "ipc.copyImageUnsupported",
@@ -181,8 +180,8 @@ mod tests {
         "ipc.runningNoSwitch",
         "ipc.runningNoDelete",
         "ipc.contentEmpty",
+        "ipc.typeNameEmpty",
         "ipc.memoryExists",
-        "ipc.researchSkillExists",
         "ipc.rulesUpdateRunning",
         "ipc.noRuleSource",
         "ipc.noRuleFile",
@@ -199,6 +198,7 @@ mod tests {
         "err.exists",
         "err.attachmentIsMd",
         "err.mdNeedsNoteApi",
+        "err.metaNotANote",
         "err.isTheVaultItself",
         "err.folderIntoItself",
         "err.reservedName",

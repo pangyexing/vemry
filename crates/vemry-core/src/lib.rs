@@ -39,8 +39,8 @@ pub use provenance::{
 };
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
-pub use types::{list_block_types, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE, TYPES_SUBDIR};
-pub use vault::{sanitize_filename, BacklinkEntry, InsertLanded, RefHit, RefResolution, RefTarget, Vault};
+pub use types::{list_block_types, type_skeleton, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE, TYPES_SUBDIR};
+pub use vault::{is_meta_id, sanitize_filename, BacklinkEntry, InsertLanded, RefHit, RefResolution, RefTarget, Vault};
 
 #[derive(thiserror::Error, Debug)]
 pub enum VemryError {
@@ -76,6 +76,7 @@ pub enum PathReject {
     Exists,
     AttachmentIsMd,
     MdNeedsNoteApi,
+    MetaNotANote,
     IsTheVaultItself,
     FolderIntoItself,
     ReservedName,
@@ -95,6 +96,7 @@ impl PathReject {
             PathReject::Exists => "err.exists",
             PathReject::AttachmentIsMd => "err.attachmentIsMd",
             PathReject::MdNeedsNoteApi => "err.mdNeedsNoteApi",
+            PathReject::MetaNotANote => "err.metaNotANote",
             PathReject::IsTheVaultItself => "err.isTheVaultItself",
             PathReject::FolderIntoItself => "err.folderIntoItself",
             PathReject::ReservedName => "err.reservedName",
@@ -115,6 +117,7 @@ impl std::fmt::Display for PathReject {
             PathReject::Exists => "already exists",
             PathReject::AttachmentIsMd => "an attachment cannot be .md",
             PathReject::MdNeedsNoteApi => ".md must be written through the note API",
+            PathReject::MetaNotANote => "a file under .vemry/ is configuration, not a note",
             PathReject::IsTheVaultItself => "cannot import the vault itself",
             PathReject::FolderIntoItself => "cannot copy a folder into itself",
             PathReject::ReservedName => "the name uses characters or a reserved word Windows forbids",

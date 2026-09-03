@@ -291,9 +291,17 @@ pub fn note_read(state: State<'_, AppState>, path: String) -> Result<NoteContent
 pub fn note_write(app: AppHandle, state: State<'_, AppState>, path: String, content: String) -> Result<(), String> {
     let event = with_vault_mut(&state, |v| {
         let id = v.note_id(&path).map_err(crate::i18n::err)?;
-        v.write_note(&id, &content).map_err(crate::i18n::err)
+        // A block type or a skill open in the editor: configuration, written by path
+        // and never indexed. The watcher raises whatever event the directory deserves
+        // (TypesChanged, or nothing), the same as for an external edit.
+        if vemry_core::is_meta_id(&id) {
+            return v.write_meta(&id, &content).map(|()| None).map_err(crate::i18n::err);
+        }
+        v.write_note(&id, &content).map(Some).map_err(crate::i18n::err)
     })?;
-    broadcast(&app, &event);
+    if let Some(event) = event {
+        broadcast(&app, &event);
+    }
     Ok(())
 }
 
@@ -389,20 +397,52 @@ pub fn types_list(state: State<'_, AppState>) -> Result<Vec<vemry_core::BlockTyp
     with_vault(&state, |v| Ok(vemry_core::list_block_types(&v.meta_dir())))
 }
 
-/// Write the example block type (`.vemry/types/book.md`); refuses to overwrite one
-/// the user already has. The prompt snapshot is invalidated and the change
-/// broadcast, the same as an external edit under the directory.
-#[tauri::command]
-pub fn types_init(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    let dir = with_vault(&state, |v| Ok(v.meta_dir()))?.join(vemry_core::TYPES_SUBDIR);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("book.md");
+/// What a scaffold command (`type_create`, `init_research_skill`) hands back: the
+/// vault-relative path of the file, and whether it was written just now. A file
+/// the user already has is left untouched and reported with `created: false`
+/// rather than as an error — it is the end state the command exists to reach, so
+/// the frontend opens it instead of complaining.
+#[derive(Serialize)]
+pub struct Scaffolded {
+    pub path: String,
+    pub created: bool,
+}
+
+/// Write `content` to `path` unless a file is already there, creating the parent
+/// directory on demand (a meta directory is created by the write paths, never by
+/// merely opening a vault — see `Vault::meta_dir`). Returns whether it wrote.
+fn write_if_absent(path: &std::path::Path, content: &str) -> Result<bool, String> {
     if path.exists() {
-        return Err(crate::i18n::t(crate::i18n::current(), "ipc.typeExampleExists"));
+        return Ok(false);
     }
-    std::fs::write(&path, vemry_core::BOOK_TYPE_TEMPLATE).map_err(|e| e.to_string())?;
-    broadcast(&app, &VaultEvent::TypesChanged);
-    Ok(".vemry/types/book.md".into())
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, content).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Open-or-create for "block type…": the type file for `name`
+/// (`.vemry/types/<stem>.md`, the stem sanitised the way a note title is) is
+/// written when there is none — `book` gets the full example, any other name the
+/// skeleton — and reported as `created`; one already there is left as it is. The
+/// frontend opens it either way. A fresh write invalidates the prompt snapshot
+/// and is broadcast, the same as an external edit under the directory.
+#[tauri::command]
+pub fn type_create(app: AppHandle, state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(crate::i18n::t(crate::i18n::current(), "ipc.typeNameEmpty"));
+    }
+    let stem = vemry_core::sanitize_filename(name);
+    let content =
+        if stem.eq_ignore_ascii_case("book") { vemry_core::BOOK_TYPE_TEMPLATE.to_string() } else { vemry_core::type_skeleton(name) };
+    let dir = with_vault(&state, |v| Ok(v.meta_dir()))?.join(vemry_core::TYPES_SUBDIR);
+    let created = write_if_absent(&dir.join(format!("{stem}.md")), &content)?;
+    if created {
+        broadcast(&app, &VaultEvent::TypesChanged);
+    }
+    Ok(Scaffolded { path: format!("{}/{stem}.md", vemry_core::vault::TYPES_DIR), created })
 }
 
 /// Inline-field keys and their frequent values for the editor's `key::` completion;
@@ -1497,18 +1537,15 @@ Follow this for any 'look into / search for / tell me about X' request:
 
 /// Install the research methodology skill into .vemry/skills/ (a skill is a meta
 /// file and does not enter the block index; the skill list travels with the session
-/// snapshot, so it takes effect in a new session).
+/// snapshot, so it takes effect in a new session). One already there is left as it is.
 #[tauri::command]
-pub fn init_research_skill(state: State<'_, AppState>) -> Result<String, String> {
-    let dir = with_vault(&state, |v| Ok(v.meta_dir()))?.join("skills");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("research.md");
-    if path.exists() {
-        return Err(crate::i18n::t(crate::i18n::current(), "ipc.researchSkillExists"));
+pub fn init_research_skill(state: State<'_, AppState>) -> Result<Scaffolded, String> {
+    let path = with_vault(&state, |v| Ok(v.meta_dir()))?.join("skills").join("research.md");
+    let created = write_if_absent(&path, RESEARCH_SKILL_TEMPLATE)?;
+    if created {
+        let _ = with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)));
     }
-    std::fs::write(&path, RESEARCH_SKILL_TEMPLATE).map_err(|e| e.to_string())?;
-    let _ = with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)));
-    Ok(".vemry/skills/research.md".into())
+    Ok(Scaffolded { path: ".vemry/skills/research.md".into(), created })
 }
 
 /// Install the research methodology skill automatically the first time the research
@@ -1526,15 +1563,8 @@ pub fn ensure_research_skill(state: State<'_, AppState>) -> Result<bool, String>
     if already_marked {
         return Ok(false);
     }
-    let skills = meta_dir.join("skills");
-    std::fs::create_dir_all(&skills).map_err(|e| e.to_string())?;
-    let path = skills.join("research.md");
-    let installed = if path.exists() {
-        false // the user installed it themselves: only the marker is added
-    } else {
-        std::fs::write(&path, RESEARCH_SKILL_TEMPLATE).map_err(|e| e.to_string())?;
-        true
-    };
+    // Already there = the user installed it themselves: only the marker is added.
+    let installed = write_if_absent(&meta_dir.join("skills").join("research.md"), RESEARCH_SKILL_TEMPLATE)?;
     with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)))?;
     Ok(installed)
 }

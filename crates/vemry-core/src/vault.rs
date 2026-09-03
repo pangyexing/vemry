@@ -33,6 +33,13 @@ pub const SCRIPTS_DIR: &str = ".vemry/scripts";
 /// `VaultEvent::TypesChanged`.
 pub const TYPES_DIR: &str = ".vemry/types";
 
+/// Whether an id lives under the meta directory (`.vemry/`). A block type or a
+/// skill is read and written by path like a note — the editor opens it — but it
+/// is configuration, and never enters the index, the search or the block times.
+pub fn is_meta_id(id: &NoteId) -> bool {
+    id.as_str().starts_with(".vemry/")
+}
+
 /// Text files above this open with the OS default app instead of the editor.
 const MAX_TEXT_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
@@ -596,6 +603,36 @@ impl Vault {
 
     /// Write full raw content and re-index the note.
     pub fn write_note(&mut self, id: &NoteId, content: &str) -> Result<VaultEvent> {
+        // Configuration is not a note: indexing it would surface a block type or a
+        // skill in search and the graph until the next rescan. The editor's writes
+        // under .vemry/ go through write_meta; nothing else may write there.
+        if is_meta_id(id) {
+            return Err(reject(PathReject::MetaNotANote, id.as_str()));
+        }
+        let existed = self.index.contains(id);
+        self.write_bytes(id, content)?;
+        self.self_writes.insert(id.clone(), Instant::now());
+        self.reindex_note(id)?;
+        self.times.save(true);
+        Ok(if existed { VaultEvent::NoteModified { id: id.clone() } } else { VaultEvent::NoteAdded { id: id.clone() } })
+    }
+
+    /// Write a meta file (`.vemry/types/*.md`, `.vemry/skills/*.md`) from the
+    /// editor. It never enters the index, the search or the block times, and no
+    /// event is raised here: the watcher turns a change under `.vemry/types` into
+    /// `TypesChanged` — own writes included, which is how the menus and an open
+    /// editor follow it — and stays silent for the rest of the directory, exactly
+    /// as it does for an external edit.
+    pub fn write_meta(&mut self, id: &NoteId, content: &str) -> Result<()> {
+        if !is_meta_id(id) {
+            return Err(reject(PathReject::MdNeedsNoteApi, id.as_str()));
+        }
+        self.write_bytes(id, content)
+    }
+
+    /// The file write shared by notes and meta files: the parent directory is
+    /// created on demand, and a path that does not exist yet must be portable.
+    fn write_bytes(&self, id: &NoteId, content: &str) -> Result<()> {
         let path = self.abs_path(id);
         if !path.exists() {
             validate_portable_rel(id.as_str())?;
@@ -603,12 +640,8 @@ impl Vault {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let existed = self.index.contains(id);
         fs::write(&path, content)?;
-        self.self_writes.insert(id.clone(), Instant::now());
-        self.reindex_note(id)?;
-        self.times.save(true);
-        Ok(if existed { VaultEvent::NoteModified { id: id.clone() } } else { VaultEvent::NoteAdded { id: id.clone() } })
+        Ok(())
     }
 
     /// Positioned insert (clip / quick capture): land at the end of
@@ -2252,6 +2285,21 @@ mod tests {
         assert!(matches!(events[..], [VaultEvent::TypesChanged]));
         // a stray non-md file under the directory stays silent
         assert!(vault.handle_fs_change(&[root.join(".vemry/types/notes.txt")]).is_empty());
+    }
+
+    #[test]
+    fn meta_files_are_written_by_path_but_never_indexed() {
+        let (_d, mut vault) = fixture_vault();
+        let id = vault.note_id(".vemry/types/book.md").unwrap();
+        assert!(is_meta_id(&id));
+        vault.write_meta(&id, "---\nname: book\n---\n").unwrap();
+        assert_eq!(vault.read_note(&id).unwrap(), "---\nname: book\n---\n");
+        assert!(!vault.index().contains(&id));
+        // the note API refuses configuration, and the meta API refuses notes
+        assert!(vault.write_note(&id, "x").is_err());
+        let note = NoteId::new("projects/Alpha.md");
+        assert!(!is_meta_id(&note));
+        assert!(vault.write_meta(&note, "x").is_err());
     }
 
     #[test]

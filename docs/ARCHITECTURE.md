@@ -639,9 +639,15 @@ and template. The editor lists the enabled types in the `/` menu and under
 into the kind and appends the fields it lacks); the system prompt names them
 under `## Block types` so the agent writes such blocks the same way; the
 watcher emits `TypesChanged` for the directory, which refreshes the menus and
-invalidates the prompt snapshot. IPC: `types_list`, `types_init` (the example
-`book.md`). A typed block is ordinary Markdown with fields — no note points
-at a type.
+invalidates the prompt snapshot. IPC: `types_list`, `type_create` (the "block
+type…" command's open-or-create: a name with no file gets the skeleton, `book`
+the full example, and an existing file is opened in the editor, never
+overwritten).
+A type file opens through the same `note_read`/`note_write` as a note, but
+`note_write` routes a `.vemry/` path to `Vault::write_meta`: configuration is
+never indexed, and the watcher's `TypesChanged` (own writes included) is how
+the menus and the open editor follow it. A typed block is ordinary Markdown
+with fields — no note points at a type.
 
 ### Skills (instruction-level)
 

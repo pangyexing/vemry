@@ -79,6 +79,48 @@ fields:
 {{cursor}} [author:: {{author}}] [status:: {{status}}]
 ";
 
+/// The file a new type starts from ("block type…" given a name with no file yet):
+/// every knob once, so the file explains itself when it opens in the editor.
+/// `book` gets `BOOK_TYPE_TEMPLATE` instead (the caller's choice).
+pub fn type_skeleton(name: &str) -> String {
+    let name = name.trim();
+    let tag = tag_of(name);
+    let tag_line = if tag.is_empty() { String::new() } else { format!("tag: {}\n", yaml_scalar(&tag)) };
+    format!(
+        "---\nname: {}\ndescription: {}\nkind: bullet\n{tag_line}fields:\n  - key: status\n    values: [open, done]\n    default: open\n  - key: due\n    type: date\n---\n{{{{cursor}}}} [status:: {{{{status}}}}] [due:: ]\n",
+        yaml_scalar(name),
+        yaml_scalar(&format!("A {name}")),
+    )
+}
+
+/// A name as a YAML scalar: plain when it is unmistakably one (letters, digits,
+/// spaces, `-` and `_`, not starting with an indicator), double-quoted otherwise.
+fn yaml_scalar(s: &str) -> String {
+    let plain = !s.is_empty()
+        && s.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-' || c == '_')
+        && !s.starts_with(['-', ' '])
+        && !s.ends_with(' ');
+    if plain {
+        s.to_string()
+    } else {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
+/// The `#tag` derived from a type name: letters, digits, `-` and `_` kept, runs
+/// of whitespace joined with `-`, anything else dropped.
+fn tag_of(name: &str) -> String {
+    let mut tag = String::new();
+    for c in name.chars() {
+        if c.is_alphanumeric() || c == '-' || c == '_' {
+            tag.push(c);
+        } else if c.is_whitespace() && !tag.is_empty() && !tag.ends_with('-') {
+            tag.push('-');
+        }
+    }
+    tag.trim_matches('-').to_string()
+}
+
 fn yaml_str(v: &serde_yaml::Value) -> Option<String> {
     match v {
         serde_yaml::Value::String(s) => Some(s.clone()),
@@ -167,6 +209,26 @@ pub fn list_block_types(meta_dir: &Path) -> Vec<BlockType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skeleton_parses_for_plain_and_awkward_names() {
+        let t = parse_block_type("meeting.md", &type_skeleton("meeting"));
+        assert_eq!(t.name, "meeting");
+        assert_eq!(t.description, "A meeting");
+        assert_eq!(t.kind, "bullet");
+        assert_eq!(t.tag.as_deref(), Some("meeting"));
+        assert_eq!(t.fields.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(), ["status", "due"]);
+        assert_eq!(t.fields[0].default.as_deref(), Some("open"));
+        assert_eq!(t.fields[1].kind.as_deref(), Some("date"));
+        assert!(t.template.starts_with("{{cursor}} [status:: {{status}}]"));
+        // a name YAML would misread is quoted, and the tag keeps only what a tag can hold
+        let t = parse_block_type("x.md", &type_skeleton(" to: \"do\" later "));
+        assert_eq!(t.name, "to: \"do\" later");
+        assert_eq!(t.tag.as_deref(), Some("to-do-later"));
+        assert_eq!(t.fields.len(), 2);
+        // nothing tag-worthy → no tag line at all
+        assert_eq!(parse_block_type("x.md", &type_skeleton("!!!")).tag, None);
+    }
 
     #[test]
     fn example_type_parses_every_key() {

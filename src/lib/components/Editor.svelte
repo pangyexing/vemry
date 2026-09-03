@@ -19,7 +19,7 @@
   import { suppressReveal } from "$lib/editor/reveal";
   import { ensureSyntaxTree } from "@codemirror/language";
   import { linkAt } from "$lib/editor/linkat";
-  import { vault, fileKind, mimeOf } from "$lib/stores/vault.svelte";
+  import { vault, fileKind, mimeOf, isMetaPath, metaDocExists } from "$lib/stores/vault.svelte";
   import { agent } from "$lib/stores/agent.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -151,8 +151,10 @@
 
   /** The existence guard: writing back in the window before note_removed/files_changed arrives
    *  after an external deletion would resurrect the file just deleted. A non-md file is not in
-   *  the notes index, so otherFiles is consulted. */
+   *  the notes index, so otherFiles is consulted; a meta file (a block type) is in neither list
+   *  and has its own guard. */
   function docExists(path: string): boolean {
+    if (isMetaPath(path)) return metaDocExists(path);
     return path.endsWith(".md") ? vault.notes.some((n) => n.id === path) : vault.otherFiles.includes(path);
   }
 
