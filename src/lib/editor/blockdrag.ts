@@ -8,7 +8,7 @@
 // the block above the boundary. The drop is one `moveBlockTo` transaction.
 import { StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
-import { type EditorBlock, blockAt, extentTo, frontmatterEnd, topBlocks } from "./blocks";
+import { type EditorBlock, blockAt, extentTo, frontmatterEnd } from "./blocks";
 import { CONTENT_PAD } from "./blockhandle";
 import { moveBlockTo } from "./blockops";
 import { selectBlock } from "./blocksel";
@@ -246,5 +246,4 @@ export function startBlockDrag(
   grip.addEventListener("pointerup", onUp);
   grip.addEventListener("pointercancel", onCancel);
   window.addEventListener("keydown", onKey, true);
-  void topBlocks;
 }

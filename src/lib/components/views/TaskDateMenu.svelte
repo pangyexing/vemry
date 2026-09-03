@@ -1,16 +1,11 @@
 <!-- The one implementation of the task reschedule menu (shared by the Agenda chip, the
   kanban chip and a kanban drop): today / tomorrow / next week / a chosen date, plus
   "remove the date" when current is set. Viewport clamping and closing on a click outside
-  or Esc are built in, with the same discipline as ContextMenu — the outside click closes
-  on pointerdown capture (the menu holds a date input, which does not affect the contains
-  check); Esc uses keydown capture plus stop, or App's layered Escape would close the
-  projection view carrying the menu along with it.
-  ⚠ The closing listeners must not touch click: after a kanban drop (pointerup) raises this
-  menu the browser still dispatches a click, which KanbanView swallows with
-  onclickcapture + suppressClick — attaching a click listener here as well would have that
-  click close the menu instantly, and it only reproduces under a real drag. -->
+  or Esc come from popmenu.ts, shared with FieldValueMenu — the ⚠ about never listening on
+  click lives there, and this menu is the one that reproduces it (a kanban drop). -->
 <script lang="ts">
   import { t } from "$lib/i18n/i18n.svelte";
+  import { clampToViewport, dismissOn } from "$lib/popmenu";
   import { dateFieldLabel, type DateField, dateIconSvg, localDate } from "$lib/views/tasks";
 
   interface Props {
@@ -31,40 +26,19 @@
   let { x, y, field, title, current, onpick, onclose }: Props = $props();
 
   let el = $state<HTMLElement | null>(null);
-  /** The clamped landing point: rendered at the raw coordinates first, then measured against
-   *  its own rect after mounting and pulled inside the viewport (the same as ContextMenu).
-   *  With the chip at the bottom of a column the menu would overflow the screen's lower
-   *  edge, especially the taller menu that carries "remove the date". */
+  /** The landing point: rendered at the raw coordinates first, then pulled inside the
+   *  viewport once it has a rect of its own. */
   let clamped = $state({ x: 0, y: 0 });
   $effect(() => {
     clamped = { x, y };
     queueMicrotask(() => {
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      clamped = {
-        x: Math.min(x, Math.max(4, window.innerWidth - r.width - 4)),
-        y: Math.min(y, Math.max(4, window.innerHeight - r.height - 4)),
-      };
+      if (el) clamped = clampToViewport(el, x, y);
     });
   });
-
-  // Close on a click outside: pointerdown comes before click, so a click inside the menu is
-  // unaffected. The component is only mounted while the menu is open, and the interaction
-  // that opened it precedes the mount, so it naturally does not close by mistake
-  function onWindowPointerdown(e: PointerEvent) {
-    if (el && e.target instanceof Node && el.contains(e.target)) return;
-    onclose();
-  }
-  function onWindowKeydown(e: KeyboardEvent) {
-    if (e.key !== "Escape") return;
-    // Only the menu closes: App's layered Escape must not close the projection view along with it
-    e.stopPropagation();
-    e.preventDefault();
-    onclose();
-  }
+  const dismiss = dismissOn(() => el, () => onclose());
 </script>
 
-<svelte:window onpointerdowncapture={onWindowPointerdown} onkeydowncapture={onWindowKeydown} />
+<svelte:window onpointerdowncapture={dismiss.onpointerdowncapture} onkeydowncapture={dismiss.onkeydowncapture} />
 
 <div class="menu" bind:this={el} style:left="{clamped.x}px" style:top="{clamped.y}px" role="menu" tabindex="-1">
   <div class="menu-title">{@html dateIconSvg(field)}{title ?? dateFieldLabel(field)}</div>

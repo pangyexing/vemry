@@ -181,10 +181,8 @@ fn call_query(env: &BindEnv, p: Value) -> String {
     };
     let hide = env.perspective.hide_private;
     match with_vault(env, |v| {
-        let mut hits = v.index().query(&q);
-        if hide {
-            hits.retain(|h| !v.is_private(&h.note) && !matches!(h.block.kind, vemry_core::BlockKind::Private));
-        }
+        // The script's perspective decides whether it reads as the agent does.
+        let hits = if hide { v.query_for_agent(&q).0 } else { v.index().query(&q) };
         serde_json::to_value(hits).map_err(|e| e.to_string())
     }) {
         Ok(v) => ok(v),

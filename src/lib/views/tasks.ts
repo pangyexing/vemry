@@ -2,7 +2,14 @@
 import { t, tn } from "$lib/i18n/i18n.svelte";
 import { setFieldValue, stripFields } from "$lib/fields";
 import { api, type BlockHit } from "$lib/api";
+import { byNote } from "$lib/views/queryrows";
 import { plainText } from "$lib/markdown";
+
+/** A task line as the field layer sees it: a bullet or ordered marker and a checkbox.
+ *  Wider than CHECKBOX_RE, which does not take ordered items. The renderer and the
+ *  chip's writer read this one rule — otherwise a chip could be drawn through one and
+ *  written through the other. */
+export const TASK_LINE_RE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+\[[ xX/]\]/;
 
 /** Checkbox prefix at the start of a task block. The state char is `(.)`
  *  because the Rust parser accepts any single char (unknowns count as todo) —
@@ -308,38 +315,6 @@ export async function updateTask(hit: BlockHit, edit: TaskEdit): Promise<boolean
   });
 }
 
-/** A UTF-8 byte offset (Rust's block.span) → a UTF-16 character position (the units
- *  CodeMirror's revealPos takes). For CJK content the two differ by a factor of 2-3,
- *  and mixing them jumps to the wrong line. Clamped when out of range. */
-export function byteToChar(content: string, byte: number): number {
-  const bytes = new TextEncoder().encode(content);
-  return new TextDecoder().decode(bytes.slice(0, Math.min(byte, bytes.length))).length;
-}
-
-/** The inverse: a UTF-16 character position → a UTF-8 byte offset (what `block_id_plan`'s
- *  offset selector and `Block.span` count in). */
-export function charToByte(content: string, ch: number): number {
-  return new TextEncoder().encode(content.slice(0, Math.max(0, ch))).length;
-}
-
-/** Many byte spans → character ranges in one pass over the text (byteToChar per span
- *  would re-encode the whole document for each block). Offsets past the end clamp. */
-export function byteSpansToChar(content: string, spans: { start: number; end: number }[]): { from: number; to: number }[] {
-  const wanted = Array.from(new Set(spans.flatMap((s) => [s.start, s.end]))).sort((a, b) => a - b);
-  const map = new Map<number, number>();
-  let byte = 0;
-  let wi = 0;
-  let i = 0;
-  while (wi < wanted.length && i <= content.length) {
-    while (wi < wanted.length && wanted[wi] <= byte) map.set(wanted[wi++], i);
-    if (i === content.length) break;
-    const cp = content.codePointAt(i)!;
-    byte += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
-    i += cp >= 0x10000 ? 2 : 1;
-  }
-  while (wi < wanted.length) map.set(wanted[wi++], content.length);
-  return spans.map((s) => ({ from: map.get(s.start) ?? content.length, to: map.get(s.end) ?? content.length }));
-}
 
 /** Task text for display: checkbox prefix, date markers, capture stamps and
  *  markdown ornaments stripped — Agenda is a projection, and cramming the source's
@@ -406,17 +381,14 @@ export const byWhen = (a: TaskRow, b: TaskRow) =>
  *  the done groups): the most recently changed task first, then the source order. The
  *  time is the block's own (`modified`: when its current text appeared — a toggled
  *  checkbox, an edited word, a changed date all count; a minted `^id` does not), so
- *  checking one task moves that task alone. `oldestFirst` reads the axis the other
- *  way. Agenda's no-date and done groups and the board's unscheduled and done columns
- *  read this one rule. */
-export const byModified = (oldestFirst = false) => (a: TaskRow, b: TaskRow) =>
-  (oldestFirst ? -1 : 1) * (b.modified - a.modified) || bySource(a, b);
+ *  checking one task moves that task alone. Agenda's no-date and done groups and the
+ *  board's unscheduled and done columns read this one rule. */
+export const byModified = (a: TaskRow, b: TaskRow) => b.modified - a.modified || bySource(a, b);
 
-/** The source order: the note's path, then the block's byte position in it. The
- *  tie-break of every task ordering — two cards that compare equal on any key keep the
- *  order they have in the notes. */
-export const bySource = (a: TaskRow, b: TaskRow) =>
-  a.hit.note.localeCompare(b.hit.note) || a.hit.block.span.start - b.hit.block.span.start;
+/** The source order: the note's path, then the block's byte position in it (queryrows'
+ *  byNote, read off the row's hit). The tie-break of every task ordering — two cards that
+ *  compare equal on any key keep the order they have in the notes. */
+export const bySource = (a: TaskRow, b: TaskRow) => byNote(a.hit, b.hit);
 
 /** Local-timezone `YYYY-MM-DD` for a Date — the one day-key both Agenda and
  *  Timeline group by (two copies would let a UTC-parse fix drift them apart). */

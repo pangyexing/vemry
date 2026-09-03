@@ -16,6 +16,7 @@ import {
   type WebSearchResult,
   type WriteRequest,
 } from "$lib/api";
+import { POSITIONAL_RE } from "$lib/citation";
 import { domainOf, extractCitations } from "$lib/markdown";
 import { clips } from "$lib/stores/clips.svelte";
 import { toast } from "$lib/stores/toast.svelte";
@@ -116,7 +117,7 @@ function refTag(r: ContextRef): RefTag {
 /** A block's handle as the audit and the bubble show it: `bN` stays, anything else gets its caret. */
 export function blockHandle(localId: string): string {
   const id = localId.replace(/^\^/, "");
-  return /^b\d+$/.test(id) ? id : `^${id}`;
+  return POSITIONAL_RE.test(id) ? id : `^${id}`;
 }
 
 /** The index of the last user item (-1 = there is none). */

@@ -36,10 +36,15 @@ export function parseSort(value: string): SortSpec | null {
   return FIELD_KEY_RE.test(k) ? { key: { by: "field", key: k }, desc } : null;
 }
 
+/** A block's first value of a field, the key already lowercased — for the loops that
+ *  compare one key against every row, where lowercasing it per row is the whole cost. */
+export function fieldOfLower(hit: BlockHit, lower: string): string | undefined {
+  return hit.block.fields?.find((f) => f.key.toLowerCase() === lower)?.value;
+}
+
 /** A block's first value of a field (keys compare case-insensitively). */
 export function fieldOf(hit: BlockHit, key: string): string | undefined {
-  const lower = key.toLowerCase();
-  return hit.block.fields?.find((f) => f.key.toLowerCase() === lower)?.value;
+  return fieldOfLower(hit, key.toLowerCase());
 }
 
 /** Dates and numbers in their own order, everything else alphabetical. The board's
@@ -51,24 +56,30 @@ export function cmpValue(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
-const byNote = (a: BlockHit, b: BlockHit) => a.note.localeCompare(b.note) || a.block.span.start - b.block.span.start;
+/** The source order: the note's path, then the block's byte position in it. The tie-break
+ *  of every block ordering, so a requery never shuffles two rows that compare equal
+ *  (tasks.ts's bySource is this one read off a TaskRow's hit). */
+export const byNote = (a: BlockHit, b: BlockHit) => a.note.localeCompare(b.note) || a.block.span.start - b.block.span.start;
 
-/** A stable sort; a block without the sort field goes last whichever the direction,
- *  and equal keys keep note order (path, then position) so a requery does not shuffle. */
+/** The one `sort` convention, read by a query block's hits and by the board's cards: a row
+ *  without the key's value goes last whichever the direction, and equal values keep `tie`'s
+ *  order. `tie` is a comparator rather than a number so it runs only when it decides. */
+export function cmpMissingLast<T>(a: T, b: T, va: string | undefined, vb: string | undefined, dir: number, tie: (a: T, b: T) => number): number {
+  if (va === undefined || vb === undefined) return va === vb ? tie(a, b) : va === undefined ? 1 : -1;
+  return cmpValue(va, vb) * dir || tie(a, b);
+}
+
+/** A stable sort; the missing-value and tie-break rules are cmpMissingLast's. */
 export function sortHits(hits: BlockHit[], spec: SortSpec): BlockHit[] {
   const k = spec.key;
   const dir = spec.desc ? -1 : 1;
+  const lower = k.by === "field" ? k.key.toLowerCase() : "";
   const cmp = (a: BlockHit, b: BlockHit): number => {
     let c: number;
     if (k.by === "note") c = byNote(a, b);
     else if (k.by === "kind") c = a.block.kind.type.localeCompare(b.block.kind.type);
     else if (k.by === "text") c = a.block.content.localeCompare(b.block.content);
-    else {
-      const va = fieldOf(a, k.key);
-      const vb = fieldOf(b, k.key);
-      if (va === undefined || vb === undefined) return va === vb ? byNote(a, b) : va === undefined ? 1 : -1;
-      c = cmpValue(va, vb);
-    }
+    else return cmpMissingLast(a, b, fieldOfLower(a, lower), fieldOfLower(b, lower), dir, byNote);
     return c * dir || byNote(a, b);
   };
   return [...hits].sort(cmp);
@@ -86,6 +97,7 @@ export interface HitGroup {
 export function groupHits(hits: BlockHit[], group: GroupKey, noneTitle: string, kindLabel: (kind: string) => string): HitGroup[] {
   const groups = new Map<string, HitGroup>();
   const none: BlockHit[] = [];
+  const lower = group.by === "field" ? group.key.toLowerCase() : "";
   for (const h of hits) {
     let key: string | undefined;
     let title: string;
@@ -96,7 +108,7 @@ export function groupHits(hits: BlockHit[], group: GroupKey, noneTitle: string, 
       key = h.block.kind.type;
       title = kindLabel(key);
     } else {
-      key = fieldOf(h, group.key);
+      key = fieldOfLower(h, lower);
       title = key ?? "";
     }
     if (key === undefined) {

@@ -228,7 +228,3 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
   ];
 }
 
-/** The character offset Rust turns into the block's content start when an id is minted by position. */
-export function idOffsetOf(view: EditorView, b: EditorBlock): number {
-  return blockContentStart(view.state, b);
-}

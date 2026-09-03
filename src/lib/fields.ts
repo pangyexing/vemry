@@ -4,7 +4,9 @@
 // (backtick spans, `[[wikilinks]]`; the caller keeps code blocks and frontmatter
 // out). Offsets are UTF-16 character positions. The Rust table of accepted and
 // rejected examples is replayed against scanFields by the batch's harness, so the
-// two cannot drift silently. Pure: no CodeMirror, no stores.
+// two cannot drift silently. Pure: no CodeMirror, no stores (BlockType is a type-only
+// import and is erased).
+import type { BlockType } from "$lib/api";
 
 export type FieldForm = "line" | "bracket" | "paren" | "bare";
 
@@ -194,6 +196,25 @@ export function fieldValueKind(value: string): FieldValueKind {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return "date";
   if (/^-?\d+(?:\.\d+)?$/.test(value)) return "number";
   return "text";
+}
+
+/** What a set of block types declares for one field key: every value in order, each
+ *  tagged with the type that names it, and the value kind (`date` / `number`) the first
+ *  spec naming one gives it. The chip's value menu and the `key:: ` completion read this
+ *  one answer — two walks of the same types let them disagree about, say, whether a key
+ *  is a date, and the chip would open the calendar where the completion offered plain
+ *  values. */
+export function declaredField(types: BlockType[], key: string): { values: { value: string; type: string }[]; kind?: string } {
+  const lower = key.toLowerCase();
+  const values: { value: string; type: string }[] = [];
+  let kind: string | undefined;
+  for (const ty of types)
+    for (const f of ty.fields) {
+      if (f.key.toLowerCase() !== lower) continue;
+      for (const value of f.values ?? []) values.push({ value, type: ty.name });
+      kind ??= f.type;
+    }
+  return { values, kind };
 }
 
 /** Set, replace or (with null) remove a field on one line. The field with that key is

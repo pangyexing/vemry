@@ -134,3 +134,13 @@ pub struct Block {
     #[serde(default)]
     pub modified_ms: u64,
 }
+
+impl Block {
+    /// How this block is cited: an explicit `^id` keeps its caret, a positional
+    /// `bN` does not — so a reader can tell a stable reference from one that is
+    /// only valid until the note changes, without a second field. The agent's
+    /// answers and its query results both read this one rule.
+    pub fn handle(&self) -> String {
+        if self.explicit_id { format!("^{}", self.local_id) } else { self.local_id.clone() }
+    }
+}

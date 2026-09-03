@@ -155,7 +155,6 @@ pub fn run() {
             commands::provenance_accept,
             commands::provenance_revert_plan,
             commands::provenance_record,
-            commands::provenance_pending,
             commands::fields_list,
             commands::types_list,
             commands::type_create,

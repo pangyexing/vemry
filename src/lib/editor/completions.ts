@@ -19,8 +19,8 @@ import { localDate } from "$lib/views/tasks";
 import type { BlockType, FieldStat } from "$lib/api";
 import { blockAt, frontmatterEnd } from "./blocks";
 import { type FieldChipHandler, inCode } from "./livepreview";
-import { CALLOUT_GROUP } from "./livepreview";
-import { scanFields } from "$lib/fields";
+import { CALLOUT_GROUP } from "$lib/callout";
+import { declaredField, fieldValueKind, scanFields } from "$lib/fields";
 
 /** `@` at the start of a line or after whitespace / an opening bracket / `:` (the
  *  `supports:@` of an evidence block); mirrors the agent composer's AT_RE. */
@@ -103,19 +103,6 @@ export function fieldCompletions(
   onFieldChip?: FieldChipHandler,
 ): CompletionSource {
   const DATE_KEYS = new Set(["due", "scheduled", "date", "start", "end", "created", "deadline"]);
-  /** What the enabled types declare for a key: each value with the type naming it, and whether one calls the key a date. */
-  const declared = (key: string) => {
-    const lower = key.toLowerCase();
-    const values: { value: string; type: string }[] = [];
-    let date = false;
-    for (const ty of blockTypes())
-      for (const f of ty.fields) {
-        if (f.key.toLowerCase() !== lower) continue;
-        if (f.type === "date") date = true;
-        for (const value of f.values ?? []) values.push({ value, type: ty.name });
-      }
-    return { values, date };
-  };
   return (context: CompletionContext): CompletionResult | null => {
     const line = context.state.doc.lineAt(context.pos);
     if (line.from < frontmatterEnd(context.state.doc)) return null;
@@ -145,9 +132,9 @@ export function fieldCompletions(
           apply: spaced ? undefined : ` ${label}`,
         });
       };
-      const decl = declared(key);
+      const decl = declaredField(blockTypes(), key);
       for (const d of decl.values) push(d.value, t("field.fromType", { name: d.type }), 3);
-      const dateKey = decl.date || DATE_KEYS.has(key.toLowerCase()) || (stat?.values.some((v) => /^\d{4}-\d{2}-\d{2}$/.test(v)) ?? false);
+      const dateKey = decl.kind === "date" || DATE_KEYS.has(key.toLowerCase()) || (stat?.values.some((v) => fieldValueKind(v) === "date") ?? false);
       if (dateKey) {
         push(localDate(0), t("field.today"), 2);
         push(localDate(1), t("field.tomorrow"), 1);

@@ -718,12 +718,6 @@ pub fn block_id_plan(source: String, selector: BlockSelector) -> Result<BlockIdP
     vemry_core::plan_block_id(&source, &selector).map_err(crate::i18n::err)
 }
 
-#[derive(Serialize)]
-pub struct PendingNote {
-    pub path: String,
-    pub count: usize,
-}
-
 /// Who authored each block of a note (see vemry-core's provenance.rs).
 #[tauri::command]
 pub fn provenance_get(state: State<'_, AppState>, path: String) -> Result<Vec<BlockProvenance>, String> {
@@ -788,14 +782,6 @@ pub fn provenance_record(
             blocks,
         });
         Ok(())
-    })
-}
-
-/// Every note with agent blocks still awaiting review.
-#[tauri::command]
-pub fn provenance_pending(state: State<'_, AppState>) -> Result<Vec<PendingNote>, String> {
-    with_vault(&state, |v| {
-        Ok(v.pending_notes().into_iter().map(|(id, count)| PendingNote { path: id.to_string(), count }).collect())
     })
 }
 
@@ -1563,17 +1549,27 @@ Follow this for any 'look into / search for / tell me about X' request:
   clipped into clips/.
 ";
 
+/// The research skill's file in the two forms its installers need: the absolute path it
+/// is written to, and the vault-relative path the frontend opens. One spelling of the
+/// directory (vemry-agent owns it) and of the name, so the file that is written and the
+/// file that is reported cannot drift apart.
+fn research_skill_path(meta_dir: &std::path::Path) -> (std::path::PathBuf, String) {
+    const FILE: &str = "research.md";
+    let sub = vemry_agent::skills::SKILLS_SUBDIR;
+    (meta_dir.join(sub).join(FILE), format!(".vemry/{sub}/{FILE}"))
+}
+
 /// Install the research methodology skill into .vemry/skills/ (a skill is a meta
 /// file and does not enter the block index; the skill list travels with the session
 /// snapshot, so it takes effect in a new session). One already there is left as it is.
 #[tauri::command]
 pub fn init_research_skill(state: State<'_, AppState>) -> Result<Scaffolded, String> {
-    let path = with_vault(&state, |v| Ok(v.meta_dir()))?.join("skills").join("research.md");
+    let (path, rel) = research_skill_path(&with_vault(&state, |v| Ok(v.meta_dir()))?);
     let created = write_if_absent(&path, RESEARCH_SKILL_TEMPLATE)?;
     if created {
         let _ = with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)));
     }
-    Ok(Scaffolded { path: ".vemry/skills/research.md".into(), created })
+    Ok(Scaffolded { path: rel, created })
 }
 
 /// Install the research methodology skill automatically the first time the research
@@ -1592,7 +1588,7 @@ pub fn ensure_research_skill(state: State<'_, AppState>) -> Result<bool, String>
         return Ok(false);
     }
     // Already there = the user installed it themselves: only the marker is added.
-    let installed = write_if_absent(&meta_dir.join("skills").join("research.md"), RESEARCH_SKILL_TEMPLATE)?;
+    let installed = write_if_absent(&research_skill_path(&meta_dir).0, RESEARCH_SKILL_TEMPLATE)?;
     with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)))?;
     Ok(installed)
 }
@@ -1627,7 +1623,7 @@ pub fn skill_set_enabled(state: State<'_, AppState>, file: String, enabled: bool
     if file.contains('/') || file.contains('\\') || file.contains("..") || !file.ends_with(".md") {
         return Err("bad skill file name".into());
     }
-    let path = with_vault(&state, |v| Ok(v.meta_dir()))?.join("skills").join(&file);
+    let path = with_vault(&state, |v| Ok(v.meta_dir()))?.join(vemry_agent::skills::SKILLS_SUBDIR).join(&file);
     let meta = std::fs::symlink_metadata(&path).map_err(|_| "skill not found".to_string())?;
     if !meta.is_file() {
         return Err("skill not found".into());

@@ -17,7 +17,7 @@ import { type EditorState, type Extension, type Line, StateField } from "@codemi
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import type { RefResolution } from "$lib/api";
 import { handleCodeCopyClick, renderNoteMarkdown } from "$lib/markdown";
-import { byteToChar } from "$lib/views/tasks";
+import { byteToChar } from "$lib/bytes";
 import { IMAGE_EXT_RE, inCode } from "./livepreview";
 import { queryRefresh } from "./queryblock";
 import { selectionReveals, selectionTouches } from "./reveal";

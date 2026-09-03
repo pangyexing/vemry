@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 use walkdir::WalkDir;
 
-use crate::block::{BlockKind, WikiLink};
+use crate::block::{Block, BlockKind, WikiLink};
 use crate::blockid::{BlockSelector, PlanTarget};
 use crate::event::VaultEvent;
 use crate::{reject, PathReject};
@@ -81,6 +81,32 @@ pub struct RefHit {
     /// Byte range in the note's raw text (`Block.span` convention).
     pub span: std::ops::Range<usize>,
     pub content: String,
+}
+
+/// What a reference to the heading at `i` denotes: the heading itself, and its
+/// section down to the next heading of the same or a higher level.
+fn heading_target(blocks: &[Block], src: &str, i: usize) -> (RefTarget, std::ops::Range<usize>) {
+    let b = &blocks[i];
+    let level = match b.kind {
+        BlockKind::Heading { level } => level,
+        _ => 0,
+    };
+    (
+        RefTarget::Heading { text: crate::locate::heading_text(b).to_string(), level },
+        crate::locate::section_span_at(blocks, src, i),
+    )
+}
+
+/// What a reference to any other block at `i` denotes: the block, and for a list
+/// item or a task its subtree. `resolve_ref` and `block_for_agent` share these two
+/// so a `[[Note#^id]]` and an `@Note#block` attachment cannot come to differ about
+/// how far a reference reaches.
+fn block_target(blocks: &[Block], src: &str, i: usize) -> (RefTarget, std::ops::Range<usize>) {
+    let b = &blocks[i];
+    (
+        RefTarget::Block { local_id: b.local_id.clone(), block_kind: b.kind.clone() },
+        crate::locate::item_subtree_span(blocks, src, i),
+    )
 }
 
 /// Outcome of [`Vault::resolve_ref`]. `AnchorMissing` = the note exists
@@ -722,33 +748,19 @@ impl Vault {
             return Ok(RefResolution::NoteMissing);
         };
         let parsed = parse_note(&raw);
-        let note_title =
-            self.index.summary(&note_id).map(|s| s.title).unwrap_or_else(|| note_id.stem().to_string());
+        let note_title = self.note_title(&note_id);
         let missing = || RefResolution::AnchorMissing { note: note_id.clone(), note_title: note_title.clone() };
+        // Which block the link names is the link's syntax to decide (`#^id` names a
+        // block whatever its kind, `#Heading` names a section); what the block then
+        // denotes is block_target/heading_target, shared with block_for_agent.
         let (target, span) = if let Some(id) = &link.block_ref {
             match parsed.blocks.iter().position(|b| b.explicit_id && b.local_id == *id) {
-                Some(i) => {
-                    let b = &parsed.blocks[i];
-                    (
-                        RefTarget::Block { local_id: b.local_id.clone(), block_kind: b.kind.clone() },
-                        crate::locate::item_subtree_span(&parsed.blocks, &raw, i),
-                    )
-                }
+                Some(i) => block_target(&parsed.blocks, &raw, i),
                 None => return Ok(missing()),
             }
         } else if let Some(h) = link.heading.as_deref().filter(|h| !h.trim().is_empty()) {
             match crate::locate::find_heading(&parsed.blocks, h) {
-                Some(i) => {
-                    let b = &parsed.blocks[i];
-                    let level = match b.kind {
-                        BlockKind::Heading { level } => level,
-                        _ => 0,
-                    };
-                    (
-                        RefTarget::Heading { text: crate::locate::heading_text(b).to_string(), level },
-                        crate::locate::section_span_at(&parsed.blocks, &raw, i),
-                    )
-                }
+                Some(i) => heading_target(&parsed.blocks, &raw, i),
                 None => return Ok(missing()),
             }
         } else {
@@ -810,24 +822,6 @@ impl Vault {
             .unwrap_or(0)
     }
 
-    /// Every note with pending blocks, with the count (only notes the ledger
-    /// ever recorded are candidates; a pending block moved into another note
-    /// keeps its state but escapes this count).
-    pub fn pending_notes(&self) -> Vec<(NoteId, usize)> {
-        let mut v: Vec<(NoteId, usize)> = self
-            .provenance
-            .paths()
-            .map(NoteId::new)
-            .filter(|id| self.index.contains(id))
-            .map(|id| {
-                let n = self.pending_count(&id);
-                (id, n)
-            })
-            .filter(|(_, n)| *n > 0)
-            .collect();
-        v.sort();
-        v
-    }
 
     /// Append one ledger entry (an agent write, or text the user placed).
     pub fn record_provenance(&mut self, entry: ProvenanceEntry) {
@@ -907,16 +901,16 @@ impl Vault {
         Ok(VaultEvent::NoteRemoved { id: id.clone() })
     }
 
-    /// Re-read one note from disk into the index. The block stamps are saved only
-    /// where `.vemry/` already exists — an external change to a directory merely
-    /// being browsed must not leave one; the vault's own writes save with `create`.
+    /// Re-read one note from disk into the index. It stamps the block times and leaves
+    /// the saving to its caller — `write_note` after its one note, `handle_fs_change`
+    /// after the whole batch — so a checkout touching N notes rewrites the table once
+    /// rather than N times.
     fn reindex_note(&mut self, id: &NoteId) -> Result<()> {
         let rel = PathBuf::from(id.as_str());
         let mut note = load_note(&self.root, &rel)?;
         self.times.stamp(&mut note);
         self.search.index_note(&note.id, note.effective_title(), &note.raw);
         self.index.upsert(&note);
-        self.times.save(false);
         Ok(())
     }
 
@@ -993,10 +987,14 @@ impl Vault {
                 self.index.remove(&id);
                 self.search.remove_note(&id);
                 self.times.remove(id.as_str());
-                self.times.save(false);
                 events.push(VaultEvent::NoteRemoved { id });
             }
         }
+        // One save for the batch (the loop only ever continues, so this is reached from
+        // every branch). The stamps are saved only where `.vemry/` already exists — an
+        // external change to a directory merely being browsed must not leave one; the
+        // vault's own writes save with `create`.
+        self.times.save(false);
         if files_changed {
             events.push(VaultEvent::FilesChanged);
         }
@@ -1017,6 +1015,12 @@ impl Vault {
     // blocks (see privacy.rs). Named rather than flagged so the choke points
     // can be grepped, and so the raw `read_note` its many UI callers use can
     // never be handed to the agent by a wrong default. ----
+
+    /// A note's display title: the index's, falling back to the file stem for a
+    /// note the index has not seen yet.
+    fn note_title(&self, id: &NoteId) -> String {
+        self.index.summary(id).map(|s| s.title).unwrap_or_else(|| id.stem().to_string())
+    }
 
     /// Whether the note holds a private block (index state; a cheap trigger).
     pub fn has_private_blocks(&self, id: &NoteId) -> bool {
@@ -1056,6 +1060,20 @@ impl Vault {
         hits
     }
 
+    /// `query()` as the agent may see it: a whole private note and a private block
+    /// are both nonexistent to it (a `kind: private` query therefore finds nothing).
+    /// Returns the surviving hits and how many were dropped, so a caller can tell
+    /// the model its view is partial. Positional ids are not renumbered around a
+    /// removed block — one id space shared with the UI, the editor and id minting
+    /// matters more than a gapless sequence.
+    pub fn query_for_agent(&self, q: &crate::query::BlockQuery) -> (Vec<crate::query::BlockHit>, usize) {
+        let mut hits = self.index.query(q);
+        let before = hits.len();
+        hits.retain(|h| !self.is_private(&h.note) && !matches!(h.block.kind, BlockKind::Private));
+        let filtered = before - hits.len();
+        (hits, filtered)
+    }
+
     /// VEMRY.md as the agent may read it (private blocks removed).
     pub fn memory_file_for_agent(&self) -> Option<String> {
         let raw = self.memory_file()?;
@@ -1088,28 +1106,20 @@ impl Vault {
     pub fn block_for_agent(&self, id: &NoteId, local_id: &str) -> Result<Option<RefHit>> {
         let raw = self.read_note(id)?;
         let parsed = parse_note(&raw);
-        let Some(b) = crate::locate::find_block(&parsed.blocks, local_id) else {
+        let Some(i) = crate::locate::find_block(&parsed.blocks, local_id) else {
             return Ok(None);
         };
-        let Some(i) = parsed.blocks.iter().position(|x| std::ptr::eq(x, b)) else {
-            return Ok(None);
-        };
-        let (target, span) = match b.kind {
+        // Unlike a wikilink, this entry point has only the id: what the block denotes
+        // follows from its kind.
+        let (target, span) = match parsed.blocks[i].kind {
             BlockKind::Private => return Ok(None),
-            BlockKind::Heading { level } => (
-                RefTarget::Heading { text: crate::locate::heading_text(b).to_string(), level },
-                crate::locate::section_span_at(&parsed.blocks, &raw, i),
-            ),
-            _ => (
-                RefTarget::Block { local_id: b.local_id.clone(), block_kind: b.kind.clone() },
-                crate::locate::item_subtree_span(&parsed.blocks, &raw, i),
-            ),
+            BlockKind::Heading { .. } => heading_target(&parsed.blocks, &raw, i),
+            _ => block_target(&parsed.blocks, &raw, i),
         };
         let slice = &raw[span.clone()];
         let blocks = crate::parser::parse_blocks(slice, 0);
         let content = crate::privacy::redact_private_blocks(slice, &blocks).text;
-        let note_title = self.index.summary(id).map(|s| s.title).unwrap_or_else(|| id.stem().to_string());
-        Ok(Some(RefHit { note: id.clone(), note_title, target, content, span }))
+        Ok(Some(RefHit { note: id.clone(), note_title: self.note_title(id), target, content, span }))
     }
 
     /// Backlinks with a context snippet from the linking block.
@@ -1674,7 +1684,6 @@ mod tests {
         let prov = vault.provenance(&n).unwrap();
         assert!(matches!(prov[3].origin, Origin::Agent { pending: true, session: Some(ref s), .. } if s == "s1"));
         assert_eq!(vault.pending_count(&n), 1);
-        assert_eq!(vault.pending_notes(), vec![(n.clone(), 1)]);
         // the same block, turned into a list item elsewhere in the note, keeps its record
         vault.write_note(&n, &format!("- agent added\n\n{old}")).unwrap();
         assert!(matches!(vault.provenance(&n).unwrap()[0].origin, Origin::Agent { pending: true, .. }));
@@ -1684,7 +1693,6 @@ mod tests {
         assert!(matches!(vault.accept_provenance(&n, Some("b99")), Err(VemryError::BlockNotFound { .. })));
         let reopened = Vault::open(root).unwrap();
         assert!(matches!(reopened.provenance(&n).unwrap()[0].origin, Origin::Agent { pending: false, .. }));
-        assert!(reopened.pending_notes().is_empty());
         // editing the words turns the block into the user's
         let mut reopened = reopened;
         reopened.write_note(&n, &format!("- agent edited\n\n{old}")).unwrap();

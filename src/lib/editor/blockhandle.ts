@@ -218,8 +218,4 @@ class HandlePlugin {
   }
 }
 
-export const handlePlugin = (host: BlockHost) => ViewPlugin.define((view) => new HandlePlugin(view, host));
-
-export function blockHandle(host: BlockHost) {
-  return handlePlugin(host);
-}
+export const blockHandle = (host: BlockHost) => ViewPlugin.define((view) => new HandlePlugin(view, host));

@@ -60,13 +60,15 @@ pub fn section_span(blocks: &[Block], src: &str, heading: &str) -> Option<Range<
     find_heading(blocks, heading).map(|i| section_span_at(blocks, src, i))
 }
 
-/// The block whose local id is `local_id`. An explicit `^id` wins over a
-/// positional `bN` that happens to be spelled the same.
-pub fn find_block<'a>(blocks: &'a [Block], local_id: &str) -> Option<&'a Block> {
+/// Index of the block whose local id is `local_id`. An explicit `^id` wins over
+/// a positional `bN` that happens to be spelled the same. The index rather than
+/// the reference, like `find_heading` and `find_block_at`: every caller needs it
+/// to reach the neighbouring blocks.
+pub fn find_block(blocks: &[Block], local_id: &str) -> Option<usize> {
     blocks
         .iter()
-        .find(|b| b.explicit_id && b.local_id == local_id)
-        .or_else(|| blocks.iter().find(|b| !b.explicit_id && b.local_id == local_id))
+        .position(|b| b.explicit_id && b.local_id == local_id)
+        .or_else(|| blocks.iter().position(|b| !b.explicit_id && b.local_id == local_id))
 }
 
 /// Index of the block whose span contains `offset` (a byte offset into the
@@ -135,7 +137,7 @@ mod tests {
     fn find_block_prefers_explicit_ids_and_locates_by_offset() {
         let src = "first\n\nsecond ^b0\n";
         let b = blocks(src);
-        assert_eq!(find_block(&b, "b0").unwrap().content, "second ^b0");
+        assert_eq!(b[find_block(&b, "b0").unwrap()].content, "second ^b0");
         assert!(find_block(&b, "b1").is_none());
         assert_eq!(find_block_at(&b, 0), Some(0));
         assert_eq!(find_block_at(&b, 6), None);

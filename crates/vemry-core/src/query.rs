@@ -225,16 +225,18 @@ impl BlockIndex {
         let limit = q.limit.unwrap_or(200);
         let text_lower = q.text.as_ref().map(|t| t.to_lowercase());
         let note_filter = q.note.as_ref().map(|n| NoteId::new(n));
+        // Each filter's key lowercased once, not once per block of the vault.
+        let fields: Vec<(String, &FieldFilter)> = q.field.iter().map(|f| (f.key.to_lowercase(), f)).collect();
         let mut hits = Vec::new();
 
-        // Note order is deterministic so `limit` cuts a stable prefix;
-        // blocks are already in document order within a note.
-        'outer: for (id, entry) in self.entries_sorted() {
-            if let Some(nf) = &note_filter {
-                if id != nf {
-                    continue;
-                }
-            }
+        // A note-scoped query reaches its one note directly instead of walking the
+        // vault; otherwise note order is the index's, deterministic, so `limit` cuts a
+        // stable prefix. Blocks are already in document order within a note.
+        let entries: Box<dyn Iterator<Item = (&NoteId, &crate::index::NoteEntry)> + '_> = match &note_filter {
+            Some(nf) => Box::new(self.entry(nf).map(|e| (nf, e)).into_iter()),
+            None => Box::new(self.entries()),
+        };
+        'outer: for (id, entry) in entries {
             let summary = &entry.summary;
             for block in &entry.blocks {
                 if let Some(kf) = &q.kind {
@@ -264,16 +266,15 @@ impl BlockIndex {
                         _ => continue,
                     }
                 }
-                if !q.field.iter().all(|f| {
-                    let key = f.key.to_lowercase();
-                    let mut own = block.fields.iter().filter(|x| x.key.to_lowercase() == key).map(|x| x.value.as_str()).peekable();
+                if !fields.iter().all(|(key, f)| {
+                    let mut own = block.fields.iter().filter(|x| x.key.to_lowercase() == *key).map(|x| x.value.as_str()).peekable();
                     if own.peek().is_some() {
                         own.any(|v| field_matches(v, f.op, f.value.as_deref()))
                     } else {
                         entry
                             .fm_fields
                             .iter()
-                            .filter(|(k, _)| k.to_lowercase() == key)
+                            .filter(|(k, _)| k.to_lowercase() == *key)
                             .any(|(_, v)| field_matches(v, f.op, f.value.as_deref()))
                     }
                 }) {

@@ -337,15 +337,7 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             let mut q: BlockQuery =
                 serde_json::from_value(args.clone()).map_err(|e| ToolError::Other(format!("bad query: {e}")))?;
             q.limit = Some(q.limit.unwrap_or(QUERY_BLOCKS_MAX_LIMIT).min(QUERY_BLOCKS_MAX_LIMIT));
-            let mut hits = vault.index().query(&q);
-            let before = hits.len();
-            // Whole private notes, then private blocks: both are nonexistent to
-            // the agent (a `kind: private` query therefore finds nothing).
-            // Positional ids are not renumbered around a removed block — one id
-            // space for the UI, the editor and id minting matters more than a
-            // gapless sequence
-            hits.retain(|h| !vault.is_private(&h.note) && !matches!(h.block.kind, vemry_core::BlockKind::Private));
-            let filtered = before - hits.len();
+            let (hits, filtered) = vault.query_for_agent(&q);
             if hits.is_empty() {
                 return Ok(ReadOutcome { text: "(no matching blocks)".into(), filtered });
             }
@@ -353,12 +345,11 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
                 .into_iter()
                 .map(|h| {
                     let content: String = h.block.content.chars().take(300).collect();
-                    // The citation handle: an explicit id keeps its caret so the model
-                    // can tell stable from positional without a second field
-                    let block = if h.block.explicit_id { format!("^{}", h.block.local_id) } else { h.block.local_id.clone() };
                     json!({
                         "note": h.note.as_str(),
-                        "block": block,
+                        // an explicit id keeps its caret, so the model can tell a stable
+                        // reference from a positional one (Block::handle)
+                        "block": h.block.handle(),
                         "kind": h.block.kind,
                         "content": content,
                     })
@@ -624,7 +615,9 @@ pub fn execute_write(
     }
     // The size reported is the model's view of the note: a private block it
     // never saw is not counted, so nothing about it shows in the arithmetic
-    let seen = vemry_core::redact_private_blocks(content, &vemry_core::parser::parse_note(content).blocks).text.len();
+    let hidden: usize =
+        vemry_core::privacy::private_spans(content, &vemry_core::parser::parse_note(content).blocks).iter().map(|r| r.len()).sum();
+    let seen = content.len() - hidden;
     Ok(format!("wrote {id} ({seen} bytes)"))
 }
 

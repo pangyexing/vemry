@@ -207,11 +207,6 @@ export interface BlockProvenance {
   origin: Origin;
 }
 
-export interface PendingNote {
-  path: string;
-  count: number;
-}
-
 /** How to undo the agent writes behind unreviewed blocks (mirrors vemry-core's `RevertPlan`):
  *  byte ranges of the text the plan was made for. */
 export interface RevertPlan {
@@ -814,8 +809,6 @@ export const api = {
   /** Record text the user placed themselves (lands accepted); a private path or text without blocks records nothing. */
   provenanceRecord: (path: string, text: string, origin: "agent" | "clip" | "capture", session?: string, url?: string) =>
     invoke<void>("provenance_record", { path, text, origin, session, url }),
-  /** Every note with agent blocks awaiting review. */
-  provenancePending: () => invoke<PendingNote[]>("provenance_pending"),
   settingsGet: () => invoke<SettingsView>("settings_get"),
   settingsSet: (update: SettingsUpdate) => invoke<void>("settings_set", { update }),
   agentStart: (

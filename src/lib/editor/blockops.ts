@@ -117,11 +117,6 @@ export function isPrivateBlock(b: EditorBlock): boolean {
   return b.kind === "callout" && b.calloutType === "private";
 }
 
-/** The block's own lines with its current prefix removed. */
-export function blockPlainLines(state: EditorState, b: EditorBlock): string[] {
-  return stripPrefix(state.doc.sliceString(b.from, b.to).split("\n"), b);
-}
-
 function stripPrefix(lines: string[], b: EditorBlock): string[] {
   switch (b.kind) {
     case "heading": {
@@ -194,7 +189,7 @@ export function turnInto(
   };
   switch (target) {
     case "paragraph":
-      lines = plain.map((l, i) => (i === 0 ? pad + l.trimStart() : pad + l.trimStart()));
+      lines = plain.map((l) => pad + l.trimStart());
       if (children && isList) children = reindent(children, indent - oldContentCol);
       break;
     case "heading1":
@@ -256,6 +251,14 @@ function kindOfLastDescendant(b: EditorBlock): SeamKind {
   let cur = b;
   while (cur.children.length) cur = cur.children[cur.children.length - 1];
   return seamKindOf(cur);
+}
+
+/** The seam kind the text above `pos` presents: the last descendant of the top-level
+ *  block there. What every seam decision on the upper side asks — written out inline
+ *  three times before, once as an IIFE and once resolving the block twice. */
+function seamKindAbove(state: EditorState, pos: number): SeamKind | null {
+  const b = blockAtLazy(state, pos, { top: true });
+  return b ? kindOfLastDescendant(b) : null;
 }
 
 /** Blank lines (their texts) between the end of one block's subtree and the
@@ -343,11 +346,10 @@ export function moveBlocks(state: EditorState, run: EditorBlock[], dir: -1 | 1):
   const beforeGap = blankRunBefore(state, eStart);
   const afterGap = blankRunAfter(state, lEnd);
   const beforeLine = doc.lineAt(eStart).number - beforeGap.length - 1;
-  const beforeKind = beforeLine >= 1 ? (blockAtLazy(state, doc.line(beforeLine).to)?.kind ?? null) : null;
   const afterLine = doc.lineAt(lEnd).number + afterGap.length + 1;
   const afterBlock = afterLine <= doc.lines ? blockAtLazy(state, doc.line(afterLine).from) : null;
   const afterKind = afterBlock ? seamKindOf(afterBlock) : null;
-  const beforeKindLast = beforeLine >= 1 ? (() => { const b = blockAtLazy(state, doc.line(beforeLine).to, { top: true }); return b ? kindOfLastDescendant(b) : null; })() : null;
+  const beforeKindLast = beforeLine >= 1 ? seamKindAbove(state, doc.line(beforeLine).to) : null;
   const needBefore = beforeKindLast != null && beforeGap.length === 0 && seamSeparator(beforeKindLast, lFirst) === "\n";
   const needAfter = afterKind != null && afterGap.length === 0 && seamSeparator(eLast, afterKind) === "\n";
   let from = eStart;
@@ -465,7 +467,7 @@ export function moveBlockTo(
     }
     const atLine = doc.lineAt(at);
     const prevLine = atLine.number > 1 ? doc.line(atLine.number - 1) : null;
-    const prevKind = prevLine && prevLine.text.trim() !== "" ? (blockAtLazy(state, prevLine.from, { top: true }) ? kindOfLastDescendant(blockAtLazy(state, prevLine.from, { top: true })!) : null) : null;
+    const prevKind = prevLine && prevLine.text.trim() !== "" ? seamKindAbove(state, prevLine.from) : null;
     const sepBefore = prevKind && seamSeparator(prevKind, seamKindOf(b)) === "\n" ? "\n" : "";
     const sepAfter = keptBlanks === 0 && seamSeparator(lastKind, target ? seamKindOf(target) : null) === "\n" ? "\n" : "";
     insert = sepBefore + text + "\n" + sepAfter;
@@ -551,8 +553,3 @@ export function copyBlocksText(state: EditorState, run: EditorBlock[]): string {
   return reindent(text, -(sorted[0].indentCols ?? 0)).replace(/\n+$/, "") + "\n";
 }
 
-/** A callout's type as written on its first line, for menus. */
-export function calloutTypeOf(text: string): string | null {
-  const m = CALLOUT_RE.exec(text);
-  return m ? m[3].toLowerCase() : null;
-}

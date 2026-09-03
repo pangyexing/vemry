@@ -23,6 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::blockid::is_valid_block_id;
 use crate::note::Note;
 use crate::provenance::fnv1a64;
 
@@ -35,8 +36,9 @@ pub fn change_key(raw_slice: &str) -> u64 {
     let mut lines: Vec<&str> = raw_slice.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     if let Some(last) = lines.last_mut() {
         if let Some(at) = last.rfind(" ^") {
-            let id = &last[at + 2..];
-            if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            // The parser's acceptance rule, not a third spelling of it: an id it would
+            // never mint is ordinary content and stays in the key.
+            if is_valid_block_id(&last[at + 2..]) {
                 *last = last[..at].trim_end();
             }
         }

@@ -15,6 +15,9 @@
      --border, dark mode leaves only a step of grey between it and --bg-panel, and the
      three columns would blur into one */
   --border-strong: #d6d3d1;
+  /* The app accent. The private callout wears it (privacy is the one callout that
+     carries the product's own colour); --co-tip must therefore stay off this hue —
+     the two were byte-identical until 2026-09-03 and only the glyph told them apart. */
   --accent: #0f766e;
   --accent-soft: rgba(15, 118, 110, 0.1);
   --danger: #b91c1c;
@@ -23,7 +26,7 @@
 
   --mark-bg: rgba(250, 204, 21, 0.35);
   --co-info: #3b82f6;
-  --co-tip: #0f766e;
+  --co-tip: #457b0e;
   --co-success: #16a34a;
   --co-question: #ea580c;
   --co-warn: #d97706;
@@ -91,7 +94,7 @@
     --diff-del-bg: rgba(224, 108, 108, 0.09);
     --mark-bg: rgba(250, 204, 21, 0.22);
     --co-info: #60a5fa;
-    --co-tip: #38b2a3;
+    --co-tip: #8ccb4d;
     --co-success: #4ade80;
     --co-question: #fb923c;
     --co-warn: #fbbf24;
@@ -623,7 +626,8 @@ button:focus-visible,
 }
 /* An inline `key:: value` field as a chip (the key muted, the value plain); the source
    `key::` is faint while the cursor is on it */
-.cm-lp-field {
+.cm-lp-field,
+.md-body .md-field {
   display: inline;
   white-space: nowrap;
   background: var(--bg-hover);
@@ -632,11 +636,13 @@ button:focus-visible,
   padding: 1px 6px 2px;
   font-size: 0.85em;
 }
-.cm-lp-field-key {
+.cm-lp-field-key,
+.md-body .md-field-key {
   color: var(--fg-faint);
   margin-right: 4px;
 }
-.cm-lp-field-key::after {
+.cm-lp-field-key::after,
+.md-body .md-field-key::after {
   content: ":";
 }
 .cm-lp-field-src {
@@ -892,35 +898,45 @@ button:focus-visible,
   width: 15px;
   height: 15px;
 }
-.cm-lp-co-tip {
+.cm-lp-co-tip,
+.md-body .md-co-tip {
   --co-color: var(--co-tip);
 }
-.cm-lp-co-success {
+.cm-lp-co-success,
+.md-body .md-co-success {
   --co-color: var(--co-success);
 }
-.cm-lp-co-question {
+.cm-lp-co-question,
+.md-body .md-co-question {
   --co-color: var(--co-question);
 }
-.cm-lp-co-warn {
+.cm-lp-co-warn,
+.md-body .md-co-warn {
   --co-color: var(--co-warn);
 }
-.cm-lp-co-danger {
+.cm-lp-co-danger,
+.md-body .md-co-danger {
   --co-color: var(--co-danger);
 }
-.cm-lp-co-example {
+.cm-lp-co-example,
+.md-body .md-co-example {
   --co-color: var(--co-example);
 }
-.cm-lp-co-quote {
+.cm-lp-co-quote,
+.md-body .md-co-quote {
   --co-color: var(--co-quote);
 }
-.cm-lp-co-claim {
+.cm-lp-co-claim,
+.md-body .md-co-claim {
   --co-color: var(--co-claim);
 }
-.cm-lp-co-evidence {
+.cm-lp-co-evidence,
+.md-body .md-co-evidence {
   --co-color: var(--co-evidence);
 }
 /* the block-level privacy zone wears the privacy accent, like every other privacy badge */
-.cm-lp-co-private {
+.cm-lp-co-private,
+.md-body .md-co-private {
   --co-color: var(--accent);
 }
 
@@ -1376,8 +1392,13 @@ button:focus-visible,
 }
 /* A callout in a read-only rendering (an embed, the reading projection, chat): the
    editor's tint groups on the same variables, the head in the group's colour */
-.md-body .md-callout {
+/* The default tint, split out at one class so the shared .md-co-* family above — two
+   classes in this form, and ~500 lines earlier in the file — always wins it whatever the
+   source order. The same trap as the .cm-lp-callout note above, mirrored. */
+.md-callout {
   --co-color: var(--co-info);
+}
+.md-body .md-callout {
   margin: 0 0 8px;
   padding: 6px 10px;
   border-left: 2px solid var(--co-color);
@@ -1390,33 +1411,6 @@ button:focus-visible,
 .md-body .md-co-head {
   color: var(--co-color);
   font-weight: 600;
-}
-.md-body .md-co-tip { --co-color: var(--co-tip); }
-.md-body .md-co-success { --co-color: var(--co-success); }
-.md-body .md-co-question { --co-color: var(--co-question); }
-.md-body .md-co-warn { --co-color: var(--co-warn); }
-.md-body .md-co-danger { --co-color: var(--co-danger); }
-.md-body .md-co-example { --co-color: var(--co-example); }
-.md-body .md-co-quote { --co-color: var(--co-quote); }
-.md-body .md-co-claim { --co-color: var(--co-claim); }
-.md-body .md-co-evidence { --co-color: var(--co-evidence); }
-.md-body .md-co-private { --co-color: var(--accent); }
-/* An inline field, the same chip as the editor's */
-.md-body .md-field {
-  display: inline;
-  white-space: nowrap;
-  background: var(--bg-hover);
-  color: var(--fg);
-  border-radius: 4px;
-  padding: 1px 6px 2px;
-  font-size: 0.85em;
-}
-.md-body .md-field-key {
-  color: var(--fg-faint);
-  margin-right: 4px;
-}
-.md-body .md-field-key::after {
-  content: ":";
 }
 .md-body code {
   font-family: var(--font-mono);

@@ -3,11 +3,11 @@
   values (what the block types declare for the key first, then what the vault already
   uses) and "remove field". Enter in the input commits it; a click on a candidate picks
   it; a click outside or Esc cancels without writing. Viewport clamping and the closing
-  discipline are TaskDateMenu's: the outside click closes on pointerdown capture, Esc on
-  keydown capture plus stop (App's layered Escape must not close the view along with it).
+  discipline come from popmenu.ts, shared with TaskDateMenu.
   The input takes focus on mount, so a typed value is one keystroke away from the chip. -->
 <script lang="ts">
   import { t } from "$lib/i18n/i18n.svelte";
+  import { clampToViewport, dismissOn } from "$lib/popmenu";
 
   interface Props {
     /** The fixed positioning anchor: where the chip was clicked */
@@ -30,20 +30,16 @@
 
   let el = $state<HTMLElement | null>(null);
   let input = $state<HTMLInputElement | null>(null);
-  /** The clamped landing point: rendered at the raw coordinates first, then measured against
-   *  its own rect after mounting and pulled inside the viewport (the same as TaskDateMenu). */
+  /** The landing point: rendered at the raw coordinates first, then pulled inside the
+   *  viewport once it has a rect of its own. */
   let clamped = $state({ x: 0, y: 0 });
   $effect(() => {
     clamped = { x, y };
     queueMicrotask(() => {
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      clamped = {
-        x: Math.min(x, Math.max(4, window.innerWidth - r.width - 4)),
-        y: Math.min(y, Math.max(4, window.innerHeight - r.height - 4)),
-      };
+      if (el) clamped = clampToViewport(el, x, y);
     });
   });
+  const dismiss = dismissOn(() => el, () => onclose());
   $effect(() => {
     input?.focus();
     input?.select();
@@ -54,20 +50,9 @@
     if (v === "") onclose();
     else onpick(v);
   }
-
-  function onWindowPointerdown(e: PointerEvent) {
-    if (el && e.target instanceof Node && el.contains(e.target)) return;
-    onclose();
-  }
-  function onWindowKeydown(e: KeyboardEvent) {
-    if (e.key !== "Escape") return;
-    e.stopPropagation();
-    e.preventDefault();
-    onclose();
-  }
 </script>
 
-<svelte:window onpointerdowncapture={onWindowPointerdown} onkeydowncapture={onWindowKeydown} />
+<svelte:window onpointerdowncapture={dismiss.onpointerdowncapture} onkeydowncapture={dismiss.onkeydowncapture} />
 
 <div class="menu" bind:this={el} style:left="{clamped.x}px" style:top="{clamped.y}px" role="menu" tabindex="-1">
   <div class="menu-title">{key}</div>

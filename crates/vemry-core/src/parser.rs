@@ -428,7 +428,7 @@ pub(crate) fn leading_ws(line: &str) -> usize {
 }
 
 /// `---`, `***`, `- - -`: three or more of one marker with only spaces between.
-fn is_thematic_break(trimmed: &str) -> bool {
+pub(crate) fn is_thematic_break(trimmed: &str) -> bool {
     let mut marker = None;
     let mut n = 0;
     for c in trimmed.chars() {

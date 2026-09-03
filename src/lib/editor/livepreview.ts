@@ -26,8 +26,9 @@ import { contentStart, fencedCodeAt, fencedCodeText } from "./fenced";
 import { revealArmed, revealRanges, selectionReveals, selectionTouches } from "./reveal";
 import { tableField } from "./table";
 import { LINK_RE as WIKI_RE } from "./wikilink";
-import { DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, localDate, scanTaskDates, STAMP_RE } from "$lib/views/tasks";
+import { DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, localDate, scanTaskDates, STAMP_RE, TASK_LINE_RE } from "$lib/views/tasks";
 import { scanFields } from "$lib/fields";
+import { privateRangeAt } from "./privateblock";
 import { openImageLightbox } from "$lib/lightbox";
 import { copyText } from "$lib/copytext";
 
@@ -74,7 +75,6 @@ const headingLines = [1, 2, 3, 4, 5, 6].map((n) => Decoration.line({ class: `cm-
 // claim/evidence)
 // exported: the completion source uses it as the list of callout type candidates
 import { CALLOUT_GROUP } from "$lib/callout";
-export { CALLOUT_GROUP };
 
 // lucide-style stroke icons (a 24 viewBox)
 const CALLOUT_ICONS: Record<string, string> = {
@@ -282,7 +282,6 @@ class FieldChipWidget extends WidgetType {
 }
 
 const fieldSrcDeco = Decoration.mark({ class: "cm-lp-field-src" });
-const TASK_LINE_RE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+\[[ xX/]\]/;
 
 /* The copy button is always an icon (stacked squares), with the words demoted to a
    hover tip (data-tip → CSS ::after); after a click it briefly swaps to a result icon
@@ -750,20 +749,12 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
             const group = CALLOUT_GROUP[co[3].toLowerCase()] ?? "info";
             const title = first.text.slice(co[0].length).trim();
             const from = Math.max(n.from, range.from);
-            // A private block's tint stops where the index's block stops: at the last
-            // `>` line. Lezer folds a lazy continuation line into the quote, but the
-            // parser (and so the agent's redaction) does not — an untinted lazy line
-            // is visibly public
-            let end = n.to;
-            if (group === "private") {
-              let last = first;
-              while (last.to < n.to) {
-                const next = doc.lineAt(last.to + 1);
-                if (!next.text.trimStart().startsWith(">")) break;
-                last = next;
-              }
-              end = last.to;
-            }
+            // A private block's tint stops where the index's block stops: privateblock.ts
+            // mirrors the Rust parser and is what the status bar and the selection guard
+            // read, so the tint asks it rather than walking `>` lines again. (Lezer folds a
+            // lazy continuation line into the quote and the parser does not — an untinted
+            // lazy line is visibly public.)
+            const end = group === "private" ? (privateRangeAt(doc, first.from)?.to ?? n.to) : n.to;
             const to = Math.min(end, range.to);
             for (let pos = doc.lineAt(from).from; pos <= to; ) {
               const line = doc.lineAt(pos);

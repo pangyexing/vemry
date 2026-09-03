@@ -63,23 +63,21 @@ pub struct BlockIdPlan {
 pub fn plan_block_id(source: &str, selector: &BlockSelector) -> Result<BlockIdPlan> {
     let parsed = parse_note(source);
     let blocks = &parsed.blocks;
-    let (idx, name) = match selector {
+    let idx = match selector {
         BlockSelector::Id { local_id, guard } => {
-            let by_id = find_block(blocks, local_id).map(|b| blocks.iter().position(|x| std::ptr::eq(x, b)).unwrap());
-            let idx = match (by_id, guard) {
+            let by_id = find_block(blocks, local_id);
+            match (by_id, guard) {
                 (Some(i), Some(g)) if !blocks[i].explicit_id && blocks[i].content != *g => unique_by_content(blocks, g)
                     .ok_or_else(|| VemryError::BlockChanged { local_id: local_id.clone() })?,
                 (Some(i), _) => i,
                 (None, Some(g)) => unique_by_content(blocks, g)
                     .ok_or_else(|| VemryError::BlockNotFound { local_id: local_id.clone() })?,
                 (None, None) => return Err(VemryError::BlockNotFound { local_id: local_id.clone() }),
-            };
-            (idx, local_id.clone())
+            }
         }
-        BlockSelector::Offset { offset } => (
-            find_block_at(blocks, *offset).ok_or_else(|| VemryError::BlockNotFound { local_id: format!("@{offset}") })?,
-            format!("@{offset}"),
-        ),
+        BlockSelector::Offset { offset } => {
+            find_block_at(blocks, *offset).ok_or_else(|| VemryError::BlockNotFound { local_id: format!("@{offset}") })?
+        }
     };
     let block = &blocks[idx];
     if matches!(block.kind, BlockKind::Heading { .. }) {
@@ -89,7 +87,6 @@ pub fn plan_block_id(source: &str, selector: &BlockSelector) -> Result<BlockIdPl
         return Ok(BlockIdPlan { target: PlanTarget::Block { id: block.local_id.clone() }, insert: None });
     }
     if !is_anchorable(block, source) {
-        let _ = name;
         return Err(VemryError::BlockNotIdable);
     }
     let taken: HashSet<&str> = blocks.iter().filter(|b| b.explicit_id).map(|b| b.local_id.as_str()).collect();
@@ -149,20 +146,10 @@ pub fn is_anchorable(b: &Block, src: &str) -> bool {
         BlockKind::CodeBlock { .. } => false,
         BlockKind::Paragraph => {
             let raw = src.get(b.span.clone()).unwrap_or("").trim_start();
-            !raw.starts_with('|') && !is_rule(raw)
+            !raw.starts_with('|') && !crate::parser::is_thematic_break(raw.trim())
         }
         _ => true,
     }
-}
-
-fn is_rule(t: &str) -> bool {
-    let t = t.trim();
-    let first = match t.chars().next() {
-        Some(c) if matches!(c, '-' | '*' | '_') => c,
-        _ => return false,
-    };
-    t.chars().filter(|c| !matches!(c, ' ' | '\t')).all(|c| c == first)
-        && t.chars().filter(|&c| c == first).count() >= 3
 }
 
 #[cfg(test)]

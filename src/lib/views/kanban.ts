@@ -18,16 +18,16 @@
 // under every one of them.
 import { t } from "$lib/i18n/i18n.svelte";
 import type { BlockHit } from "$lib/api";
-import { cmpValue } from "$lib/views/queryrows";
-import { byModified, bySource, DATE_FIELDS, type DateField, rowOf, type TaskEdit, type TaskRow, whenOf } from "$lib/views/tasks";
+import { cmpMissingLast, cmpValue } from "$lib/views/queryrows";
+import { bySource, DATE_FIELDS, type DateField, rowOf, type TaskEdit, type TaskRow, whenOf } from "$lib/views/tasks";
 
-export type ColumnId = "overdue" | "today" | "scheduled" | "unscheduled" | "done";
+type ColumnId = "overdue" | "today" | "scheduled" | "unscheduled" | "done";
 
 /** What the columns mean: the time axis, or one inline field's values. */
 export type GroupMode = { by: "state" } | { by: "field"; key: string };
 
 /** The column of a task that carries no value of the grouping field (a spelling no real value takes). */
-export const NONE_COL = "__none__";
+const NONE_COL = "__none__";
 
 export interface Card extends TaskRow {
   /** The time-axis column (the state grouping's column; the field grouping reads `fields`). */
@@ -41,11 +41,11 @@ export interface Card extends TaskRow {
 }
 
 /** The semantic level of a column header's colour dot, which the view maps onto the existing tokens (danger/accent/fg-muted/fg-faint). */
-export type ColumnTone = "danger" | "accent" | "muted" | "faint";
+type ColumnTone = "danger" | "accent" | "muted" | "faint";
 
 /** One rendered column: the id is the stable key of a drop target and of the landing
  *  logic (a state column's name, or a field value), the title is copy. */
-export interface ColumnDef {
+interface ColumnDef {
   id: string;
   title: string;
   drop: boolean;
@@ -58,7 +58,7 @@ export interface ColumnDef {
  *  data-drop-col from drop:false; add works the same way: creating something in the
  *  overdue column means nothing, and the done column does not create finished
  *  items. */
-export const COLUMNS: { id: ColumnId; drop: boolean; add: boolean; tone: ColumnTone }[] = [
+const COLUMNS: { id: ColumnId; drop: boolean; add: boolean; tone: ColumnTone }[] = [
   { id: "overdue", drop: false, add: false, tone: "danger" },
   { id: "today", drop: true, add: true, tone: "accent" },
   { id: "scheduled", drop: true, add: true, tone: "muted" },
@@ -67,7 +67,7 @@ export const COLUMNS: { id: ColumnId; drop: boolean; add: boolean; tone: ColumnT
 ];
 
 /** The column's name. Kept apart from the id: the id is the stable key of a drop target and of the landing logic, and the name is copy. */
-export function columnTitle(id: ColumnId): string {
+function columnTitle(id: ColumnId): string {
   return t(`kanban.col.${id}`);
 }
 
@@ -179,6 +179,8 @@ export interface CardOrder {
 
 export const DEFAULT_ORDER: CardOrder = { key: { by: "auto" }, desc: false };
 const DATE_ASC: CardOrder = { key: { by: "date" }, desc: false };
+/** The natural order of a column with no date to read: most recently changed first. */
+const MODIFIED_DESC: CardOrder = { key: { by: "modified" }, desc: true };
 
 /** The direction a key starts in when it is picked: newest first for the change time
  *  (nobody picks it to see what they touched longest ago), ascending for the rest. The
@@ -202,32 +204,26 @@ export function parseSortKey(id: string): SortKey | null {
 
 const doingFirst = (a: Card, b: Card) => (a.state === "doing" ? 0 : 1) - (b.state === "doing" ? 0 : 1);
 
-/** The comparator of one explicit key, the same for every column (`auto` resolves to
- *  the date here; columnComparator is where it differs per column). doing stays on top
- *  whatever the key — it is the task being worked on, and it is orthogonal to every
- *  key. A card without the key's value (no date, no such field) goes last whichever
- *  the direction, the same convention as a query block's `sort`, and equal keys keep
- *  the source order — so a requery never shuffles two cards that compare equal. */
-export function cardComparator(order: CardOrder): (a: Card, b: Card) => number {
-  const k = order.key.by === "auto" ? DATE_ASC.key : order.key;
+/** The comparator of one resolved key, the same for every column (columnComparator is
+ *  what resolves `auto`, and where it differs per column). doing stays on top whatever
+ *  the key — it is the task being worked on, and it is orthogonal to every key. The
+ *  missing-value and tie-break rules are cmpMissingLast's, the same implementation a
+ *  query block's `sort` reads, so the two cannot drift. */
+function cardComparator(order: CardOrder): (a: Card, b: Card) => number {
+  const k = order.key;
   const dir = order.desc ? -1 : 1;
-  if (k.by === "modified") {
-    const recent = byModified(!order.desc);
-    return (a, b) => doingFirst(a, b) || recent(a, b);
-  }
-  const valueOf = (c: Card): string | undefined => (k.by === "date" ? whenOf(c) : k.by === "field" ? c.fields[k.key.toLowerCase()] : undefined);
+  // The field key is a loop invariant: lowercasing it inside the comparator would run
+  // twice per comparison
+  const fieldKey = k.by === "field" ? k.key.toLowerCase() : "";
+  const valueOf = (c: Card): string | undefined => (k.by === "date" ? whenOf(c) : k.by === "field" ? c.fields[fieldKey] : undefined);
   return (a, b) => {
     const doing = doingFirst(a, b);
     if (doing) return doing;
     let c: number;
     if (k.by === "note") c = bySource(a, b);
     else if (k.by === "text") c = a.text.localeCompare(b.text);
-    else {
-      const va = valueOf(a);
-      const vb = valueOf(b);
-      if (va === undefined || vb === undefined) return va === vb ? bySource(a, b) : va === undefined ? 1 : -1;
-      c = cmpValue(va, vb);
-    }
+    else if (k.by === "modified") c = a.modified - b.modified;
+    else return cmpMissingLast(a, b, valueOf(a), valueOf(b), dir, bySource);
     return c * dir || bySource(a, b);
   };
 }
@@ -237,18 +233,19 @@ export function cardComparator(order: CardOrder): (a: Card, b: Card) => number {
  *  is one; and for the two columns that have no date to read — an unscheduled task has
  *  none, and a finished task's due date says nothing about when it was finished — the
  *  task's own change time, most recently changed first, the way a task manager's inbox
- *  and completed list read (tasks.ts's byModified; Agenda's no-date and done groups
- *  read the same). Only the state grouping has these two columns. */
-export function columnComparator(col: string, mode: GroupMode, order: CardOrder): (a: Card, b: Card) => number {
+ *  and completed list read (Agenda's no-date and done groups read the same rule). Only
+ *  the state grouping has these two columns. */
+function columnComparator(col: string, mode: GroupMode, order: CardOrder): (a: Card, b: Card) => number {
   if (order.key.by !== "auto") return cardComparator(order);
-  if (mode.by !== "state" || (col !== "unscheduled" && col !== "done")) return cardComparator(DATE_ASC);
-  const recent = byModified();
-  return (a, b) => doingFirst(a, b) || recent(a, b);
+  const noDate = mode.by === "state" && (col === "unscheduled" || col === "done");
+  return cardComparator(noDate ? MODIFIED_DESC : DATE_ASC);
 }
 
 export function columnsOf(cards: Card[], defs: ColumnDef[], mode: GroupMode, order: CardOrder): Record<string, Card[]> {
   const cols: Record<string, Card[]> = Object.fromEntries(defs.map((d) => [d.id, [] as Card[]]));
-  for (const c of cards) cols[cardCol(c, mode)]?.push(c);
+  // The grouping key lowercased once for the whole board rather than once per card
+  const lower = mode.by === "field" ? mode.key.toLowerCase() : "";
+  for (const c of cards) cols[mode.by === "state" ? c.col : (c.fields[lower] ?? NONE_COL)]?.push(c);
   for (const [id, list] of Object.entries(cols)) list.sort(columnComparator(id, mode, order));
   return cols;
 }

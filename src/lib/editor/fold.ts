@@ -9,7 +9,7 @@
 // CodeMirror's fold field unfolds any fold the selection head enters, so the
 // outline's and the search's jumps need nothing extra.
 import { t } from "$lib/i18n/i18n.svelte";
-import { codeFolding, foldEffect, foldService, foldedRanges, unfoldEffect } from "@codemirror/language";
+import { codeFolding, foldedRanges, foldEffect, foldService, syntaxTree, unfoldEffect } from "@codemirror/language";
 import { RangeSetBuilder, type EditorState, type Extension, type Line, type StateEffect } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from "@codemirror/view";
 import { blockAt, ensureParsed, frontmatterEnd, sectionEnd, topBlocks } from "./blocks";
@@ -63,8 +63,8 @@ export function foldOnLoad(view: EditorView): void {
   // the tree of a freshly created state may cover the first screen only: push
   // the parse to the end (bounded) and land it with an empty transaction so
   // the callouts below the fold are seen
-  if (!ensureParsed(view.state, view.state.doc.length)) view.dispatch({});
-  else view.dispatch({});
+  ensureParsed(view.state, view.state.doc.length);
+  view.dispatch({});
   const effects = defaultFolds(view.state);
   if (effects.length) view.dispatch({ effects });
 }
@@ -128,7 +128,10 @@ const foldToggles = ViewPlugin.fromClass(
     }
     update(u: ViewUpdate) {
       const foldChanged = foldedRanges(u.state) !== foldedRanges(u.startState);
-      if (u.docChanged || u.viewportChanged || foldChanged || u.transactions.some((tr) => tr.effects.length > 0)) {
+      // The tree comparison is what catches background parse progress — the same test the
+      // four sibling extensions use. "Any transaction carrying any effect" also fired on
+      // the completion popup's per-keystroke effects, on closeBrackets and on block mode.
+      if (u.docChanged || u.viewportChanged || foldChanged || syntaxTree(u.state) !== syntaxTree(u.startState)) {
         this.decorations = toggles(u.view);
       }
     }

@@ -14,6 +14,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::note::yaml_text;
 use crate::parser::extract_frontmatter;
 
 /// Types live in `<meta_dir>/types` (i.e. `.vemry/types/`).
@@ -121,15 +122,6 @@ fn tag_of(name: &str) -> String {
     tag.trim_matches('-').to_string()
 }
 
-fn yaml_str(v: &serde_yaml::Value) -> Option<String> {
-    match v {
-        serde_yaml::Value::String(s) => Some(s.clone()),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
-        _ => None,
-    }
-}
-
 fn parse_fields(v: Option<&serde_yaml::Value>) -> Vec<FieldSpec> {
     let Some(serde_yaml::Value::Sequence(items)) = v else { return Vec::new() };
     items
@@ -138,12 +130,12 @@ fn parse_fields(v: Option<&serde_yaml::Value>) -> Vec<FieldSpec> {
             serde_yaml::Value::String(key) => Some(FieldSpec { key: key.trim().to_string(), ..Default::default() }),
             serde_yaml::Value::Mapping(m) => {
                 let get = |k: &str| m.get(serde_yaml::Value::String(k.into()));
-                let key = get("key").and_then(yaml_str)?.trim().to_string();
+                let key = get("key").and_then(yaml_text)?.trim().to_string();
                 let values = match get("values") {
-                    Some(serde_yaml::Value::Sequence(vs)) => vs.iter().filter_map(yaml_str).collect(),
+                    Some(serde_yaml::Value::Sequence(vs)) => vs.iter().filter_map(yaml_text).collect(),
                     _ => Vec::new(),
                 };
-                Some(FieldSpec { key, default: get("default").and_then(yaml_str), values, kind: get("type").and_then(yaml_str) })
+                Some(FieldSpec { key, default: get("default").and_then(yaml_text), values, kind: get("type").and_then(yaml_text) })
             }
             _ => None,
         })
@@ -165,7 +157,7 @@ fn auto_template(fields: &[FieldSpec]) -> String {
 /// still listed under its file stem with paragraph defaults.
 pub fn parse_block_type(file: &str, raw: &str) -> BlockType {
     let (fm, body_offset) = extract_frontmatter(raw);
-    let text = |key: &str| fm.extra.get(key).and_then(yaml_str).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let text = |key: &str| fm.extra.get(key).and_then(yaml_text).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let stem = file.strip_suffix(".md").unwrap_or(file).to_string();
     let kind = text("kind").filter(|k| TYPE_KINDS.contains(&k.as_str())).unwrap_or_else(|| "paragraph".into());
     let fields = parse_fields(fm.extra.get("fields"));
@@ -195,9 +187,13 @@ pub fn set_type_disabled(raw: &str, disabled: bool) -> String {
     let eol = if raw.contains("\r\n") { "\r\n" } else { "\n" };
     let line = format!("disabled: true{eol}");
     let mut lines: Vec<&str> = raw.split_inclusive('\n').collect();
-    let is_fence = |l: &str| l.trim_end() == "---";
+    // The boundary is `parser::extract_frontmatter`'s, which owns the rule: the opener is
+    // `---`, the closer `---` or YAML's `...`. Reading a `...` close as ordinary text would
+    // prepend a second frontmatter block ahead of the file's own.
+    let opens = |l: &str| l.trim_end() == "---";
+    let closes = |l: &str| matches!(l.trim_end(), "---" | "...");
     let close = match lines.first() {
-        Some(first) if is_fence(first) => lines.iter().skip(1).position(|l| is_fence(l)).map(|i| i + 1),
+        Some(first) if opens(first) => lines.iter().skip(1).position(|l| closes(l)).map(|i| i + 1),
         _ => None,
     };
     let Some(close) = close else {

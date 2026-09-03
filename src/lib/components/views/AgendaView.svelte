@@ -60,10 +60,9 @@
       else if (r.state === "doing") g.doing.push(r);
       else g.nodate.push(r);
     }
-    for (const rows of Object.values(g)) rows.sort(byWhen);
-    // The two groups with no date to read follow the task's own change time instead, most recently changed first
-    g.nodate.sort(byModified());
-    g.done.sort(byModified());
+    // Each group is sorted once: the two with no date to read follow the task's own change
+    // time, most recently changed first; the rest go by date
+    for (const [name, rows] of Object.entries(g)) rows.sort(name === "nodate" || name === "done" ? byModified : byWhen);
     return g;
   });
 

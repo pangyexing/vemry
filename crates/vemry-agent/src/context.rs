@@ -329,7 +329,7 @@ fn selection_block(vault: &Vault, path: &str, from_line: usize, to_line: usize) 
     if matches!(b.kind, vemry_core::BlockKind::Private) {
         return None;
     }
-    Some(if b.explicit_id { format!("^{}", b.local_id) } else { b.local_id.clone() })
+    Some(b.handle())
 }
 
 /// `bN`: the index's positional id (never written to disk; valid until the note changes).
@@ -349,7 +349,9 @@ fn resolve_block(vault: &Vault, path: &str, local_id: &str, filtered: &mut usize
     let rel = gate_private(vault, path, filtered)?;
     let id = vault.note_id(rel).map_err(|e| e.to_string())?;
     let clean = local_id.trim().trim_start_matches('^');
-    if clean.is_empty() || !clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    // The parser's own acceptance rule: an id it would never mint can never be in
+    // a note, and must not reach an envelope attribute.
+    if !vemry_core::blockid::is_valid_block_id(clean) {
         return Err(format!("block not found: {id}#{clean}"));
     }
     match vault.block_for_agent(&id, clean) {

@@ -4,7 +4,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { browser, revealPanelIfDocked } from "$lib/stores/browser.svelte";
   import { fetchHeadings, noteKey, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
-  import { vault } from "$lib/stores/vault.svelte";
+  import { typePath, vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { types } from "$lib/stores/types.svelte";
   import { scaffold } from "$lib/scaffold";
@@ -279,8 +279,8 @@
       const list: Item[] = fuzzyFilter(types.list, query, (x) => `${x.name} ${x.description}`).map((x) => ({
         id: x.file,
         title: x.icon ? `${x.icon} ${x.name}` : x.name,
-        hint: x.disabled ? t("palette.typeDisabled") : x.description || `.vemry/types/${x.file}`,
-        run: () => vault.openFile(`.vemry/types/${x.file}`),
+        hint: x.disabled ? t("palette.typeDisabled") : x.description || typePath(x.file),
+        run: () => vault.openFile(typePath(x.file)),
         // The row's toggle (the button, or ⌘↩): the file's disabled line flips and types_changed
         // redraws the row, the palette staying open like url mode's unbookmark
         action: {

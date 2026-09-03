@@ -7,10 +7,11 @@ import { api, onVaultEvent, type EditorSelection, type NoteSummary, type Origin,
 import { agent } from "$lib/stores/agent.svelte";
 import { clips } from "$lib/stores/clips.svelte";
 import { toast } from "$lib/stores/toast.svelte";
-import { POSITIONAL_RE, blocksOf, findBlock } from "$lib/citation";
+import { POSITIONAL_RE, blocksOf, findBlock, parseRefTarget } from "$lib/citation";
 import { types } from "$lib/stores/types.svelte";
 import { k } from "$lib/shortcut";
-import { byteToChar, ymd } from "$lib/views/tasks";
+import { byteToChar } from "$lib/bytes";
+import { ymd } from "$lib/views/tasks";
 import { loadBucketMap, saveBucket } from "$lib/persist";
 import type { OutlineItem } from "$lib/outline";
 
@@ -960,16 +961,8 @@ class VaultStore {
         } catch {
           // files_changed carries no path: a failed read plus absence from the list = an
           // external delete or rename (a hidden path, or one whose case does not match, is
-          // not in the list to begin with, and one that reads is left alone). It ends the
-          // same way as note_removed — without clearing currentPath, the editor's steady
-          // flush branch (which has no existence guard) would write the buffer back and
-          // resurrect a dead file; unsaved changes must not be dropped silently, so a toast
-          // says so plainly
-          if (this.currentPath === path && !this.otherFiles.includes(path)) {
-            if (this.dirty) toast.push(t("vaultStore.deletedExternally", { path }));
-            this.pruneHistory((p) => p === path);
-            await this.dropTabs((t) => t.path === path);
-          }
+          // not in the list to begin with, and one that reads is left alone)
+          if (this.currentPath === path && !this.otherFiles.includes(path)) await this.closeDeleted(path);
         }
       }
     }
@@ -981,21 +974,8 @@ class VaultStore {
       // lands in a clean current buffer. The echo of the editor's own save compares equal
       // and is left alone, as with a note.
       for (const tab of this.tabs.filter((x) => typeFileOf(x.path) !== null)) {
-        if (!metaDocExists(tab.path)) {
-          if (tab.path === this.currentPath && this.dirty) toast.push(t("vaultStore.deletedExternally", { path: tab.path }));
-          this.pruneHistory((p) => p === tab.path);
-          await this.dropTabs((x) => x.path === tab.path);
-        } else if (tab.path === this.currentPath && !this.dirty) {
-          try {
-            const { content } = await api.noteRead(tab.path);
-            if (content !== this.currentContent) {
-              this.currentContent = content;
-              this.reloadCounter++;
-            }
-          } catch {
-            /* gone between the listing and the read: the next types_changed closes it */
-          }
-        }
+        if (!metaDocExists(tab.path)) await this.closeDeleted(tab.path);
+        else if (tab.path === this.currentPath) await this.reloadCurrent();
       }
       return;
     }
@@ -1023,6 +1003,17 @@ class VaultStore {
       this.pruneHistory((p) => p === e.id);
       await this.dropTabs((t) => t.path === e.id);
     }
+  }
+
+  /** The end of a document the disk no longer has: the history forgets it and its tab
+   *  goes. Without clearing currentPath the editor's steady flush branch (which has no
+   *  existence guard) would write the buffer back and resurrect a dead file; unsaved
+   *  changes must not be dropped silently, so a toast says so plainly. The external-delete
+   *  branches of files_changed and types_changed both end here. */
+  private async closeDeleted(path: string) {
+    if (path === this.currentPath && this.dirty) toast.push(t("vaultStore.deletedExternally", { path }));
+    this.pruneHistory((p) => p === path);
+    await this.dropTabs((x) => x.path === path);
   }
 
   /** The explicit alignment for when the disk's source of truth changed but no event
@@ -1433,9 +1424,7 @@ class VaultStore {
   /** Follow a wikilink target: open if resolved, create if not. A fragment lands on the
    *  block (with a flash); guard is a positional citation's content when it was cited. */
   async followLink(target: string, opts: { guard?: string } = {}) {
-    const hash = target.indexOf("#");
-    const notePart = hash >= 0 ? target.slice(0, hash).trim() : target.trim();
-    const fragment = hash >= 0 ? target.slice(hash + 1).trim() : "";
+    const { note: notePart, frag: fragment } = parseRefTarget(target);
     if (POSITIONAL_RE.test(fragment)) {
       // `Note#bN`: a positional id from an AI answer — the index knows it, resolve_ref does not
       const note = notePart ? await api.resolveLink(notePart, this.currentPath ?? undefined) : this.currentPath;
@@ -1471,16 +1460,15 @@ class VaultStore {
       await this.openNote(resolved);
       return;
     }
-    const clean = notePart;
-    if (!clean) return;
+    if (!notePart) return;
     // [[attachment.png]] / ⌘-clicking ![[img.png]]: when the target is a non-note file that
     // already exists in the vault, it is opened — falling into "unresolved, so create it"
     // would conjure up a junk note called img.png.md. The resolution rule matches an image
     // embed's (an exact path match, and a bare file name takes the shortest path)
-    const lower = clean.toLowerCase();
+    const lower = notePart.toLowerCase();
     const file =
       this.otherFiles.find((f) => f.toLowerCase() === lower) ??
-      (clean.includes("/")
+      (notePart.includes("/")
         ? undefined
         : this.otherFiles
             .filter((f) => (f.split("/").pop() ?? "").toLowerCase() === lower)
@@ -1489,10 +1477,10 @@ class VaultStore {
       await this.openFile(file);
       return;
     }
-    await this.createAndOpen(clean);
+    await this.createAndOpen(notePart);
     // Clicking an unresolved link creates a note — a misclick is more likely now that a
     // single click opens links, so this gives a receipt the user can notice
-    toast.push(t("vaultStore.created", { path: clean }));
+    toast.push(t("vaultStore.created", { path: notePart }));
   }
 
   /** Attachment bucket for the open note: attachments/<note stem>. */
@@ -1590,22 +1578,30 @@ class VaultStore {
     return { intoEditor: false, landed };
   }
 
-  /** Capture one quick memo: a list item with a timestamp, inserted into target (inbox.md
-   *  by default); the destination dispatch and the section-fallback message live in
-   *  insertBlock. */
   /** Accept one pending AI block (a local id) or, with null, every pending block of the
-   *  current note. The buffer flushes first: the ledger is flipped by the hash of the
-   *  block as it is on disk, and a stale disk copy would accept the wrong text. Returns
-   *  how many blocks were accepted. */
+   *  current note, and report it. The buffer flushes first: the ledger is flipped by the
+   *  hash of the block as it is on disk, and a stale disk copy would accept the wrong
+   *  text. The receipt is pushed here rather than by each of the three entry points (the
+   *  palette, the status bar and the block menu), so what the user is told does not depend
+   *  on which one they reached for. Returns how many blocks were accepted. */
   async acceptProvenance(localId: string | null): Promise<number> {
     const path = this.currentPath;
     if (!path) return 0;
-    if (this.dirty) await this.flushEditor?.();
-    const n = await api.provenanceAccept(path, localId ?? undefined);
-    this.provenanceEpoch++;
-    return n;
+    try {
+      if (this.dirty) await this.flushEditor?.();
+      const n = await api.provenanceAccept(path, localId ?? undefined);
+      this.provenanceEpoch++;
+      toast.push(localId ? t("prov.accepted") : t("prov.acceptedAll", { n }));
+      return n;
+    } catch (e) {
+      toast.push(String(e), "error");
+      return 0;
+    }
   }
 
+  /** Capture one quick memo: a list item with a timestamp, inserted into target (inbox.md
+   *  by default); the destination dispatch and the section-fallback message live in
+   *  insertBlock. */
   async capture(text: string, target = "inbox.md", heading: string | null = null) {
     // Local time (toISOString is UTC, which is hours out east of Greenwich); the format has
     // to stay `YYYY-MM-DD HH:MM` — views/tasks.ts's STAMP_RE strips the signature by it
@@ -1711,11 +1707,19 @@ export function isMetaPath(path: string): boolean {
   return path.startsWith(".vemry/");
 }
 
+/** Where block type files live, the one spelling of the prefix. */
+const TYPES_PREFIX = ".vemry/types/";
+
 /** The file name of a block type path (`.vemry/types/book.md` → `book.md`), or null. */
 function typeFileOf(path: string): string | null {
-  const prefix = ".vemry/types/";
-  const rest = path.slice(prefix.length);
-  return path.startsWith(prefix) && rest !== "" && !rest.includes("/") ? rest : null;
+  const rest = path.slice(TYPES_PREFIX.length);
+  return path.startsWith(TYPES_PREFIX) && rest !== "" && !rest.includes("/") ? rest : null;
+}
+
+/** The path a block type's file opens under (`book.md` → `.vemry/types/book.md`) — the
+ *  inverse of typeFileOf, for the callers that hold a BlockType's `file`. */
+export function typePath(file: string): string {
+  return TYPES_PREFIX + file;
 }
 
 /** The existence guard for a meta document (the autosave must not resurrect a deleted file). A

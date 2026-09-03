@@ -160,8 +160,7 @@ function apply(view: EditorView, item: SlashItem, completion: Completion, applyT
   if (lineHasText && block) {
     // below the current block, on its own lines
     const at = extentTo(state, block);
-    const prevBlank = false;
-    const insert = "\n\n" + text + (prevBlank ? "" : "");
+    const insert = "\n\n" + text;
     view.dispatch({
       changes: [
         { from: slashPos, to: applyTo, insert: "" },

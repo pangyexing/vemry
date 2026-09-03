@@ -275,9 +275,10 @@
       if (k && !keys.includes(k)) keys.push(k);
     return keys;
   });
-  const groupSel = $derived(groupBy.by === "state" ? "state" : `field:${groupBy.key}`);
+  const groupSel = $derived(groupBy.by === "state" ? "state" : sortKeyId(groupBy));
   function setGroup(v: string) {
-    groupBy = v === "state" ? { by: "state" } : { by: "field", key: v.slice("field:".length) };
+    const key = parseSortKey(v);
+    groupBy = key?.by === "field" ? key : { by: "state" };
     collapsed = {};
     persistUi();
   }
@@ -293,14 +294,6 @@
     order = { key: order.key, desc: !order.desc };
     persistUi();
   }
-  /** The direction button's glyph: an arrow beside bars growing (ascending) or shrinking (descending), on the 24 viewBox of the other card icons. */
-  const sortDirIcon = $derived(
-    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
-      order.desc
-        ? '<path d="m3 16 4 4 4-4M7 20V4M11 4h10M11 8h7M11 12h4"/>'
-        : '<path d="m3 8 4-4 4 4M7 4v16M11 12h4M11 16h7M11 20h10"/>'
-    }</svg>`,
-  );
   /** The note a quick create lands in; it defaults to inbox.md, the same as a quick memo's. */
   let addTarget = $state(savedUi?.target || "inbox.md");
 
@@ -418,6 +411,17 @@
   </button>
 {/snippet}
 
+<!-- The field keys both selects offer, one spelling of the `field:<key>` option value -->
+{#snippet fieldOptions()}
+  {#if menuKeys.length}
+    <optgroup label={t("kanban.fieldsGroup")}>
+      {#each menuKeys as key (key)}
+        <option value={sortKeyId({ by: "field", key })}>{key}</option>
+      {/each}
+    </optgroup>
+  {/if}
+{/snippet}
+
 <div class="view">
   <ViewHeader
     title={t("view.kanban")}
@@ -431,13 +435,7 @@
         <span>{t("kanban.groupBy")}</span>
         <select value={groupSel} onchange={(e) => setGroup(e.currentTarget.value)}>
           <option value="state">{t("kanban.groupByState")}</option>
-          {#if menuKeys.length}
-            <optgroup label={t("kanban.fieldsGroup")}>
-              {#each menuKeys as key (key)}
-                <option value={`field:${key}`}>{key}</option>
-              {/each}
-            </optgroup>
-          {/if}
+          {@render fieldOptions()}
         </select>
       </label>
       <!-- The order inside a column. "Default" is each column's own natural order (the
@@ -456,18 +454,15 @@
             <option value="modified">{t("kanban.sortModified")}</option>
             <option value="note">{t("kanban.sortNote")}</option>
             <option value="text">{t("kanban.sortText")}</option>
-            {#if menuKeys.length}
-              <optgroup label={t("kanban.fieldsGroup")}>
-                {#each menuKeys as key (key)}
-                  <option value={`field:${key}`}>{key}</option>
-                {/each}
-              </optgroup>
-            {/if}
+            {@render fieldOptions()}
           </select>
         </label>
         {#if order.key.by !== "auto"}
           <button class="sort-dir" title={order.desc ? t("kanban.sortDesc") : t("kanban.sortAsc")} aria-pressed={order.desc} onclick={flipSortDir}>
-            {@html sortDirIcon}
+            <!-- an arrow beside bars growing (ascending) or shrinking (descending), on the 24 viewBox of the other card icons -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d={order.desc ? "m3 16 4 4 4-4M7 20V4M11 4h10M11 8h7M11 12h4" : "m3 8 4-4 4 4M7 4v16M11 12h4M11 16h7M11 20h10"} />
+            </svg>
           </button>
         {/if}
       </span>
@@ -1126,7 +1121,7 @@
     background: var(--bg-hover);
     color: var(--fg);
   }
-  .sort-dir :global(svg) {
+  .sort-dir svg {
     width: 14px;
     height: 14px;
   }

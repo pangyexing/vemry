@@ -3,7 +3,7 @@
 //! views, scripts, agent tools — reads from here.
 
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::UNIX_EPOCH;
 
 use crate::block::BlockKind;
@@ -84,14 +84,7 @@ pub(crate) struct NoteEntry {
 /// scalar sequences joined with ", "; mappings and nulls are skipped.
 /// `title`/`tags`/`aliases`/`private`/`vemry` are metadata, not fields.
 fn frontmatter_fields(note: &Note) -> Vec<(String, String)> {
-    fn scalar(v: &serde_yaml::Value) -> Option<String> {
-        match v {
-            serde_yaml::Value::String(s) => Some(s.clone()),
-            serde_yaml::Value::Number(n) => Some(n.to_string()),
-            serde_yaml::Value::Bool(b) => Some(b.to_string()),
-            _ => None,
-        }
-    }
+    use crate::note::yaml_text as scalar;
     let mut out = Vec::new();
     if let Some(c) = &note.frontmatter.created {
         out.push(("created".to_string(), c.clone()));
@@ -118,7 +111,9 @@ fn frontmatter_fields(note: &Note) -> Vec<(String, String)> {
 
 #[derive(Default)]
 pub struct BlockIndex {
-    notes: HashMap<NoteId, NoteEntry>,
+    /// Ordered by note id, so a query that stops at its `limit` cuts a stable
+    /// prefix without sorting the vault on every call.
+    notes: BTreeMap<NoteId, NoteEntry>,
     /// lowercase stem/alias -> candidate notes
     by_name: HashMap<String, BTreeSet<NoteId>>,
     /// lowercase full path without ".md" -> note
@@ -334,7 +329,8 @@ impl BlockIndex {
     /// One block of one note by local id (`locate::find_block` rules: an
     /// explicit `^id` beats a positional `bN` of the same spelling).
     pub fn find_block(&self, id: &NoteId, local_id: &str) -> Option<&Block> {
-        crate::locate::find_block(self.blocks(id)?, local_id)
+        let blocks = self.blocks(id)?;
+        crate::locate::find_block(blocks, local_id).map(|i| &blocks[i])
     }
 
     pub fn links_out(&self, id: &NoteId) -> Vec<(LinkEdge, ResolvedLink)> {
@@ -376,12 +372,12 @@ impl BlockIndex {
             if skip(id) {
                 continue;
             }
-            let mut seen_here: Vec<String> = Vec::new();
+            let mut seen_here: HashSet<String> = HashSet::new();
             let mut bump = |key: &str, value: &str| {
                 let lower = key.to_lowercase();
-                let a = acc.entry(lower.clone()).or_insert_with(|| Acc { key: key.to_string(), notes: 0, values: HashMap::new() });
-                if !seen_here.contains(&lower) {
-                    seen_here.push(lower);
+                let fresh = seen_here.insert(lower.clone());
+                let a = acc.entry(lower).or_insert_with(|| Acc { key: key.to_string(), notes: 0, values: HashMap::new() });
+                if fresh {
                     a.notes += 1;
                 }
                 *a.values.entry(value.to_string()).or_insert(0) += 1;
@@ -430,16 +426,19 @@ impl BlockIndex {
         v
     }
 
-    /// Note entries in note-id order, so a query that stops at its limit
-    /// returns a deterministic prefix instead of whatever the hash map yields.
-    pub(crate) fn entries_sorted(&self) -> Vec<(&NoteId, &NoteEntry)> {
-        let mut v: Vec<_> = self.notes.iter().collect();
-        v.sort_by(|a, b| a.0.cmp(b.0));
-        v
+    /// Note entries in note-id order — the map's own order.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&NoteId, &NoteEntry)> {
+        self.notes.iter()
+    }
+
+    /// One note's entry, for a query scoped to a single note.
+    pub(crate) fn entry(&self, id: &NoteId) -> Option<&NoteEntry> {
+        self.notes.get(id)
     }
 
     /// Values of a note-level field (frontmatter scalar or `created`), key
     /// compared case-insensitively.
+    #[cfg(test)]
     pub fn frontmatter_field<'a>(&'a self, id: &NoteId, key: &str) -> impl Iterator<Item = &'a str> + 'a {
         let key = key.to_lowercase();
         self.notes

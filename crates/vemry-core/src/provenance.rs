@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::{Block, BlockKind};
 use crate::blockid::is_valid_block_id;
-use crate::parser::{leading_ws, parse_list_marker, parse_note};
+use crate::parser::{parse_list_marker, parse_note};
 
 /// Vault-relative path of the ledger (inside `.vemry`, so never indexed and
 /// never visible to the agent).
@@ -506,10 +506,6 @@ impl ProvenanceLedger {
         self.by_path.contains_key(path)
     }
 
-    pub fn paths(&self) -> impl Iterator<Item = &str> {
-        self.by_path.keys().map(String::as_str)
-    }
-
     /// Rewrite the file keeping one line per live hash (an `agent` or
     /// `insert` line carrying its state, plus one `accept` for the accepted
     /// ones). Written to a temporary file and renamed into place.
@@ -520,7 +516,6 @@ impl ProvenanceLedger {
         }
         self.by_path.retain(|_, set| !set.is_empty());
         let mut lines: Vec<String> = Vec::new();
-        let mut accepted: Vec<String> = Vec::new();
         let mut paths: Vec<(&String, &HashSet<String>)> = self.by_path.iter().collect();
         paths.sort_by(|a, b| a.0.cmp(b.0));
         for (path, hashes) in paths {
@@ -562,15 +557,11 @@ impl ProvenanceLedger {
                         blocks: vec![stamp],
                     },
                 };
-                if rec.accepted && matches!(rec.source, ProvSource::Agent { .. }) {
-                    accepted.push(h.clone());
-                }
                 if let Ok(l) = serde_json::to_string(&entry) {
                     lines.push(l);
                 }
             }
         }
-        let _ = accepted;
         let tmp = self.path.with_extension("jsonl.tmp");
         if let Some(parent) = self.path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -694,12 +685,6 @@ pub fn derive_origin(
     }
 }
 
-/// Leading indentation is not identity: used by tests and by nothing else
-/// here, kept so the rule has one home.
-pub fn indent_of(line: &str) -> usize {
-    leading_ws(line)
-}
-
 /// Every block's stamp in a parsed note — the "live" set for compaction.
 pub fn live_hashes<'a>(raw: &'a str, blocks: &'a [Block]) -> impl Iterator<Item = String> + 'a {
     blocks.iter().filter_map(move |b| block_hash(&raw[b.span.clone()], &b.kind))
@@ -800,7 +785,7 @@ mod tests {
         });
         fs::OpenOptions::new().append(true).open(root.join(LEDGER_FILE)).unwrap().write_all(b"not json\n").unwrap();
         let reloaded = ProvenanceLedger::load(root, HashSet::new);
-        assert_eq!(reloaded.lookup("aaaa").unwrap().accepted, false);
+        assert!(!reloaded.lookup("aaaa").unwrap().accepted);
         assert!(matches!(reloaded.lookup("aaaa").unwrap().source, ProvSource::Agent { .. }));
         assert!(reloaded.lookup("bbbb").unwrap().accepted);
         assert!(reloaded.has_path("n.md"));

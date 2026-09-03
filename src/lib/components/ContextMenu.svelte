@@ -35,10 +35,10 @@
 
   const close = () => contextMenu.close();
 
-  function onItemClick(item: MenuItem, i: number) {
+  function onItemClick(item: MenuItem, i: number, btn: HTMLElement) {
     if (item.disabled) return;
     if (item.submenu) {
-      openSub(i);
+      openSub(i, btn);
       return;
     }
     if (item.confirm && confirming !== i) {
@@ -49,10 +49,11 @@
     item.action?.();
   }
 
-  function openSub(i: number) {
+  /** The flyout is anchored against the row that opened it, so the caller hands over
+   *  the element it already has: `entries` counts separators and titles that are not
+   *  menuitems, so an index into the button list would anchor against the wrong row. */
+  function openSub(i: number, btn: HTMLElement) {
     if (subTimer) clearTimeout(subTimer);
-    const btn = el?.querySelectorAll<HTMLElement>("[role='menuitem']")[i];
-    if (!btn) return;
     const r = btn.getBoundingClientRect();
     sub = { index: i, x: r.right + 2, y: r.top - 4 };
     queueMicrotask(() => {
@@ -64,9 +65,9 @@
     });
   }
 
-  function onItemEnter(item: MenuItem, i: number) {
+  function onItemEnter(item: MenuItem, i: number, btn: HTMLElement) {
     if (subTimer) clearTimeout(subTimer);
-    if (item.submenu && !item.disabled) subTimer = setTimeout(() => openSub(i), 120);
+    if (item.submenu && !item.disabled) subTimer = setTimeout(() => openSub(i, btn), 120);
     else if (sub) subTimer = setTimeout(() => (sub = null), 200);
   }
 
@@ -121,8 +122,8 @@
           class:danger={entry.danger || (entry.confirm != null && confirming === i)}
           class:open={sub?.index === i}
           disabled={entry.disabled}
-          onclick={() => onItemClick(entry, i)}
-          onmouseenter={() => onItemEnter(entry, i)}
+          onclick={(e) => onItemClick(entry, i, e.currentTarget)}
+          onmouseenter={(e) => onItemEnter(entry, i, e.currentTarget)}
           role="menuitem"
         >
           {confirming === i && entry.confirm ? entry.confirm : entry.label}

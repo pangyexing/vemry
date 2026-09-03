@@ -10,7 +10,7 @@ import { t } from "$lib/i18n/i18n.svelte";
 import type { Completion, CompletionContext, CompletionResult, CompletionSource } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
 import type { BlockHit, BlockIdPlan, BlockSelector } from "$lib/api";
-import { byteToChar } from "$lib/views/tasks";
+import { byteToChar } from "$lib/bytes";
 
 export interface RefHost {
   currentPath(): string | null;

@@ -203,10 +203,6 @@ export function subtreeTo(b: EditorBlock): number {
   return to;
 }
 
-export function subtreeRange(b: EditorBlock): { from: number; to: number } {
-  return { from: b.from, to: subtreeTo(b) };
-}
-
 /** The block's extent as a unit: its subtree — or, for a folded heading, the
  *  whole folded section, so that what is shown as one thing moves, copies and
  *  deletes as one thing. */
@@ -235,11 +231,6 @@ export function blockAt(state: EditorState, pos: number, opts?: { top?: boolean 
     level = b.children;
   }
   return found;
-}
-
-/** Document-level blocks whose subtree intersects [from, to]. */
-export function blocksIn(state: EditorState, from: number, to: number): EditorBlock[] {
-  return topBlocks(state).filter((b) => b.from <= to && subtreeTo(b) >= from);
 }
 
 export function siblings(state: EditorState, b: EditorBlock): EditorBlock[] {
@@ -339,10 +330,6 @@ export function blockContentStart(state: EditorState, b: EditorBlock): number {
     default:
       return line.from + (text.length - text.trimStart().length);
   }
-}
-
-export function blockText(state: EditorState, b: EditorBlock, opts?: { subtree?: boolean }): string {
-  return state.doc.sliceString(b.from, opts?.subtree ? subtreeTo(b) : b.to);
 }
 
 /** End of a heading's section: the last document-level block before the next

@@ -12,8 +12,9 @@
   import { deleteBlocks, duplicateBlocks, moveBlocks } from "$lib/editor/blockops";
   import type { BlockHost } from "$lib/editor/blockhandle";
   import { startBlockDrag } from "$lib/editor/blockdrag";
-  import { byteToChar, charToByte } from "$lib/views/tasks";
+  import { byteSpansToChar, byteToChar, charToByte } from "$lib/bytes";
   import { copyText } from "$lib/copytext";
+  import { blocksOf } from "$lib/citation";
   import { privateRangeAt, selectionTouchesPrivate } from "$lib/editor/privateblock";
   import { queryRefresh } from "$lib/editor/queryblock";
   import { suppressReveal } from "$lib/editor/reveal";
@@ -23,7 +24,7 @@
   import { agent } from "$lib/stores/agent.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { toast } from "$lib/stores/toast.svelte";
-  import { api, SELECTION_MAX_CHARS, trimLoneSurrogate, type BlockHit, type BlockQuery, type BlockSelector } from "$lib/api";
+  import { api, SELECTION_MAX_CHARS, trimLoneSurrogate, type BlockQuery, type BlockSelector } from "$lib/api";
   import { planInsert, planCursorInsert } from "$lib/insert";
   import { extractOutline } from "$lib/outline";
   import { countWords } from "$lib/stats";
@@ -42,10 +43,9 @@
     provenanceOverlay as provOverlayEffect,
     provenanceSet,
   } from "$lib/editor/provenance";
-  import { byteSpansToChar } from "$lib/views/tasks";
   import { flashRange } from "$lib/editor/flash";
-  import { fieldValueKind, scanFields, setFieldValue } from "$lib/fields";
-  import { DATE_FIELDS, rescheduleLine, type DateField } from "$lib/views/tasks";
+  import { declaredField, fieldValueKind, scanFields, setFieldValue } from "$lib/fields";
+  import { DATE_FIELDS, rescheduleLine, TASK_LINE_RE, type DateField } from "$lib/views/tasks";
   import TaskDateMenu from "./views/TaskDateMenu.svelte";
   import FieldValueMenu from "./FieldValueMenu.svelte";
   import { types } from "$lib/stores/types.svelte";
@@ -76,7 +76,6 @@
       .catch(() => undefined);
   });
 
-  const TASK_LINE_RE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+\[[ xX/]\]/;
   /** A menu's pick lands on the line: a task's due/scheduled goes through rescheduleLine
    *  (it knows the emoji spellings); any other field is rewritten in place by
    *  setFieldValue, at the clicked chip (null removes it). An empty placeholder of a
@@ -102,20 +101,6 @@
     const m = valueMenu;
     valueMenu = null;
     if (m) writeField(m, value);
-  }
-  /** What the enabled block types declare for a key: every value in order, and the
-   *  value kind (`date` / `number`) the first spec naming one gives it. */
-  function declaredField(key: string): { values: string[]; kind?: string } {
-    const lower = key.toLowerCase();
-    const values: string[] = [];
-    let kind: string | undefined;
-    for (const ty of types.enabled)
-      for (const f of ty.fields) {
-        if (f.key.toLowerCase() !== lower) continue;
-        values.push(...(f.values ?? []));
-        kind ??= f.type;
-      }
-    return { values, kind };
   }
   let loadedFor = -1;
 
@@ -557,12 +542,7 @@
     pendingCount: () => vault.pendingCount,
     blockTypes: () => types.enabled,
     rejectProvenance: (localId) => void revertProvenance(localId),
-    acceptProvenance: (localId) => {
-      vault
-        .acceptProvenance(localId)
-        .then((n) => toast.push(localId ? t("prov.accepted") : t("prov.acceptedAll", { n })))
-        .catch((e) => toast.push(String(e), "error"));
-    },
+    acceptProvenance: (localId) => void vault.acceptProvenance(localId),
     // Select the block's lines (the composer's automatic selection chip picks the
     // selection up through syncSelection → vault.editorSelection) and summon the agent
     askAgent: (v, b) => {
@@ -577,17 +557,6 @@
       void executeCommand("focus-agent");
     },
   };
-
-  /** The blocks of a note for the reference stages, cached per index version. */
-  const blocksCache = new Map<string, { version: number; promise: Promise<BlockHit[]> }>();
-  function blocksOf(note: string): Promise<BlockHit[]> {
-    const version = vault.indexVersion;
-    const hit = blocksCache.get(note);
-    if (hit && hit.version === version) return hit.promise;
-    const promise = api.queryBlocks({ note, limit: 5000 });
-    blocksCache.set(note, { version, promise });
-    return promise;
-  }
 
   const embedHost: EmbedHost = {
     resolve: (target: string) => api.resolveRef(target, docPath ?? undefined),
@@ -606,7 +575,9 @@
       const note = target.trim() ? await api.resolveLink(target.trim(), docPath ?? undefined) : docPath;
       return note && !vault.privatePaths.has(note) ? note : null;
     },
-    blocksOf,
+    // citation.ts's cache, the same one the `@Note#` picker, the hover card and the
+    // click path read — a second copy here fetched every note twice
+    blocksOf: (note: string) => blocksOf(note, vault.indexVersion),
     planId: (source: string, selector: BlockSelector) => api.blockIdPlan(source, selector),
     ensureId: (note: string, localId: string, guard: string) => api.blockEnsureId(note, localId, guard),
     toast: (message: string, level?: "info" | "error") => toast.push(message, level),
@@ -1022,13 +993,13 @@
       // date menu; everything else the value menu — the declared values first, then the
       // vault's, deduplicated, and a numeric input when the type says number or the value is one
       onFieldChip: (_v: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }) => {
-        const spec = declaredField(key);
+        const spec = declaredField(types.enabled, key);
         if (key in DATE_FIELDS || spec.kind === "date" || fieldValueKind(value) === "date") {
           fieldMenu = { x: at.x, y: at.y, pos, key, current: value || undefined, field: key === "scheduled" ? "scheduled" : "due" };
           return;
         }
         const seen = fieldStats.find((s) => s.key.toLowerCase() === key.toLowerCase())?.values ?? [];
-        const values = [...new Set([...spec.values, ...seen])].slice(0, MENU_VALUES_MAX);
+        const values = [...new Set([...spec.values.map((v) => v.value), ...seen])].slice(0, MENU_VALUES_MAX);
         const number = spec.kind === "number" || (value !== "" && fieldValueKind(value) === "number");
         valueMenu = { x: at.x, y: at.y, pos, key, current: value, values, number };
       },

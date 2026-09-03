@@ -134,3 +134,17 @@ impl Note {
         self.frontmatter.title.as_deref().unwrap_or_else(|| self.id.stem())
     }
 }
+
+/// A YAML scalar as the text a field carries: strings as written, numbers and
+/// booleans rendered; a mapping, a sequence or a null has no scalar form. The one
+/// rule for both readers of frontmatter — the index's `field_stats` and a block
+/// type's declared fields — so a `=` comparison and a type's `default:` cannot
+/// come to read the same value differently.
+pub fn yaml_text(v: &serde_yaml::Value) -> Option<String> {
+    match v {
+        serde_yaml::Value::String(s) => Some(s.clone()),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}

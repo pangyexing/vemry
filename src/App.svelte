@@ -742,7 +742,7 @@
         toast.push(t("prov.noPendingHere"), "error");
         return;
       }
-      vault.acceptProvenance(id).then(() => toast.push(t("prov.accepted"))).catch((e) => toast.push(String(e), "error"));
+      void vault.acceptProvenance(id);
     },
   });
   registerCommand({
@@ -752,7 +752,7 @@
         toast.push(t("prov.noPending"), "error");
         return;
       }
-      vault.acceptProvenance(null).then((n) => toast.push(t("prov.acceptedAll", { n }))).catch((e) => toast.push(String(e), "error"));
+      void vault.acceptProvenance(null);
     },
   });
   registerCommand({
