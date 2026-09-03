@@ -9,6 +9,7 @@
 import { StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 import { type EditorBlock, blockAt, extentTo, frontmatterEnd, topBlocks } from "./blocks";
+import { CONTENT_PAD } from "./blockhandle";
 import { moveBlockTo } from "./blockops";
 import { selectBlock } from "./blocksel";
 
@@ -16,7 +17,6 @@ const THRESHOLD = 5;
 const DEPTH_PX = 24;
 const EDGE = 40;
 const SCROLL_STEP = 8;
-const CONTENT_PAD = 24;
 
 /** The lines of the block being dragged are dimmed while the drag lasts. */
 export const setDragSource = StateEffect.define<{ from: number; to: number } | null>();

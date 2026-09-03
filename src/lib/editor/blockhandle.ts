@@ -1,11 +1,21 @@
 // The hover block handle: one grip (⋮⋮) that follows the block under the
-// pointer, sitting in the editor's left padding. It lives in scrollDOM (like
+// pointer, sitting in the editor's left padding, left of the fold chevron's
+// slot (fold.ts) so the two never overlap on a heading. It lives in scrollDOM (like
 // CodeMirror's own selection layers), so it scrolls with the content and never
 // overlays the dialogs, menus or the lightbox above the editor. Resolution
 // costs no layout: `lineBlockAtHeight` is a height-map lookup, and
 // `coordsAtPos` runs once per hovered-block change. Clicking the grip selects
 // the block and opens the block menu; the drag batch hooks the grip's
 // pointerdown. Touch pointers are ignored.
+//
+// While the grip is shown, the fold chevron on the block's first line (fold.ts)
+// carries a `cm-fold-hover` class so it stays visible when the pointer is on
+// the grip and the line itself is no longer hovered. A DOM class rather than a
+// line decoration: a transaction per hovered block would wake every plugin that
+// watches effects. It goes on the chevron, not the line: CodeMirror's mutation
+// observer ignores changes inside a widget's DOM, whereas a foreign attribute
+// on a line marks it dirty and the next sync strips it. A re-created widget
+// leaves the old element detached, and the next pointer move re-applies it.
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { type EditorBlock, blockAt, frontmatterEnd } from "./blocks";
 import { selectBlock } from "./blocksel";
@@ -21,7 +31,18 @@ export interface BlockHost {
 
 const HANDLE_W = 18;
 const HANDLE_H = 22;
-const CONTENT_PAD = 24; // .cm-content's horizontal padding (app.css)
+/** .cm-content's horizontal padding (app.css); the drop bar in blockdrag.ts uses it too. */
+export const CONTENT_PAD = 34;
+/** How far the fold chevron (fold.ts) hangs into the padding from the line's text: its
+ *  -20px margin less CodeMirror's 6px line padding. The grip stops where it begins. */
+const FOLD_TOGGLE_HANG = 20 - 6;
+
+/** The fold chevron on the line at pos; null when the line is not foldable or not in the DOM. */
+function foldToggleAt(view: EditorView, pos: number): HTMLElement | null {
+  const { node } = view.domAtPos(pos);
+  const el = node instanceof HTMLElement ? node : node.parentElement;
+  return el?.closest(".cm-line")?.querySelector<HTMLElement>(".cm-fold-toggle") ?? null;
+}
 
 /** The innermost block at a viewport y coordinate, via the height map (no layout read). */
 export function hoveredBlockAt(view: EditorView, clientY: number): EditorBlock | null {
@@ -38,6 +59,9 @@ class HandlePlugin {
   current: EditorBlock | null = null;
   shown = false;
   muted = false;
+  /** The chevron carrying cm-fold-hover (null: none on that line), and the block start it was looked up for. */
+  marked: HTMLElement | null = null;
+  markedFrom = -1;
   showTimer: ReturnType<typeof setTimeout> | null = null;
   raf = 0;
   lastX = -1;
@@ -70,8 +94,7 @@ class HandlePlugin {
     readonly host: BlockHost,
   ) {
     this.handle = document.createElement("div");
-    this.handle.className = "cm-block-handle";
-    this.handle.hidden = true;
+    this.handle.className = "cm-block-handle cm-hidden";
     this.grip = document.createElement("button");
     this.grip.className = "cm-block-grip";
     this.grip.tabIndex = -1;
@@ -108,19 +131,37 @@ class HandlePlugin {
       this.hide();
       return;
     }
-    if (this.current && this.current.from === b.from && this.shown) return;
+    if (this.current && this.current.from === b.from && this.shown) {
+      this.mark();
+      return;
+    }
     this.current = b;
     this.place(b);
-    if (!this.shown) {
+    if (this.shown) {
+      this.mark();
+    } else {
       if (this.showTimer) clearTimeout(this.showTimer);
       this.showTimer = setTimeout(() => {
         this.showTimer = null;
         if (this.current === b) {
-          this.handle.hidden = false;
+          this.handle.classList.remove("cm-hidden");
           this.shown = true;
+          this.mark();
         }
       }, 60);
     }
+  }
+
+  /** Put cm-fold-hover on the current block's chevron, or take it off when the grip is
+   *  hidden. Nothing to do while the answer for this block is still current (a chevron
+   *  that is still attached, or a block that has none). */
+  mark() {
+    const want = this.shown && this.current ? this.current.from : -1;
+    if (want === this.markedFrom && (this.marked?.isConnected ?? true)) return;
+    this.marked?.classList.remove("cm-fold-hover");
+    this.marked = want >= 0 ? foldToggleAt(this.view, want) : null;
+    this.marked?.classList.add("cm-fold-hover");
+    this.markedFrom = want;
   }
 
   place(b: EditorBlock) {
@@ -131,7 +172,7 @@ class HandlePlugin {
     const lb = view.lineBlockAt(b.from);
     const top = coords ? coords.top - base.top + view.scrollDOM.scrollTop : lb.top;
     const lineH = coords ? coords.bottom - coords.top : lb.height;
-    const left = content.left - base.left + view.scrollDOM.scrollLeft + CONTENT_PAD - HANDLE_W - 4;
+    const left = content.left - base.left + view.scrollDOM.scrollLeft + CONTENT_PAD - FOLD_TOGGLE_HANG - HANDLE_W;
     this.handle.style.left = `${Math.max(0, left)}px`;
     this.handle.style.top = `${top + Math.max(0, (lineH - HANDLE_H) / 2)}px`;
   }
@@ -142,10 +183,11 @@ class HandlePlugin {
       this.showTimer = null;
     }
     if (this.shown) {
-      this.handle.hidden = true;
+      this.handle.classList.add("cm-hidden");
       this.shown = false;
     }
     this.current = null;
+    this.mark();
   }
 
   gripClick(e: MouseEvent) {
@@ -171,6 +213,7 @@ class HandlePlugin {
     this.view.scrollDOM.removeEventListener("mousemove", this.onMove);
     this.view.scrollDOM.removeEventListener("mouseleave", this.onLeave);
     this.view.contentDOM.removeEventListener("keydown", this.onKey);
+    this.marked?.classList.remove("cm-fold-hover");
     this.handle.remove();
   }
 }

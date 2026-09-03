@@ -226,7 +226,11 @@ button:focus-visible,
 .cm-editor .cm-scroller .cm-content {
   max-width: var(--content-width);
   margin: 0 auto;
-  padding: 0 24px;
+  /* 34px: the left strip holds two hover affordances side by side, the block handle
+     (blockhandle.ts, 18px, at the strip's edge) and the fold chevron (.cm-fold-toggle,
+     18px, hanging 20px into the strip from the text). With the readable line width off
+     the strip is all the room there is, so both mirror this value (CONTENT_PAD) */
+  padding: 0 34px;
 }
 /* The one way to write a line decoration's padding: the .ͼx .cm-line{padding:0 2px 0 6px}
    CM injects at runtime is (0,2,0), and any padding on the bare .cm-line / .cm-lp-*
@@ -1156,13 +1160,32 @@ button:focus-visible,
 
 /* ---- The hover block handle (blockhandle.ts): one grip in the editor's left padding,
    absolutely positioned inside the scroller (so it scrolls with the content and stays
-   under every overlay above the editor); a tooltip in the copy button's style ---- */
+   under every overlay above the editor); a tooltip in the copy button's style. The grip
+   and the fold chevron (.cm-fold-toggle, below) sit side by side and share one look:
+   the same fade, the same rounded hover, the same tooltip, and a hit area grown 3px
+   on every side but the one they share ---- */
 .cm-block-handle {
   position: absolute;
   z-index: 3;
   width: 18px;
   height: 22px;
   pointer-events: none;
+  transition: opacity 0.12s;
+}
+.cm-block-handle.cm-hidden {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s, visibility 0s 0.12s;
+}
+.cm-block-grip::before {
+  content: "";
+  position: absolute;
+  inset: -3px 0 -3px -3px;
+}
+.cm-fold-toggle::before {
+  content: "";
+  position: absolute;
+  inset: -3px -2px -3px 0; /* right: only the chevron's own 2px margin, never the text */
 }
 .cm-block-grip {
   position: relative;
@@ -1183,11 +1206,13 @@ button:focus-visible,
   width: 14px;
   height: 14px;
 }
-.cm-block-grip:hover {
+.cm-block-grip:hover,
+.cm-fold-toggle:hover {
   background: var(--bg-hover);
   color: var(--fg-muted);
 }
-.cm-block-grip::after {
+.cm-block-grip::after,
+.cm-fold-toggle::after {
   content: attr(data-tip);
   position: absolute;
   top: calc(100% + 6px);
@@ -1198,6 +1223,7 @@ button:focus-visible,
   color: var(--bg);
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
+  font-weight: 400;
   line-height: 1.4;
   white-space: nowrap;
   pointer-events: none;
@@ -1205,7 +1231,8 @@ button:focus-visible,
   transition: opacity 0.12s;
   z-index: 2;
 }
-.cm-block-grip:hover::after {
+.cm-block-grip:hover::after,
+.cm-fold-toggle:hover::after {
   opacity: 1;
   transition-delay: 0.4s;
 }
@@ -1257,8 +1284,12 @@ button:focus-visible,
 }
 
 /* ---- Folding (fold.ts): a chevron at the start of a foldable line, shown on hover
-   (always while folded), and the "n lines" chip standing in for a folded range ---- */
+   (always while folded), and the "n lines" chip standing in for a folded range. The
+   chevron hangs 20px into .cm-content's left padding, in the slot right of the block
+   handle (the two meet edge to edge; see the padding note on .cm-content), and its
+   hover look, tooltip and hit area are the grip's rules above ---- */
 .cm-fold-toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1267,6 +1298,7 @@ button:focus-visible,
   margin: 0 2px 0 -20px;
   padding: 0;
   border: 0;
+  border-radius: 4px;
   background: none;
   color: var(--fg-faint);
   cursor: pointer;
@@ -1283,12 +1315,12 @@ button:focus-visible,
 .cm-fold-toggle.cm-fold-folded svg {
   transform: none;
 }
+/* shown on hover, and while the block handle marks it (the pointer is on the grip
+   beside the chevron, which the line's own :hover no longer covers) */
 .cm-editor .cm-scroller .cm-foldable:hover .cm-fold-toggle,
+.cm-fold-toggle.cm-fold-hover,
 .cm-fold-toggle.cm-fold-folded {
   opacity: 1;
-}
-.cm-fold-toggle:hover {
-  color: var(--accent);
 }
 .cm-fold-chip {
   display: inline-block;

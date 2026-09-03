@@ -1,6 +1,8 @@
 // Folding: a heading folds its section, a callout or quote folds its body. A
 // chevron appears at the start of a foldable line on hover (no fold gutter —
-// the note column keeps its left edge), and a folded range shows a small
+// the note column keeps its left edge; it hangs into the content padding, in
+// the slot right of the block handle, and stays visible while the handle marks
+// it with cm-fold-hover), and a folded range shows a small
 // "n lines" chip that unfolds on click. `[!type]-` callouts start folded when
 // the document opens; `+` or no marker means expanded. Fold state lives only
 // in the editor state (it survives a suspended tab, never the file).
@@ -80,7 +82,9 @@ class FoldToggleWidget extends WidgetType {
   toDOM(view: EditorView) {
     const el = document.createElement("button");
     el.className = "cm-fold-toggle" + (this.folded ? " cm-fold-folded" : "");
-    el.title = t(this.folded ? "block.unfold" : "block.fold");
+    const tip = t(this.folded ? "block.unfold" : "block.fold");
+    el.dataset.tip = tip; // the block grip's tooltip (app.css), not the browser's title
+    el.setAttribute("aria-label", tip);
     el.innerHTML =
       '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5 L12 10 L7 15"/></svg>';
     el.onmousedown = (e) => {
