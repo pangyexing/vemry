@@ -49,7 +49,9 @@
     /** Given, it renders the filter box and doubles as its placeholder */
     filterPlaceholder?: string;
     filter?: string;
-    /** The left slot: on the same side as the count, for a legend and the like — things read along with the title */
+    /** The left slot: on the same side as the count, for a legend and the like — things read
+     *  along with the title (a legend may also be a filter, as Agenda's is: it then sits by
+     *  the count it narrows) */
     left?: Snippet;
     /** The right slot: for tools such as switches */
     right?: Snippet;

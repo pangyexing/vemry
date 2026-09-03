@@ -3,7 +3,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
-  import { byModified, byWhen, DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, type TaskRow, taskStateIconSvg, toggleTask, whenOf } from "$lib/views/tasks";
+  import { byDate, byModified, DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, type TaskRow, taskStateIconSvg, toggleTask, whenOf } from "$lib/views/tasks";
   import { k as kbd } from "$lib/shortcut";
   import Chevron from "../Chevron.svelte";
   import TaskDateMenu from "./TaskDateMenu.svelte";
@@ -36,33 +36,54 @@
   type Row = TaskRow;
 
   let query = $state("");
+  /** The second filter, set from the legend: only the tasks carrying this date are shown,
+   *  and they are shown by it — the groups and the order inside them read that date instead
+   *  of the due-first default, so "start date" is a real view of when things start rather
+   *  than the due-date view minus some rows. One kind at a time: a task with both dates is
+   *  found by either, so a "both" state would only ever be a stricter version of one of
+   *  them. */
+  let dateKind = $state<DateField>();
 
   /** The rows are built before they are filtered: the grouping reads the state and dates
    *  rowOf gave, the filtering reads taskFilterKey, and both share one Row — so rowOf runs
    *  once per block. The key holds the note's title and path, since "what else is unfinished
    *  in this note" is the most common way of searching. */
   const allRows = $derived(hits.map(rowOf));
-  const shown = $derived(fuzzyKeep(allRows, query, taskFilterKey));
+  const shown = $derived.by(() => {
+    const kept = fuzzyKeep(allRows, query, taskFilterKey);
+    const kind = dateKind;
+    return kind ? kept.filter((r) => r[kind]) : kept;
+  });
+  /** The one way back from an empty list: either filter may be the one in the way, and a
+   *  button that cleared only the other would do nothing when pressed */
+  const clearFilters = () => {
+    query = "";
+    dateKind = undefined;
+  };
 
   /** The groups: overdue / today / the next 7 days / later / doing / no date / done */
   const groups = $derived.by(() => {
     const today = localDate();
     const weekEnd = localDate(7);
+    const kind = dateKind;
     const g = { overdue: [] as Row[], today: [] as Row[], week: [] as Row[], later: [] as Row[], doing: [] as Row[], nodate: [] as Row[], done: [] as Row[] };
     for (const r of shown) {
-      const when = whenOf(r);
+      const when = whenOf(r, kind);
       if (r.state === "done") g.done.push(r);
       else if (when && when < today) g.overdue.push(r);
       // A task starting today with ⏳ belongs under "today" even when its due date is later
-      else if (when === today || r.scheduled === today) g.today.push(r);
+      // — in the default view only: with a date kind pressed every task sits by that one date
+      else if (when === today || (!kind && r.scheduled === today)) g.today.push(r);
       else if (when && when <= weekEnd) g.week.push(r);
       else if (when) g.later.push(r);
       else if (r.state === "doing") g.doing.push(r);
       else g.nodate.push(r);
     }
     // Each group is sorted once: the two with no date to read follow the task's own change
-    // time, most recently changed first; the rest go by date
-    for (const [name, rows] of Object.entries(g)) rows.sort(name === "nodate" || name === "done" ? byModified : byWhen);
+    // time, most recently changed first; the rest go by date. With a date kind pressed every
+    // group goes by that date — it is the order that was asked for, the done group included
+    const byWhen = byDate(kind);
+    for (const [name, rows] of Object.entries(g)) rows.sort(!kind && (name === "nodate" || name === "done") ? byModified : byWhen);
     return g;
   });
 
@@ -124,7 +145,13 @@
   </button>
 {/snippet}
 
-{#snippet taskRow(r: Row, overdue: boolean)}
+{#snippet taskRow(r: Row)}
+  <!-- Whether the due chip reads as late is the task's own: its due date has passed and it
+    is not done. In the default view that is the same as sitting in the overdue group (a
+    task's date is its due date whenever it has one); with the start date pressed the group
+    follows the start date, and a task that started last month but is due next week must
+    not be painted late -->
+  {@const dueOverdue = r.state !== "done" && !!r.due && r.due < localDate()}
   <li>
     <div
       class="row"
@@ -144,7 +171,7 @@
         the left and looked like a saw edge) -->
       <span class="dates">
         {#if r.due}
-          {@render dateChip(r, "due", t("task.editDateWith", { field: dateFieldLabel("due"), date: r.due }), dueLabel(r.due, overdue), overdue ? "due overdue" : "due")}
+          {@render dateChip(r, "due", t("task.editDateWith", { field: dateFieldLabel("due"), date: r.due }), dueLabel(r.due, dueOverdue), dueOverdue ? "due overdue" : "due")}
         {/if}
         {#if r.scheduled}
           {@render dateChip(r, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: r.scheduled }), r.scheduled)}
@@ -159,6 +186,17 @@
       </span>
     </div>
   </li>
+{/snippet}
+
+{#snippet dateKindToggle(field: DateField)}
+  <button
+    class="kind"
+    aria-pressed={dateKind === field}
+    title={t(dateKind === field ? "task.onlyWithOff" : "task.onlyWith", { field: dateFieldLabel(field) })}
+    onclick={() => (dateKind = dateKind === field ? undefined : field)}
+  >
+    {@html dateIconSvg(field)}{dateFieldLabel(field)}
+  </button>
 {/snippet}
 
 {#snippet section(title: string, rows: Row[], overdue: boolean, collapsed: boolean)}
@@ -177,7 +215,7 @@
           explicit ^id may be copied into duplicates and cannot be a key); a stable key keeps
           the DOM of unchanged rows from being rebuilt after a requery -->
         {#each rows as r (r.hit.note + ":" + r.hit.block.span.start)}
-          {@render taskRow(r, overdue)}
+          {@render taskRow(r)}
         {/each}
       </ul>
     </details>
@@ -187,10 +225,14 @@
 <div class="view">
   <ViewHeader title={t("view.agenda")} total={countLabel(total, allRows.length, "task.count")} filterPlaceholder={t("task.filterPlaceholder")} bind:filter={query}>
     {#snippet left()}
-      <!-- The legend: the calendar and hourglass chip icons used to be recognisable only on hover -->
-      <span class="legend" aria-hidden="true">
-        <span>{@html dateIconSvg("due")}{dateFieldLabel("due")}</span>
-        <span>{@html dateIconSvg("scheduled")}{dateFieldLabel("scheduled")}</span>
+      <!-- The legend doubles as a filter. As a legend it names the calendar and hourglass
+        chip icons (they used to be recognisable only on hover); pressed, an entry keeps only
+        the tasks carrying that date, placed and ordered by it, and the count beside it shows
+        how many that left. It sits on the left, by the count it narrows, rather than among
+        the tools on the right -->
+      <span class="legend">
+        {@render dateKindToggle("due")}
+        {@render dateKindToggle("scheduled")}
       </span>
     {/snippet}
   </ViewHeader>
@@ -200,8 +242,10 @@
         {t("task.empty1")}<code>- [ ] a task 📅 2026-01-01</code>{t("task.empty2")}<code>- [/]</code
         >{t("task.empty3")}<code>⏳ 2026-01-01</code>{t("task.empty4")}
       </ViewEmpty>
+    {:else if total === 0 && !query.trim() && dateKind}
+      <ViewEmpty onclear={clearFilters}>{t("task.noneWithDate", { field: dateFieldLabel(dateKind) })}</ViewEmpty>
     {:else if total === 0}
-      <ViewEmpty onclear={() => (query = "")}>{t("task.noMatch", { query })}</ViewEmpty>
+      <ViewEmpty onclear={clearFilters}>{t("task.noMatch", { query })}</ViewEmpty>
     {:else}
       {@render section(t("agenda.overdue"), groups.overdue, true, false)}
       {@render section(t("agenda.today"), groups.today, false, false)}
@@ -234,17 +278,31 @@
   }
   .legend {
     display: flex;
-    gap: 10px;
-    font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    gap: 6px;
   }
-  .legend span {
+  /* Each entry wears the shape of the date chips it stands for, so the legend reads as
+     "these two chips". Faint at rest; pressed, it takes the accent — a hover only lifts the
+     background, so the pressed one stays distinguishable from a hovered one */
+  .kind {
     display: inline-flex;
     align-items: center;
     gap: 3px;
+    font-size: var(--fs-xs);
+    color: var(--fg-faint);
+    background: var(--bg-hover);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+  .kind:hover {
+    color: var(--fg-muted);
+    background: var(--bg-active);
+  }
+  .kind[aria-pressed="true"] {
+    color: var(--accent);
+    background: var(--accent-soft);
   }
   /* dateIconSvg is injected with {@html}, and the svg carries no scope marker, so its size is matched with :global */
-  .legend :global(svg) {
+  .kind :global(svg) {
     width: 0.95em;
     height: 0.95em;
   }

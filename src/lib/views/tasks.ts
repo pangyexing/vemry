@@ -368,14 +368,15 @@ export const taskFilterKey = (r: TaskRow) =>
 /** The date a task groups by: due first, and without a due the ⏳scheduled date counts
  *  too — otherwise a task "⏳ starting tomorrow" would carry a date chip while lying
  *  under "no date". Agenda's grouping and the kanban's column assignment read this one
- *  rule. */
-export const whenOf = (r: TaskRow) => r.due ?? r.scheduled;
+ *  rule. Asked for one `field`, it reads that field alone: Agenda with a date kind pressed
+ *  places every task by the date the user asked to see, not by the due-first default. */
+export const whenOf = (r: TaskRow, field?: DateField) => (field ? r[field] : r.due ?? r.scheduled);
 
-/** Date ascending, and within a day the source order (the note's path, then the block's
- *  position in it) — so the order is stable after a requery whatever order the hits
- *  arrived in. */
-export const byWhen = (a: TaskRow, b: TaskRow) =>
-  (whenOf(a) ?? "9999").localeCompare(whenOf(b) ?? "9999") || bySource(a, b);
+/** Date ascending (whenOf's date, or the one `field` when given), and within a day the
+ *  source order (the note's path, then the block's position in it) — so the order is
+ *  stable after a requery whatever order the hits arrived in. */
+export const byDate = (field?: DateField) => (a: TaskRow, b: TaskRow) =>
+  (whenOf(a, field) ?? "9999").localeCompare(whenOf(b, field) ?? "9999") || bySource(a, b);
 
 /** The last-touched order, for the tasks that have no date to read (the unscheduled and
  *  the done groups): the most recently changed task first, then the source order. The
