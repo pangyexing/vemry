@@ -42,8 +42,9 @@ export function fieldOf(hit: BlockHit, key: string): string | undefined {
   return hit.block.fields?.find((f) => f.key.toLowerCase() === lower)?.value;
 }
 
-/** Dates and numbers in their own order, everything else alphabetical. */
-function cmpValue(a: string, b: string): number {
+/** Dates and numbers in their own order, everything else alphabetical. The board's
+ *  column order and card order read the same rule. */
+export function cmpValue(a: string, b: string): number {
   const na = Number(a);
   const nb = Number(b);
   if (a !== "" && b !== "" && !Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;

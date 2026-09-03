@@ -21,10 +21,15 @@
     cardsOf,
     columnDefsFor,
     columnsOf,
+    DEFAULT_ORDER,
+    defaultDesc,
     dropEdit,
     fieldKeysOf,
+    parseSortKey,
     quickTaskPayload,
+    sortKeyId,
     type Card,
+    type CardOrder,
     type GroupMode,
   } from "$lib/views/kanban";
   import { t } from "$lib/i18n/i18n.svelte";
@@ -33,7 +38,7 @@
   import { toast } from "$lib/stores/toast.svelte";
   import { loadBucketMap, saveBucket } from "$lib/persist";
   import { noteKey } from "$lib/pickNote";
-  // The list sorts by its own contract (byCard inside columnsOf), so the order-preserving
+  // The list sorts by its own contract (cardComparator inside columnsOf), so the order-preserving
   // fuzzyKeep is used; picking a destination note is a selector, where "the closest match
   // first" is right, so that still uses fuzzyFilter
   import { fuzzyFilter, fuzzyKeep } from "$lib/commands/registry";
@@ -238,7 +243,7 @@
   // buckets). The component is rebuilt wholesale by {#key vault.root}, so reading the bucket
   // once at initialisation is enough and there is no cross-vault timing trap ----
   const KANBAN_UI_KEY = "vemry-kanban-ui";
-  type KanbanUi = { collapsed: string[]; target: string; groupBy?: GroupMode };
+  type KanbanUi = { collapsed: string[]; target: string; groupBy?: GroupMode; sort?: { key: string; desc: boolean } };
   const savedUi = vault.root ? loadBucketMap<KanbanUi>(KANBAN_UI_KEY)[vault.root] : undefined;
   // A record rather than a Set: a toggle is one assignment (a Set would need a whole
   // copy-on-write), and an unfamiliar column name restored from storage is harmless and need
@@ -250,17 +255,52 @@
   let groupBy = $state<GroupMode>(
     savedUi?.groupBy?.by === "field" && savedUi.groupBy.key ? { by: "field", key: savedUi.groupBy.key } : { by: "state" },
   );
+  /** The order inside a column (persisted with the grouping); a stored key this build
+   *  does not know falls back to the default. */
+  let order = $state<CardOrder>(orderOf(savedUi?.sort));
+  function orderOf(saved?: { key: string; desc: boolean }): CardOrder {
+    const key = saved && parseSortKey(saved.key);
+    return key ? { key, desc: !!saved?.desc } : DEFAULT_ORDER;
+  }
   /** The columns follow the grouping: the five state columns, or one per value of the chosen field plus "none". */
   const defs = $derived(columnDefsFor(groupBy, shown));
-  const cols = $derived(columnsOf(shown, defs, groupBy));
+  const cols = $derived(columnsOf(shown, defs, groupBy, order));
   /** The field keys the tasks carry, for the group-by menu. */
   const fieldKeys = $derived(fieldKeysOf(allCards));
+  /** The keys the two menus list: the ones the tasks carry, plus a restored key no task
+   *  carries any more — without it the select would show nothing selected. */
+  const menuKeys = $derived.by(() => {
+    const keys = [...fieldKeys];
+    for (const k of [groupBy.by === "field" ? groupBy.key : null, order.key.by === "field" ? order.key.key : null])
+      if (k && !keys.includes(k)) keys.push(k);
+    return keys;
+  });
   const groupSel = $derived(groupBy.by === "state" ? "state" : `field:${groupBy.key}`);
   function setGroup(v: string) {
     groupBy = v === "state" ? { by: "state" } : { by: "field", key: v.slice("field:".length) };
     collapsed = {};
     persistUi();
   }
+  const sortSel = $derived(sortKeyId(order.key));
+  /** Picking a key starts it in its natural direction (newest first for the modification time, ascending for the rest); the arrow flips it from there. */
+  function setSort(v: string) {
+    const key = parseSortKey(v);
+    if (!key) return;
+    order = { key, desc: defaultDesc(key) };
+    persistUi();
+  }
+  function flipSortDir() {
+    order = { key: order.key, desc: !order.desc };
+    persistUi();
+  }
+  /** The direction button's glyph: an arrow beside bars growing (ascending) or shrinking (descending), on the 24 viewBox of the other card icons. */
+  const sortDirIcon = $derived(
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
+      order.desc
+        ? '<path d="m3 16 4 4 4-4M7 20V4M11 4h10M11 8h7M11 12h4"/>'
+        : '<path d="m3 8 4-4 4 4M7 4v16M11 12h4M11 16h7M11 20h10"/>'
+    }</svg>`,
+  );
   /** The note a quick create lands in; it defaults to inbox.md, the same as a quick memo's. */
   let addTarget = $state(savedUi?.target || "inbox.md");
 
@@ -269,7 +309,12 @@
     saveBucket(
       KANBAN_UI_KEY,
       vault.root,
-      { collapsed: Object.keys(collapsed).filter((id) => collapsed[id]), target: addTarget, groupBy: $state.snapshot(groupBy) },
+      {
+        collapsed: Object.keys(collapsed).filter((id) => collapsed[id]),
+        target: addTarget,
+        groupBy: $state.snapshot(groupBy),
+        sort: { key: sortKeyId(order.key), desc: order.desc },
+      },
       vault.recentLoaded ? vault.recent : null,
     );
   }
@@ -382,15 +427,50 @@
   >
     {#snippet right()}
       <!-- The grouping: the time axis, or any inline field the tasks carry (one column per value) -->
-      <label class="group-by">
+      <label class="tool">
         <span>{t("kanban.groupBy")}</span>
         <select value={groupSel} onchange={(e) => setGroup(e.currentTarget.value)}>
           <option value="state">{t("kanban.groupByState")}</option>
-          {#each fieldKeys as key (key)}
-            <option value={`field:${key}`}>{key}</option>
-          {/each}
+          {#if menuKeys.length}
+            <optgroup label={t("kanban.fieldsGroup")}>
+              {#each menuKeys as key (key)}
+                <option value={`field:${key}`}>{key}</option>
+              {/each}
+            </optgroup>
+          {/if}
         </select>
       </label>
+      <!-- The order inside a column. "Default" is each column's own natural order (the
+        tooltip says which) and has no direction; every other key applies to every column
+        alike, and only then is there an arrow to flip it -->
+      <span class="tool">
+        <label>
+          <span>{t("kanban.sortBy")}</span>
+          <select
+            value={sortSel}
+            title={order.key.by === "auto" ? t("kanban.sortAutoHint") : undefined}
+            onchange={(e) => setSort(e.currentTarget.value)}
+          >
+            <option value="auto">{t("kanban.sortAuto")}</option>
+            <option value="date">{t("kanban.sortDate")}</option>
+            <option value="modified">{t("kanban.sortModified")}</option>
+            <option value="note">{t("kanban.sortNote")}</option>
+            <option value="text">{t("kanban.sortText")}</option>
+            {#if menuKeys.length}
+              <optgroup label={t("kanban.fieldsGroup")}>
+                {#each menuKeys as key (key)}
+                  <option value={`field:${key}`}>{key}</option>
+                {/each}
+              </optgroup>
+            {/if}
+          </select>
+        </label>
+        {#if order.key.by !== "auto"}
+          <button class="sort-dir" title={order.desc ? t("kanban.sortDesc") : t("kanban.sortAsc")} aria-pressed={order.desc} onclick={flipSortDir}>
+            {@html sortDirIcon}
+          </button>
+        {/if}
+      </span>
     {/snippet}
   </ViewHeader>
   {#if total === 0}
@@ -1013,20 +1093,42 @@
     padding: 4px 10px;
     font-size: var(--fs-xs);
   }
-  .group-by {
+  /* The header's tools (group by, sort by): a caption plus a select, and for the sort a
+     direction button pressed against its select — the 6px inside a tool against the
+     header's 10px between tools is what keeps the arrow read as part of "sort by" */
+  .tool,
+  .tool label {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     font-size: var(--fs-xs);
     color: var(--fg-faint);
   }
-  .group-by select {
+  .tool select {
     font-size: var(--fs-xs);
     padding: 2px 4px;
     border: 1px solid var(--border);
     border-radius: 5px;
     background: var(--bg);
     color: var(--fg);
+  }
+  .sort-dir {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--fg-muted);
+  }
+  .sort-dir:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
+  }
+  .sort-dir :global(svg) {
+    width: 14px;
+    height: 14px;
   }
   .field-chip .fk {
     color: var(--fg-faint);

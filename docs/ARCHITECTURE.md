@@ -1864,6 +1864,27 @@ about the same task. A column id is a stable key (a drop target, the landing log
 and a column name is copy (`kanban.col.<id>`). "Overdue" is not a legal drop target
 — dragging a task into being overdue has no meaning.
 
+Inside a column the cards follow one order the user picks in the header (`CardOrder`
+in `views/kanban.ts`). The default, "auto", is each column's own natural order and
+has no direction: the task's date (Agenda's `whenOf`), soonest first, where a column
+has one; and for the two columns that have no date to read — an unscheduled task has
+none, and a finished task's due date says nothing about when it was finished — the
+task's own change time, most recently changed first, the way a task manager's inbox
+and completed list read (`byModified` in `views/tasks.ts`, reading
+`Block.modified_ms` — see "Block change times"; Agenda's no-date and done groups
+read the same rule). Checking one task moves that task alone.
+
+Every other key — the date, the change time, the source order, the display
+text, any inline field's value — applies to every column alike, ascending or
+descending, so the label never hides a per-column special case; picking a key starts
+it in its natural direction (newest first for the modification time, ascending for
+the rest) and only then is there an arrow to flip it. A task in progress stays on top
+under every key, a card without the key's value goes last whichever the direction
+(the same convention as a query block's `sort`), and equal keys fall back to the
+source order — path, then position — so a requery never shuffles cards that compare
+equal. The order is persisted per vault together with the grouping and the collapsed
+columns.
+
 ### The plan confirmation gate (v0.9)
 
 The `propose_plan` tool plus a blocking gate: a multi-step task presents a plan card

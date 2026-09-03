@@ -10,9 +10,16 @@
 // doing is not a column (it is orthogonal to the date dimension): it lands in its
 // column by date as usual, and the card shows a marker and sorts to the top of that
 // column.
+// Inside a column the cards follow one order the user picks (CardOrder). The default,
+// "auto", is each column's own natural order — the date where there is one, the task's
+// own change time for the unscheduled and the done columns; every other key (the date,
+// the change time, the source order, the text, a field) applies to every column alike,
+// ascending or descending, so the label never hides a special case. doing stays on top
+// under every one of them.
 import { t } from "$lib/i18n/i18n.svelte";
 import type { BlockHit } from "$lib/api";
-import { byWhen, DATE_FIELDS, type DateField, rowOf, type TaskEdit, type TaskRow, whenOf } from "$lib/views/tasks";
+import { cmpValue } from "$lib/views/queryrows";
+import { byModified, bySource, DATE_FIELDS, type DateField, rowOf, type TaskEdit, type TaskRow, whenOf } from "$lib/views/tasks";
 
 export type ColumnId = "overdue" | "today" | "scheduled" | "unscheduled" | "done";
 
@@ -64,20 +71,13 @@ export function columnTitle(id: ColumnId): string {
   return t(`kanban.col.${id}`);
 }
 
-/** A field value's sort: dates and numbers in their own order, everything else alphabetical. */
-function byValue(a: string, b: string): number {
-  const na = Number(a);
-  const nb = Number(b);
-  if (a !== "" && b !== "" && !Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
-  return a.localeCompare(b);
-}
-
 /** The columns of a grouping: the five state columns, or the distinct values of the
- *  field among the cards (sorted) followed by "none". */
+ *  field among the cards (dates and numbers in their own order, the rest alphabetical
+ *  — a query block's cmpValue) followed by "none". */
 export function columnDefsFor(mode: GroupMode, cards: Card[]): ColumnDef[] {
   if (mode.by === "state") return COLUMNS.map((c) => ({ ...c, title: columnTitle(c.id) }));
   const key = mode.key.toLowerCase();
-  const values = [...new Set(cards.map((c) => c.fields[key]).filter((v): v is string => v !== undefined))].sort(byValue);
+  const values = [...new Set(cards.map((c) => c.fields[key]).filter((v): v is string => v !== undefined))].sort(cmpValue);
   const defs: ColumnDef[] = values.map((v) => ({ id: v, title: v, drop: true, add: true, tone: "muted" }));
   defs.push({ id: NONE_COL, title: t("kanban.col.none"), drop: true, add: true, tone: "faint" });
   return defs;
@@ -158,14 +158,98 @@ function cardOf(hit: BlockHit, today: string): Card {
   };
 }
 
-/** The order inside a column: doing on top, then byWhen (date ascending plus the note's name) — so the order is stable after a requery. */
-const byCard = (a: Card, b: Card) =>
-  (a.state === "doing" ? 0 : 1) - (b.state === "doing" ? 0 : 1) || byWhen(a, b);
+/** What the cards inside a column are ordered by. `auto` is each column's own natural
+ *  order (columnComparator) and has no direction; the rest apply one key to every
+ *  column alike: the task's date (whenOf — the same date Agenda sorts by), the task's
+ *  own change time (TaskRow.modified), the source order (the note's path, then the
+ *  position in it), the display text, or one inline field's value. */
+export type SortKey =
+  | { by: "auto" }
+  | { by: "date" }
+  | { by: "modified" }
+  | { by: "note" }
+  | { by: "text" }
+  | { by: "field"; key: string };
 
-export function columnsOf(cards: Card[], defs: ColumnDef[], mode: GroupMode): Record<string, Card[]> {
+/** A column's order: the key and its direction (meaningless under `auto`). */
+export interface CardOrder {
+  key: SortKey;
+  desc: boolean;
+}
+
+export const DEFAULT_ORDER: CardOrder = { key: { by: "auto" }, desc: false };
+const DATE_ASC: CardOrder = { key: { by: "date" }, desc: false };
+
+/** The direction a key starts in when it is picked: newest first for the change time
+ *  (nobody picks it to see what they touched longest ago), ascending for the rest. The
+ *  arrow shows it and flips it. */
+export function defaultDesc(key: SortKey): boolean {
+  return key.by === "modified";
+}
+
+/** The one spelling of a sort key the select's options and the persisted UI state
+ *  share: `auto` / `date` / `modified` / `note` / `text` / `field:<key>`. */
+export function sortKeyId(key: SortKey): string {
+  return key.by === "field" ? `field:${key.key}` : key.by;
+}
+
+/** The inverse of sortKeyId; null for anything else (a stored value from an older build, an empty field key). */
+export function parseSortKey(id: string): SortKey | null {
+  if (id === "auto" || id === "date" || id === "modified" || id === "note" || id === "text") return { by: id };
+  const key = id.startsWith("field:") ? id.slice("field:".length) : "";
+  return key ? { by: "field", key } : null;
+}
+
+const doingFirst = (a: Card, b: Card) => (a.state === "doing" ? 0 : 1) - (b.state === "doing" ? 0 : 1);
+
+/** The comparator of one explicit key, the same for every column (`auto` resolves to
+ *  the date here; columnComparator is where it differs per column). doing stays on top
+ *  whatever the key — it is the task being worked on, and it is orthogonal to every
+ *  key. A card without the key's value (no date, no such field) goes last whichever
+ *  the direction, the same convention as a query block's `sort`, and equal keys keep
+ *  the source order — so a requery never shuffles two cards that compare equal. */
+export function cardComparator(order: CardOrder): (a: Card, b: Card) => number {
+  const k = order.key.by === "auto" ? DATE_ASC.key : order.key;
+  const dir = order.desc ? -1 : 1;
+  if (k.by === "modified") {
+    const recent = byModified(!order.desc);
+    return (a, b) => doingFirst(a, b) || recent(a, b);
+  }
+  const valueOf = (c: Card): string | undefined => (k.by === "date" ? whenOf(c) : k.by === "field" ? c.fields[k.key.toLowerCase()] : undefined);
+  return (a, b) => {
+    const doing = doingFirst(a, b);
+    if (doing) return doing;
+    let c: number;
+    if (k.by === "note") c = bySource(a, b);
+    else if (k.by === "text") c = a.text.localeCompare(b.text);
+    else {
+      const va = valueOf(a);
+      const vb = valueOf(b);
+      if (va === undefined || vb === undefined) return va === vb ? bySource(a, b) : va === undefined ? 1 : -1;
+      c = cmpValue(va, vb);
+    }
+    return c * dir || bySource(a, b);
+  };
+}
+
+/** The comparator one column reads. An explicit key is the same for every column. Under
+ *  `auto` each column reads its own natural order: the date, soonest first, where there
+ *  is one; and for the two columns that have no date to read — an unscheduled task has
+ *  none, and a finished task's due date says nothing about when it was finished — the
+ *  task's own change time, most recently changed first, the way a task manager's inbox
+ *  and completed list read (tasks.ts's byModified; Agenda's no-date and done groups
+ *  read the same). Only the state grouping has these two columns. */
+export function columnComparator(col: string, mode: GroupMode, order: CardOrder): (a: Card, b: Card) => number {
+  if (order.key.by !== "auto") return cardComparator(order);
+  if (mode.by !== "state" || (col !== "unscheduled" && col !== "done")) return cardComparator(DATE_ASC);
+  const recent = byModified();
+  return (a, b) => doingFirst(a, b) || recent(a, b);
+}
+
+export function columnsOf(cards: Card[], defs: ColumnDef[], mode: GroupMode, order: CardOrder): Record<string, Card[]> {
   const cols: Record<string, Card[]> = Object.fromEntries(defs.map((d) => [d.id, [] as Card[]]));
   for (const c of cards) cols[cardCol(c, mode)]?.push(c);
-  for (const list of Object.values(cols)) list.sort(byCard);
+  for (const [id, list] of Object.entries(cols)) list.sort(columnComparator(id, mode, order));
   return cols;
 }
 

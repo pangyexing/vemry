@@ -3,7 +3,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
-  import { byWhen, DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, type TaskRow, taskStateIconSvg, toggleTask, whenOf } from "$lib/views/tasks";
+  import { byModified, byWhen, DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, type TaskRow, taskStateIconSvg, toggleTask, whenOf } from "$lib/views/tasks";
   import { k as kbd } from "$lib/shortcut";
   import Chevron from "../Chevron.svelte";
   import TaskDateMenu from "./TaskDateMenu.svelte";
@@ -61,6 +61,9 @@
       else g.nodate.push(r);
     }
     for (const rows of Object.values(g)) rows.sort(byWhen);
+    // The two groups with no date to read follow the task's own change time instead, most recently changed first
+    g.nodate.sort(byModified());
+    g.done.sort(byModified());
     return g;
   });
 

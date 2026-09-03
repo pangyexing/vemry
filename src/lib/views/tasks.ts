@@ -367,13 +367,16 @@ export interface TaskRow {
   state: "todo" | "doing" | "done";
   due?: string;
   scheduled?: string;
+  /** When the task's current text appeared (ms; the block's modified_ms, 0 when unknown). */
+  modified: number;
 }
 
 export function rowOf(hit: BlockHit): TaskRow {
   const k = hit.block.kind;
   const text = taskText(hit.block.content);
-  if (k.type !== "task") return { hit, text, state: "todo" };
-  return { hit, text, state: k.state, due: k.due, scheduled: k.scheduled };
+  const modified = hit.block.modified_ms ?? 0;
+  if (k.type !== "task") return { hit, text, state: "todo", modified };
+  return { hit, text, state: k.state, due: k.due, scheduled: k.scheduled, modified };
 }
 
 /** The filter key of Agenda and the kanban — one definition, so the two views give the
@@ -393,9 +396,27 @@ export const taskFilterKey = (r: TaskRow) =>
  *  rule. */
 export const whenOf = (r: TaskRow) => r.due ?? r.scheduled;
 
-/** Date ascending, and by note name within a day — so the order is stable after a requery. */
+/** Date ascending, and within a day the source order (the note's path, then the block's
+ *  position in it) — so the order is stable after a requery whatever order the hits
+ *  arrived in. */
 export const byWhen = (a: TaskRow, b: TaskRow) =>
-  (whenOf(a) ?? "9999").localeCompare(whenOf(b) ?? "9999") || a.hit.note.localeCompare(b.hit.note);
+  (whenOf(a) ?? "9999").localeCompare(whenOf(b) ?? "9999") || bySource(a, b);
+
+/** The last-touched order, for the tasks that have no date to read (the unscheduled and
+ *  the done groups): the most recently changed task first, then the source order. The
+ *  time is the block's own (`modified`: when its current text appeared — a toggled
+ *  checkbox, an edited word, a changed date all count; a minted `^id` does not), so
+ *  checking one task moves that task alone. `oldestFirst` reads the axis the other
+ *  way. Agenda's no-date and done groups and the board's unscheduled and done columns
+ *  read this one rule. */
+export const byModified = (oldestFirst = false) => (a: TaskRow, b: TaskRow) =>
+  (oldestFirst ? -1 : 1) * (b.modified - a.modified) || bySource(a, b);
+
+/** The source order: the note's path, then the block's byte position in it. The
+ *  tie-break of every task ordering — two cards that compare equal on any key keep the
+ *  order they have in the notes. */
+export const bySource = (a: TaskRow, b: TaskRow) =>
+  a.hit.note.localeCompare(b.hit.note) || a.hit.block.span.start - b.hit.block.span.start;
 
 /** Local-timezone `YYYY-MM-DD` for a Date — the one day-key both Agenda and
  *  Timeline group by (two copies would let a UTC-parse fix drift them apart). */
