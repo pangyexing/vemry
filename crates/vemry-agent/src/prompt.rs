@@ -711,4 +711,21 @@ mod tests {
             compose_user_message("看看".into(), Some(&page("t", "https://e.com", &big)), &[], &TurnContext::default());
         assert!(out.chars().count() < PAGE_CONTEXT_MAX_CHARS + 300);
     }
+
+    /// Not a test: prints the system prompt built for a real vault, the one way to
+    /// read what the model is sent (the UI shows no system prompt and the session
+    /// log does not keep it). `VEMRY_PROMPT_PLAN=1` adds the plan tool the way the
+    /// "confirm plans" setting does.
+    ///   VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn print_system_prompt() {
+        let Some(root) = std::env::var("VEMRY_PROMPT_VAULT").ok().filter(|p| !p.is_empty()) else {
+            eprintln!("VEMRY_PROMPT_VAULT not set — nothing to print");
+            return;
+        };
+        let plan = std::env::var("VEMRY_PROMPT_PLAN").is_ok_and(|v| v == "1");
+        let vault = Vault::open(root).expect("open the vault");
+        println!("{}", build_system_prompt(&vault, plan));
+    }
 }

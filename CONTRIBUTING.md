@@ -54,6 +54,9 @@ small number of tokens):
 
 ```bash
 VEMRY_TEST_API_KEY=sk-... cargo test -p vemry-agent --test live -- --ignored
+
+# print the system prompt a vault gets (what the model is sent; the UI and the session log show none of it)
+VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt -- --ignored --nocapture
 # optional: VEMRY_TEST_BASE_URL / VEMRY_TEST_MODEL (defaults to DeepSeek deepseek-v4-flash)
 ```
 

@@ -23,6 +23,9 @@ pnpm build                # the frontend builds
 
 # after touching the agent layer, run one real end-to-end turn (crates/vemry-agent/tests/live.rs, --ignored by default)
 VEMRY_TEST_API_KEY=sk-... cargo test -p vemry-agent --test live -- --ignored
+
+# print the system prompt a vault gets (what the model is sent; the UI and the session log show none of it)
+VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt -- --ignored --nocapture
 ```
 
 ## Architecture essentials
