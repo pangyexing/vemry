@@ -224,7 +224,10 @@ pub struct BlockStamp {
 /// write can be put back block by block: `old` and `new` are the lines the
 /// write removed and added (each line with its break), `before` and `after`
 /// up to three unchanged lines on either side, to find the region again by
-/// its surroundings once the note has moved on.
+/// its surroundings once the note has moved on. `before + new + after` is
+/// text as the write left it, and `old` in place of `new` is the text before
+/// it — a last line that gained or lost its break carries that break in
+/// `new` or `old`, not in the context (see `diff_hunks` in vemry-agent).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hunk {
     #[serde(default, skip_serializing_if = "String::is_empty")]

@@ -659,10 +659,35 @@ fn with_agent_provenance(content: &str, session: Option<&str>) -> String {
 /// The changed regions of a write as ledger hunks: each maximal run of changed
 /// lines, with up to three unchanged lines of context on either side (see
 /// `Hunk`). Lines carry their breaks, so a hunk pasted back reproduces the text.
+/// Lines compare without their break: a text's last line without one is the
+/// same line as with one, and the break only one side holds is then a change
+/// of its own — otherwise a write that appends to a note whose last line has
+/// no break records that line as replaced, and once the user takes that line
+/// out the write can no longer be found.
 pub fn diff_hunks(old: &str, new: &str) -> Vec<vemry_core::Hunk> {
     use similar::ChangeTag;
-    let diff = TextDiff::from_lines(old, new);
-    let changes: Vec<(ChangeTag, &str)> = diff.iter_all_changes().map(|c| (c.tag(), c.value())).collect();
+    let (old_lines, new_lines) = (split_lines(old), split_lines(new));
+    let old_keys: Vec<&str> = old_lines.iter().map(|l| line_key(l)).collect();
+    let new_keys: Vec<&str> = new_lines.iter().map(|l| line_key(l)).collect();
+    let diff = TextDiff::configure().diff_slices(&old_keys, &new_keys);
+    let mut changes: Vec<(ChangeTag, &str)> = Vec::new();
+    for c in diff.iter_all_changes() {
+        match c.tag() {
+            ChangeTag::Delete => changes.push((ChangeTag::Delete, old_lines[c.old_index().unwrap()])),
+            ChangeTag::Insert => changes.push((ChangeTag::Insert, new_lines[c.new_index().unwrap()])),
+            ChangeTag::Equal => {
+                let (o, n) = (old_lines[c.old_index().unwrap()], new_lines[c.new_index().unwrap()]);
+                let shared = o.len().min(n.len());
+                changes.push((ChangeTag::Equal, &n[..shared]));
+                if o.len() > shared {
+                    changes.push((ChangeTag::Delete, &o[shared..]));
+                }
+                if n.len() > shared {
+                    changes.push((ChangeTag::Insert, &n[shared..]));
+                }
+            }
+        }
+    }
     let mut hunks = Vec::new();
     let mut i = 0;
     while i < changes.len() {
@@ -687,6 +712,16 @@ pub fn diff_hunks(old: &str, new: &str) -> Vec<vemry_core::Hunk> {
         hunks.push(vemry_core::Hunk { before: before.concat(), old: old_text, new: new_text, after });
     }
     hunks
+}
+
+/// The lines of `text`, each with its break; a last line without one is a line too.
+fn split_lines(text: &str) -> Vec<&str> {
+    text.split_inclusive('\n').collect()
+}
+
+/// What a line is compared by: itself without its break.
+fn line_key(line: &str) -> &str {
+    line.strip_suffix('\n').unwrap_or(line)
 }
 
 pub fn unified_diff(old: &str, new: &str, path: &str) -> String {
@@ -1004,6 +1039,34 @@ mod tests {
         let h = diff_hunks("a\n", "a\nnew");
         assert_eq!(h, vec![vemry_core::Hunk { before: "a\n".into(), old: String::new(), new: "new".into(), after: String::new() }]);
         assert!(diff_hunks("same\n", "same\n").is_empty());
+        // a last line without its break is the same line as with one: the break is the change, the line is context
+        let hunk = |before: &str, old: &str, new: &str| vemry_core::Hunk { before: before.into(), old: old.into(), new: new.into(), after: String::new() };
+        assert_eq!(diff_hunks("a\nX", "a\nX\n\nY"), vec![hunk("a\nX", "", "\n\nY")]);
+        assert_eq!(diff_hunks("a\nX\nY\n", "a\nX"), vec![hunk("a\nX", "\nY\n", "")]);
+        assert_eq!(diff_hunks("X", "X\n"), vec![hunk("X", "", "\n")]);
+        assert!(diff_hunks("X", "X").is_empty());
+    }
+
+    #[test]
+    fn a_write_appended_after_an_unterminated_line_is_found_once_that_line_is_gone() {
+        // the note ended without a line break; the write extended it, and the user
+        // then took the last line out (reverting it) — the write is still found by
+        // the lines it added, so "revert all" does not leave it behind
+        let (_d, mut vault) = fixture_with_private_block();
+        vault.write_note(&NoteId::new("Tail.md"), "test2\n\nTEST3").unwrap();
+        let req = prepare_write(
+            &vault,
+            "r".into(),
+            "edit_note",
+            &json!({"path": "Tail.md", "old_str": "TEST3", "new_str": "TEST3\n\nTEST4"}),
+            Some("s1"),
+        )
+        .unwrap();
+        execute_write(&mut vault, &req, None, Some("s1"), false).unwrap();
+        assert_eq!(std::fs::read_to_string(vault.root().join("Tail.md")).unwrap(), "test2\n\nTEST3\n\nTEST4");
+        let plan = vault.revert_plan("test2\n\n\nTEST4", None).unwrap();
+        assert_eq!(plan.missed, 0);
+        assert_eq!(plan.replacements, vec![vemry_core::Replacement { from: 6, to: 13, insert: String::new() }]);
     }
 
     #[test]
