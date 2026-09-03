@@ -14,7 +14,8 @@
 //   pressed position to what the jump put under the pointer.
 //
 // Two guards, both narrow: the native caret is parked at the pressed point before CodeMirror
-// focuses (parkNativeCaret), and while the pointer has not travelled the drag threshold since
+// focuses (parkNativeCaret; focusEditor does the same for a focus that comes from a menu or a
+// command rather than a click), and while the pointer has not travelled the drag threshold since
 // a plain single click, a pointer selection that is not empty is collapsed back to its anchor
 // (the pressed position). A double or triple click (a word, a line), a shift-click and a real
 // drag are untouched.
@@ -24,24 +25,34 @@ import { EditorView } from "@codemirror/view";
 /** The pointer travel that turns a press into a drag (the platform's own drag threshold). */
 const DRAG_THRESHOLD = 4;
 
-/** Before CodeMirror focuses the editor for a click, put the native caret where the click
- *  lands. WebKit reveals an editable element's own selection when it is focused, whatever
- *  preventScroll says, and after a document switch that selection is stale: the text node it
- *  sat in is gone, so it has collapsed to a child index of the content element, which in the
- *  new document is some line far down. Revealing that scrolled the document by hundreds of
- *  pixels inside the mousedown. A caret at the pressed point is already in view, so the
- *  reveal has nothing to do; CodeMirror sets the same position again right after. */
-function parkNativeCaret(view: EditorView, e: MouseEvent) {
+/** Before the editor is focused, put the native caret at document position `pos`. WebKit
+ *  reveals an editable element's own selection when it is focused, whatever preventScroll
+ *  says, and after a document switch that selection is stale: the text node it sat in is
+ *  gone, so it has collapsed to a child index of the content element, which in the new
+ *  document is some line far down. Revealing that scrolled the document by hundreds of
+ *  pixels. A caret at a position already in view gives the reveal nothing to do; CodeMirror
+ *  sets its own position again right after. */
+function parkNativeCaret(view: EditorView, pos: number) {
   const sel = view.contentDOM.ownerDocument.getSelection();
   if (!sel) return;
-  const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
-  if (pos == null) return;
   const { node, offset } = view.domAtPos(pos);
   try {
     sel.collapse(node, offset);
   } catch {
     /* a detached node: leave it to CodeMirror */
   }
+}
+
+/** Focus the editor from outside a pointer event (a menu entry, a palette command, a jump
+ *  from another view). The same stale-selection reveal as the click case, traced live on the
+ *  block menu's "copy link": the first copy after opening a note scrolled the document down,
+ *  since the entry's focus() had WebKit show a caret left far below from the previous
+ *  document. The native caret is parked at the selection head first — for a menu entry the
+ *  head is inside the block the menu was opened on, which is in view. An editor that already
+ *  has focus needs nothing. */
+export function focusEditor(view: EditorView) {
+  if (!view.hasFocus) parkNativeCaret(view, view.state.selection.main.head);
+  view.focus();
 }
 
 export function clickGuard(): Extension {
@@ -63,7 +74,10 @@ export function clickGuard(): Extension {
       EditorView.domEventHandlers({
         mousedown(e, view) {
           // A shift-click extends from the selection CodeMirror holds, which parking would replace
-          if (!view.hasFocus && !e.shiftKey) parkNativeCaret(view, e);
+          if (!view.hasFocus && !e.shiftKey) {
+            const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+            if (pos != null) parkNativeCaret(view, pos);
+          }
           onUp();
           if (e.button !== 0 || e.shiftKey || e.detail !== 1) return false;
           press = { x: e.clientX, y: e.clientY, moved: false };

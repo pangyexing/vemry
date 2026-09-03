@@ -12,6 +12,7 @@ import { type EditorBlock, blockAt, extentTo, frontmatterEnd } from "./blocks";
 import { CONTENT_PAD } from "./blockhandle";
 import { moveBlockTo } from "./blockops";
 import { selectBlock } from "./blocksel";
+import { focusEditor } from "./clickguard";
 
 const THRESHOLD = 5;
 const DEPTH_PX = 24;
@@ -225,7 +226,7 @@ export function startBlockDrag(
         if (moved) selectBlock(view, moved);
       }
     }
-    view.focus();
+    focusEditor(view);
     done(true);
   };
 

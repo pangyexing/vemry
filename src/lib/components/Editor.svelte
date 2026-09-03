@@ -9,6 +9,7 @@
   import { type EditorBlock, blockAt, blockContentStart, extentTo } from "$lib/editor/blocks";
   import { blockMenuEntries, type BlockMenuHost } from "$lib/editor/blockmenu";
   import { selectedBlocks } from "$lib/editor/blocksel";
+  import { focusEditor } from "$lib/editor/clickguard";
   import { deleteBlocks, duplicateBlocks, moveBlocks } from "$lib/editor/blockops";
   import type { BlockHost } from "$lib/editor/blockhandle";
   import { startBlockDrag } from "$lib/editor/blockdrag";
@@ -88,7 +89,7 @@
     const placeholder = scanFields(line.text, 0, { empty: true }).some((f) => f.value === "" && f.key.toLowerCase() === lower);
     const isTaskDate = !placeholder && TASK_LINE_RE.test(line.text) && m.key in DATE_FIELDS;
     const next = isTaskDate ? rescheduleLine(line.text, m.key as DateField, value) : setFieldValue(line.text, m.key, value, m.pos - line.from);
-    view.focus();
+    focusEditor(view);
     if (next === line.text) return;
     view.dispatch({ changes: { from: line.from, to: line.to, insert: next }, userEvent: "input.field" });
   }
@@ -249,7 +250,7 @@
       selection: { anchor: plan.caret },
       scrollIntoView: true,
     });
-    view.focus();
+    focusEditor(view);
     return true;
   }
   vault.insertAtCursor = insertAtCursor;
@@ -267,7 +268,7 @@
       selection: { anchor: plan.caret },
       scrollIntoView: true,
     });
-    view.focus();
+    focusEditor(view);
     return plan.landed;
   }
   vault.insertAtSection = insertAtSection;
@@ -307,7 +308,7 @@
       effects: EditorView.scrollIntoView(p, { y: "start", yMargin: REVEAL_TOP_MARGIN }),
       annotations: suppressReveal.of(true),
     });
-    view.focus();
+    focusEditor(view);
     if (flash) {
       // The landing block (its whole extent) flashes so the eye finds it after the scroll
       const b = blockAt(view.state, p);
@@ -350,7 +351,7 @@
             : deleteBlocks(state, run);
     if (!spec) return false;
     view.dispatch(spec);
-    view.focus();
+    focusEditor(view);
     return true;
   }
   vault.blockCommand = blockCommand;
@@ -359,7 +360,7 @@
     const pos = nextPending(view.state, view.state.selection.main.head);
     if (pos == null) return false;
     view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
-    view.focus();
+    focusEditor(view);
     return true;
   };
   vault.pendingAtCursor = () => {
@@ -549,7 +550,7 @@
       const from = b.from;
       const to = extentTo(v.state, b);
       v.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
-      v.focus();
+      focusEditor(v);
       if (blockHost.isPrivate()) {
         toast.push(t("block.askPrivate"), "error");
         return;
@@ -720,7 +721,7 @@
       selection: { anchor: sel.from + text.length },
       scrollIntoView: true,
     });
-    view.focus();
+    focusEditor(view);
   }
 
   async function copySelection(): Promise<boolean> {
@@ -746,7 +747,7 @@
       // delete the wrong text or even throw a RangeError. Text is immutable, so comparing references is enough.
       if (view.state.doc !== doc) return;
       view.dispatch({ changes: { from: sel.from, to: sel.to, insert: "" }, selection: { anchor: sel.from } });
-      view.focus();
+      focusEditor(view);
     });
   }
 

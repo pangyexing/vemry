@@ -23,6 +23,7 @@ import {
   turnInto,
 } from "./blockops";
 import { selectBlock } from "./blocksel";
+import { focusEditor } from "./clickguard";
 import { applyType } from "./blocktype";
 import type { BlockType } from "$lib/api";
 import { foldRangeAt, toggleFoldAt } from "./fold";
@@ -69,7 +70,7 @@ function act(view: EditorView, b: EditorBlock, f: (now: EditorBlock) => void) {
     const now = fresh(view, b);
     if (!now) return;
     f(now);
-    view.focus();
+    focusEditor(view);
   };
 }
 
