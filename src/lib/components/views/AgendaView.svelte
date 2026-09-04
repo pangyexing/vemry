@@ -3,8 +3,10 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
-  import { byDate, byModified, DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, taskKey, type TaskRow, taskStateIconSvg, toggleTask, whenOf } from "$lib/views/tasks";
+  import { byDate, byModified, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
   import { k as kbd } from "$lib/shortcut";
+  import { contextMenu } from "$lib/stores/contextMenu.svelte";
+  import { cliptip } from "$lib/cliptip";
   import Chevron from "../Chevron.svelte";
   import TaskDateMenu from "./TaskDateMenu.svelte";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
@@ -94,6 +96,20 @@
 
   const total = $derived(shown.length);
 
+  /** Whether a task's due chip reads as late is the task's own: its due date has passed
+   *  and it is not done. In the default view that is the same as sitting in the overdue
+   *  group (a task's date is its due date whenever it has one); with the start date
+   *  pressed the group follows the start date, and a task that started last month but is
+   *  due next week must not be painted late. */
+  const isLate = (r: Row) => r.state !== "done" && !!r.due && r.due < today;
+  /** The date track's width follows what the shown rows carry. Every row shares it, so the
+   *  source chips still line up into one column across the groups (the reason the track is
+   *  fixed at all); it is only as wide as the widest chip the current rows can show — the
+   *  full "date · N days late" (13em), a bare date (the chip is about 7.2em), or nothing but
+   *  the hover "+" — rather than reserving 13em for a lateness that no row in a filtered
+   *  list has. The task text keeps its own cap; the space goes to the source column. */
+  const dateTrack = $derived(shown.some(isLate) ? "13em" : shown.some((r) => r.due || r.scheduled) ? "7.5em" : "2.6em");
+
   /** The guard every write in Agenda shares: the note being edited is saved first, so unsaved changes are not overwritten */
   function dirtyGuard(hit: BlockHit, act: string): boolean {
     if (hit.note === vault.currentPath && vault.dirty) {
@@ -103,34 +119,66 @@
     return true;
   }
 
-  async function onToggle(e: Event, hit: BlockHit) {
-    e.stopPropagation();
-    if (!dirtyGuard(hit, t("task.act.toggle"))) return;
+  /** The write funnel every path shares (the kanban has the same one): dirtyGuard, a
+   *  requery on a stale span and error reporting. */
+  async function commit(hit: BlockHit, act: string, write: () => Promise<boolean>) {
+    if (!dirtyGuard(hit, act)) return;
     try {
       // A stale span (the note changed after the query): nothing is written, and after a requery the user retries on the new data
-      if (!(await toggleTask(hit))) await load();
+      if (!(await write())) await load();
     } catch (err) {
       vault.error = String(err);
     }
+  }
+
+  function onToggle(e: Event, hit: BlockHit) {
+    e.stopPropagation();
+    void commit(hit, t("task.act.toggle"), () => toggleTask(hit));
   }
 
   /** The reschedule menu a date chip opens; an empty current means the task does not have that date yet */
-  let dateMenu = $state<{ x: number; y: number; hit: BlockHit; field: DateField; current?: string } | null>(null);
+  let dateMenu = $state<{ x: number; y: number; key: string; hit: BlockHit; field: DateField; current?: string } | null>(null);
 
   function openDateMenu(e: MouseEvent, r: Row, field: DateField) {
     e.stopPropagation();
-    dateMenu = { x: e.clientX, y: e.clientY, hit: r.hit, field, current: field === "due" ? r.due : r.scheduled };
+    dateMenu = { x: e.clientX, y: e.clientY, key: taskKey(r), hit: r.hit, field, current: field === "due" ? r.due : r.scheduled };
   }
 
-  async function applyDate(date: string | null) {
+  /** The row a menu is about keeps its hover colour while the menu is open. A chip's date
+   *  menu hangs off the chip and the row is plain to see; the context menu, and the date
+   *  menu it opens, float at the right-click with the pointer gone from the row — and a
+   *  "start date: today / tomorrow" with no row lit says nothing about which task it is
+   *  setting. The context menu is the application's singleton, so the row it was opened for
+   *  is remembered here and forgotten when the menu closes (by an item, a click outside or
+   *  Esc alike). */
+  let menuRowKey = $state<string | null>(null);
+  $effect(() => {
+    if (!contextMenu.pos) menuRowKey = null;
+  });
+  const heldKey = $derived(dateMenu?.key ?? menuRowKey);
+
+  function applyDate(date: string | null) {
     const m = dateMenu;
     dateMenu = null;
-    if (!m || !dirtyGuard(m.hit, t("task.act.editDate"))) return;
-    try {
-      if (!(await rescheduleTask(m.hit, m.field, date))) await load();
-    } catch (err) {
-      vault.error = String(err);
-    }
+    if (m) void commit(m.hit, t("task.act.editDate"), () => rescheduleTask(m.hit, m.field, date));
+  }
+
+  /** A row's context menu: the entries are the kanban card's (taskMenuEntries), and the
+   *  date entries open the same TaskDateMenu a chip does, at the right-click. */
+  function rowMenu(e: MouseEvent, r: Row) {
+    e.stopPropagation();
+    const at = { x: e.clientX, y: e.clientY };
+    const key = taskKey(r);
+    menuRowKey = key;
+    contextMenu.open(
+      e,
+      taskMenuEntries(r, {
+        open: () => void openTask(r.hit),
+        editDate: (field, current) => (dateMenu = { ...at, key, hit: r.hit, field, current }),
+        setState: (state) => void commit(r.hit, t(state === "doing" || r.state === "doing" ? "task.act.state" : "task.act.toggle"), () => updateTask(r.hit, { state })),
+        remove: () => void commit(r.hit, t("task.act.remove"), () => deleteTask(r.hit)),
+      }),
+    );
   }
 
   /** Clicking a task jumps to its line. The kanban uses the same vault.openBlockAt — the
@@ -151,25 +199,23 @@
 {/snippet}
 
 {#snippet taskRow(r: Row)}
-  <!-- Whether the due chip reads as late is the task's own: its due date has passed and it
-    is not done. In the default view that is the same as sitting in the overdue group (a
-    task's date is its due date whenever it has one); with the start date pressed the group
-    follows the start date, and a task that started last month but is due next week must
-    not be painted late -->
-  {@const dueOverdue = r.state !== "done" && !!r.due && r.due < today}
+  {@const dueOverdue = isLate(r)}
   <li>
     <div
       class="row"
+      class:held={taskKey(r) === heldKey}
       role="button"
       tabindex="0"
       onclick={() => void openTask(r.hit)}
+      oncontextmenu={(e) => rowMenu(e, r)}
       onkeydown={(e) =>
         e.target === e.currentTarget && (e.key === "Enter" || e.key === " ") && void openTask(r.hit)}
     >
       <button class="check" class:done={r.state === "done"} aria-label={t("task.toggleDone")} onclick={(e) => onToggle(e, r.hit)}>
         {@html taskStateIconSvg(r.state)}
       </button>
-      <span class="text" class:done={r.state === "done"}>{r.text}</span>
+      <!-- The text is clipped to its track: a long task is read whole from cliptip's box, a quarter second into the hover (the kanban card does the same) -->
+      <span class="text" class:done={r.state === "done"} use:cliptip={r.text}>{r.text}</span>
       <!-- The date and the source each take a fixed-width slot: a row with no date holds its
         place too, which is what lets the source chips line up into a real column (before
         this, the chips of the with-date and without-date groups differed by nearly 70px on
@@ -204,7 +250,7 @@
   </button>
 {/snippet}
 
-{#snippet section(title: string, rows: Row[], overdue: boolean, collapsed: boolean)}
+{#snippet section(title: string, rows: Row[], collapsed: boolean, tone: "" | "late" | "today" = "")}
   {#if rows.length}
     <details open={!collapsed}>
       <summary>
@@ -213,7 +259,7 @@
           to look identical ("Later 3" had a count but showed no rows and looked broken). This
           chevron is the only collapse indicator -->
         <span class="chevron"><Chevron /></span>
-        <span class:overdue-title={overdue}>{title}</span><span class="count">{rows.length}</span>
+        <span class="title {tone}">{title}</span><span class="count">{rows.length}</span>
       </summary>
       <ul>
         {#each rows as r (taskKey(r))}
@@ -238,7 +284,7 @@
       </span>
     {/snippet}
   </ViewHeader>
-  <div class="body">
+  <div class="body" style:--ag-date={dateTrack}>
     {#if hits.length === 0}
       <ViewEmpty>
         {t("task.empty1")}<code>- [ ] a task 📅 2026-01-01</code>{t("task.empty2")}<code>- [/]</code
@@ -249,13 +295,13 @@
     {:else if total === 0}
       <ViewEmpty onclear={clearFilters}>{t("task.noMatch", { query })}</ViewEmpty>
     {:else}
-      {@render section(t("agenda.overdue"), groups.overdue, true, false)}
-      {@render section(t("agenda.today"), groups.today, false, false)}
-      {@render section(t("agenda.week"), groups.week, false, false)}
-      {@render section(t("agenda.later"), groups.later, false, true)}
-      {@render section(t("agenda.doing"), groups.doing, false, false)}
-      {@render section(t("agenda.nodate"), groups.nodate, false, false)}
-      {@render section(t("agenda.done"), groups.done, false, true)}
+      {@render section(t("agenda.overdue"), groups.overdue, false, "late")}
+      {@render section(t("agenda.today"), groups.today, false, "today")}
+      {@render section(t("agenda.week"), groups.week, false)}
+      {@render section(t("agenda.later"), groups.later, true)}
+      {@render section(t("agenda.doing"), groups.doing, false)}
+      {@render section(t("agenda.nodate"), groups.nodate, false)}
+      {@render section(t("agenda.done"), groups.done, true)}
     {/if}
   </div>
 </div>
@@ -316,6 +362,11 @@
   details {
     margin-bottom: 6px;
   }
+  /* A group's heading stays at the top of the pane while its rows scroll under it (the
+     timeline's day headings do the same): with 24 undated and 77 done tasks the eye
+     needs to know which group it is in. sticky is bounded by the details element, so a
+     heading yields to the next group's rather than stacking; the shadow backs the pane's
+     10px top padding so a row's text does not peek out above the heading */
   summary {
     display: flex;
     align-items: baseline;
@@ -326,6 +377,11 @@
     font-weight: 600;
     -webkit-user-select: none;
     user-select: none;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg);
+    box-shadow: 0 -10px 0 0 var(--bg);
   }
   /* The same collapse language as the file tree's and the outline panel's: collapsed points right, expanded turns 90° */
   .chevron {
@@ -337,8 +393,12 @@
   details[open] > summary .chevron {
     transform: rotate(90deg);
   }
-  .overdue-title {
+  /* The two headings that ask for attention: overdue in the danger colour, today in the accent — the rest read as plain labels */
+  .title.late {
     color: var(--danger);
+  }
+  .title.today {
+    color: var(--accent);
   }
   .count {
     font-size: var(--fs-xs);
@@ -357,17 +417,16 @@
      pushed a short task's date out past 500px and made the eye sweep a whole row to pair
      them up.
      The date track uses minmax: the few rows carrying both 📅 and ⏳ let it grow rather than
-     squeezing the source column; 13em is the size of the longest chip, "a date plus N days
-     late" (a bare date is about 7.2em).
+     squeezing the source column. Its floor, --ag-date, is set on .body from the rows shown
+     (dateTrack): 13em when a "date plus N days late" chip is on the table, less otherwise.
      The source track's 10em floor is the overflow guard: as the pane narrows the fixed
      tracks fill up first, and without a floor the source chip would be pushed out of the
      container and the whole view would grow a horizontal scrollbar. */
   .row {
     --ag-text: 26em;
-    --ag-date: 13em;
     --ag-note: 10em;
     display: grid;
-    grid-template-columns: auto minmax(0, var(--ag-text)) minmax(var(--ag-date), auto) minmax(var(--ag-note), 1fr);
+    grid-template-columns: auto minmax(0, var(--ag-text)) minmax(var(--ag-date, 13em), auto) minmax(var(--ag-note), 1fr);
     align-items: center;
     width: 100%;
     text-align: left;
@@ -377,7 +436,8 @@
     font-size: var(--fs-sm);
     cursor: pointer;
   }
-  .row:hover {
+  .row:hover,
+  .row.held {
     background: var(--bg-hover);
   }
   .check {

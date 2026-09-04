@@ -1640,3 +1640,21 @@ button:focus-visible,
   background: var(--accent-soft);
   color: var(--fg);
 }
+/* The full text of a clipped line (cliptip.ts): one box shared by every hovered line, so
+   it lives on body and is styled here. Read-only, and passes the pointer through */
+.clip-tip {
+  position: fixed;
+  z-index: 95;
+  max-width: 420px;
+  padding: 6px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+}

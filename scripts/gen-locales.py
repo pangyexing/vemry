@@ -546,6 +546,14 @@ add("task.", {
     "act.move": ("moving the task", "移动任务"),
     "act.state": ("changing its state", "修改状态"),
     "act.remove": ("removing the task", "移除任务"),
+    # The context menu of a task: an Agenda row and a kanban card raise the same entries
+    "menu.jumpToSource": ("Jump to the source line", "跳到原文"),
+    "menu.markDoing": ("Mark in progress", "标记进行中"),
+    "menu.markBackTodo": ("Mark back to to-do", "标回待办"),
+    "menu.markDone": ("Mark done", "标记完成"),
+    "menu.reopen": ("Reopen", "重新打开"),
+    "menu.remove": ("Remove task", "移除任务"),
+    "menu.removeConfirm": ("Remove it? The line is deleted from the note.", "确认移除？将从笔记原文删除"),
 })
 
 add("agenda.", {
@@ -579,13 +587,6 @@ add("kanban.", {
     "sortText": ("Text", "文本"),
     "sortAsc": ("Ascending — click for descending", "升序，点击改为降序"),
     "sortDesc": ("Descending — click for ascending", "降序，点击改为升序"),
-    "jumpToSource": ("Jump to the source line", "跳到原文"),
-    "markDoing": ("Mark in progress", "标记进行中"),
-    "markBackTodo": ("Mark back to to-do", "标回待办"),
-    "markDone": ("Mark done", "标记完成"),
-    "reopen": ("Reopen", "重新打开"),
-    "removeTask": ("Remove task", "移除任务"),
-    "removeConfirm": ("Remove it? The line is deleted from the note.", "确认移除？将从笔记原文删除"),
     "targetGone": ("Target note {path} no longer exists — pick another",
                    "目标笔记 {path} 已不存在,请重新选择"),
     "expand": ("Expand", "展开"),

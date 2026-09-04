@@ -4,6 +4,7 @@ import { setFieldValue, stripAnchor, stripFields } from "$lib/fields";
 import { api, type BlockHit } from "$lib/api";
 import { byNote } from "$lib/views/queryrows";
 import { plainText } from "$lib/markdown";
+import type { MenuEntry } from "$lib/stores/contextMenu.svelte";
 
 /** A task line as the field layer sees it: a bullet or ordered marker and a checkbox.
  *  Wider than CHECKBOX_RE, which does not take ordered items. The renderer and the
@@ -465,6 +466,45 @@ export function dueLabel(due: string, overdue: boolean, density: "full" | "short
  *  carries information. */
 export function chipDate(ymd: string): string {
   return ymd.startsWith(localDate().slice(0, 4) + "-") ? ymd.slice(5) : ymd;
+}
+
+/** What a task's context menu does, as the view that raised it does them. An Agenda row
+ *  and a kanban card offer the same entries in the same words (the menu is the one place
+ *  a task's state can be set to "in progress" from a view), and each view brings its own
+ *  write funnel — its dirty guard, its requery on a stale span — and its own date menu. */
+export interface TaskMenuActions {
+  /** Jump to the task's line in its note. */
+  open: () => void;
+  /** Raise the date menu for one field; current is the date it has, absent when the date is being set for the first time. */
+  editDate: (field: DateField, current?: string) => void;
+  setState: (state: TaskRow["state"]) => void;
+  remove: () => void;
+}
+
+/** The entries of a task's context menu, computed for the task at the moment of open.
+ *  A date the task has can be changed; one it does not have can be set (not on a done
+ *  task — a date on a finished task is a record, not a plan); the state entries read
+ *  "mark / reopen" by what the task is now; and removing deletes the line from the
+ *  note's source, so it takes ContextMenu's second confirmation. */
+export function taskMenuEntries(task: Pick<TaskRow, "state" | "due" | "scheduled">, act: TaskMenuActions): MenuEntry[] {
+  const entries: MenuEntry[] = [{ label: t("task.menu.jumpToSource"), action: act.open }, { separator: true }];
+  for (const field of FIELDS) {
+    const current = task[field];
+    if (current) entries.push({ label: `${t("task.editDate", { field: dateFieldLabel(field) })}…`, action: () => act.editDate(field, current) });
+    else if (task.state !== "done") entries.push({ label: `${t("task.setDate", { field: dateFieldLabel(field) })}…`, action: () => act.editDate(field) });
+  }
+  entries.push({ separator: true });
+  if (task.state !== "done")
+    entries.push({
+      label: t(task.state === "doing" ? "task.menu.markBackTodo" : "task.menu.markDoing"),
+      action: () => act.setState(task.state === "doing" ? "todo" : "doing"),
+    });
+  entries.push({
+    label: t(task.state === "done" ? "task.menu.reopen" : "task.menu.markDone"),
+    action: () => act.setState(task.state === "done" ? "todo" : "done"),
+  });
+  entries.push({ separator: true }, { label: t("task.menu.remove"), danger: true, confirm: t("task.menu.removeConfirm"), action: act.remove });
+  return entries;
 }
 
 /** A date field's display name ("Due date" / "Start date"). Shared by the menu items and the chip's tooltip. */

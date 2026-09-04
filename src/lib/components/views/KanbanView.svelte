@@ -13,6 +13,7 @@
     rescheduleTask,
     taskFilterKey,
     taskKey,
+    taskMenuEntries,
     taskStateIconSvg,
     updateTask,
     type TaskEdit,
@@ -36,7 +37,8 @@
   } from "$lib/views/kanban";
   import { t } from "$lib/i18n/i18n.svelte";
   import { k as kbd } from "$lib/shortcut";
-  import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
+  import { contextMenu } from "$lib/stores/contextMenu.svelte";
+  import { cliptip } from "$lib/cliptip";
   import { toast } from "$lib/stores/toast.svelte";
   import { loadBucketMap, saveBucket } from "$lib/persist";
   import { noteKey } from "$lib/pickNote";
@@ -142,6 +144,16 @@
     | { mode: "drop"; x: number; y: number; card: Card }
     | { mode: "chip"; x: number; y: number; card: Card; field: DateField; current?: string };
   let menu = $state<MenuState | null>(null);
+  /** The card a menu is about keeps its hover colour while the menu is open (Agenda's rows
+   *  do the same): the context menu, and the date menu it opens, float at the right-click
+   *  with the pointer gone from the card, and a date menu with no card lit does not say
+   *  which task it is setting. The context menu is the application's singleton, so the card
+   *  it was opened for is remembered here and forgotten when the menu closes. */
+  let menuCardKey = $state<string | null>(null);
+  $effect(() => {
+    if (!contextMenu.pos) menuCardKey = null;
+  });
+  const heldKey = $derived(menu ? taskKey(menu.card) : menuCardKey);
   /** A card dropped into "scheduled" shows there at once, at the top of the column, rather
    *  than only after its date is picked: date null while the menu is open (Esc or a click
    *  outside puts the card back where it was), then the picked date until a query made after
@@ -255,41 +267,22 @@
     }
   }
 
-  /** The card's context menu: the reschedule entry reuses TaskDateMenu in chip mode (raised at
-   *  the right-click), and the state items go through the same applyEdit funnel. entries are
-   *  computed for the card at the moment of open. */
+  /** The card's context menu: the entries are Agenda's too (taskMenuEntries); the date
+   *  entries reuse TaskDateMenu in chip mode, raised at the right-click, and the state
+   *  items go through the same applyEdit funnel. */
   function cardMenu(e: MouseEvent, card: Card) {
     e.stopPropagation();
     const at = { x: e.clientX, y: e.clientY };
-    const chipMenu = (field: DateField, current?: string) => () =>
-      (menu = { mode: "chip", ...at, card, field, current });
-    const entries: MenuEntry[] = [{ label: t("kanban.jumpToSource"), action: () => void openCard(card) }, { separator: true }];
-    if (card.due) entries.push({ label: `${t("task.editDate", { field: dateFieldLabel("due") })}…`, action: chipMenu("due", card.due) });
-    if (card.scheduled)
-      entries.push({ label: `${t("task.editDate", { field: dateFieldLabel("scheduled") })}…`, action: chipMenu("scheduled", card.scheduled) });
-    if (!card.due && !card.scheduled && card.state !== "done")
-      entries.push({ label: `${t("task.setDate", { field: dateFieldLabel("due") })}…`, action: chipMenu("due") });
-    entries.push({ separator: true });
-    if (card.state !== "done")
-      entries.push({
-        label: card.state === "doing" ? t("kanban.markBackTodo") : t("kanban.markDoing"),
-        action: () => void applyEdit(card.hit, { state: card.state === "doing" ? "todo" : "doing" }, t("task.act.state")),
-      });
-    entries.push({
-      label: card.state === "done" ? t("kanban.reopen") : t("kanban.markDone"),
-      action: () => void applyEdit(card.hit, { state: card.state === "done" ? "todo" : "done" }, t("task.act.toggle")),
-    });
-    entries.push(
-      { separator: true },
-      {
-        label: t("kanban.removeTask"),
-        danger: true,
-        // The second confirmation (built into ContextMenu): what is deleted is the task line in the note's source, sub-content included for a multi-line task
-        confirm: t("kanban.removeConfirm"),
-        action: () => void commit(card.hit, t("task.act.remove"), () => deleteTask(card.hit)),
-      },
+    menuCardKey = taskKey(card);
+    contextMenu.open(
+      e,
+      taskMenuEntries(card, {
+        open: () => void openCard(card),
+        editDate: (field, current) => (menu = { mode: "chip", ...at, card, field, current }),
+        setState: (state) => void applyEdit(card.hit, { state }, t(state === "doing" || card.state === "doing" ? "task.act.state" : "task.act.toggle")),
+        remove: () => void commit(card.hit, t("task.act.remove"), () => deleteTask(card.hit)),
+      }),
     );
-    contextMenu.open(e, entries);
   }
 
   // ---- Column collapsing plus the quick-create destination: persisted per vault (persist.ts's
@@ -603,7 +596,7 @@
                   class:doing={card.state === "doing"}
                   class:done={card.state === "done" && !pend}
                   class:pending={!!pend}
-                  title={card.text}
+                  class:held={heldKey === taskKey(card)}
                   role="button"
                   tabindex="0"
                   onpointerdown={(e) => pressCard(e, card)}
@@ -621,7 +614,8 @@
                     >
                       {@html taskStateIconSvg(pend && card.state === "done" ? "todo" : card.state)}
                     </button>
-                    <span class="text">{card.text}</span>
+                    <!-- Clamped to two lines: a long task is read whole from cliptip's box, a quarter second into the hover -->
+                    <span class="text" use:cliptip={card.text}>{card.text}</span>
                   </div>
                   <div class="card-meta">
                     {#if pend}
@@ -941,7 +935,8 @@
     user-select: none;
   }
   /* Hover changes the colour and not the shape: a shadow is too heavy, and a transform would disturb the drag's elementFromPoint lookup */
-  .card:hover {
+  .card:hover,
+  .card.held {
     background: var(--bg-hover);
     border-color: var(--fg-faint);
   }
