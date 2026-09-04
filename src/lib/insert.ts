@@ -10,6 +10,8 @@
 // The only difference from Rust is the offset unit (UTF-16 characters here, bytes
 // there); the rules themselves are whatever insert.rs's table of cases says.
 
+import { stripAnchor } from "$lib/fields";
+
 export interface InsertPlan {
   from: number;
   to: number;
@@ -28,16 +30,25 @@ function headingLevel(line: string): number | null {
   return n >= 1 && n <= 6 && t[n] === " " ? n : null;
 }
 
+/** A heading's text minus a trailing ` ^id` (locate.rs::heading_text). */
 function headingText(line: string): string {
   const t = line.trimStart();
   let n = 0;
   while (t[n] === "#") n++;
-  return t.slice(n).trim();
+  return stripAnchor(t.slice(n).trim());
 }
 
+/** parser.rs::is_thematic_break: three or more of one of `-*_`, spaces between allowed. */
+function isThematicBreak(t: string): boolean {
+  return /^([-*_])(?:[ \t]*\1)*[ \t]*$/.test(t) && t.replace(/[ \t]/g, "").length >= 3;
+}
+
+/** parser.rs::parse_list_marker: a bullet that is not a spaced thematic break (`- - -`),
+ *  or an ordered marker of at most nine digits. */
 function isListLine(line: string): boolean {
   const t = line.trimStart();
-  return /^[-*+] /.test(t) || /^\d+[.)] /.test(t);
+  if (/^[-*+] /.test(t)) return !isThematicBreak(t);
+  return /^\d{1,9}[.)] /.test(t);
 }
 
 /** The separator between a block payload and the line before it: packed against a
@@ -67,9 +78,25 @@ export function tightBelow(payload: string, nextLine: string): boolean {
 /** The offset of the end of the `heading` section's content; null when the heading
  *  does not exist. It skips the frontmatter (a YAML comment `# x` would be mistaken
  *  for a heading) and phantom headings inside code fences, and takes the first heading
- *  of a repeated name in document order — all matching how the Rust side parses. */
+ *  of a repeated name in document order, an exact match before a case-insensitive one
+ *  (locate.rs::find_heading) — all matching how the Rust side parses. */
 export function sectionInsertOffset(doc: string, heading: string): number | null {
   const want = heading.trim();
+  const headings = scanHeadings(doc);
+  let at = headings.findIndex((h) => h.text === want);
+  if (at < 0) {
+    const lower = want.toLowerCase();
+    at = headings.findIndex((h) => h.text.toLowerCase() === lower);
+  }
+  if (at < 0) return null;
+  const level = headings[at].level;
+  const next = headings.slice(at + 1).find((h) => h.level <= level);
+  return next ? doc.slice(0, next.from).trimEnd().length : doc.trimEnd().length;
+}
+
+/** The headings of `doc` in order: level, text and the offset their line starts at. */
+function scanHeadings(doc: string): { level: number; text: string; from: number }[] {
+  const out: { level: number; text: string; from: number }[] = [];
   const lines = doc.split("\n");
   let pos = 0;
   let i = 0;
@@ -84,8 +111,6 @@ export function sectionInsertOffset(doc: string, heading: string): number | null
     }
   }
   let fence: { ch: string; len: number } | null = null;
-  let level = 0;
-  let found = false;
   for (; i < lines.length; i++) {
     const line = lines[i];
     const t = line.trimStart();
@@ -97,22 +122,13 @@ export function sectionInsertOffset(doc: string, heading: string): number | null
       if (open) {
         fence = { ch: open[1][0], len: open[1].length };
       } else {
-        const lv = headingLevel(line);
-        if (lv != null) {
-          if (!found) {
-            if (headingText(line) === want) {
-              found = true;
-              level = lv;
-            }
-          } else if (lv <= level) {
-            return doc.slice(0, pos).trimEnd().length;
-          }
-        }
+        const level = headingLevel(line);
+        if (level != null) out.push({ level, text: headingText(line), from: pos });
       }
     }
     pos += line.length + 1;
   }
-  return found ? doc.trimEnd().length : null;
+  return out;
 }
 
 export function contentEndOffset(doc: string): number {

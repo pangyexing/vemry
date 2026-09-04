@@ -24,6 +24,14 @@ export interface FieldMark {
 
 const KEY_CHAR = /[\p{L}\p{N}_-]/u;
 const BLOCK_ID_RE = /^[A-Za-z0-9-]+$/;
+/** A trailing ` ^id` anchor, as the parser accepts it (blockid.rs::split_anchor): one
+ *  horizontal space, then the id alphabet, at the end of the line. */
+export const ANCHOR_TAIL_RE = /[ \t]\^[A-Za-z0-9-]+$/;
+
+/** `line` without its trailing ` ^id` anchor (the mirror of blockid.rs::strip_anchor). */
+export function stripAnchor(line: string): string {
+  return line.replace(ANCHOR_TAIL_RE, "").trimEnd();
+}
 
 export function isFieldKey(s: string): boolean {
   if (!s) return false;

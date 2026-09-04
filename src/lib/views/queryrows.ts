@@ -42,11 +42,6 @@ export function fieldOfLower(hit: BlockHit, lower: string): string | undefined {
   return hit.block.fields?.find((f) => f.key.toLowerCase() === lower)?.value;
 }
 
-/** A block's first value of a field (keys compare case-insensitively). */
-export function fieldOf(hit: BlockHit, key: string): string | undefined {
-  return fieldOfLower(hit, key.toLowerCase());
-}
-
 /** Dates and numbers in their own order, everything else alphabetical. The board's
  *  column order and card order read the same rule. */
 export function cmpValue(a: string, b: string): number {

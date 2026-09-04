@@ -113,9 +113,15 @@ fn score_doc(title_lower: &str, lower: &str, content: &str, terms: &[String]) ->
     Some((score, snippet, line))
 }
 
-/// The line containing `pos`, trimmed to ~160 chars around the hit.
+/// The line containing `pos`, trimmed to ~160 chars around the hit. `pos`
+/// was found in the lowercased text, whose byte offsets drift from the
+/// original's where a character changes length when folded (`İ` → `i̇`),
+/// so it is snapped back to a character boundary before slicing.
 fn make_snippet(content: &str, pos: usize) -> (String, usize) {
-    let pos = pos.min(content.len());
+    let mut pos = pos.min(content.len());
+    while !content.is_char_boundary(pos) {
+        pos -= 1;
+    }
     let line_no = content[..pos].matches('\n').count();
     let line_start = content[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let line_end = content[pos..].find('\n').map(|i| pos + i).unwrap_or(content.len());
@@ -127,4 +133,23 @@ fn make_snippet(content: &str, pos: usize) -> (String, usize) {
         line.to_string()
     };
     (snippet.trim().to_string(), line_no + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hit is found in the lowercased text; where a character changes length
+    /// when folded, the offset drifts from the original's and must not be sliced
+    /// into the middle of a character.
+    #[test]
+    fn snippet_survives_a_case_fold_that_changes_byte_length() {
+        let mut s = InMemorySearch::new();
+        s.index_note(&NoteId::new("n1"), "t", "İa中文");
+        let hits = s.search("文", 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].line, 1);
+        assert!(hits[0].snippet.contains("中文"));
+        assert!(match_doc("t", "Ka中文\nsecond", &["second".into()]).is_some());
+    }
 }

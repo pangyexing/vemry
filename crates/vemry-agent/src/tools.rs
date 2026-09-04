@@ -589,10 +589,16 @@ pub fn execute_write(
     }
     // The same for an edit: prepared against the note as it was, it would
     // overwrite a private block that appeared during the gate. A proposal the
-    // user rewrote in the dialog is their own view of the raw text and is not
-    // second-guessed.
-    if req.tool == "edit_note" && content_override.is_none() && !vemry_core::private_blocks_preserved(&old, &req.new_content)
-    {
+    // user rewrote in the dialog is their own view of the raw text — the
+    // private blocks it showed are theirs to change — but a block that
+    // appeared while the dialog was open was never in that view, and the
+    // rewrite (seeded from the proposal) drops it just the same unless the
+    // user put it there.
+    let stale = match content_override {
+        None => !vemry_core::private_blocks_preserved(&old, &req.new_content),
+        Some(edited) => !vemry_core::privacy::late_private_blocks_kept(&old, &req.new_content, edited),
+    };
+    if req.tool == "edit_note" && stale {
         return Err(format!("{} changed while the edit was awaiting review — read it again and retry", req.path));
     }
     let content = content_override.unwrap_or(&req.new_content);
@@ -1022,6 +1028,10 @@ mod tests {
         .unwrap();
         vault.write_note(&NoteId::new("Plain.md"), "plain\n\n> [!private] late\n").unwrap();
         let err = execute_write(&mut vault, &req, None, None, false).unwrap_err();
+        assert!(err.contains("changed while the edit was awaiting review"), "{err}");
+        assert!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap().contains("late"));
+        // a rewrite of the proposal that drops the block it never showed is refused too
+        let err = execute_write(&mut vault, &req, Some("plain edited!\n"), None, false).unwrap_err();
         assert!(err.contains("changed while the edit was awaiting review"), "{err}");
         assert!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap().contains("late"));
         // the user's own rewrite of the proposal is applied as they wrote it

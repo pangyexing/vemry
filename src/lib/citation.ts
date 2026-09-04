@@ -6,6 +6,7 @@
 // stable ids (`block_ensure_id` writes ` ^id` into the cited note; a citation
 // that cannot be pinned degrades to the note alone).
 import { api, type BlockHit } from "$lib/api";
+import { stripAnchor } from "$lib/fields";
 
 export const POSITIONAL_RE = /^b\d+$/;
 /** `[[note#bN]]` / `[[note#bN|alias]]` — the transient form, with the note as the model wrote it. */
@@ -89,7 +90,7 @@ export async function materializeCitations(
           // A heading is its own anchor: link it by its text instead of minting an
           // id it cannot carry
           const hit = findBlock(await blocksOf(path, version), bN, guards(note, bN));
-          if (hit?.block.kind.type === "heading") return { path, frag: hit.block.content.replace(/\s*\^[A-Za-z0-9-]+$/, "") };
+          if (hit?.block.kind.type === "heading") return { path, frag: stripAnchor(hit.block.content) };
         }
         const id = await api.blockEnsureId(path, bN, guards(note, bN));
         return { path, frag: `^${id.replace(/^\^/, "")}` };

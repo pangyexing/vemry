@@ -836,9 +836,11 @@ impl Vault {
         let hashes: Vec<String> = match local_id {
             None => prov.iter().filter(|p| pending(p)).map(|p| p.hash.clone()).collect(),
             Some(lid) => {
-                let p = prov
-                    .iter()
-                    .find(|p| p.local_id == lid)
+                // The one lookup rule (an explicit `^id` beats a positional `bN` spelled
+                // the same): the rows are in block order, so the index carries over
+                let raw = self.read_note(id)?;
+                let p = crate::locate::find_block(&parse_note(&raw).blocks, lid)
+                    .and_then(|i| prov.get(i))
                     .ok_or_else(|| VemryError::BlockNotFound { local_id: lid.to_string() })?;
                 if pending(p) {
                     vec![p.hash.clone()]
@@ -1102,8 +1104,9 @@ impl Vault {
     /// explicit wins a clash), as the agent may see it: a heading hands over its
     /// section, a list item or task its subtree, anything else the block alone,
     /// with private blocks removed from the slice; a private block itself does
-    /// not exist. None = no such block.
-    pub fn block_for_agent(&self, id: &NoteId, local_id: &str) -> Result<Option<RefHit>> {
+    /// not exist. With it the block's handle (`Block::handle`, the one rule for
+    /// how it is cited). None = no such block.
+    pub fn block_for_agent(&self, id: &NoteId, local_id: &str) -> Result<Option<(RefHit, String)>> {
         let raw = self.read_note(id)?;
         let parsed = parse_note(&raw);
         let Some(i) = crate::locate::find_block(&parsed.blocks, local_id) else {
@@ -1119,7 +1122,8 @@ impl Vault {
         let slice = &raw[span.clone()];
         let blocks = crate::parser::parse_blocks(slice, 0);
         let content = crate::privacy::redact_private_blocks(slice, &blocks).text;
-        Ok(Some(RefHit { note: id.clone(), note_title: self.note_title(id), target, content, span }))
+        let handle = parsed.blocks[i].handle();
+        Ok(Some((RefHit { note: id.clone(), note_title: self.note_title(id), target, content, span }, handle)))
     }
 
     /// Backlinks with a context snippet from the linking block.
@@ -1691,6 +1695,13 @@ mod tests {
         let remaining = vault.accept_provenance(&n, Some("b0")).unwrap();
         assert_eq!(remaining, 0);
         assert!(matches!(vault.accept_provenance(&n, Some("b99")), Err(VemryError::BlockNotFound { .. })));
+        // a hand-written `^b1` is looked up by the one rule: explicit before positional
+        let old = vault.read_note(&n).unwrap();
+        vault.write_note(&n, &format!("{old}\nlate agent ^b1\n")).unwrap();
+        let added = crate::provenance::added_blocks(&old, &vault.read_note(&n).unwrap());
+        vault.record_provenance(ProvenanceEntry::Agent { ts: "t2".into(), session: None, path: "n.md".into(), blocks: added, hunks: vec![] });
+        assert_eq!(vault.pending_count(&n), 1);
+        assert_eq!(vault.accept_provenance(&n, Some("b1")).unwrap(), 0);
         let reopened = Vault::open(root).unwrap();
         assert!(matches!(reopened.provenance(&n).unwrap()[0].origin, Origin::Agent { pending: false, .. }));
         // editing the words turns the block into the user's

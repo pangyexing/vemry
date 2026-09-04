@@ -24,6 +24,7 @@ import katex from "katex";
 import { toast } from "$lib/stores/toast.svelte";
 import { CALLOUT_GROUP, CALLOUT_HEAD_RE } from "$lib/callout";
 import { scanFields } from "$lib/fields";
+import { POSITIONAL_RE } from "$lib/citation";
 
 export interface Citation {
   title: string;
@@ -281,7 +282,7 @@ export function wikiAnchor(target: string, alias?: string): string {
   if (hash < 0) return `<a class="md-wiki" data-wiki="${escapeHtml(target)}">${escapeHtml(alias ?? target)}</a>`;
   const note = target.slice(0, hash).trim();
   const frag = target.slice(hash + 1).trim();
-  const isBlock = frag.startsWith("^") || /^b\d+$/.test(frag);
+  const isBlock = frag.startsWith("^") || POSITIONAL_RE.test(frag);
   const stem = (note.split("/").pop() ?? note).replace(/\.md$/i, "");
   const label = alias ?? (isBlock ? stem || t("chat.thisNote") : `${stem ? `${stem} › ` : ""}${frag}`);
   return (

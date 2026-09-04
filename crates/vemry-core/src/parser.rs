@@ -9,7 +9,6 @@
 use chrono::NaiveDate;
 
 use crate::block::{Block, BlockKind, Field, TaskState, WikiLink};
-use crate::blockid::is_valid_block_id;
 use crate::note::Frontmatter;
 
 pub struct ParsedNote {
@@ -325,13 +324,10 @@ fn push_block(blocks: &mut Vec<Block>, raw: &str, kind: BlockKind, span: std::op
 /// positional id.
 fn assign_id(b: &mut Block, index: usize) {
     let last_line = b.content.lines().last().unwrap_or("");
-    if let Some(pos) = last_line.rfind(" ^") {
-        let candidate = &last_line[pos + 2..];
-        if is_valid_block_id(candidate) {
-            b.local_id = candidate.to_string();
-            b.explicit_id = true;
-            return;
-        }
+    if let (_, Some(id)) = crate::blockid::split_anchor(last_line) {
+        b.local_id = id.to_string();
+        b.explicit_id = true;
+        return;
     }
     b.local_id = format!("b{index}");
 }
@@ -632,12 +628,7 @@ pub fn scan_fields(slice: &str, base: usize) -> Vec<Field> {
                     }
                 }
                 _ if key_start == content_start => {
-                    let mut value = after.trim();
-                    if let Some(p) = value.rfind(" ^") {
-                        if is_valid_block_id(&value[p + 2..]) {
-                            value = value[..p].trim_end();
-                        }
-                    }
+                    let value = crate::blockid::strip_anchor(after.trim());
                     Some((key_start, line.trim_end().len(), value.to_string()))
                 }
                 Some(c) if c.is_whitespace() => {

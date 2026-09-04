@@ -1,4 +1,4 @@
-// The block menu's entries (the grip's click, and the "块" group of the text
+// The block menu's entries (the grip's click, and the "Block" group of the text
 // context menu). Every action re-resolves the block from its start position
 // before acting, since the document may have changed since the menu opened;
 // every dispatch carries a `block.*` user event and the transforms come from
@@ -80,6 +80,9 @@ export function isAnchorable(b: EditorBlock): boolean {
 }
 
 export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMenuHost, opts: { compact: boolean }): MenuEntry[] {
+  // The state the entries are built against: the enabled/disabled decisions only.
+  // An action reads `view.state` when it runs — the document may have changed
+  // while the menu was open, and `now` is resolved against that one.
   const state = view.state;
   // The block the caller holds may belong to an earlier state (the grip's hover
   // resolved it, and selecting it on the click made a new one): the enabled/disabled
@@ -98,14 +101,14 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
     label: t(`block.kind.${target}`),
     disabled: !canTurnInto(b, target),
     action: act(view, b, (now) => {
-      const spec = turnInto(state, now, target);
+      const spec = turnInto(view.state, now, target);
       if (spec) view.dispatch(spec);
     }),
   }));
   const typeItems: MenuEntry[] = host.blockTypes().map((type) => ({
     label: type.icon ? `${type.icon} ${type.name}` : type.name,
     action: act(view, b, (now) => {
-      const spec = applyType(state, now, type);
+      const spec = applyType(view.state, now, type);
       if (spec) view.dispatch(spec);
     }),
   }));
@@ -140,7 +143,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
     {
       label: t("block.insertBelow"),
       action: act(view, b, (now) => {
-        const at = extentTo(state, now);
+        const at = extentTo(view.state, now);
         view.dispatch({ changes: { from: at, insert: "\n\n" }, selection: { anchor: at + 2 }, userEvent: "input.type" });
       }),
     },
@@ -210,7 +213,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
       // The key that works in both modes (block mode also takes a bare ⌘D, text mode does not)
       hint: k("Mod+Shift+D"),
       action: act(view, b, (now) => {
-        const spec = duplicateBlocks(state, [now]);
+        const spec = duplicateBlocks(view.state, [now]);
         if (spec) view.dispatch(spec);
       }),
     },
@@ -219,7 +222,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
       hint: k("Backspace"),
       danger: true,
       action: act(view, b, (now) => {
-        const spec = deleteBlocks(state, [now]);
+        const spec = deleteBlocks(view.state, [now]);
         if (spec) view.dispatch(spec);
       }),
     },

@@ -116,6 +116,26 @@ pub fn is_valid_block_id(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
+/// A line split from its trailing ` ^id` anchor: `(text, Some(id))` when it
+/// ends in one the parser accepts, `(line, None)` otherwise — an id the parser
+/// would never mint is ordinary content. The one spelling of the rule: the
+/// parser, the block-times key, the provenance hash and field values all read
+/// a line through it.
+pub fn split_anchor(line: &str) -> (&str, Option<&str>) {
+    if let Some(pos) = line.rfind(" ^") {
+        let candidate = &line[pos + 2..];
+        if is_valid_block_id(candidate) {
+            return (line[..pos].trim_end(), Some(candidate));
+        }
+    }
+    (line, None)
+}
+
+/// `line` without its trailing ` ^id` anchor.
+pub fn strip_anchor(line: &str) -> &str {
+    split_anchor(line).0
+}
+
 /// A fresh random id not in `taken`. Random rather than content-derived so
 /// two identical paragraphs never collide and an edit never changes an id.
 pub fn mint_block_id(taken: &HashSet<&str>) -> String {

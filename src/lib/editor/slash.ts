@@ -9,7 +9,7 @@
 // completion source through the picked-completion annotation.
 import { t } from "$lib/i18n/i18n.svelte";
 import type { BlockType } from "$lib/api";
-import { applyType, typeBlockText } from "./blocktype";
+import { applyType, typeBlockText, newlinesBefore } from "./blocktype";
 import { type Completion, type CompletionContext, type CompletionResult, type CompletionSource, pickedCompletion } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
 import { localDate } from "$lib/views/tasks";
@@ -108,7 +108,8 @@ function applyTypeItem(view: EditorView, type: BlockType, applyTo: number) {
   const from = line.from + indentLen;
   const pad = " ".repeat(indentLen);
   const body = text.replace(/\n/g, "\n" + pad);
-  view.dispatch({ changes: { from, to: applyTo, insert: body }, selection: { anchor: from + caret }, userEvent: "block.type" });
+  const anchor = from + caret + newlinesBefore(text, caret) * pad.length;
+  view.dispatch({ changes: { from, to: applyTo, insert: body }, selection: { anchor }, userEvent: "block.type" });
 }
 
 function apply(view: EditorView, item: SlashItem, completion: Completion, applyTo: number) {

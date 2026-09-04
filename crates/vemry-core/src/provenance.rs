@@ -21,7 +21,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::block::{Block, BlockKind};
-use crate::blockid::is_valid_block_id;
 use crate::parser::{parse_list_marker, parse_note};
 
 /// Vault-relative path of the ledger (inside `.vemry`, so never indexed and
@@ -114,13 +113,7 @@ fn normalize_line(line: &str) -> String {
             t = rest.trim_start();
         }
     }
-    // trailing anchor
-    if let Some(p) = t.rfind(" ^") {
-        if is_valid_block_id(&t[p + 2..]) {
-            t = t[..p].trim_end();
-        }
-    }
-    let unstamped = strip_stamps(t);
+    let unstamped = strip_stamps(crate::blockid::strip_anchor(t));
     unstamped.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -200,24 +193,11 @@ pub fn block_hash(raw_slice: &str, kind: &BlockKind) -> Option<String> {
     normalize_block(raw_slice, kind).map(|n| format!("{:016x}", fnv1a64(n.as_bytes())))
 }
 
-fn kind_label(kind: &BlockKind) -> &'static str {
-    match kind {
-        BlockKind::Paragraph => "paragraph",
-        BlockKind::Heading { .. } => "heading",
-        BlockKind::ListItem { .. } => "list_item",
-        BlockKind::Task { .. } => "task",
-        BlockKind::Claim => "claim",
-        BlockKind::Evidence { .. } => "evidence",
-        BlockKind::CodeBlock { .. } => "code_block",
-        BlockKind::Private => "private",
-    }
-}
-
-/// One block as the ledger names it: its hash and kind, never its text.
+/// One block as the ledger names it: its hash, never its text. (Older lines
+/// also carry a `kind`; it is ignored on load.)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockStamp {
     pub hash: String,
-    pub kind: String,
 }
 
 /// One changed region of an agent write, kept with the ledger line so the
@@ -318,10 +298,9 @@ pub fn plan_revert<'a>(
 ) -> crate::Result<RevertPlan> {
     let parsed = parse_note(text);
     let targets: Vec<&Block> = match local_id {
-        Some(lid) => vec![parsed
-            .blocks
-            .iter()
-            .find(|b| b.local_id == lid)
+        // the one lookup rule: an explicit `^id` wins over a positional `bN` spelled the same
+        Some(lid) => vec![crate::locate::find_block(&parsed.blocks, lid)
+            .map(|i| &parsed.blocks[i])
             .ok_or_else(|| crate::VemryError::BlockNotFound { local_id: lid.to_string() })?],
         None => parsed.blocks.iter().collect(),
     };
@@ -526,39 +505,19 @@ impl ProvenanceLedger {
             hs.sort();
             for h in hs {
                 let Some(rec) = self.by_hash.get(h) else { continue };
-                let stamp = BlockStamp { hash: h.clone(), kind: String::new() };
+                let (ts, path, blocks) = (rec.ts.clone(), path.clone(), vec![BlockStamp { hash: h.clone() }]);
                 let entry = match &rec.source {
-                    ProvSource::Agent { session } if !rec.accepted => ProvenanceEntry::Agent {
-                        ts: rec.ts.clone(),
-                        session: session.clone(),
-                        path: path.clone(),
-                        blocks: vec![stamp],
-                        hunks: rec.hunks.clone(),
-                    },
-                    ProvSource::Agent { session } => ProvenanceEntry::Insert {
-                        ts: rec.ts.clone(),
-                        origin: InsertOrigin::Agent,
-                        session: session.clone(),
-                        url: None,
-                        path: path.clone(),
-                        blocks: vec![stamp],
-                    },
-                    ProvSource::Clip { url } => ProvenanceEntry::Insert {
-                        ts: rec.ts.clone(),
-                        origin: InsertOrigin::Clip,
-                        session: None,
-                        url: url.clone(),
-                        path: path.clone(),
-                        blocks: vec![stamp],
-                    },
-                    ProvSource::Capture => ProvenanceEntry::Insert {
-                        ts: rec.ts.clone(),
-                        origin: InsertOrigin::Capture,
-                        session: None,
-                        url: None,
-                        path: path.clone(),
-                        blocks: vec![stamp],
-                    },
+                    ProvSource::Agent { session } if !rec.accepted => {
+                        ProvenanceEntry::Agent { ts, session: session.clone(), path, blocks, hunks: rec.hunks.clone() }
+                    }
+                    source => {
+                        let (origin, session, url) = match source {
+                            ProvSource::Agent { session } => (InsertOrigin::Agent, session.clone(), None),
+                            ProvSource::Clip { url } => (InsertOrigin::Clip, None, url.clone()),
+                            ProvSource::Capture => (InsertOrigin::Capture, None, None),
+                        };
+                        ProvenanceEntry::Insert { ts, origin, session, url, path, blocks }
+                    }
                 };
                 if let Ok(l) = serde_json::to_string(&entry) {
                     lines.push(l);
@@ -583,7 +542,7 @@ pub fn stamps_of(text: &str) -> Vec<BlockStamp> {
     parsed
         .blocks
         .iter()
-        .filter_map(|b| block_hash(&text[b.span.clone()], &b.kind).map(|hash| BlockStamp { hash, kind: kind_label(&b.kind).into() }))
+        .filter_map(|b| block_hash(&text[b.span.clone()], &b.kind).map(|hash| BlockStamp { hash }))
         .collect()
 }
 
@@ -759,7 +718,6 @@ mod tests {
         assert!(added_blocks(old, "c\n\na\n\nb\n").is_empty(), "a pure move adds nothing");
         let added = added_blocks(old, "a\n\nnew\n\nb\n\nc\n");
         assert_eq!(added.len(), 1);
-        assert_eq!(added[0].kind, "paragraph");
         assert_eq!(added_blocks(old, "a\n\nb changed\n\nc\n").len(), 1, "a changed block is a new one");
         assert_eq!(added_blocks("", "x\n\ny\n").len(), 2);
         assert_eq!(added_blocks("dup\n\ndup\n", "dup\n\ndup\n\ndup\n").len(), 1, "a third copy is new");
@@ -775,7 +733,7 @@ mod tests {
             ts: "t1".into(),
             session: Some("s1".into()),
             path: "n.md".into(),
-            blocks: vec![BlockStamp { hash: "aaaa".into(), kind: "paragraph".into() }],
+            blocks: vec![BlockStamp { hash: "aaaa".into() }],
             hunks: vec![],
         });
         ledger.append(ProvenanceEntry::Insert {
@@ -784,7 +742,7 @@ mod tests {
             session: None,
             url: Some("https://u".into()),
             path: "n.md".into(),
-            blocks: vec![BlockStamp { hash: "bbbb".into(), kind: "paragraph".into() }],
+            blocks: vec![BlockStamp { hash: "bbbb".into() }],
         });
         fs::OpenOptions::new().append(true).open(root.join(LEDGER_FILE)).unwrap().write_all(b"not json\n").unwrap();
         let reloaded = ProvenanceLedger::load(root, HashSet::new);
@@ -798,7 +756,7 @@ mod tests {
         assert!(again.lookup("aaaa").unwrap().accepted);
         // an agent write of the same hash makes it pending again
         let mut again = again;
-        again.append(ProvenanceEntry::Agent { ts: "t4".into(), session: None, path: "n.md".into(), blocks: vec![BlockStamp { hash: "aaaa".into(), kind: "paragraph".into() }], hunks: vec![] });
+        again.append(ProvenanceEntry::Agent { ts: "t4".into(), session: None, path: "n.md".into(), blocks: vec![BlockStamp { hash: "aaaa".into() }], hunks: vec![] });
         assert!(!again.lookup("aaaa").unwrap().accepted);
     }
 
@@ -894,7 +852,7 @@ mod tests {
                 ts: "t".into(),
                 session: Some("s".into()),
                 path: "n.md".into(),
-                blocks: vec![BlockStamp { hash: format!("h{i}"), kind: "paragraph".into() }],
+                blocks: vec![BlockStamp { hash: format!("h{i}") }],
                 hunks: vec![],
             });
         }

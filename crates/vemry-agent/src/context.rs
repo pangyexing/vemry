@@ -159,8 +159,10 @@ impl ContextRef {
             | ContextRef::Block { path, .. } => path,
         }
     }
-    /// A block reference's handle as the envelope shows it: `^id` for an explicit
-    /// id, `bN` for a positional one (None for every other kind).
+    /// A block reference's handle as the audit names it when the block could not
+    /// be resolved: `^id` for an explicit id, `bN` for a positional one (None for
+    /// every other kind). A resolved block hands over its own handle instead
+    /// (`Vault::block_for_agent`), which is what the envelope shows.
     pub fn block(&self) -> Option<String> {
         match self {
             ContextRef::Block { local_id, .. } => {
@@ -224,6 +226,7 @@ pub fn resolve_context_refs(
         .take(MAX_CONTEXT_REFS)
         .map(|r| {
             let before = filtered;
+            let mut resolved_handle: Option<String> = None;
             let body = match r {
                 ContextRef::Note { path } => run_read(vault, "read_note", json!({ "path": path }), &mut filtered),
                 // A folder means a listing: paths and titles, with the content
@@ -237,7 +240,12 @@ pub fn resolve_context_refs(
                 ContextRef::File { path } => read_text_file(vault, path, &mut filtered),
                 ContextRef::Image { path } => resolve_image(vault, path, &mut filtered, image_cache),
                 ContextRef::Selection { path, text, .. } => gate_selection(vault, path, text, &mut filtered),
-                ContextRef::Block { path, local_id } => resolve_block(vault, path, local_id, &mut filtered),
+                ContextRef::Block { path, local_id } => {
+                    resolve_block(vault, path, local_id, &mut filtered).map(|(body, handle)| {
+                        resolved_handle = Some(handle);
+                        body
+                    })
+                }
             };
             // Whether the reference itself was filtered by the gate: for the
             // non-folder kinds any increase in filtered can only come from this
@@ -256,7 +264,7 @@ pub fn resolve_context_refs(
                 ContextRef::Selection { path, from_line, to_line, .. } if body.is_ok() => {
                     selection_block(vault, path, *from_line, *to_line)
                 }
-                _ => r.block(),
+                _ => resolved_handle.or_else(|| r.block()),
             };
             ResolvedRef { kind: r.kind(), path: r.path().to_string(), lines: r.lines(), block, body, private }
         })
@@ -345,7 +353,7 @@ fn is_positional(id: &str) -> bool {
 /// the UI's index a moment ago, and its wording names the id so the user sees
 /// what went stale. An id with characters outside a block id's alphabet is a
 /// miss too (it can never be in a note, and it must not reach an attribute).
-fn resolve_block(vault: &Vault, path: &str, local_id: &str, filtered: &mut usize) -> Result<String, String> {
+fn resolve_block(vault: &Vault, path: &str, local_id: &str, filtered: &mut usize) -> Result<(String, String), String> {
     let rel = gate_private(vault, path, filtered)?;
     let id = vault.note_id(rel).map_err(|e| e.to_string())?;
     let clean = local_id.trim().trim_start_matches('^');
@@ -355,7 +363,7 @@ fn resolve_block(vault: &Vault, path: &str, local_id: &str, filtered: &mut usize
         return Err(format!("block not found: {id}#{clean}"));
     }
     match vault.block_for_agent(&id, clean) {
-        Ok(Some(hit)) => Ok(hit.content),
+        Ok(Some((hit, handle))) => Ok((hit.content, handle)),
         Ok(None) => Err(format!("block not found: {id}#{clean}")),
         // a note that cannot be read is worded exactly like a gated one
         Err(_) => Err(vemry_core::reject(vemry_core::PathReject::NotFound, rel).to_string()),
@@ -370,8 +378,13 @@ fn truncate_ctx(text: &str) -> Option<String> {
 }
 
 /// Reading a text attachment: an agent-visible read path, gated by `gate_private`.
+/// A note sent as a file is read as a note — `read_file` knows nothing of
+/// private blocks, so a `.md` path must take the note path that cuts them.
 fn read_text_file(vault: &Vault, path: &str, filtered: &mut usize) -> Result<String, String> {
     let rel = gate_private(vault, path, filtered)?;
+    if rel.to_ascii_lowercase().ends_with(".md") {
+        return run_read(vault, "read_note", json!({ "path": rel }), filtered);
+    }
     let pdf = is_pdf(rel);
     let content =
         if pdf { read_pdf_text(vault, rel, rel)? } else { vault.read_file(rel).map_err(|e| e.to_string())? };
@@ -448,16 +461,11 @@ fn gate_selection(vault: &Vault, path: &str, text: &str, filtered: &mut usize) -
     // selection; this stays the real gate.
     let mut body = text.to_string();
     let mut dropped = false;
-    if let Ok(id) = vault.note_id(rel) {
+    // the index knows whether the note has a private block at all: no disk read for the common case
+    if let Some(id) = vault.note_id(rel).ok().filter(|id| vault.has_private_blocks(id)) {
         if let Ok(raw) = vault.read_note(&id) {
             let blocks = vemry_core::parser::parse_note(&raw).blocks;
-            let private_lines: std::collections::HashSet<&str> = blocks
-                .iter()
-                .filter(|b| matches!(b.kind, vemry_core::BlockKind::Private))
-                .flat_map(|b| raw[b.span.clone()].lines())
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .collect();
+            let private_lines = vemry_core::privacy::private_lines(&raw, &blocks);
             if !private_lines.is_empty() {
                 let kept: Vec<&str> = body
                     .lines()
@@ -683,6 +691,7 @@ pub fn scrub_private_refs(vault: &Vault, messages: &mut [ChatMessage]) {
                 None if kind == RefKind::Folder => filter_folder_block(vault, &text[b.start..b.end], &b.attr),
                 None if kind == RefKind::Note => rebuild_note_block(vault, &b.attr),
                 None if kind == RefKind::Selection => scrub_selection_block(vault, &text[b.start..b.end], &b.attr),
+                None if kind == RefKind::Block => rebuild_block_block(vault, &text[b.start..b.end], &b.attr),
                 None => None,
             };
             if let Some(rep) = rep {
@@ -800,6 +809,35 @@ fn rebuild_note_block(vault: &Vault, attr: &str) -> Option<String> {
     Some(crate::prompt::ref_envelope(tag, attr, "", crate::prompt::NOTE_INTRO, &crate::prompt::fence_body(&body, tag)))
 }
 
+/// A block envelope whose note now holds private blocks is resolved again
+/// through the same read the resolution used (`block_for_agent`: private
+/// blocks cut from a section, a block that turned private itself
+/// nonexistent), so it equals a fresh resolution byte for byte — or becomes
+/// the one-line "unavailable" the resolution would have produced. The handle
+/// is the envelope's own `block="…"` attribute.
+fn rebuild_block_block(vault: &Vault, block: &str, attr: &str) -> Option<String> {
+    let id = vault.note_id(attr).ok()?;
+    if !vault.has_private_blocks(&id) {
+        return None;
+    }
+    let head = &block[..block.find('>')?];
+    let handle = head.rsplit_once(" block=\"")?.1.trim_end_matches('"');
+    let mut ignored = 0;
+    Some(match resolve_block(vault, attr, handle, &mut ignored) {
+        Ok((body, handle)) => {
+            let tag = RefKind::Block.tag();
+            crate::prompt::ref_envelope(
+                tag,
+                attr,
+                &format!(" block=\"{handle}\""),
+                &crate::prompt::block_intro(attr, &handle),
+                &crate::prompt::fence_body(&body, tag),
+            )
+        }
+        Err(err) => crate::prompt::ref_unavailable_line(attr, &err),
+    })
+}
+
 /// A frozen selection envelope has no disk source to rebuild from: when the
 /// note now holds a private block and any body line equals one of that
 /// block's lines, the whole envelope becomes the one-line "unavailable" —
@@ -812,13 +850,7 @@ fn scrub_selection_block(vault: &Vault, block: &str, attr: &str) -> Option<Strin
     }
     let raw = vault.read_note(&id).ok()?;
     let blocks = vemry_core::parser::parse_note(&raw).blocks;
-    let private_lines: std::collections::HashSet<&str> = blocks
-        .iter()
-        .filter(|b| matches!(b.kind, vemry_core::BlockKind::Private))
-        .flat_map(|b| raw[b.span.clone()].lines().chain(b.content.lines()))
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
+    let private_lines = vemry_core::privacy::private_lines(&raw, &blocks);
     let hit = block.lines().any(|l| !l.trim().is_empty() && private_lines.contains(l.trim()));
     hit.then(|| crate::prompt::ref_unavailable_line(attr, "selection no longer available"))
 }
@@ -1019,6 +1051,19 @@ mod tests {
         let (fm, f2) = one(&vault, ContextRef::File { path: " Diary.md ".into() });
         assert_eq!(fm.body.unwrap_err(), not_found("Diary.md"));
         assert_eq!(f2, 1);
+    }
+
+    /// A note sent as a file takes the note read: read_file knows nothing of
+    /// private blocks, and the frontend's kind is not what keeps them out.
+    #[test]
+    fn file_ref_to_a_note_cuts_its_private_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Mixed.md"), "public\n\n> [!private] BLOCKSECRET\n").unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let (r, filtered) = one(&vault, ContextRef::File { path: "Mixed.md".into() });
+        let body = r.body.unwrap();
+        assert!(body.contains("public") && !body.contains("BLOCKSECRET"), "{body}");
+        assert_eq!(filtered, 1);
     }
 
     #[test]
@@ -1386,10 +1431,13 @@ mod tests {
         let refs = [
             ContextRef::Note { path: "Doc.md".into() },
             ContextRef::Selection { path: "Doc.md".into(), from_line: 5, to_line: 5, text: "SOON-PRIVATE".into() },
+            ContextRef::Block { path: "Doc.md".into(), local_id: "b2".into() },
+            ContextRef::Block { path: "Doc.md".into(), local_id: "b0".into() },
         ];
         let ctx = crate::prompt::TurnContext::default();
         let mut msgs = vec![envelope_msg(&vault, &refs, &ctx)];
         assert!(msgs[0].text().unwrap().contains("SOON-PRIVATE"));
+        assert_eq!(msgs[0].text().unwrap().matches("<block-context ").count(), 2);
         // nothing private yet: the bytes stay untouched
         let before = msgs[0].text().unwrap().to_string();
         scrub_private_refs(&vault, &mut msgs);
@@ -1400,14 +1448,18 @@ mod tests {
         let text = msgs[0].text().unwrap().to_string();
         assert!(!text.contains("SOON-PRIVATE") && text.contains("keep"), "{text}");
         assert!(text.contains("(attachment Doc.md unavailable: selection no longer available)"));
-        // the rebuilt note envelope equals a fresh resolution byte for byte
-        let fresh = envelope_msg(&vault, &refs[..1], &ctx).text().unwrap().to_string();
-        let env = |t: &str| {
-            let a = t.find("<note-context").unwrap();
-            let b = t.find("</note-context>").unwrap() + "</note-context>".len();
+        // the block that turned private is gone the way a private block is at resolution
+        assert!(text.contains("(attachment Doc.md unavailable: block not found: Doc.md#b2)"), "{text}");
+        // the rebuilt note and block envelopes equal a fresh resolution byte for byte
+        let fresh = envelope_msg(&vault, &refs, &ctx).text().unwrap().to_string();
+        let env = |t: &str, tag: &str| {
+            let a = t.find(&format!("<{tag}")).unwrap();
+            let b = t.find(&format!("</{tag}>")).unwrap() + tag.len() + 3;
             t[a..b].to_string()
         };
-        assert_eq!(env(&text), env(&fresh));
+        assert_eq!(env(&text, "note-context"), env(&fresh, "note-context"));
+        assert_eq!(env(&text, "block-context"), env(&fresh, "block-context"));
+        assert!(env(&text, "block-context").contains("# Doc"));
         // idempotent
         scrub_private_refs(&vault, &mut msgs);
         assert_eq!(msgs[0].text().unwrap(), text);

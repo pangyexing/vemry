@@ -92,6 +92,21 @@ pub fn has_private_blocks(blocks: &[Block]) -> bool {
     blocks.iter().any(|b| matches!(b.kind, BlockKind::Private))
 }
 
+/// The trimmed, non-empty lines of the private blocks of `raw`, in both
+/// spellings a line can be met in — as written (`> secret`) and as the parser
+/// keeps it (`secret`, the quote marker gone) — so text copied out of a
+/// private block is recognised whichever way it was taken. What a selection
+/// is judged against, at resolution and again every turn after.
+pub fn private_lines<'a>(raw: &'a str, blocks: &'a [Block]) -> std::collections::HashSet<&'a str> {
+    blocks
+        .iter()
+        .filter(|b| matches!(b.kind, BlockKind::Private))
+        .flat_map(|b| raw[b.span.start.min(raw.len())..b.span.end.min(raw.len())].lines().chain(b.content.lines()))
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
 /// The byte ranges to cut for the private blocks of `raw`: each block's
 /// span widened to whole lines including the line break, plus one adjacent
 /// blank line — the one after it, or the one before when it ends the text —
@@ -106,11 +121,27 @@ pub fn private_spans(raw: &str, blocks: &[Block]) -> Vec<Range<usize>> {
         if blank_after > 0 {
             end += blank_after;
         } else if end >= raw.len() {
-            let before = &raw[..start];
-            if before.ends_with("\n\n") {
-                start -= 1;
+            // the blank line before it — or, when the private blocks before it
+            // already took that line as the one after themselves, the blank line
+            // before that whole run: the run goes as one, the spans stay
+            // disjoint, and what remains keeps one blank line's separation
+            let mut first = spans.len();
+            let mut run_start = start;
+            while first > 0 && spans[first - 1].end == run_start {
+                first -= 1;
+                run_start = spans[first].start;
+            }
+            let before = &raw[..run_start];
+            let reach = if before.ends_with("\n\n") {
+                1
             } else if before.ends_with("\r\n\r\n") {
-                start -= 2;
+                2
+            } else {
+                0
+            };
+            match spans.get_mut(first) {
+                Some(head) => head.start -= reach,
+                None => start -= reach,
             }
         }
         spans.push(start..end);
@@ -243,17 +274,42 @@ fn ensure_blank_line(out: &mut String, nl: &str) {
 /// made around: a fence opened above it and never closed, its first line
 /// glued onto a quote line before it.
 pub fn private_blocks_preserved(old: &str, new: &str) -> bool {
-    fn slices(raw: &str) -> Vec<String> {
-        let blocks = crate::parser::parse_note(raw).blocks;
-        let mut v: Vec<String> = blocks
-            .iter()
-            .filter(|b| matches!(b.kind, BlockKind::Private))
-            .map(|b| raw[b.span.start.min(raw.len())..b.span.end.min(raw.len())].to_string())
-            .collect();
-        v.sort_unstable();
-        v
-    }
-    slices(old) == slices(new)
+    private_block_slices(old) == private_block_slices(new)
+}
+
+/// The raw text of each private block of `raw`, sorted — the multiset a
+/// write is checked against.
+pub fn private_block_slices(raw: &str) -> Vec<String> {
+    let blocks = crate::parser::parse_note(raw).blocks;
+    let mut v: Vec<String> = blocks
+        .iter()
+        .filter(|b| matches!(b.kind, BlockKind::Private))
+        .map(|b| raw[b.span.start.min(raw.len())..b.span.end.min(raw.len())].to_string())
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+/// Whether every private block `now` holds that `proposal` does not — the
+/// ones that appeared while a proposal was awaiting review — is in `edited`,
+/// the text the user rewrote the proposal into. The blocks the proposal
+/// showed are theirs to change; one they never saw must survive.
+pub fn late_private_blocks_kept(now: &str, proposal: &str, edited: &str) -> bool {
+    let mut proposed = private_block_slices(proposal);
+    let mut in_edit = private_block_slices(edited);
+    private_block_slices(now).into_iter().all(|slice| {
+        if let Some(i) = proposed.iter().position(|s| *s == slice) {
+            proposed.remove(i);
+            return true;
+        }
+        match in_edit.iter().position(|s| *s == slice) {
+            Some(i) => {
+                in_edit.remove(i);
+                true
+            }
+            None => false,
+        }
+    })
 }
 
 #[cfg(test)]
@@ -278,6 +334,15 @@ mod tests {
         assert_eq!(r.text, "x\n\ny\n");
         assert_eq!(r.count(), 2);
         assert_eq!(redact("no private here\n").count(), 0);
+        // two blocks ending the text: the first takes the blank line after it,
+        // the second must not reach back into it — the spans stay disjoint
+        let r = redact("x\n\n> [!private] a\n\n> [!private] b\n");
+        assert_eq!(r.text, "x\n");
+        assert_eq!(r.removed, vec![2..19, 19..34]);
+        assert_eq!(redact("x\n\n> [!private] a\n\n> [!private] b\n\n> [!private] c").text, "x\n");
+        let r = redact("x\r\n\r\n> [!private] a\r\n\r\n> [!private] b\r\n");
+        assert_eq!(r.text, "x\r\n");
+        assert_eq!(r.count(), 2);
     }
 
     #[test]

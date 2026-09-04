@@ -175,6 +175,8 @@ export function turnInto(
     own = own.slice(0, opts.omit.from - b.from) + own.slice(opts.omit.to - b.from);
   }
   const plain = stripPrefix(own.split("\n"), b);
+  // an empty fence has no body lines: it turns into an empty block
+  if (!plain.length) plain.push("");
   const childrenText = subtreeEnd > b.to ? doc.sliceString(b.to + 1, subtreeEnd) : "";
   const indent = b.indentCols ?? leadingWs(doc.lineAt(b.from).text);
   const pad = " ".repeat(indent);

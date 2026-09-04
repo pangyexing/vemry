@@ -4,7 +4,7 @@
 // with text, "turn into ›" in the block menu). One transaction either way.
 import { ChangeSet, type EditorState, type TransactionSpec } from "@codemirror/state";
 import type { BlockType } from "$lib/api";
-import { scanFields } from "$lib/fields";
+import { ANCHOR_TAIL_RE, scanFields } from "$lib/fields";
 import { localDate } from "$lib/views/tasks";
 import { blockAt, type EditorBlock } from "./blocks";
 import { type TurnTarget, canTurnInto, turnInto } from "./blockops";
@@ -47,9 +47,16 @@ export function typeBlockText(type: BlockType): { text: string; caret: number } 
   if (type.kind === "code") return { text: `\`\`\`\n${text}\n\`\`\``, caret: 4 + caret };
   let prefix = PREFIX[type.kind] ?? "";
   if (type.kind === "callout") prefix = `> [!${type.callout ?? "note"}] `;
-  const body = text.replace(/\n/g, `\n${prefix === "" ? "" : prefix.startsWith(">") ? "> " : "  "}`);
+  const cont = prefix === "" ? "" : prefix.startsWith(">") ? "> " : "  ";
+  const body = text.replace(/\n/g, `\n${cont}`);
   const withTag = type.tag && !body.includes(`#${type.tag}`) ? `${body} #${type.tag}` : body;
-  return { text: prefix + withTag, caret: prefix.length + caret };
+  // every line break before the caret gained a continuation prefix
+  return { text: prefix + withTag, caret: prefix.length + caret + newlinesBefore(text, caret) * cont.length };
+}
+
+/** How many line breaks `text` has before `caret`. */
+export function newlinesBefore(text: string, caret: number): number {
+  return (text.slice(0, caret).match(/\n/g) ?? []).length;
 }
 
 /** Turn the block into the type: its kind first (turnInto, when the kind differs and
@@ -77,7 +84,8 @@ export function applyType(
   }
   const nb = blockAt(st, Math.min(changes.mapPos(b.from, 1), st.doc.length));
   let caret: number | null = null;
-  if (nb) {
+  // a code block's first line is its fence: fields there would be its info string
+  if (nb && nb.kind !== "code") {
     const line = st.doc.lineAt(nb.from);
     const text = line.text;
     const existing = new Set(scanFields(text).map((f) => f.key.toLowerCase()));
@@ -92,7 +100,7 @@ export function applyType(
     if (type.tag && !new RegExp(`(^|\\s)#${type.tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(text)) pieces.push(`#${type.tag}`);
     if (pieces.length) {
       const trimmed = text.replace(/[ \t]+$/, "");
-      const anchor = /[ \t]\^[A-Za-z0-9-]+$/.exec(trimmed);
+      const anchor = ANCHOR_TAIL_RE.exec(trimmed);
       const at = line.from + (anchor ? anchor.index : trimmed.length);
       const insert = ` ${pieces.join(" ")}`;
       const tr = st.update({ changes: { from: at, insert } });

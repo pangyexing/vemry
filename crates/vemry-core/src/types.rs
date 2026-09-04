@@ -237,6 +237,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_types_directory_has_one_spelling() {
+        // the vault-relative path the watcher and the IPC use is the meta dir plus this subdir
+        assert_eq!(crate::vault::TYPES_DIR, format!(".vemry/{TYPES_SUBDIR}"));
+    }
+
+    #[test]
     fn skeleton_parses_for_plain_and_awkward_names() {
         let t = parse_block_type("meeting.md", &type_skeleton("meeting"));
         assert_eq!(t.name, "meeting");

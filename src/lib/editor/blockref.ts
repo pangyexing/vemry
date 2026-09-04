@@ -11,6 +11,7 @@ import type { Completion, CompletionContext, CompletionResult, CompletionSource 
 import type { EditorView } from "@codemirror/view";
 import type { BlockHit, BlockIdPlan, BlockSelector } from "$lib/api";
 import { byteToChar } from "$lib/bytes";
+import { stripAnchor } from "$lib/fields";
 
 export interface RefHost {
   currentPath(): string | null;
@@ -51,12 +52,12 @@ export function isAnchorableHit(h: BlockHit): boolean {
 
 /** The first line of a block, markers stripped, ≤ 80 characters. */
 export function blockLabel(content: string): string {
-  const first = (content.split("\n")[0] ?? "")
+  const firstLine = (content.split("\n")[0] ?? "")
     .replace(/^[\s>]*(?:[-*+]\s+(?:\[[ xX/]\]\s*)?|\d+[.)]\s+)?(?:\[![\w-]+\][+-]?\s*)?/, "")
-    // the trailing ` ^id` is shown by the caller, next to the text, not inside it
-    .replace(/\s*\^[A-Za-z0-9-]+$/, "")
     .replace(/\s+/g, " ")
     .trim();
+  // the trailing ` ^id` is shown by the caller, next to the text, not inside it
+  const first = stripAnchor(firstLine);
   return first.length > 80 ? first.slice(0, 80) + "…" : first;
 }
 
@@ -107,7 +108,7 @@ export function refCompletions(host: RefHost): CompletionSource {
       const sortText = String(i++).padStart(5, "0");
       if (kind === "heading") {
         if (blocksOnly) continue;
-        const text = h.block.content.replace(/\s+\^[A-Za-z0-9-]+$/, "").trim();
+        const text = stripAnchor(h.block.content.trim());
         options.push({
           label: text,
           detail: KIND_GLYPH.heading,
@@ -126,7 +127,9 @@ export function refCompletions(host: RefHost): CompletionSource {
         type: "text",
         sortText,
         section: { name: t("wikilink.sectionBlocks"), rank: 1 },
-        apply: (view, _c, applyFrom, applyTo) => void pickBlock(view, host, note, h, applyFrom, applyTo, before.from),
+        // the tail always carries the `^`: past a typed `^` the link starts one before it
+        apply: (view, _c, applyFrom, applyTo) =>
+          void pickBlock(view, host, note, h, blocksOnly ? applyFrom - 1 : applyFrom, applyTo, before.from),
       });
     }
     if (!options.length) return null;

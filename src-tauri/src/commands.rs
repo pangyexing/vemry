@@ -437,7 +437,7 @@ pub fn type_create(app: AppHandle, state: State<'_, AppState>, name: String) -> 
     let stem = vemry_core::sanitize_filename(name);
     let content =
         if stem.eq_ignore_ascii_case("book") { vemry_core::BOOK_TYPE_TEMPLATE.to_string() } else { vemry_core::type_skeleton(name) };
-    let dir = with_vault(&state, |v| Ok(v.meta_dir()))?.join(vemry_core::TYPES_SUBDIR);
+    let dir = with_vault(&state, |v| Ok(v.root().join(vemry_core::vault::TYPES_DIR)))?;
     let created = write_if_absent(&dir.join(format!("{stem}.md")), &content)?;
     if created {
         broadcast(&app, &VaultEvent::TypesChanged);

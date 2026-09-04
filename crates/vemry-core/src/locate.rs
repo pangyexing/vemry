@@ -14,9 +14,7 @@ use crate::parser::leading_ws;
 pub fn heading_text(b: &Block) -> &str {
     let t = b.content.trim();
     if b.explicit_id {
-        if let Some(stripped) = t.strip_suffix(&format!(" ^{}", b.local_id)) {
-            return stripped.trim_end();
-        }
+        return crate::blockid::strip_anchor(t);
     }
     t
 }

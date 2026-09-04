@@ -357,7 +357,7 @@ and an agent-written block stays visibly **pending** until the user accepts it.
 Nothing is added to the notes. `.vemry/provenance.jsonl` is an append-only
 ledger written at the moment text lands (`vemry-core/src/provenance.rs`):
 
-- `{"kind":"agent","ts","session","path","blocks":[{hash,kind}],"hunks":[…]}` —
+- `{"kind":"agent","ts","session","path","blocks":[{hash}],"hunks":[…]}` —
   an agent write that passed the gate (`execute_write` records the blocks the
   applied bytes added, so an "edit, then apply" counts what the user applied,
   not what the model proposed); these are pending. `hunks` are the write's
@@ -663,8 +663,10 @@ matches a name exactly against the already-scanned list and never concatenates
 caller input into a path, so it is immune to traversal by construction.
 
 **Privacy semantics (a deliberate trade-off)**: `.vemry` is a built-in privacy zone
-as far as the agent is concerned, and the skills directory is a deliberate, narrow
-exception — the whole point of a skill is for the agent to read it. The exception
+as far as the agent is concerned, and two directories are deliberate, narrow
+exceptions: the skills directory — the whole point of a skill is for the agent to
+read it — and the types directory, whose schema (never its files) the system
+prompt lists so the agent writes typed blocks the way the user does. The exception
 covers the single `read_skill` tool and reaches only `.md` files directly under the
 skills directory; `read_note` and every other tool still cannot touch anything
 inside `.vemry` (a regression test pins this). To hide a skill from the agent: set
@@ -1220,7 +1222,10 @@ Known limitations (deliberate):
 - The UI does not filter: an embed of a private block (`![[Note#^id]]`) renders in
   the editor, and the status bar names the block when the cursor is inside it.
 - `.vemry/skills/` is a deliberate exception the agent can read (the `read_skill`
-  tool only, and only `.md` directly under that directory — see "Programmability");
+  tool only, and only `.md` directly under that directory — see "Programmability"),
+  and `.vemry/types/` is the other: the system prompt lists each enabled block
+  type's schema — name, kind, tag, field keys, description — never a file's body,
+  and `disabled: true` takes a type out of it (see "Block types");
   user scripts read and write the vault from the user's perspective, privacy zones
   included, because a script is trusted as the user is. The agent cannot trigger a
   script, so the two trust domains do not connect.

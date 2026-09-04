@@ -36,7 +36,7 @@ const KINDS: NonNullable<BlockQuery["kind"]>[] = ["paragraph", "heading", "list_
 const STATES: NonNullable<BlockQuery["task_state"]>[] = ["todo", "doing", "done"];
 const FIELDS = "kind/note/tag/text/task_state/due_before/field/limit/group/sort";
 // Mirrors vemry-core's parse_field_filter grammar for a localized error only; Rust is the authority
-const FIELD_FLAT_RE = /^[\p{L}\p{N}_-]+\s*(?:(?:!=|=|<|>|~)\s*\S.*)?$/u;
+const FIELD_FLAT_RE = /^(?!\d+(?![\p{L}\p{N}_-]))[\p{L}\p{N}_-]+\s*(?:(?:!=|=|<|>|~)\s*\S.*)?$/u;
 
 /** What a fence parses to: the query for Rust, and the two presentation keys the widget applies itself. */
 export interface ParsedQuery {
