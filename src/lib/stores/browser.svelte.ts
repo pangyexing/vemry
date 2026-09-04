@@ -1,8 +1,11 @@
 // The built-in browser's state (Svelte 5 runes). The source of truth for the tabs,
 // the active tab and the shape is Rust's BrowserState, and this is the mirror
 // assembled from browser://event pushes plus the browser_state backstop snapshot.
-// The panel's own presentation state (open or collapsed, its width) belongs to the
-// main window's frontend alone and is kept in localStorage, the same as the sidebars.
+// The panel's width belongs to the main window's frontend alone and is kept in
+// localStorage, the same as the sidebar widths. Whether the panel is on screen is not
+// state at all: it is there exactly while it has tabs — closing the last tab closes
+// it, and opening a page brings it back (a hidden-but-alive set of tabs would need a
+// switch of its own, which twice turned out to be a button nobody could place).
 import {
   api,
   type AdblockStatusView,
@@ -14,7 +17,7 @@ import {
 import { isMainWindow } from "$lib/window";
 
 const UI_KEY = "vemry-browser-ui";
-type UiState = { open?: boolean; width?: number };
+type UiState = { width?: number };
 function loadUi(): UiState {
   try {
     return JSON.parse(localStorage.getItem(UI_KEY) ?? "{}") as UiState;
@@ -38,8 +41,6 @@ class BrowserStore {
   /** The bookmarks mirror (the source of truth is bookmarks.json, and a change replaces it wholesale through bookmarks_changed). */
   bookmarks = $state<BookmarkView[]>([]);
 
-  /** The panel column is on screen (docked shape). Collapsing keeps the tabs alive; opening a page brings it back. */
-  panelOpen = $state(ui.open ?? false);
   panelWidth = $state<number>(Math.max(PANEL_MIN, ui.width ?? 440));
   /** A full-window overlay is open (the palette, a dialog, the lightbox, a sash drag): the
    *  native tab is hidden by Rust meanwhile, and the panel paints a placeholder. Written by
@@ -49,6 +50,11 @@ class BrowserStore {
   lightboxOpen = $state(false);
   /** The next URL submitted opens a new tab rather than navigating the active one (set by the tab strip's + and ⌘T, consumed by the palette). */
   newTabIntent = false;
+
+  /** The panel column is on screen (docked shape): exactly while there are tabs. */
+  get panelOpen(): boolean {
+    return this.tabs.length > 0;
+  }
 
   /** The tab shown: the chrome shows and acts on it; null when there are no tabs. */
   get current(): BrowserTabView | null {
@@ -78,20 +84,17 @@ class BrowserStore {
         this.tabs = [...this.tabs, { label: e.label, url: e.url, title: "" }];
       }
       this.active = e.label;
-      this.panelOpen = true;
     } else if (e.type === "navigated") {
       this.patch(e.label, { url: e.url });
     } else if (e.type === "title_changed") {
       this.patch(e.label, { title: e.title });
     } else if (e.type === "activated") {
       this.active = e.label;
-      this.panelOpen = true;
     } else if (e.type === "closed") {
       this.tabs = this.tabs.filter((w) => w.label !== e.label);
       if (this.active === e.label) this.active = null;
     } else if (e.type === "shape_changed") {
       this.shape = e.shape;
-      if (e.shape === "docked" && this.tabs.length > 0) this.panelOpen = true;
     } else if (e.type === "adblock_status") {
       this.adblock = e.status;
     } else if (e.type === "bookmarks_changed") {
@@ -120,11 +123,11 @@ class BrowserStore {
 
 export const browser = new BrowserStore();
 
-// The panel's presentation state is written through to localStorage by the main window (the bar mirrors it and never writes)
+// The panel's width is written through to localStorage by the main window (the bar mirrors the store and never writes)
 if (isMainWindow) {
   $effect.root(() => {
     $effect(() => {
-      const snapshot = JSON.stringify({ open: browser.panelOpen, width: browser.panelWidth });
+      const snapshot = JSON.stringify({ width: browser.panelWidth });
       try {
         localStorage.setItem(UI_KEY, snapshot);
       } catch {

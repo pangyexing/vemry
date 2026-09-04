@@ -520,14 +520,6 @@
     },
   });
   registerCommand({
-    id: "show-browser", group: "research",
-    run: () => {
-      // Docked: toggle the panel column (the tabs stay alive while it is collapsed); detached: bring the window out
-      if (browser.shape === "docked") browser.panelOpen = !browser.panelOpen;
-      else void api.browserOpenLast().catch((e) => toast.push(String(e), "error"));
-    },
-  });
-  registerCommand({
     id: "browser-new-tab", hotkey: k("Mod+T"), group: "research",
     run: () => { browser.newTabIntent = true; paletteMode = "url"; },
   });

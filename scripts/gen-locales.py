@@ -149,11 +149,6 @@ CMD = {
         ("Empty the built-in browser's history (bookmarks are untouched)",
          "清空内置浏览器的历史记录(收藏不受影响)"),
     ),
-    "show-browser": (
-        ("Browser panel", "浏览面板"),
-        ("Show or hide the browser panel at the right edge (tabs stay alive while hidden)",
-         "显示或收起右侧浏览面板(收起时标签页仍保留)"),
-    ),
     "bookmark-toggle": (
         ("Bookmark current page", "收藏/取消收藏当前页面"),
         ("Save the browser's current page to bookmarks (reachable from the {key} list)",
@@ -355,11 +350,6 @@ for cid, (title, desc) in CMD.items():
 
 # ---------------------------------------------------------------- activity bar
 add("activityBar.", {
-    "browser": ("Browser panel", "浏览面板"),
-    "showBrowser": ("Show the browser panel", "显示浏览面板"),
-    "hideBrowser": ("Hide the browser panel (tabs stay alive)", "收起浏览面板(标签页保留)"),
-    "browserDetached": ("The browser is in its own window — click to bring it forward", "浏览器在独立窗口,点击唤到前台"),
-    "tabsKept": ("{n} tabs kept", "保留 {n} 个标签页"),
     "label": ("Activity bar", "活动栏"),
     "fileTree": ("File tree", "文件树"),
     "openFileTree": ("Show file tree", "打开文件树"),
@@ -874,13 +864,10 @@ add("browserPanel.", {
     "detach": ("Detach into its own window", "分离成独立窗口"),
     "dock": ("Dock back into the main window", "贴回主窗"),
     "tooNarrow": ("The main window is too narrow to dock the browser", "主窗太窄,贴不下浏览面板"),
-    "closePanel": ("Hide the panel (tabs stay alive)", "收起面板(标签页保留)"),
     "more": ("More", "更多"),
     "clip": ("Clip", "剪藏"),
     "clipMenuHint": ("Other clip destinations", "其它剪藏落点"),
     "pickTarget": ("Pick a destination…", "选落点…"),
-    "emptyTitle": ("Start browsing", "开始浏览"),
-    "emptyHint": ("Type a URL above, or press {key} for recents and bookmarks", "在上方输入网址,或按 {key} 从最近与收藏里挑一个"),
     "aiDockedHint": ("Add this page to the conversation as context", "把这一页作为上下文加入对话"),
     "veiled": ("The page is hidden while a dialog is open", "对话框打开时页面暂时隐藏"),
     "zoomIn": ("Zoom in", "放大"),

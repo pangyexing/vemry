@@ -56,7 +56,6 @@
 
 <script lang="ts">
   import { vault } from "$lib/stores/vault.svelte";
-  import { browser } from "$lib/stores/browser.svelte";
   import { executeCommand } from "$lib/commands/registry";
   import { t } from "$lib/i18n/i18n.svelte";
   import { k } from "$lib/shortcut";
@@ -109,26 +108,6 @@
     "M4.25 3.5 h11.5 a1.75 1.75 0 0 1 1.75 1.75 v9.5 a1.75 1.75 0 0 1 -1.75 1.75 h-11.5 a1.75 1.75 0 0 1 -1.75 -1.75 v-9.5 a1.75 1.75 0 0 1 1.75 -1.75 Z",
     "M7.5 3.5 V16.5",
   ];
-  // The browser panel's toggle: the same rule as the file tree's — a collapsible panel's
-  // switch lives outside the panel, in the one place that stays put, so collapsing it
-  // never leaves the user hunting for a look-alike button on the neighbouring column (the
-  // research panel's collapse). A globe: a circle, its equator and one meridian
-  const browserIcon = [
-    "M3 10 a7 7 0 1 0 14 0 a7 7 0 1 0 -14 0",
-    "M3 10 H17",
-    "M10 3 c-3.6 3.2 -3.6 10.8 0 14 M10 3 c3.6 3.2 3.6 10.8 0 14",
-  ];
-  /** The panel column is on screen (docked and open). */
-  const browserShown = $derived(browser.panelOpen && browser.shape === "docked");
-  /** Tabs exist somewhere the user cannot see from here: collapsed, or in the detached window. */
-  const browserKept = $derived(browser.tabs.length > 0 && !browserShown);
-  const browserTip = $derived(
-    browser.shape === "detached"
-      ? t("activityBar.browserDetached")
-      : browserShown
-        ? t("activityBar.hideBrowser")
-        : t("activityBar.showBrowser"),
-  );
 </script>
 
 <!-- The label capsule that reads on hover. A native title takes one or two seconds to appear
@@ -169,17 +148,6 @@
   >
     {@render icon(filesIcon, vault.swapSides)}
     {@render tip(vault.leftOpen ? t("activityBar.collapseFileTree") : t("activityBar.openFileTree"), k("Mod+B"))}
-  </button>
-  <button
-    class="ab-btn"
-    class:on={browserShown}
-    aria-pressed={browserShown}
-    aria-label={t("activityBar.browser")}
-    onclick={() => void executeCommand("show-browser")}
-  >
-    {@render icon(browserIcon)}
-    {#if browserKept}<span class="ab-dot" aria-hidden="true"></span>{/if}
-    {@render tip(browserTip, browserKept ? t("activityBar.tabsKept", { n: browser.tabs.length }) : "")}
   </button>
   <button class="ab-btn" aria-label={t("cmd.search.title")} onclick={() => void executeCommand("search")}>
     {@render icon(searchIcon)}
@@ -253,20 +221,9 @@
   .ab-btn:hover::after {
     background: var(--bg-hover);
   }
-  /* The file tree and browser buttons are switches rather than views: they only brighten and do not take the accent's lit-up language */
+  /* The file tree button is a switch rather than a view: it only brightens and does not take the accent's lit-up language */
   .ab-btn.on {
     color: var(--fg);
-  }
-  /* Tabs kept out of sight (the panel collapsed, or the detached window): a dot on the tile's corner */
-  .ab-dot {
-    position: absolute;
-    top: 9px;
-    right: 9px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    z-index: 1;
   }
   /* The view's active "lit up" state: accent colouring plus an accent-soft tile (the same
      active language as the file tree's selected row and the settings navigation), and hover

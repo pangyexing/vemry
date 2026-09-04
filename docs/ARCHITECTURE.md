@@ -1328,8 +1328,11 @@ and its history come along. The surface has two shapes, remembered through
   outermost column of `.frame`, the window's full height). The chrome — the tab
   strip, the address row, the clip and AI entry points — is the main window's own
   DOM, and the native tab view is placed under it. Only the active tab is shown
-  (`show`/`hide`); the others stay alive hidden, as does the whole set while the
-  panel is collapsed.
+  (`show`/`hide`); the others stay alive hidden. The panel column is there exactly
+  while there are tabs: closing the last one (×, ⌘W) is how the panel goes away,
+  and opening a page (⌘L, a link, "open browser") is how it comes back — there is
+  no hide switch, twice tried and twice a button nobody could place; "out of the
+  layout but kept" is what detaching is for.
 - **Detached**: the tabs move into a standalone window `browserwin` — a plain
   `WindowBuilder` window with no webview of its own — whose first child is
   `browserbar`, our bundle mounting the same `BrowserPanel` in bar mode as a 72 px
@@ -1353,7 +1356,7 @@ for, so opening one is left with navigating, placing and showing (`claim_tab`; i
 the detached shape it is reparented first).
 
 **Geometry — who computes the bounds.** Docked: the frontend reports the panel's
-anchors (`browser_panel_layout`: on screen or collapsed, the column's width, the
+anchors (`browser_panel_layout`: mounted or not, the column's width, the
 chrome's height) only when they change; on a window resize Rust re-places the tab
 from the anchors with no round trip (`apply_layout`, the main window's Resized
 hook), so a live resize does not lag. The width is the user's (a sash on the notes
@@ -1432,14 +1435,13 @@ prompt for.
 One component for both shapes (`BrowserPanel.svelte`; `mode="docked"` in the panel
 column, `mode="bar"` as the root of the `browserbar` webview). The tab strip: a tab
 per `browser-N` (title, else domain; × closes, middle click too, a native context
-menu), `+` for a new tab, then detach (docked) or dock back (bar), and hide the
-panel (docked; the tabs stay alive collapsed, and `show-browser` toggles it). The
+menu), `+` for a new tab, then detach (docked) or dock back (bar). The
 address row: ← → ↻ (history.back/forward sent blind — canGoBack is unknowable), the
 address (domain plus title; a click edits it inline: ↵ navigates the active tab,
 ⌘↵ or an address opened by `+` opens a new one; in the main window ⌘L opens the
 palette's URL mode with its recents and bookmarks, and `+`/⌘T open it with a new-tab
 intent), ★, **AI**, the **clip** split button and ⋯ (the ad-blocking status, open in
-the system browser, clear history, hide the panel).
+the system browser, clear history).
 
 **AI** follows the shape: docked, the page joins the research panel's conversation
 as context (the panel is brought out); detached, the floating chat window is

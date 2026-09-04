@@ -195,16 +195,12 @@
     if (adText) items.push({ id: "adblock", text: adText, enabled: false }, { item: "Separator" });
     if (url) items.push({ id: "system", text: t("reader.openInSystemBrowser"), action: () => run(api.urlOpenSystem(url), false) });
     items.push({ id: "history", text: t("cmd.clear-browser-history.title"), action: () => run(api.browserHistoryClear(), false) });
-    if (!inBar) items.push({ item: "Separator" }, { id: "hide", text: t("browserPanel.closePanel"), action: closePanel });
     const menu = await Menu.new({ items });
     await menu.popup();
   }
 
-  // ---- the shape switch and the panel ----
+  // ---- the shape switch ----
   const toggleDock = () => run(api.browserSetDocked(inBar), false);
-  function closePanel() {
-    browser.panelOpen = false;
-  }
 
   // ---- bar mode: the destination picker (a simplified two-stage pick-note; the bar grows
   // over the page to make room). The CommandPalette component is not reused (a
@@ -447,8 +443,8 @@
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="1.75" /><path d="M12.5 3.5 V16.5" /></svg>
         </button>
       {:else}
-        <!-- Detach only: the panel's show/hide switch lives on the activity bar (a switch inside
-          the panel vanishes with it, and its look-alike on the research panel gets the click) -->
+        <!-- Detach only: there is no "hide the panel" — the panel is there exactly while it has
+          tabs, so closing the last tab (× or ⌘W) is how it goes away -->
         <button class="ico" title={t("browserPanel.detach")} aria-label={t("browserPanel.detach")} onclick={toggleDock}>
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5 H11.5 M16.5 3.5 V8.5 M16.5 3.5 L9.5 10.5 M8.5 4.5 H4.5 A1 1 0 0 0 3.5 5.5 V15.5 A1 1 0 0 0 4.5 16.5 H14.5 A1 1 0 0 0 15.5 15.5 V11.5" /></svg>
         </button>
@@ -541,17 +537,9 @@
       </div>
     {/if}
   {:else}
-    <!-- The native tab view is laid over this slot; what is drawn here shows only when there is no tab, or while the tab is veiled under an overlay -->
+    <!-- The native tab view is laid over this slot; what is drawn here shows only while the tab is veiled under an overlay -->
     <div class="page-slot">
-      {#if browser.tabs.length === 0}
-        <div class="empty">
-          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
-            <circle cx="18" cy="18" r="13" /><path d="M5 18 H31 M18 5 C13 10 13 26 18 31 M18 5 C23 10 23 26 18 31" />
-          </svg>
-          <div class="empty-title">{t("browserPanel.emptyTitle")}</div>
-          <div class="empty-hint">{t("browserPanel.emptyHint", { key: k("Mod+L") })}</div>
-        </div>
-      {:else if browser.veiled}
+      {#if browser.veiled}
         <div class="veil">
           <div class="veil-title">{cur?.title || domainOf(url)}</div>
           <div class="veil-hint">{domainOf(url)}</div>
@@ -809,26 +797,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-  }
-  .empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    color: var(--fg-faint);
-    padding: 24px;
-    text-align: center;
-  }
-  .empty-title {
-    color: var(--fg);
-    font-size: 15px;
-    font-weight: 600;
-    margin-top: 6px;
-  }
-  .empty-hint {
-    font-size: 12.5px;
-    color: var(--fg-muted);
-    max-width: 26em;
   }
   .veil {
     display: flex;
