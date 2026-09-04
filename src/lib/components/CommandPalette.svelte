@@ -2,7 +2,7 @@
   import { api, type HistoryEntryView, type SearchHit } from "$lib/api";
   import { allCommands, commandDescription, commandTitle, executeCommand, fuzzyFilter, groupLabel, groupOf, type Command } from "$lib/commands/registry";
   import { t } from "$lib/i18n/i18n.svelte";
-  import { browser, revealPanelIfDocked } from "$lib/stores/browser.svelte";
+  import { browser } from "$lib/stores/browser.svelte";
   import { fetchHeadings, noteKey, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
   import { typePath, vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
@@ -359,7 +359,7 @@
       if (!q) {
         const list: Item[] = [];
         // Row 0: summon it directly — with a window it returns to it, without one it reopens the last page (the single open-browser implementation)
-        if (browser.windows.length > 0) {
+        if (browser.tabs.length > 0) {
           const cur = browser.current;
           list.push({
             id: "__last__",
@@ -385,7 +385,7 @@
           });
         });
         // When row 0 is already "reopen the last page" (= history[0]), the recent section skips it rather than repeating it
-        const skipFirst = browser.windows.length === 0 && urlHistory.length > 0 ? 1 : 0;
+        const skipFirst = browser.tabs.length === 0 && urlHistory.length > 0 ? 1 : 0;
         urlHistory.slice(skipFirst, skipFirst + 12).forEach((h, i) => {
           list.push({
             id: `h:${h.url}`,
@@ -433,6 +433,7 @@
   });
 
   function close() {
+    browser.newTabIntent = false; // a cancelled "new tab" must not turn the next plain ↩ into one
     mode = null;
   }
 
@@ -476,12 +477,10 @@
       }
       const url = it?.url ?? query.trim();
       if (url) {
-        // Send the open first: the slow path (building or claiming a window plus navigating)
-        // must not queue behind the settingsGet round trip
-        const opening = api.browserOpen(url, modifier).catch((e) => toast.push(String(e), "error"));
-        // A docked window's navigation and clip panel are in the main window, so they are brought out along with it (the same check as ⌘P's "open the browser")
-        await revealPanelIfDocked(modifier ? null : browser.current?.label);
-        await opening;
+        // ⌘↩, or the palette opened by the tab strip's + / ⌘T, opens a new tab; a bare ↩ navigates the active one
+        const newTab = modifier || browser.newTabIntent;
+        browser.newTabIntent = false;
+        await api.browserOpen(url, newTab).catch((e) => toast.push(String(e), "error"));
       }
       return;
     }

@@ -20,7 +20,7 @@ chrono.workspace = true
 # macos-private-api: needed by the transparent clip toolbar window (its bottom
 # corners match the browser window); it only affects windows that declare
 # themselves transparent, and is harmless outside App Store distribution
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri = { version = "2", features = ["macos-private-api", "unstable"] }
 tauri-plugin-dialog = "2"
 # In-app updates (minisign signature verification; the check is user-initiated by
 # default — rule 5 of the controlled network egress)

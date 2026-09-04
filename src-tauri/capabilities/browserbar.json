@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "browserbar",
+  "description": "The chrome bar of the detached browser window (label `browserbar`, our own bundle, a child webview of `browserwin` beside the browser-N tabs). Authorised by its exact label: a webview holding remote content is always browser-* or reader and never matches. Tauri's ACL does not constrain an application's own custom commands one by one, so the allowlist below is a discipline list rather than an enforced boundary — what the bar actually calls is: browserbar_to_main / browserbar_set_expanded / browser_set_docked / browser_navigate / browser_open / browser_activate / browser_close_tab / browser_back / browser_forward / browser_reload / browser_focus / browser_state / bookmark_toggle / bookmark_list / vault_current / vault_last / notes_list / query_blocks / note_create / clips_lookup / settings_get. start-dragging: the bar's tab strip is the detached window's drag region.",
+  "webviews": ["browserbar"],
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
+}

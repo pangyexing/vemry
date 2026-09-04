@@ -2,8 +2,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { extractOutline } from "$lib/outline";
-  import { api, emitClipbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onClipbarAction, onMenuEvent, onReadingEvent, onScriptEvent, type ClipbarResult, type ScriptInfo } from "$lib/api";
-  import { clipbarLabelOf } from "$lib/window";
+  import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onMenuEvent, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
   import { runHostAction } from "$lib/host";
   import { executeCommand, registerCommand, syncScriptCommands } from "$lib/commands/registry";
   import { MEMORY_DRAFT_PROMPT, MEMORY_REVIEW_PROMPT } from "$lib/commands/memoryPrompts";
@@ -12,7 +11,7 @@
   import { agent } from "$lib/stores/agent.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { types } from "$lib/stores/types.svelte";
-  import { browser, revealPanelIfDocked } from "$lib/stores/browser.svelte";
+  import { browser, MAIN_MIN_BESIDE_PANEL, PANEL_MIN as BROWSER_PANEL_MIN } from "$lib/stores/browser.svelte";
   import { reading } from "$lib/stores/reading.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
@@ -26,6 +25,7 @@
   import TabBar from "$lib/components/TabBar.svelte";
   import OutlinePanel from "$lib/components/OutlinePanel.svelte";
   import AgentPanel from "$lib/components/AgentPanel.svelte";
+  import BrowserPanel from "$lib/components/BrowserPanel.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import PermissionDialog from "$lib/components/PermissionDialog.svelte";
   import ContextMenu from "$lib/components/ContextMenu.svelte";
@@ -139,10 +139,10 @@
     const onLeft = which === "tree" ? !vault.swapSides : vault.swapSides;
     const min = which === "tree" ? TREE_MIN : PANEL_MIN;
     // The upper bound leaves the minimum widths for the content area, the opposite sidebar and
-    // the activity bar; the room a docked browser window takes (padding-right) is deducted from
-    // the available width too
+    // the activity bar; the room the docked browser panel takes is deducted from the available
+    // width too
     const otherMin = which === "tree" ? (vault.rightOpen ? PANEL_MIN : 0) : (vault.leftOpen ? TREE_MIN : 0);
-    const max = Math.max(min, window.innerWidth - Math.max(browser.overlayInset, 0) - ABAR_W - CENTER_MIN - otherMin);
+    const max = Math.max(min, window.innerWidth - browser.panelInset - ABAR_W - CENTER_MIN - otherMin);
     vault.resizing = which;
     sash.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
@@ -160,6 +160,44 @@
     sash.addEventListener("pointerup", up);
     sash.addEventListener("pointercancel", up);
   }
+
+  /** The browser panel's sash (its left edge, on the notes side of the boundary): the width is
+   *  live while dragging, and the native tab is veiled for the drag — the pointer would be lost
+   *  to the native view the moment it crossed into the panel, and a per-frame relayout of the
+   *  page is not wanted anyway; the final width reaches Rust once the drag ends (BrowserPanel
+   *  reports it when resizing goes back to null). */
+  function startBrowserResize(e: PointerEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const sash = e.currentTarget as HTMLElement;
+    const startX = e.clientX;
+    const startW = browser.panelWidth;
+    const max = Math.max(BROWSER_PANEL_MIN, window.innerWidth - MAIN_MIN_BESIDE_PANEL);
+    vault.resizing = "browser";
+    sash.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      browser.panelWidth = Math.round(Math.min(max, Math.max(BROWSER_PANEL_MIN, startW + (startX - ev.clientX))));
+    };
+    const up = () => {
+      vault.resizing = null;
+      sash.removeEventListener("pointermove", move);
+      sash.removeEventListener("pointerup", up);
+      sash.removeEventListener("pointercancel", up);
+    };
+    sash.addEventListener("pointermove", move);
+    sash.addEventListener("pointerup", up);
+    sash.addEventListener("pointercancel", up);
+  }
+  // Every full-window overlay veils the docked browser tab (a native view would cover the
+  // overlay, and stay bright under its backdrop); the panel paints a placeholder meanwhile
+  const overlayOpen = $derived(
+    paletteMode !== null || settingsOpen || !!agent.pendingPermission || !!scripts.pendingGrant
+      || !!scripts.pendingPrompt || browser.lightboxOpen || vault.resizing === "browser",
+  );
+  $effect(() => {
+    browser.veiled = overlayOpen;
+    void api.browserPanelVeil(overlayOpen).catch(() => {});
+  });
 
   vault.loadRecent();
   // The settings are fetched once at startup (the prefs mirror brings updater_auto_check back
@@ -200,24 +238,24 @@
   // closing the last returns to the landing point (Rust has already refocused the main window,
   // and this adds the navigation).
   void onBrowserEvent((e) => {
-    if (e.type === "opened" && browser.windows.length === 0) lastClipLanding = null;
+    if (e.type === "opened" && browser.tabs.length === 0) lastClipLanding = null;
     browser.handle(e);
-    if (e.type === "closed" && browser.windows.length === 0 && lastClipLanding) {
+    if (e.type === "closed" && browser.tabs.length === 0 && lastClipLanding) {
       const { path, heading } = lastClipLanding;
       lastClipLanding = null;
       void openLanding(path, heading).catch((err) => toast.push(String(err), "error"));
     }
   }).then(() => void browser.refresh());
-  // The action relay of the clip toolbar (at the bottom of a browser window, batch D): the clip
-  // flow, the pinned destination and the editor live in the main window alone, so they are run
-  // here on its behalf; once a clip action finishes, the receipt is sent back to the toolbar to
-  // flash there (it cannot see the main window's toast). Raising the main window for open-note
-  // has already been done by Rust's relay (the focus parameter).
-  void onClipbarAction(async (a) => {
+  // The action relay of the detached browser window's chrome bar: the clip flow, the pinned
+  // destination and the editor live in the main window alone, so they are run here on its
+  // behalf; once a clip action finishes, the receipt is sent back to the bar to flash there (it
+  // cannot see the main window's toast). Raising the main window for open-note has already been
+  // done by Rust's relay (the focus parameter).
+  void onBrowserbarAction(async (a) => {
     if (a.kind === "set-clip-target") {
       clipTarget.path = a.path;
       clipTarget.heading = a.heading;
-      return; // the store's persistence effect writes it to disk and broadcasts it back to the toolbar automatically
+      return; // the store's persistence effect writes it to disk and broadcasts it back to the bar automatically
     }
     if (a.kind === "clear-clip-target") {
       clipTarget.clear();
@@ -234,7 +272,7 @@
       // it; attachPage is a single-page replacement, so summoning again only refreshes it). A
       // failed extraction's error goes into the chat window too.
       if (!vault.root) {
-        void emitClipbarResult(clipbarLabelOf(a.label), { ok: false, message: t("app.openVaultFirst") }).catch(() => {});
+        void emitBrowserbarResult({ ok: false, message: t("app.openVaultFirst") }).catch(() => {});
         return;
       }
       try {
@@ -249,11 +287,11 @@
       } catch (e) {
         toast.push(String(e), "error");
         // The error goes all three ways: to the chat window (which may be open, where the user is
-        // looking), and to the toolbar's flash (when opening the window itself failed there is no
+        // looking), and to the bar's flash (when opening the window itself failed there is no
         // chat window, and the main window's toast is hidden behind the browser window — without
         // this receipt what the user sees is "the AI button did nothing")
         void api.agentWindowToAgent({ kind: "attach-page", page: null, error: String(e) }).catch(() => {});
-        void emitClipbarResult(clipbarLabelOf(a.label), { ok: false, message: String(e) }).catch(() => {});
+        void emitBrowserbarResult({ ok: false, message: String(e) }).catch(() => {});
       }
       return;
     }
@@ -263,7 +301,7 @@
         : a.kind === "clip-page"
           ? await clipPageFlow(a.label)
           : await clipLinkFlow(a.label);
-    void emitClipbarResult(clipbarLabelOf(a.label), r).catch(() => {});
+    void emitBrowserbarResult(r).catch(() => {});
   });
   // The native menu bar (macOS) → a command: the payload is a registry command id, and everything is a command
   void onMenuEvent((id) => void executeCommand(id));
@@ -464,11 +502,7 @@
     run: async () => {
       try {
         const label = await api.browserOpenLast();
-        if (!label) {
-          toast.push(t("app.noHistory", { key: k("Mod+L") }));
-          return;
-        }
-        await revealPanelIfDocked(label);
+        if (!label) toast.push(t("app.noHistory", { key: k("Mod+L") }));
       } catch (e) {
         toast.push(String(e), "error");
       }
@@ -487,7 +521,35 @@
   });
   registerCommand({
     id: "show-browser", group: "research",
-    run: () => { vault.rightOpen = true; vault.rightTab = "agent"; },
+    run: () => {
+      // Docked: toggle the panel column (the tabs stay alive while it is collapsed); detached: bring the window out
+      if (browser.shape === "docked") browser.panelOpen = !browser.panelOpen;
+      else void api.browserOpenLast().catch((e) => toast.push(String(e), "error"));
+    },
+  });
+  registerCommand({
+    id: "browser-new-tab", hotkey: k("Mod+T"), group: "research",
+    run: () => { browser.newTabIntent = true; paletteMode = "url"; },
+  });
+  registerCommand({
+    id: "browser-close-tab", group: "research",
+    run: async () => {
+      if (!browser.current) return;
+      try { await api.browserCloseTab(); } catch (e) { toast.push(String(e), "error"); }
+    },
+  });
+  registerCommand({
+    id: "browser-reload", hotkey: k("Mod+R"), group: "research",
+    run: async () => {
+      if (!browser.current) return;
+      try { await api.browserReload(); } catch (e) { toast.push(String(e), "error"); }
+    },
+  });
+  registerCommand({
+    id: "browser-toggle-dock", group: "research",
+    run: async () => {
+      try { await api.browserSetDocked(browser.shape !== "docked"); } catch (e) { toast.push(String(e), "error"); }
+    },
   });
   registerCommand({
     // "Everything is a command": the keyboard path beside the ☆ buttons (on the page card and the
@@ -526,7 +588,7 @@
   // from it.
   let lastClipLanding: { path: string; heading: string | null } | null = null;
   function recordClipLanding(path: string | null | undefined, heading: string | null = null) {
-    if (path && browser.windows.length > 0) lastClipLanding = { path, heading };
+    if (path && browser.tabs.length > 0) lastClipLanding = { path, heading };
   }
   /** After the last browser window closes, return to the clip's landing point: open the note and,
    *  with a section, scroll to it (the same UTF-16 units as the outline's, rather than
@@ -549,12 +611,12 @@
   /** The three things a successful clip landing does: the main window's toast, recording the
    *  landing point and the toolbar's receipt — the two surfaces of one event (the toast and the
    *  bar's flash) share one wording, so changing the copy changes one place and nothing drifts. */
-  function landedOk(path: string | null | undefined, message: string): ClipbarResult {
+  function landedOk(path: string | null | undefined, message: string): BrowserbarResult {
     toast.push(message);
     recordClipLanding(path);
     return { ok: true, message };
   }
-  async function clipSelectionFlow(label?: string): Promise<ClipbarResult> {
+  async function clipSelectionFlow(label?: string): Promise<BrowserbarResult> {
     try {
       // The pinned destination wins: choose once and deliver many times (including the pinned
       // section); when the target has been deleted the pin is released (ensureLive has already
@@ -589,7 +651,7 @@
       return { ok: false, message: String(e) };
     }
   }
-  async function clipPageFlow(label?: string): Promise<ClipbarResult> {
+  async function clipPageFlow(label?: string): Promise<BrowserbarResult> {
     try {
       const rel = await api.clipPage(label);
       return landedOk(rel, t("app.clippedTo", { path: rel }));
@@ -598,7 +660,7 @@
       return { ok: false, message: String(e) };
     }
   }
-  async function clipLinkFlow(label?: string): Promise<ClipbarResult> {
+  async function clipLinkFlow(label?: string): Promise<BrowserbarResult> {
     try {
       const res = await api.clipLink(label);
       if (vault.canInsertIntoVisibleNote && vault.insertAtCursor?.(res.text)) {
@@ -951,11 +1013,15 @@
       return;
     }
     const key = e.key.toLowerCase();
-    // The isMac gate: on macOS ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧C ⌘⇧S belong to the native menu's accelerators
-    // (class 1 of menu.rs's three), so this gives way to avoid firing twice (a double ⌘⇧S would
-    // clip twice); ⌘P ⌘L ⌘B ⌘. ⌘⌥arrows stay frontend-only (the menu sets no accelerator)
+    // The isMac gate: on macOS ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧C ⌘⇧S ⌘L ⌘T ⌘R belong to the native menu's
+    // accelerators (class 1 of menu.rs's three), so this gives way to avoid firing twice (a
+    // double ⌘⇧S would clip twice); the browser keys are there because a native browser tab
+    // holding the focus swallows every key before this chain sees it. ⌘P ⌘B ⌘. ⌘⌥arrows stay
+    // frontend-only (the menu sets no accelerator)
     if (key === "p" && !e.shiftKey) { e.preventDefault(); paletteMode = "commands"; }
-    else if (key === "l" && !e.shiftKey) { e.preventDefault(); paletteMode = "url"; }
+    else if (!isMac && key === "l" && !e.shiftKey) { e.preventDefault(); paletteMode = "url"; }
+    else if (!isMac && key === "t" && !e.shiftKey) { e.preventDefault(); void executeCommand("browser-new-tab"); }
+    else if (!isMac && key === "r" && !e.shiftKey) { e.preventDefault(); void executeCommand("browser-reload"); }
     else if (!isMac && key === "o") { e.preventDefault(); paletteMode = "notes"; }
     else if (!isMac && key === "f" && e.shiftKey) { e.preventDefault(); paletteMode = "search"; }
     else if (!isMac && key === "c" && e.shiftKey) { e.preventDefault(); paletteMode = "capture"; }
@@ -1018,15 +1084,13 @@
     </div>
   </main>
 {:else}
-  <!-- With the main window full-screen or against the screen's right edge, a docked browser
-    window lies over its right edge (a native child window is always above the DOM), so the whole
-    layout gives way by the inset's width → visually a split view with notes on the left and the
-    web on the right.
-    The giving-way hangs on frame (the vertical wrapper of the shell plus the bottom status bar):
-    once the sides are swapped the activity bar is at the far right, the status bar's right
-    section is the cursor gauge, and a docked window is the main window's full height — miss any
-    of them and it would be covered by the native browser window -->
-  <div class="frame" style:padding-right={browser.overlayInset > 0 ? `${browser.overlayInset}px` : null}>
+  <!-- frame = [frame-main: the shell plus the bottom status bar | the browser panel column].
+    The panel is the outermost right column at the window's full height (it does not swap sides
+    with the sidebars), and the native browser tab is laid over it below the panel's own chrome:
+    Rust places the tab from the column's width and the chrome's height, which BrowserPanel
+    reports -->
+  <div class="frame">
+    <div class="frame-main">
     <div class="shell" class:swapped={vault.swapSides}>
     <!-- The activity bar sits outside the layout (the grid): fixed-width chrome takes no part in
       the column template's minmax negotiation; swapping sides relies on the shell's row-reverse
@@ -1143,6 +1207,24 @@
     </div>
     </div>
     <StatusBar />
+    {#if browser.panelOpen && browser.shape === "docked"}
+      <!-- The panel's sash sits on the notes side of the boundary: the native tab covers the
+        panel column below its chrome, and a sash inside it would get no pointer events -->
+      <div
+        class="bsash"
+        class:active={vault.resizing === "browser"}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t("browserPanel.tabs")}
+        title={t("app.dragToResize")}
+        onpointerdown={startBrowserResize}
+        ondblclick={() => (browser.panelWidth = 440)}
+      ></div>
+    {/if}
+    </div>
+    {#if browser.panelOpen && browser.shape === "docked"}
+      <BrowserPanel />
+    {/if}
   </div>
   {#if vault.resizing}
     <!-- The full-screen cursor overlay while dragging: the sash has already called
@@ -1153,8 +1235,8 @@
 {/if}
 
 <!-- With the main layout's bottom status bar the toast is raised; the welcome page has none and keeps
-  the default. A docked browser window covers the right edge, so the stack centres in what is left -->
-<ToastStack lift={vault.root ? "var(--statusbar-h)" : "0px"} inset={Math.max(browser.overlayInset, 0)} />
+  the default. The docked browser tab covers the panel column, so the stack keeps out of it -->
+<ToastStack lift={vault.root ? "var(--statusbar-h)" : "0px"} inset={browser.panelInset} />
 <CommandPalette bind:mode={paletteMode} onPickNote={deliverPicked} onCaptureToNote={pickNoteForCapture} />
 <ContextMenu />
 <PermissionDialog />
@@ -1249,7 +1331,37 @@
   .frame {
     height: 100%;
     display: flex;
+    flex-direction: row;
+  }
+  .frame-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
     flex-direction: column;
+    position: relative;
+  }
+  .bsash {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 6px;
+    cursor: col-resize;
+    z-index: 5;
+  }
+  .bsash::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 2px;
+    background: transparent;
+    transition: background 0.12s;
+  }
+  .bsash:hover::after,
+  .bsash.active::after {
+    background: var(--accent);
   }
   .shell {
     display: flex;

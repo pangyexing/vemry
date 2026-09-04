@@ -3,6 +3,7 @@
   Esc, danger, disabled and the second confirmation (confirm) are built in; the styling
   follows the FileTree .menu family. -->
 <script lang="ts">
+  import { usableRight } from "$lib/viewport";
   import { contextMenu, type MenuItem } from "$lib/stores/contextMenu.svelte";
 
   const pos = $derived(contextMenu.pos);
@@ -29,7 +30,7 @@
       if (!el || pos !== p) return;
       const r = el.getBoundingClientRect();
       clamped = {
-        x: Math.min(p.x, Math.max(4, window.innerWidth - r.width - 4)),
+        x: Math.min(p.x, Math.max(4, usableRight() - r.width - 4)),
         y: Math.min(p.y, Math.max(4, window.innerHeight - r.height - 4)),
       };
     });

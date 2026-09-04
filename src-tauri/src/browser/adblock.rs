@@ -705,7 +705,7 @@ mod imp {
     fn finish_reader_ready(app: &AppHandle, list: Retained<WKContentRuleList>) {
         READER_RULE_LIST.with(|c| c.replace(Some(list)));
         if let Some(webview) = app.get_webview_window(crate::browser::reader::READER_LABEL) {
-            attach_list_to(&webview, &READER_RULE_LIST);
+            attach_list_to(webview.as_ref(), &READER_RULE_LIST);
         }
     }
 
@@ -714,7 +714,7 @@ mod imp {
     /// The with_webview closure runs on the main thread, where the thread_local's list
     /// can be read.
     fn attach_list_to(
-        webview: &tauri::WebviewWindow,
+        webview: &tauri::Webview,
         cell: &'static std::thread::LocalKey<RefCell<Option<Retained<WKContentRuleList>>>>,
     ) {
         let _ = webview.with_webview(|pw| {
@@ -761,16 +761,16 @@ mod imp {
         configuration_with(RULE_LIST.with(|c| c.borrow().clone()).into_iter().collect())
     }
 
-    /// Attachment for windows built before the compilation was ready: a runtime
-    /// addContentRuleList on the native WKWebView of every registered browser window
+    /// Attachment for tabs built before the compilation was ready: a runtime
+    /// addContentRuleList on the native WKWebView of every registered tab
     /// (effective from the next load).
     fn attach_to_existing(app: &AppHandle) {
         let labels: Vec<String> = app
             .try_state::<AppState>()
-            .map(|s| s.browser.0.lock().unwrap().windows.keys().cloned().collect())
+            .map(|s| s.browser.0.lock().unwrap().tabs.keys().cloned().collect())
             .unwrap_or_default();
         for label in labels {
-            if let Some(webview) = app.get_webview_window(&label) {
+            if let Some(webview) = app.get_webview(&label) {
                 attach_list_to(&webview, &RULE_LIST);
             }
         }

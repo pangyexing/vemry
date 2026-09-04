@@ -388,7 +388,7 @@ class VaultStore {
    *  from it). While dragging, persisting the UI state is paused — a synchronous
    *  localStorage write at pointermove frequency stalls the live layout, and when it goes
    *  back to null on release the persistence effect reruns and writes the final width. */
-  resizing = $state<"tree" | "panel" | null>(null);
+  resizing = $state<"tree" | "panel" | "browser" | null>(null);
   /** true = the file tree is docked on the right and the links/research panel on the left. */
   swapSides = $state(ui.swap === true);
   mainView = $state<MainView>("editor");

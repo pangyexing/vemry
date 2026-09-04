@@ -396,22 +396,20 @@ export type VaultEvent =
 
 // ---- the built-in knowledge browser (v0.4) ----
 
-export interface BrowserWindowView {
+/** One browser tab: a `browser-N` child webview (of the main window while docked, of the detached window otherwise). */
+export interface BrowserTabView {
   label: string;
   url: string;
   title: string;
-  /** Snapped to the main window's right edge and following it (on macOS attached as a native child window); false after pressing "detach". */
-  docked: boolean;
-  /** How much of the main window's right edge it covers while docked (logical px, 0 =
-   *  side by side with no overlap). It is > 0 when the main window is full-screen or
-   *  the window is pinned to the screen's right edge, and App's layout gives way by
-   *  that much (a merged split view). */
-  inset: number;
 }
 
+/** Where the tabs live: the panel column of the main window, or the standalone browser window. */
+export type BrowserShape = "docked" | "detached";
+
 export interface BrowserSnapshot {
-  windows: BrowserWindowView[];
+  tabs: BrowserTabView[];
   active: string | null;
+  shape: BrowserShape;
 }
 
 export interface ClipSelectionResult {
@@ -446,12 +444,10 @@ export type HostAction =
   | { kind: "pin"; payload: string; session?: string }
   | { kind: "memo"; text: string }
   | { kind: "command"; id: string };
-/** An action from the clip toolbar (clipbar-N, batch D) to the main window (App.svelte
- *  listens and runs it; the clip flow, clipTarget and the editor buffer all live in the
- *  main window alone). The three clip actions carry a label = the browser window the
- *  toolbar is paired with, so with several windows open nothing is guessed from
- *  "focused last". */
-export type ClipbarAction =
+/** An action from the detached browser window's chrome bar (`browserbar`) to the main
+ *  window (App.svelte listens and runs it; the clip flow, clipTarget and the editor
+ *  buffer all live in the main window alone). The clip actions carry the tab's label. */
+export type BrowserbarAction =
   | { kind: "clip-selection"; label: string }
   | { kind: "clip-page"; label: string }
   | { kind: "clip-link"; label: string }
@@ -462,12 +458,12 @@ export type ClipbarAction =
    *  automatically (the window opens first for immediate feedback, and the extracted
    *  page is attached afterwards through attach-page; it does not go through
    *  focus-agent — that branch would pull the user back to the main window's panel,
-   *  while summoning from the browser always wants the floating chat window). */
+   *  while summoning from the detached browser always wants the floating chat window). */
   | { kind: "summon-agent"; label: string };
-/** The clip receipt from the main window back to the toolbar (emitTo'd to
- *  clipbar://result): a toast in the main window is invisible to a toolbar user, so the
- *  receipt flashes on the bar itself. */
-export interface ClipbarResult {
+/** The clip receipt from the main window back to the bar (emitTo'd to
+ *  browserbar://result): a toast in the main window is invisible to the bar's user, so
+ *  the receipt flashes on the bar itself. */
+export interface BrowserbarResult {
   ok: boolean;
   message: string;
 }
@@ -618,15 +614,14 @@ export interface BookmarkView {
   added: number;
 }
 
-/** `browser://event` payloads — the browser windows' state pushes. */
+/** `browser://event` payloads — the browser tabs' state pushes. */
 export type BrowserEvent =
-  | { type: "opened"; label: string; url: string; docked: boolean }
+  | { type: "opened"; label: string; url: string }
   | { type: "navigated"; label: string; url: string }
   | { type: "title_changed"; label: string; title: string }
-  | { type: "focused"; label: string }
+  | { type: "activated"; label: string }
   | { type: "closed"; label: string }
-  | { type: "dock_changed"; label: string; docked: boolean }
-  | { type: "dock_layout"; label: string; inset: number }
+  | { type: "shape_changed"; shape: BrowserShape }
   | { type: "adblock_status"; status: AdblockStatusView }
   | { type: "bookmarks_changed"; bookmarks: BookmarkView[] };
 
@@ -723,21 +718,29 @@ export const api = {
   urlOpenSystem: (url: string) => invoke<void>("url_open_system", { url }),
   /** The single link-opening funnel: it branches by the setting into the built-in or the system browser; invert (⌘click) inverts it. */
   urlOpen: (url: string, invert = false, focus = true) => invoke<void>("url_open", { url, invert, focus }),
-  browserOpen: (url: string, newWindow = false, focus = true) =>
-    invoke<string>("browser_open", { url, newWindow, focus }),
+  /** Navigate the active tab, or open a new one (newTab, or none open yet); returns the tab's label. */
+  browserOpen: (url: string, newTab = false, focus = true) =>
+    invoke<string>("browser_open", { url, newTab, focus }),
   /** The DNS prefetch (called behind a debounce when ⌘L input pauses): it pushes the
    *  target domain's resolution into the system cache early, so WebKit skips the
    *  resolution step after return. Only a complete domain is sent (the Rust side checks
    *  for a dot), it is purely a side channel, it never creates a window or a
    *  navigation, and a failure goes unnoticed. */
   browserPrefetch: (url: string) => invoke<void>("browser_prefetch", { url }),
-  browserSetDocked: (docked: boolean, label?: string) =>
-    invoke<void>("browser_set_docked", { docked, label }),
+  /** The shape switch: docked = the panel in the main window, detached = the standalone window (the tabs move without reloading). */
+  browserSetDocked: (docked: boolean) => invoke<void>("browser_set_docked", { docked }),
+  /** Show a tab (the tab strip). */
+  browserActivate: (label: string) => invoke<void>("browser_activate", { label }),
+  browserCloseTab: (label?: string) => invoke<void>("browser_close_tab", { label }),
+  /** The docked panel column's anchors (logical px): sent when they change, never per frame — Rust re-places the tab from them on a window resize. */
+  browserPanelLayout: (visible: boolean, width: number, chromeH: number) =>
+    invoke<void>("browser_panel_layout", { visible, width, chromeH }),
+  /** A full-window overlay is open in the main window: the active tab hides underneath it (a native view would cover the overlay). */
+  browserPanelVeil: (veiled: boolean) => invoke<void>("browser_panel_veil", { veiled }),
   browserNavigate: (url: string, label?: string) => invoke<void>("browser_navigate", { url, label }),
   browserBack: (label?: string) => invoke<void>("browser_back", { label }),
   browserForward: (label?: string) => invoke<void>("browser_forward", { label }),
   browserReload: (label?: string) => invoke<void>("browser_reload", { label }),
-  browserClose: (label?: string) => invoke<void>("browser_close", { label }),
   browserFocus: (label: string) => invoke<void>("browser_focus", { label }),
   browserState: () => invoke<BrowserSnapshot>("browser_state"),
   /** The single implementation of "open the browser": focus an existing window or
@@ -758,13 +761,13 @@ export const api = {
   clipLocalizeNote: (rel: string, url: string) => invoke<void>("clip_localize_note", { rel, url }),
   clipPage: (label?: string) => invoke<string>("clip_page", { label }),
   clipLink: (label?: string) => invoke<ClipLinkResult>("clip_link", { label }),
-  /** The toolbar → main window action relay; focus is true for "open the note" alone
+  /** The detached bar → main window action relay; focus is true for "open the note" alone
    *  (every other action leaves the browsing uninterrupted — not raising the main window
-   *  is exactly what the toolbar is for). */
-  clipbarToMain: (action: ClipbarAction, focus = false) =>
-    invoke<void>("clipbar_to_main", { action, focus }),
-  /** Expand or collapse the toolbar's destination picker (Rust changes the window's height anchored at the bottom edge). */
-  clipbarSetExpanded: (expanded: boolean) => invoke<void>("clipbar_set_expanded", { expanded }),
+   *  is exactly what the bar is for). */
+  browserbarToMain: (action: BrowserbarAction, focus = false) =>
+    invoke<void>("browserbar_to_main", { action, focus }),
+  /** Expand or collapse the bar's destination picker (Rust grows the bar's bounds downwards over the page). */
+  browserbarSetExpanded: (expanded: boolean) => invoke<void>("browserbar_set_expanded", { expanded }),
   /** One-click clipping from a source card: the `[title](url)` reference entry lands in clips/ without loading the page. */
   clipUrl: (url: string, title: string) => invoke<string>("clip_url", { url, title }),
   /** The reverse lookup of where a citation landed: which URLs have been clipped (url → the clips/ note's path). */
@@ -979,18 +982,22 @@ export function onAgentWindowCommand(handler: (c: AgentWindowCommand) => void): 
   return listen<AgentWindowCommand>("agent-window://command", (event) => handler(event.payload));
 }
 
-// ---- the cross-window events of the clip toolbar (clipbar-N, batch D) ----
-/** Main window: an action the toolbar wants the main window to run (relayed by clipbar_to_main). */
-export function onClipbarAction(handler: (a: ClipbarAction) => void): Promise<UnlistenFn> {
-  return listen<ClipbarAction>("clipbar://action", (event) => handler(event.payload));
+// ---- the cross-window events of the detached browser window's chrome bar (`browserbar`) ----
+/** Main window: an action the bar wants the main window to run (relayed by browserbar_to_main). */
+export function onBrowserbarAction(handler: (a: BrowserbarAction) => void): Promise<UnlistenFn> {
+  return listen<BrowserbarAction>("browserbar://action", (event) => handler(event.payload));
 }
-/** Toolbar: the receipt after the main window ran a clip action. */
-export function onClipbarResult(handler: (r: ClipbarResult) => void): Promise<UnlistenFn> {
-  return listen<ClipbarResult>("clipbar://result", (event) => handler(event.payload));
+/** Bar: the receipt after the main window ran a clip action. */
+export function onBrowserbarResult(handler: (r: BrowserbarResult) => void): Promise<UnlistenFn> {
+  return listen<BrowserbarResult>("browserbar://result", (event) => handler(event.payload));
 }
-/** Main window → a given toolbar window's receipt (directed, not broadcast). */
-export function emitClipbarResult(label: string, r: ClipbarResult): Promise<void> {
-  return emitTo(label, "clipbar://result", r);
+/** Main window → the bar's receipt (directed, not broadcast). */
+export function emitBrowserbarResult(r: BrowserbarResult): Promise<void> {
+  return emitTo("browserbar", "browserbar://result", r);
+}
+/** Bar: a menu-bar command routed to the detached window because it held the focus (open-url, browser-new-tab). */
+export function onBrowserbarCommand(handler: (id: string) => void): Promise<UnlistenFn> {
+  return listen<string>("browserbar://command", (event) => handler(event.payload));
 }
 
 /** The cross-window sync payload of the pinned destination (clipTarget). */

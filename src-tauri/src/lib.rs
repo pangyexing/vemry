@@ -89,26 +89,21 @@ pub fn run() {
             // hundred milliseconds of building a window and cold-starting a WebKit
             // subprocess (the memory cost is roughly one blank-page WebContent process)
             browser::window::ensure_pool_soon(app.handle(), 3000);
-            // Magnetic docking: when the main window moves or resizes, every docked
-            // browser window comes along (on macOS a docked window is a native child
-            // window, so moving is already linked and this adds the resize sync and the
-            // screen-edge clamping); on the main window regaining focus they are
-            // re-attached as a backstop — minimising breaks the child-window relation
-            if let Some(main) = tauri::Manager::get_webview_window(app, "main") {
+            // The docked browser tabs are native child views of the main window: on a
+            // resize they are re-placed from the panel anchors (no round trip to the
+            // frontend). `get_webview_window("main")` is None once the main window has a
+            // child webview, so the window is reached through its webview
+            if let Some(main) = browser::window::main_window(app.handle()) {
                 let handle = app.handle().clone();
                 main.on_window_event(move |event| match event {
-                    tauri::WindowEvent::Moved(_) => browser::window::redock_all(&handle, false),
-                    tauri::WindowEvent::Resized(_) => browser::window::redock_all(&handle, true),
-                    tauri::WindowEvent::Focused(true) => browser::window::reattach_docked(&handle),
+                    tauri::WindowEvent::Resized(_) => browser::window::relayout(&handle),
                     // The main window is gone: the detached chat window should not outlive
                     // it (it would have nowhere to send anything back), and the same goes
-                    // for a detached browser window plus its clip toolbar (nowhere to
-                    // relay to, every button mute); least of all should the hidden
-                    // browser warm-up shell hold up "closing every window quits"
+                    // for the detached browser window (nowhere to relay to, every button
+                    // mute, and it would hold up "closing every window quits")
                     tauri::WindowEvent::Destroyed => {
                         agent_window::force_close(&handle);
                         browser::window::close_all(&handle);
-                        browser::window::destroy_pool(&handle);
                     }
                     _ => {}
                 });
@@ -214,10 +209,13 @@ pub fn run() {
             browser::window::browser_back,
             browser::window::browser_forward,
             browser::window::browser_reload,
-            browser::window::browser_close,
+            browser::window::browser_close_tab,
+            browser::window::browser_activate,
             browser::window::browser_focus,
             browser::window::browser_state,
             browser::window::browser_set_docked,
+            browser::window::browser_panel_layout,
+            browser::window::browser_panel_veil,
             browser::window::browser_open_last,
             browser::window::browser_prefetch,
             browser::window::url_open,
@@ -227,8 +225,8 @@ pub fn run() {
             browser::bookmarks::bookmark_list,
             browser::bookmarks::bookmark_toggle,
             browser::bookmarks::bookmark_remove,
-            browser::clipbar::clipbar_to_main,
-            browser::clipbar::clipbar_set_expanded,
+            browser::browserbar::browserbar_to_main,
+            browser::browserbar::browserbar_set_expanded,
             browser::clip::clip_selection,
             browser::clip::clip_page,
             browser::clip::clip_localize_note,

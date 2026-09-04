@@ -7,6 +7,7 @@
 // app.css.
 
 import { t } from "$lib/i18n/i18n.svelte";
+import { browser } from "$lib/stores/browser.svelte";
 
 let closeCurrent: (() => void) | null = null;
 
@@ -146,10 +147,12 @@ export function openImageLightbox(src: string, alt = ""): void {
 
   const prevFocus = document.activeElement;
   document.body.appendChild(overlay);
+  browser.lightboxOpen = true; // a docked browser tab is veiled while the overlay is up
   overlay.focus();
   requestAnimationFrame(() => overlay.classList.add("show"));
 
   function close() {
+    browser.lightboxOpen = false;
     window.removeEventListener("keydown", onKey, true);
     overlay.classList.remove("show");
     window.setTimeout(() => overlay.remove(), 180); // wait for the fade-out to finish

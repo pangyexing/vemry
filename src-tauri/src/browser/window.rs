@@ -1,72 +1,88 @@
-//! Creating, navigating and the lifetime commands of a browser window.
+//! The browser surface: tabs as child webviews, the docked panel geometry, the
+//! detached window, the warm-up shell and the navigation commands. See mod.rs for
+//! the shape model.
 //!
-//! The security boundary: a window's label is `browser-N`, which matches no
-//! capability (default.json only authorises the `main` webview) — a remote page
-//! physically has no IPC. The navigation guard is a second line of defence: even
-//! should a page try to jump to the app's own origin (the dev server, tauri://), it
-//! is refused outright.
+//! Threading: building a webview and creating a window go through the main thread
+//! (on macOS the WKWebViewConfiguration with the ad-blocking rules is !Send and has
+//! to be made there). tauri-runtime-wry handles a message sent from the main thread
+//! inline, so `add_child`, `reparent` and `WindowBuilder::build` are safe both on
+//! the main thread (inside run_on_main_thread) and from a command thread; the
+//! bounds, hide and show messages are fire-and-forget from anywhere.
 
-use serde::Serialize;
-use tauri::webview::NewWindowResponse;
-use tauri::{AppHandle, Manager, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
-
-use super::{emit, BrowserEntry, BrowserEvent};
+use super::{emit, BrowserEntry, BrowserEvent, PanelLayout, Shape};
 use crate::AppState;
+use serde::Serialize;
+use tauri::webview::{NewWindowResponse, WebviewBuilder};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, State, Url, WebviewUrl, WindowEvent};
 
-/// Record one real navigation: the guard (http(s) and not the app's origin) →
-/// refresh the registry's URL → broadcast Navigated → record it in the
-/// application-level history. Both callers share this one navigation policy:
-/// `on_navigation` (whose return value is the verdict) and the SPA backstop in the
-/// title hook (pushState does not trigger on_navigation). Adding a banned scheme or
-/// filtering the history changes this one place.
+/// The standalone window of the detached shape (no webview of its own: the tabs and
+/// the chrome bar are its children).
+pub const DETACHED_LABEL: &str = "browserwin";
+/// The chrome bar at the top of the detached window: our own bundle, authorised by
+/// label through capabilities/browserbar.json.
+pub const BAR_LABEL: &str = "browserbar";
+/// The chrome bar's height (logical px): a tab strip row and an address row.
+pub const BAR_H: f64 = 72.0;
+/// The bar grown downwards over the page while its destination picker is open.
+pub const BAR_EXPANDED_H: f64 = 360.0;
+
+/// The main window: `get_webview_window("main")` is None as soon as the main window
+/// has a child webview (a WebviewWindow is a window whose only webview carries its
+/// own label), so every "the main window" access goes through here.
+pub(crate) fn main_window(app: &AppHandle) -> Option<tauri::Window> {
+    app.get_webview("main").map(|w| w.window())
+}
+
+/// The navigation guard's verdict, plus the bookkeeping for an allowed navigation:
+/// the registry's URL, the Navigated event and the history record. Shared by the
+/// builder hook and the SPA backstop in the title hook — both have to record the
+/// visit the same way.
 fn note_navigation(app: &AppHandle, label: &str, url: &Url) -> bool {
+    // Only http(s), and never the app's own origin: a remote page must not navigate
+    // itself into the app's bundle (where it would still be zero IPC, but it should
+    // not even be shown)
     if !matches!(url.scheme(), "http" | "https") || is_app_origin(url) {
         return false;
     }
-    let url = url.to_string();
-    update_entry(app, label, |e| e.url = url.clone());
-    emit(app, &BrowserEvent::Navigated { label: label.to_string(), url: url.clone() });
-    // The application-level browsing history: the first load and every later
-    // navigation come through here; the hidden reader window has no such hook and
-    // therefore never enters it
-    super::history::record_visit(app, &url);
+    update_entry(app, label, |e| e.url = url.to_string());
+    emit(app, &BrowserEvent::Navigated { label: label.to_string(), url: url.to_string() });
+    super::history::record_visit(app, url.as_str());
     true
 }
 
-/// User input → a navigable URL: the scheme is filled in, and only http(s) is accepted.
+/// Turn user input into a URL: a bare domain gets https://, and only http(s) is
+/// accepted (no file:, javascript:, tauri:).
 pub fn normalize_url(input: &str) -> Result<Url, String> {
-    let raw = input.trim();
-    if raw.is_empty() {
-        return Err("empty URL".into());
+    let s = input.trim();
+    if s.is_empty() {
+        return Err("empty address".into());
     }
-    let candidate =
-        if raw.contains("://") { raw.to_string() } else { format!("https://{raw}") };
-    let url = Url::parse(&candidate).map_err(|e| format!("invalid URL: {e}"))?;
+    let candidate = if s.contains("://") { s.to_string() } else { format!("https://{s}") };
+    let url = Url::parse(&candidate).map_err(|e| format!("invalid address: {e}"))?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err(format!("only http(s) is supported: {url}"));
+        return Err(format!("unsupported scheme: {}", url.scheme()));
     }
     if url.host_str().is_none() {
-        return Err("invalid URL: the host name is missing".into());
+        return Err("the address has no host".into());
     }
     Ok(url)
 }
 
-/// A browser window must never drive into the app's own origin (the main webview's
-/// dev server or bundled assets), which stops a remote page taking the local context
-/// through a navigation.
+/// The app's own origin (the dev server, the bundled scheme): never shown as a page.
 pub(crate) fn is_app_origin(url: &Url) -> bool {
     match url.scheme() {
-        "http" | "https" => matches!(url.host_str(), Some("localhost") | Some("127.0.0.1")),
+        "http" | "https" => {
+            let host = url.host_str().unwrap_or_default();
+            (host == "localhost" || host == "127.0.0.1" || host == "[::1]") && url.port() == Some(1420)
+                || host.ends_with(".localhost")
+        }
         _ => true, // tauri:// and everything else that is not http(s) counts as the app side and is refused
     }
 }
 
-/// A snapshot entry = label plus the registry entry verbatim (serde flatten, so the
-/// JSON shape on the wire matches the days of copying field by field). A field added
-/// to BrowserEntry reaches the snapshot automatically, with no three places to keep
-/// in sync.
+/// A snapshot entry = label plus the registry entry verbatim (serde flatten).
 #[derive(Serialize)]
-pub struct BrowserWindowView {
+pub struct BrowserTabView {
     pub label: String,
     #[serde(flatten)]
     pub entry: BrowserEntry,
@@ -74,58 +90,57 @@ pub struct BrowserWindowView {
 
 #[derive(Serialize)]
 pub struct BrowserSnapshot {
-    pub windows: Vec<BrowserWindowView>,
+    pub tabs: Vec<BrowserTabView>,
     pub active: Option<String>,
+    pub shape: Shape,
 }
 
-/// Open a URL: reuse the active browser window or build a new one. Returns the
-/// window's label.
-/// `focus=false` is for cases like "opened from a citation": the window appears
-/// without taking the keyboard focus, so the user can stay in the conversation and
-/// keep asking.
+// ---------------------------------------------------------------------------
+// opening
+// ---------------------------------------------------------------------------
+
+/// Open a URL: navigate the active tab in place, or (`new_tab`, or no tab yet) open
+/// a new tab. Returns the tab's label.
+/// `focus=false` is for cases like "opened from a citation": the page appears
+/// without taking the keyboard focus, so the user can stay in the conversation.
 #[tauri::command]
 pub async fn browser_open(
     app: AppHandle,
     state: State<'_, AppState>,
     url: String,
-    new_window: Option<bool>,
+    new_tab: Option<bool>,
     focus: Option<bool>,
 ) -> Result<String, String> {
     let url = normalize_url(&url)?;
-    // The same verdict as on_navigation, refused early: the app's own origin
-    // (localhost and friends) passes normalize_url but would be stopped by the
-    // navigation guard — without refusing it here, the registry and the page card
-    // would record a URL the window never showed, and every later clip would land
-    // under the wrong source
+    // The same verdict as on_navigation, refused early: the app's own origin passes
+    // normalize_url but would be stopped by the navigation guard — without refusing
+    // it here, the registry and the chrome would record a URL the tab never showed
     if is_app_origin(&url) {
         return Err(format!("that address may not be opened: {url}"));
     }
-    // Resolving first: it runs alongside the window build, so by the time the navigation really starts the DNS answer is most likely in the system cache
+    // Resolving first: it runs alongside the claim, so by the time the navigation really starts the DNS answer is most likely in the system cache
     prefetch_dns(&url);
     super::adblock::ensure_rules_soon(&app);
     let focus = focus.unwrap_or(true);
 
-    // With an active window and no request for a new one: navigate in place
-    if !new_window.unwrap_or(false) {
+    // With an active tab and no request for a new one: navigate in place
+    if !new_tab.unwrap_or(false) {
         let target = state.browser.0.lock().unwrap().target(None);
         if let Some(label) = target {
-            if let Some(webview) = app.get_webview_window(&label) {
+            if let Some(webview) = app.get_webview(&label) {
                 webview.navigate(url.clone()).map_err(|e| e.to_string())?;
-                if focus {
-                    let _ = webview.set_focus();
-                }
+                activate(&app, &label, focus);
                 // The URL record and the Navigated event are emitted together by
-                // on_navigation when the navigation is allowed; nothing is written to
-                // the registry ahead of time (which would drift from what is really
-                // shown and duplicate the event)
+                // on_navigation when the navigation is allowed; nothing is written
+                // to the registry ahead of time
                 return Ok(label);
             }
         }
     }
 
-    // Building and claiming a window happen on the main thread as a whole: on macOS
-    // the WKWebViewConfiguration (!Send) has to have the adblock rules attached
-    // before the window is built, so the first frame already blocks
+    // Building and claiming happen on the main thread as a whole: on macOS the
+    // WKWebViewConfiguration (!Send) has to have the adblock rules attached before
+    // the webview is built, so the first frame already blocks
     let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
     {
         let app2 = app.clone();
@@ -135,43 +150,30 @@ pub async fn browser_open(
         })
         .map_err(|e| e.to_string())?;
     }
-    let result = rx.await.map_err(|_| "window creation was interrupted".to_string())?;
-    // Queue the next warm-up shell window, on success and failure alike — the failure
-    // path consumed the shell too (a failed claim closes it), and without refilling,
-    // one transient failure would leave every window this session opening on the cold
-    // path
+    let result = rx.await.map_err(|_| "tab creation was interrupted".to_string())?;
+    // Queue the next warm-up shell, on success and failure alike — the failure path
+    // consumed the shell too, and without refilling, one transient failure would
+    // leave every tab this session opening on the cold path
     ensure_pool_soon(&app, 1500);
-    let label = result?;
-
-    let (docked, inset) = {
-        let inner = state.browser.0.lock().unwrap();
-        inner.windows.get(&label).map(|e| (e.docked, e.inset)).unwrap_or((false, 0.0))
-    };
-    emit(&app, &BrowserEvent::Opened { label: label.clone(), url: url.to_string(), docked });
-    // The dock at build time happens before Opened, when the frontend registry does not have this window yet — so the layout is sent once more
-    if inset > 0.0 {
-        emit(&app, &BrowserEvent::DockLayout { label: label.clone(), inset });
-    }
-    Ok(label)
+    result
 }
 
-/// Main thread: open a new browser window — claiming the warm-up shell first (a
-/// hidden about:blank window whose WKWebView, subprocess and ad-blocking rules are
-/// already built, so opening is left with navigating and showing; the same idea as
-/// pre-building a renderer process). With no shell, or one that was destroyed, it
-/// takes the cold path and builds everything. Returns the window's label.
+/// Main thread: open a new tab — claiming the warm-up shell first (a hidden
+/// about:blank child webview whose WKWebView, subprocess and ad-blocking rules are
+/// already built, so opening is left with navigating and showing). With no shell
+/// it takes the cold path and builds one. Returns the tab's label.
 fn open_in_shell(app: &AppHandle, url: &Url, focus: bool) -> Result<String, String> {
     let state = app.state::<AppState>();
     let pooled = state.browser.0.lock().unwrap().pool.take();
-    let (label, id) = match pooled.filter(|(l, _)| app.get_webview_window(l).is_some()) {
+    let (label, id) = match pooled.filter(|(l, _)| app.get_webview(l).is_some()) {
         Some((label, id)) => (label, id),
         None => {
             let (label, id) = alloc_label(&state);
-            build_shell(app, &label)?;
+            build_tab(app, &label)?;
             (label, id)
         }
     };
-    claim_shell(app, id, &label, url, focus)?;
+    claim_tab(app, id, &label, url, focus)?;
     Ok(label)
 }
 
@@ -182,9 +184,9 @@ fn alloc_label(state: &State<'_, AppState>) -> (String, u32) {
 }
 
 /// The single implementation of "open the browser" (shared by the menu bar, the ⌘P
-/// command and an empty ⌘L return): with a browser window open → focus it; with none
-/// → reopen the most recent page from the history; with neither → Ok(None) and the
-/// frontend shows a toast.
+/// command and an empty ⌘L return): with a tab open → bring it out and focus it;
+/// with none → reopen the most recent page from the history; with neither →
+/// Ok(None) and the frontend shows a toast.
 #[tauri::command]
 pub async fn browser_open_last(
     app: AppHandle,
@@ -192,10 +194,8 @@ pub async fn browser_open_last(
 ) -> Result<Option<String>, String> {
     let existing = state.browser.0.lock().unwrap().target(None);
     if let Some(label) = existing {
-        if let Some(webview) = app.get_webview_window(&label) {
-            let _ = webview.set_focus();
-            return Ok(Some(label));
-        }
+        activate(&app, &label, true);
+        return Ok(Some(label));
     }
     match super::history::last_url(&app) {
         Some(url) => browser_open(app, state, url, Some(false), Some(true)).await.map(Some),
@@ -203,13 +203,13 @@ pub async fn browser_open_last(
     }
 }
 
-/// Main thread: build the hidden browser shell window (about:blank) — the builder
-/// chain, the navigation guard, the ad-blocking rules, the gestures and the window
-/// events are all in place, but it does not enter the registry and is not shown.
-/// Registering, navigating, docking and showing happen in claim_shell (the cold path
-/// claims it immediately; the warm-up path builds it in advance and waits to be
-/// claimed).
-fn build_shell(app: &AppHandle, label: &str) -> Result<(), String> {
+/// Main thread: build a hidden tab webview (about:blank) as a child of the main
+/// window — the navigation guard, the ad-blocking rules, the injected scripts and
+/// the gestures are all in place, but it does not enter the registry and is not
+/// shown. Registering, navigating, placing and showing happen in claim_tab (the
+/// cold path claims it immediately; the warm-up path builds it in advance).
+fn build_tab(app: &AppHandle, label: &str) -> Result<(), String> {
+    let main = main_window(app).ok_or_else(|| "the main window is gone".to_string())?;
     let nav_app = app.clone();
     let nav_label = label.to_string();
     let title_app = app.clone();
@@ -219,12 +219,8 @@ fn build_shell(app: &AppHandle, label: &str) -> Result<(), String> {
     let blank = Url::parse("about:blank").expect("about:blank always parses");
     // Both `builder =` reassignments below are inside cfg(macos) blocks, so off mac the mut is unused
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::External(blank))
-        .title(crate::i18n::t(crate::i18n::current(), "window.browserTitle"))
-        // Built hidden first: it is shown once claiming has positioned it, which avoids the "appear, then jump" flicker
-        .visible(false)
+    let mut builder = WebviewBuilder::new(label, WebviewUrl::External(blank))
         .focused(false)
-        .inner_size(1080.0, 760.0)
         // The selection cache: after a page popup or script clears the selection, clipping can still fall back to the most recent one
         .initialization_script(super::clip::SELECTION_CACHE_JS)
         .on_navigation(move |target| {
@@ -236,9 +232,9 @@ fn build_shell(app: &AppHandle, label: &str) -> Result<(), String> {
             note_navigation(&nav_app, &nav_label, target)
         })
         .on_new_window(move |target, _features| {
-            // Popup suppression: target=_blank and window.open all open in the same window
+            // Popup suppression: target=_blank and window.open all open in the same tab
             if matches!(target.scheme(), "http" | "https") && !is_app_origin(&target) {
-                if let Some(w) = new_win_app.get_webview_window(&new_win_label) {
+                if let Some(w) = new_win_app.get_webview(&new_win_label) {
                     let _ = w.navigate(target);
                 }
             }
@@ -246,16 +242,13 @@ fn build_shell(app: &AppHandle, label: &str) -> Result<(), String> {
         })
         .on_document_title_changed(move |webview, title| {
             let label = webview.label().to_string();
-            // The window title follows the page, so it can be told apart in ⌘Tab and the window menu
-            let fallback = crate::i18n::t(crate::i18n::current(), "window.browserTitle");
-            let _ = webview.set_title(if title.trim().is_empty() { &fallback } else { title.as_str() });
             // The SPA backstop: a pushState navigation does not trigger on_navigation,
-            // and the registry's URL would be left on the old page (the page card and
-            // the bookmark ★ lighting up wrongly, a page missing from the history). An
-            // SPA page change almost always changes the title — so the webview's real
-            // URL is read back at this moment, and when it differs from the registry a
+            // and the registry's URL would be left on the old page (the chrome and the
+            // bookmark ★ lighting up wrongly, a page missing from the history). An SPA
+            // page change almost always changes the title — so the webview's real URL
+            // is read back at this moment, and when it differs from the registry a
             // Navigated plus a history record follow (guarded by the same verdict as
-            // on_navigation).
+            // on_navigation)
             if let Ok(current) = webview.url() {
                 let known = update_entry(&title_app, &label, |e| e.url.clone());
                 if known.is_some_and(|u| u != current.as_str()) {
@@ -263,9 +256,7 @@ fn build_shell(app: &AppHandle, label: &str) -> Result<(), String> {
                 }
             }
             // url and title arrive a beat apart: the history entry is located by
-            // label → the registry's url to amend the title. One trip through the lock
-            // sets the title and reads the current URL back, rather than entering the
-            // registry twice for it
+            // label → the registry's url to amend the title
             let url = update_entry(&title_app, &label, |e| {
                 e.title = title.clone();
                 e.url.clone()
@@ -273,28 +264,34 @@ fn build_shell(app: &AppHandle, label: &str) -> Result<(), String> {
             if let Some(url) = url {
                 super::history::amend_title(&title_app, &url, &title);
             }
+            // The detached window's title follows its active tab, so it can be told apart in ⌘Tab and the window menu
+            let (detached, active) = title_app
+                .try_state::<AppState>()
+                .map(|s| {
+                    let inner = s.browser.0.lock().unwrap();
+                    (inner.shape == Shape::Detached, inner.active.clone())
+                })
+                .unwrap_or((false, None));
+            if detached && active.as_deref() == Some(label.as_str()) {
+                if let Some(win) = title_app.get_window(DETACHED_LABEL) {
+                    let fallback = crate::i18n::t(crate::i18n::current(), "window.browserTitle");
+                    let _ = win.set_title(if title.trim().is_empty() { &fallback } else { title.as_str() });
+                }
+            }
             emit(&title_app, &BrowserEvent::TitleChanged { label, title });
         });
 
-    // A shell window is always built in the detached shape (an ordinary title bar),
-    // and the docked shape is switched at runtime while claiming by apply_dock_state
-    // (the same path as "snap/detach", with the window still hidden, so there is no
-    // flicker). The same goes for geometry: set_position/set_size happen while
-    // claiming.
-
     // Smoothing a discrete scroll wheel (macOS only: a WKWebView's wheel jumps
-    // instantly, while WebView2 smooths it itself and injecting there would only get
-    // in the way). The script is dormant by default and woken by wheel.rs's device
-    // classification
+    // instantly, while WebView2 smooths it itself). The script is dormant by default
+    // and woken by wheel.rs's device classification
     #[cfg(target_os = "macos")]
     {
         builder = builder.initialization_script(super::wheel::SMOOTH_WHEEL_JS);
     }
 
     // With the rules compiled and the switch on → they are attached to the
-    // configuration before the window is built, so no ad slips through the first
-    // frame.
-    // Should the switch or the rules change after the shell was built,
+    // configuration before the webview is built, so no ad slips through the first
+    // frame. Should the switch or the rules change after the shell was built,
     // rebuild_pool_if_present rebuilds it.
     #[cfg(target_os = "macos")]
     if crate::settings::load(app).adblock_enabled {
@@ -303,202 +300,89 @@ fn build_shell(app: &AppHandle, label: &str) -> Result<(), String> {
         }
     }
 
-    let webview = builder.build().map_err(|e| e.to_string())?;
+    // Built tiny and hidden: claim_tab places it. A child webview covers the DOM
+    // wherever it is, so it must never be visible before it has its real bounds
+    let webview = main
+        .add_child(builder, LogicalPosition::new(0.0, 0.0), LogicalSize::new(10.0, 10.0))
+        .map_err(|e| e.to_string())?;
+    let _ = webview.hide();
 
-    // A two-finger swipe is WKWebView's native back and forward. A browser window has
-    // zero IPC (capabilities authorise the main window alone), so no fallback UI can
-    // be injected — the native gesture is the only navigation the window carries on
-    // its own
     #[cfg(target_os = "macos")]
     {
         use objc2_web_kit::WKWebView;
-        let _ = webview.with_webview(|pw| {
-            let wk = pw.inner().cast::<WKWebView>();
+        let app2 = app.clone();
+        let label2 = label.to_string();
+        let _ = webview.with_webview(move |pw| {
+            let raw = pw.inner();
+            // The native view pointer, for the menu bar's "is the keyboard focus inside a page" check
+            if let Some(s) = app2.try_state::<AppState>() {
+                s.browser.0.lock().unwrap().views.insert(label2, raw as usize);
+            }
+            // A two-finger swipe is WKWebView's native back and forward: a tab has zero
+            // IPC, so the native gesture is the only navigation the page carries on its own
+            let wk = raw.cast::<WKWebView>();
             if let Some(wk) = unsafe { wk.as_ref() } {
                 unsafe { wk.setAllowsBackForwardNavigationGestures(true) };
             }
         });
     }
-
-    // Focus and destruction tracking can only hang off a window that is built (the builder has no such hook)
-    let ev_app = app.clone();
-    let ev_label = label.to_string();
-    webview.on_window_event(move |event| match event {
-        WindowEvent::Focused(true) => {
-            if let Some(s) = ev_app.try_state::<AppState>() {
-                s.browser.0.lock().unwrap().active = Some(ev_label.clone());
-            }
-            // The toolbar's backstop re-attachment: minimising a browser window breaks
-            // the child-window relation (the same as reattach_docked between the main
-            // window and a docked one; this is the second level)
-            super::clipbar::ensure_clipbar_attached(&ev_app, &ev_label);
-            super::clipbar::position_clipbar(&ev_app, &ev_label);
-            emit(&ev_app, &BrowserEvent::Focused { label: ev_label.clone() });
-        }
-        WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
-            // The toolbar follows the bottom edge: on macOS a child window moves with
-            // its parent through AppKit, and resetting the same value on every Moved
-            // tick of a window drag would be six window-server round trips for nothing,
-            // so it is only synced on a resize (with Focused as the backstop that
-            // re-attaches and repositions when the attachment lapsed); off mac there is
-            // no child-window mechanism, so both moving and resizing rely on this
-            #[cfg(target_os = "macos")]
-            if matches!(event, WindowEvent::Resized(_)) {
-                super::clipbar::position_clipbar(&ev_app, &ev_label);
-            }
-            #[cfg(not(target_os = "macos"))]
-            super::clipbar::position_clipbar(&ev_app, &ev_label);
-            // Only a detached window's geometry is recorded (written to disk on
-            // Destroyed for "reopen where it was"): a docked window's movement is driven
-            // by redock, so its position means nothing. The lock covers the check
-            // alone, and reading the geometry (a window API) happens outside it
-            let undocked = ev_app.try_state::<AppState>().is_some_and(|s| {
-                s.browser.0.lock().unwrap().windows.get(&ev_label).is_some_and(|e| !e.docked)
-            });
-            if undocked {
-                if let Some(w) = ev_app.get_webview_window(&ev_label) {
-                    if let Some(g) = crate::agent_window::read_geom(&w) {
-                        update_entry(&ev_app, &ev_label, |e| e.geom = Some(g));
-                    }
-                }
-            }
-        }
-        WindowEvent::Destroyed => {
-            // The toolbar's lifetime follows the browser window entirely (it never enters the registry, and this is the only link)
-            if let Some(bar) =
-                ev_app.get_webview_window(&super::clipbar::clipbar_label_of(&ev_label))
-            {
-                let _ = bar.close();
-            }
-            let mut last_closed = false;
-            let mut removed: Option<BrowserEntry> = None;
-            if let Some(s) = ev_app.try_state::<AppState>() {
-                let mut inner = s.browser.0.lock().unwrap();
-                // The warm-up shell was destroyed (taken along by the main window quitting, or rebuilt): clearing the slot is enough
-                if inner.pool.as_ref().is_some_and(|(l, _)| l == &ev_label) {
-                    inner.pool = None;
-                }
-                removed = inner.windows.remove(&ev_label);
-                if inner.active.as_deref() == Some(ev_label.as_str()) {
-                    // It has to pick the same window as the frontend registry's
-                    // windows[0] (the open order): with HashMap's arbitrary order,
-                    // target(None) and the current window the page card shows would
-                    // drift apart, and clipping would quietly grab the wrong window. The
-                    // open sequence number is data on the entry, so take the earliest
-                    inner.active =
-                        inner.windows.iter().min_by_key(|(_, e)| e.id).map(|(l, _)| l.clone());
-                }
-                last_closed = removed.is_some() && inner.windows.is_empty();
-            }
-            // An unregistered shell makes no noise outwards: no Closed, and no focus back to the main window
-            let Some(entry) = removed else { return };
-            // A detached window's geometry is written to disk (the same as
-            // agent_window; an unchanged value is not written). A docked one is not: the
-            // snapshot taken while it was detached stays in the entry, but with
-            // docked==true at close it is void and must not pollute the detached
-            // geometry
-            if !entry.docked {
-                if let Some(g) = entry.geom {
-                    // update: this can race browser_set_docked's write (the command
-                    // thread against the main-thread hook), and a bare load→save would
-                    // overwrite the other's fields
-                    let _ = crate::settings::update(&ev_app, |s| {
-                        let changed = s.browser_window != Some(g);
-                        s.browser_window = Some(g);
-                        changed
-                    });
-                }
-            }
-            emit(&ev_app, &BrowserEvent::Closed { label: ev_label.clone() });
-            // Focus etiquette: the main window is refocused once the last browser window closes
-            if last_closed {
-                if let Some(main) = ev_app.get_webview_window("main") {
-                    let _ = main.set_focus();
-                }
-            }
-        }
-        _ => {}
-    });
-
     Ok(())
 }
 
-/// Main thread: claim a shell as a real browser window — geometry, registration,
-/// navigation, docking, showing.
-/// The window stays hidden throughout and show comes last, so there is no flicker.
-fn claim_shell(app: &AppHandle, id: u32, label: &str, url: &Url, focus: bool) -> Result<(), String> {
-    let webview =
-        app.get_webview_window(label).ok_or_else(|| "the browser window was destroyed".to_string())?;
-    // The shape to claim it in comes from the settings (browser_set_docked persists
-    // every toggle = "remember the last choice"); the first time it defaults to
-    // detached and centred, with docking as an optional switch (batch D inverted
-    // v0.5.2's docked default)
-    let settings = crate::settings::load(app);
-    let docked = settings.browser_docked;
-    let indep_geom = if docked { None } else { independent_geom(app, settings.browser_window) };
-
-    // Geometry: a docked window's size and position are dock_window's business; a
-    // detached one restores its last geometry (cascading with several windows) or is
-    // centred at nearly full height on the main window's screen (independent_geom
-    // computes against the monitor the main window belongs to — with the main window
-    // on an external display, a browser window must not open on a different one).
-    if let Some(g) = &indep_geom {
-        let _ = webview.set_position(tauri::LogicalPosition::new(g.x, g.y));
-        let _ = webview.set_size(tauri::LogicalSize::new(g.w, g.h));
-    } else if !docked {
-        // The fallback when the main window or the monitor cannot be read (the shell defaults to 1080×760)
-        let _ = webview.center();
-    }
-
-    if let Some(s) = app.try_state::<AppState>() {
+/// Main thread: claim a shell as a real tab — registration, navigation, the move
+/// into the detached window when that is the shape, placement, showing.
+fn claim_tab(app: &AppHandle, id: u32, label: &str, url: &Url, focus: bool) -> Result<(), String> {
+    let webview = app.get_webview(label).ok_or_else(|| "the tab was destroyed".to_string())?;
+    let shape = {
+        let Some(s) = app.try_state::<AppState>() else { return Err("no state".into()) };
         let mut inner = s.browser.0.lock().unwrap();
-        inner.windows.insert(
+        inner.tabs.insert(
             label.to_string(),
-            BrowserEntry {
-                id,
-                docked,
-                inset: 0.0,
-                url: url.to_string(),
-                title: String::new(),
-                geom: indep_geom,
-            },
+            BrowserEntry { id, url: url.to_string(), title: String::new() },
         );
         inner.active = Some(label.to_string());
-    }
-
+        inner.shape
+    };
     // Registered before navigating: the update_entry/Navigated that on_navigation
-    // performs when it allows the navigation has to find the registry entry (in the
-    // days of the cold path, navigation began at build and registration came after,
-    // so the event order was once inverted)
+    // performs when it allows the navigation has to find the registry entry
     if let Err(e) = webview.navigate(url.clone()) {
-        // A window that cannot even start navigating is rare but must not be left: hidden plus registered = a ghost entry
+        // A tab that cannot even start navigating is rare but must not be left: hidden plus registered = a ghost entry
         if let Some(s) = app.try_state::<AppState>() {
-            s.browser.0.lock().unwrap().windows.remove(label);
+            let mut inner = s.browser.0.lock().unwrap();
+            inner.tabs.remove(label);
+            inner.views.remove(label);
+            inner.active = inner.tabs.iter().max_by_key(|(_, e)| e.id).map(|(l, _)| l.clone());
         }
         let _ = webview.close();
         return Err(e.to_string());
     }
-    if docked {
-        // Title bar switched to the docked shape → positioned → attached as a native
-        // child window → then shown (once attached it follows the main window's
-        // movement, minimisation and layering, and addChildWindow may order it in
-        // immediately, which is why it is positioned first)
-        apply_dock_chrome(app, label, true);
-        dock_window(app, label, true);
-        set_native_child(app, label, true);
+    emit(app, &BrowserEvent::Opened { label: label.to_string(), url: url.to_string() });
+    if shape == Shape::Detached {
+        // The tab was built as a child of the main window (the shell always is) and moves into the detached window now
+        let win = ensure_detached_window(app)?;
+        let _ = webview.reparent(&win);
+        raise_bar(app);
+        apply_layout(app);
+        let _ = win.show();
+        if focus {
+            let _ = win.set_focus();
+        }
+    } else {
+        apply_layout(app);
     }
-    let _ = webview.show();
-    // The clip toolbar comes a beat later: building its webview competes for the main thread, which should not happen at the page's first frame
-    super::clipbar::spawn_clipbar_soon(app, label);
+    emit(app, &BrowserEvent::Activated { label: label.to_string() });
     if focus {
         let _ = webview.set_focus();
     }
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// the warm-up shell
+// ---------------------------------------------------------------------------
+
 /// Refill the warm-up shell: the build is delayed to avoid the main thread's busy
-/// stretches at startup and during a page load (building a WKWebView competes for the
-/// main thread and slows down what is rendering). lib.rs's startup and each claim
+/// stretches at startup and during a page load. lib.rs's startup and each claim
 /// queue one.
 pub fn ensure_pool_soon(app: &AppHandle, delay_ms: u64) {
     super::on_main_after(app, delay_ms, ensure_pool);
@@ -508,11 +392,8 @@ pub fn ensure_pool_soon(app: &AppHandle, delay_ms: u64) {
 /// is serialised through the main thread, and an occupied slot is a no-op. A failure
 /// is only logged (the next browser_open takes the cold path, and nothing breaks).
 fn ensure_pool(app: &AppHandle) {
-    // The main window is destroyed (we are quitting): a refill timer arriving late
-    // must not build another hidden shell — destroy_pool runs once on the main
-    // window's Destroyed, and a shell born after that has nobody to clean it up, which
-    // would leave "closing every window quits" waiting forever
-    if app.get_webview_window("main").is_none() {
+    // The main window is destroyed (we are quitting): a refill timer arriving late must not build anything
+    if main_window(app).is_none() {
         return;
     }
     let Some(s) = app.try_state::<AppState>() else { return };
@@ -520,7 +401,7 @@ fn ensure_pool(app: &AppHandle) {
         return;
     }
     let (label, id) = alloc_label(&s);
-    match build_shell(app, &label) {
+    match build_tab(app, &label) {
         Ok(()) => s.browser.0.lock().unwrap().pool = Some((label, id)),
         Err(e) => eprintln!("browser pool prewarm failed: {e}"),
     }
@@ -529,59 +410,56 @@ fn ensure_pool(app: &AppHandle) {
 /// Rebuild the warm-up shell after the ad-blocking rules roll over or the switch is
 /// toggled: a shell's rule list is fixed into its configuration at build time, and
 /// only a rebuild picks up the current configuration (a runtime attachment can only
-/// add, never unload).
-/// With no shell it is a no-op — refilling is the ordinary ensure_pool_soon's job.
+/// add, never unload). With no shell it is a no-op.
 pub fn rebuild_pool_if_present(app: &AppHandle) {
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
-        if take_pool_window(&app2).is_none() {
+        if take_pool_webview(&app2).is_none() {
             return;
         }
         ensure_pool(&app2);
     });
 }
 
-/// Take the warm-up shell and close it; returns whether there really was one. The
-/// slot and the window are disposed of together, and the rebuild and quit paths share
-/// it.
-fn take_pool_window(app: &AppHandle) -> Option<()> {
+/// Take the warm-up shell and close it; returns whether there really was one.
+fn take_pool_webview(app: &AppHandle) -> Option<()> {
     let s = app.try_state::<AppState>()?;
     let taken = s.browser.0.lock().unwrap().pool.take();
     let (label, _) = taken?;
-    if let Some(w) = app.get_webview_window(&label) {
+    s.browser.0.lock().unwrap().views.remove(&label);
+    if let Some(w) = app.get_webview(&label) {
         let _ = w.close();
     }
     Some(())
 }
 
-/// The warm-up shell goes when the main window is destroyed: a hidden window must not
-/// outlive every visible one, or Tauri's "closing every window quits" would wait
-/// forever (called from lib.rs's main-window Destroyed hook).
-pub fn destroy_pool(app: &AppHandle) {
-    take_pool_window(app);
-}
-
-/// Every browser window goes when the main window is destroyed (as does the detached
-/// chat window, agent_window::force_close): since batch D made detached the default,
-/// a browser window is no longer a child of the main window and would outlive it —
-/// every relay from the clip toolbar would emit to a main that no longer exists, every
-/// button would be mute, and the windows would still hold up "closing every window
-/// quits". A paired toolbar closes through its browser window's Destroyed hook.
+/// The detached window goes when the main window is destroyed (as does the
+/// detached chat window): it would outlive it with nowhere to relay to, and hold
+/// up "closing every window quits". The tabs that are children of the main window
+/// die with it.
 pub fn close_all(app: &AppHandle) {
-    for (label, w) in app.webview_windows() {
-        if label.starts_with("browser-") {
-            let _ = w.close();
-        }
+    if let Some(s) = app.try_state::<AppState>() {
+        let mut inner = s.browser.0.lock().unwrap();
+        inner.tabs.clear();
+        inner.views.clear();
+        inner.active = None;
+        inner.pool = None;
+    }
+    if let Some(w) = app.get_window(DETACHED_LABEL) {
+        let _ = w.close();
     }
 }
+
+// ---------------------------------------------------------------------------
+// DNS prefetch
+// ---------------------------------------------------------------------------
 
 /// DNS prefetch: push the host name resolution into the system cache (on macOS
 /// getaddrinfo goes through mDNSResponder and is shared system-wide), so WebKit's
 /// network process skips the resolution step on the real connection that follows.
-/// Only hosts that "look like a domain" (containing a dot) are taken — a half-typed ⌘L
-/// input with a scheme filled in (`exam`, say) must not leak to DNS. The same host is
-/// deduplicated within 30s: hammering the real resolver on every keystroke both
-/// disturbs it and leaks privacy.
+/// Only hosts that "look like a domain" (containing a dot) are taken — a half-typed
+/// ⌘L input with a scheme filled in (`exam`, say) must not leak to DNS. The same
+/// host is deduplicated within 30s.
 fn prefetch_dns(url: &Url) {
     use std::net::ToSocketAddrs;
     use std::sync::LazyLock;
@@ -602,19 +480,13 @@ fn prefetch_dns(url: &Url) {
         recent.retain(|_, t| now.duration_since(*t) < Duration::from_secs(30));
         recent.insert(host.clone(), now);
     }
-    // Through tauri's blocking pool rather than a std::thread::spawn each time:
-    // arrowing through the history in ⌘L fires one for every host that survives the
-    // debounce, and building a thread (stack reservation included) costs more than the
-    // resolution itself
     tauri::async_runtime::spawn_blocking(move || {
         let _ = (host.as_str(), port).to_socket_addrs();
     });
 }
 
 /// The DNS prefetch for a pause in ⌘L input or a highlighted bookmark/history row
-/// (called by the frontend after its debounce). Malformed input is ignored silently —
-/// a prefetch has no visible consequence, and it never creates a window or a
-/// navigation.
+/// (called by the frontend after its debounce). Malformed input is ignored silently.
 #[tauri::command]
 pub fn browser_prefetch(url: String) {
     if let Ok(u) = normalize_url(&url) {
@@ -624,117 +496,452 @@ pub fn browser_prefetch(url: String) {
     }
 }
 
-/// macOS: attach or detach a browser window as a native child of the main window
-/// (`NSWindow addChildWindow:`).
-/// Once attached it follows the main window's movement, minimisation and layering as a
-/// group and does not appear separately in the window menu — the core of the
-/// "pseudo-merge". Returns whether the attachment state really changed. It has to be
-/// called on the main thread (the call sites: the main-thread closures of
-/// build_browser_window and apply_dock_state, and the main window's event callbacks).
-#[cfg(target_os = "macos")]
-fn set_native_child(app: &AppHandle, label: &str, attach: bool) -> bool {
-    use objc2_app_kit::{NSWindow, NSWindowButton};
-    let changed = set_child_window(app, "main", label, attach);
-    // In the floating traffic lights, minimise and zoom mean nothing for a docked
-    // window, so only the red close button is kept and they are restored on detach.
-    // This one is specific to "a browser window attached to the main window" and stays
-    // out of the shared attachment primitive
-    let Some(browser) = app.get_webview_window(label) else { return changed };
-    let Ok(child_ptr) = browser.ns_window() else { return changed };
-    let child_ns: &NSWindow = unsafe { &*child_ptr.cast() };
-    for b in [NSWindowButton::MiniaturizeButton, NSWindowButton::ZoomButton] {
-        if let Some(btn) = child_ns.standardWindowButton(b) {
-            btn.setHidden(attach);
-        }
-    }
-    changed
+// ---------------------------------------------------------------------------
+// layout: where the native tab views go
+// ---------------------------------------------------------------------------
+
+fn logical_inner(win: &tauri::Window) -> Option<LogicalSize<f64>> {
+    let scale = win.scale_factor().ok()?;
+    Some(win.inner_size().ok()?.to_logical::<f64>(scale))
 }
 
-/// macOS: attach or detach `child_label` as a native child window of `parent_label`
-/// (`NSWindow addChildWindow:`). Once attached it follows the parent's movement,
-/// minimisation and layering as a group and does not appear separately in the window
-/// menu; its position is entirely the code's to decide, so while attached it may not
-/// be dragged away by its frame.
-/// Idempotent; returns whether the attachment state really changed. It has to be
-/// called on the main thread.
-///
-/// Shared by both attachments: a browser window onto the main window (the
-/// "pseudo-merge" dock) and the clip toolbar onto a browser window.
+fn rect(x: f64, y: f64, w: f64, h: f64) -> tauri::Rect {
+    tauri::Rect {
+        position: LogicalPosition::new(x, y).into(),
+        size: LogicalSize::new(w.max(1.0), h.max(1.0)).into(),
+    }
+}
+
+/// Place the active tab and hide the others. Docked: the panel column the frontend
+/// reported (right-aligned, under the chrome, down to the window's bottom edge),
+/// shown only while the panel is on screen and no overlay is open. Detached: under
+/// the chrome bar, the full width of the detached window (the bar itself is placed
+/// here too, grown over the page while its picker is open).
+/// Called after every state change and on each window resize (the anchors make the
+/// resize a pure recomputation — no round trip to the frontend, so a live resize
+/// does not lag).
+pub fn apply_layout(app: &AppHandle) {
+    let Some(s) = app.try_state::<AppState>() else { return };
+    let (shape, active, panel, labels, bar_expanded) = {
+        let inner = s.browser.0.lock().unwrap();
+        (
+            inner.shape,
+            inner.active.clone(),
+            inner.panel,
+            inner.tabs.keys().cloned().collect::<Vec<_>>(),
+            inner.bar_expanded,
+        )
+    };
+    let (bounds, show_active) = match shape {
+        Shape::Docked => {
+            let Some(main) = main_window(app) else { return };
+            let Some(inner) = logical_inner(&main) else { return };
+            // A child view's origin is the window's top-left *including the title bar*
+            // (the content view is full-size, and unlike the main webview a child gets
+            // no automatic content inset), while the frontend measures from its own
+            // viewport, which starts under the title bar — so the bar's height is added
+            let top = title_bar_height(&main);
+            let w = panel.width.clamp(100.0, inner.width);
+            let y = (top + panel.chrome_h).min(inner.height);
+            (rect(inner.width - w, y, w, inner.height - y), panel.visible && !panel.veiled)
+        }
+        Shape::Detached => {
+            let Some(win) = app.get_window(DETACHED_LABEL) else { return };
+            let Some(inner) = logical_inner(&win) else { return };
+            if let Some(bar) = app.get_webview(BAR_LABEL) {
+                let h = if bar_expanded { BAR_EXPANDED_H.min(inner.height) } else { BAR_H };
+                let _ = bar.set_bounds(rect(0.0, 0.0, inner.width, h));
+            }
+            (rect(0.0, BAR_H, inner.width, inner.height - BAR_H), true)
+        }
+    };
+    for label in labels {
+        let Some(wv) = app.get_webview(&label) else { continue };
+        if active.as_deref() == Some(label.as_str()) {
+            let _ = wv.set_bounds(bounds);
+            if show_active {
+                let _ = wv.show();
+            } else {
+                let _ = wv.hide();
+            }
+        } else {
+            let _ = wv.hide();
+        }
+    }
+}
+
+/// macOS: how tall the window's title bar is (logical px) — the part of the full-size
+/// content view that contentLayoutRect leaves out. Zero where the content view starts
+/// under the title bar anyway.
 #[cfg(target_os = "macos")]
-pub(super) fn set_child_window(
-    app: &AppHandle,
-    parent_label: &str,
-    child_label: &str,
-    attach: bool,
-) -> bool {
-    use objc2_app_kit::{NSWindow, NSWindowOrderingMode};
-    let Some(parent) = app.get_webview_window(parent_label) else { return false };
-    let Some(child) = app.get_webview_window(child_label) else { return false };
-    let (Ok(parent_ptr), Ok(child_ptr)) = (parent.ns_window(), child.ns_window()) else {
-        return false;
-    };
-    let parent_ns: &NSWindow = unsafe { &*parent_ptr.cast() };
-    let child_ns: &NSWindow = unsafe { &*child_ptr.cast() };
-    let changed = if attach {
-        // Already attached means no second attachment (every focus goes through a backstop re-attachment)
-        let newly = child_ns.parentWindow().is_none();
-        if newly {
-            unsafe { parent_ns.addChildWindow_ordered(child_ns, NSWindowOrderingMode::Above) };
-        }
-        newly
-    } else {
-        let was_attached = child_ns.parentWindow().is_some();
-        if was_attached {
-            parent_ns.removeChildWindow(child_ns);
-        }
-        was_attached
-    };
-    child_ns.setExcludedFromWindowsMenu(attach);
-    child_ns.setMovable(!attach);
-    changed
+fn title_bar_height(win: &tauri::Window) -> f64 {
+    use objc2_app_kit::NSWindow;
+    let Ok(ptr) = win.ns_window() else { return 0.0 };
+    let ns: &NSWindow = unsafe { &*ptr.cast() };
+    let Some(content) = ns.contentView() else { return 0.0 };
+    let full = content.frame().size.height;
+    let layout = ns.contentLayoutRect().size.height;
+    (full - layout).max(0.0)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn set_native_child(_app: &AppHandle, _label: &str, _attach: bool) -> bool {
-    false
+fn title_bar_height(_win: &tauri::Window) -> f64 {
+    0.0
 }
 
-/// The backstop re-attachment when the main window is focused: on macOS minimising the
-/// main window breaks the NSWindow child relation, so once it is back in front, every
-/// browser window still marked docked is re-attached and repositioned (called from
-/// lib.rs's main-window event hook, whose callbacks run on the main thread). For a
-/// window that is still attached this is a zero-cost no-op.
-pub fn reattach_docked(app: &AppHandle) {
-    let labels: Vec<String> = {
-        let Some(s) = app.try_state::<AppState>() else { return };
-        let inner = s.browser.0.lock().unwrap();
-        inner.windows.iter().filter(|(_, e)| e.docked).map(|(l, _)| l.clone()).collect()
+/// The main window or the detached window resized (lib.rs's hooks): re-place the tabs.
+pub fn relayout(app: &AppHandle) {
+    apply_layout(app);
+}
+
+/// The frontend reports the docked panel column: on screen or collapsed, its width
+/// and its chrome height (logical px). Sent when any of them changes — never per
+/// frame; a live resize of the main window is handled from the anchors in Rust.
+#[tauri::command]
+pub fn browser_panel_layout(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    visible: bool,
+    width: f64,
+    chrome_h: f64,
+) {
+    {
+        let mut inner = state.browser.0.lock().unwrap();
+        inner.panel = PanelLayout { visible, width, chrome_h, veiled: inner.panel.veiled };
+    }
+    apply_layout(&app);
+}
+
+/// A full-window overlay opened or closed in the main window (the command palette,
+/// a dialog, the lightbox, a sash drag): a native view would cover it, so the
+/// active tab is hidden underneath and shown again afterwards. The frontend paints
+/// a placeholder in the panel meanwhile.
+#[tauri::command]
+pub fn browser_panel_veil(app: AppHandle, state: State<'_, AppState>, veiled: bool) {
+    let changed = {
+        let mut inner = state.browser.0.lock().unwrap();
+        let changed = inner.panel.veiled != veiled;
+        inner.panel.veiled = veiled;
+        changed
     };
-    for label in labels {
-        if set_native_child(app, &label, true) {
-            dock_window(app, &label, true);
+    if changed {
+        apply_layout(&app);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// tabs
+// ---------------------------------------------------------------------------
+
+/// Make a tab the shown one (a registry change, the layout, the event; `focus` also
+/// hands it the keyboard). A no-op for an unknown label.
+fn activate(app: &AppHandle, label: &str, focus: bool) {
+    let known = {
+        let Some(s) = app.try_state::<AppState>() else { return };
+        let mut inner = s.browser.0.lock().unwrap();
+        if !inner.tabs.contains_key(label) {
+            return;
+        }
+        let changed = inner.active.as_deref() != Some(label);
+        inner.active = Some(label.to_string());
+        let detached = inner.shape == Shape::Detached;
+        (changed, detached, inner.tabs.get(label).map(|e| e.title.clone()).unwrap_or_default())
+    };
+    let (_changed, detached, title) = known;
+    apply_layout(app);
+    if detached {
+        if let Some(win) = app.get_window(DETACHED_LABEL) {
+            let fallback = crate::i18n::t(crate::i18n::current(), "window.browserTitle");
+            let _ = win.set_title(if title.trim().is_empty() { &fallback } else { title.as_str() });
+            let _ = win.show();
+            if focus {
+                let _ = win.set_focus();
+            }
+        }
+    }
+    emit(app, &BrowserEvent::Activated { label: label.to_string() });
+    if focus {
+        if let Some(wv) = app.get_webview(label) {
+            let _ = wv.set_focus();
         }
     }
 }
 
-/// The build geometry of a detached window: the position it was last closed at comes
-/// first (cascaded by how many detached windows there already are, so a new one does
-/// not completely cover an old one), otherwise it is centred at nearly full height in
-/// the visible area (work_area, with the menu bar, Dock and taskbar already removed)
-/// of the main window's screen. None when the main window or the monitors cannot be
-/// read, and the caller falls back to builder.center().
+/// Show a tab (a click on the tab strip).
+#[tauri::command]
+pub fn browser_activate(app: AppHandle, state: State<'_, AppState>, label: String) -> Result<(), String> {
+    let label = state.browser.0.lock().unwrap().target(Some(&label)).ok_or("no such tab")?;
+    activate(&app, &label, true);
+    Ok(())
+}
+
+/// Close a tab (the active one when no label is given). The succession: the next
+/// tab to the right by open order, else the nearest to the left; closing the last
+/// tab of the detached shape closes the detached window, and the keyboard focus
+/// returns to the main window.
+#[tauri::command]
+pub fn browser_close_tab(app: AppHandle, state: State<'_, AppState>, label: Option<String>) -> Result<(), String> {
+    let label = state.browser.0.lock().unwrap().target(label.as_deref()).ok_or("no browser tab is open")?;
+    close_tab(&app, &label);
+    Ok(())
+}
+
+/// The menu bar's ⌘W when the keyboard focus is inside a page.
+pub fn close_active_tab(app: &AppHandle) {
+    let active = app.try_state::<AppState>().and_then(|s| s.browser.0.lock().unwrap().target(None));
+    if let Some(label) = active {
+        close_tab(app, &label);
+    }
+}
+
+fn close_tab(app: &AppHandle, label: &str) {
+    let Some(s) = app.try_state::<AppState>() else { return };
+    let (next, last, detached) = {
+        let mut inner = s.browser.0.lock().unwrap();
+        let Some(closed) = inner.tabs.remove(label) else { return };
+        inner.views.remove(label);
+        let was_active = inner.active.as_deref() == Some(label);
+        let next = if was_active {
+            let right = inner.tabs.iter().filter(|(_, e)| e.id > closed.id).min_by_key(|(_, e)| e.id);
+            let left = inner.tabs.iter().filter(|(_, e)| e.id < closed.id).max_by_key(|(_, e)| e.id);
+            right.or(left).map(|(l, _)| l.clone())
+        } else {
+            None
+        };
+        if was_active {
+            inner.active = next.clone();
+        }
+        (next, inner.tabs.is_empty(), inner.shape == Shape::Detached)
+    };
+    if let Some(wv) = app.get_webview(label) {
+        let _ = wv.close();
+    }
+    emit(app, &BrowserEvent::Closed { label: label.to_string() });
+    if last {
+        if detached {
+            if let Some(win) = app.get_window(DETACHED_LABEL) {
+                record_detached_geom(app, &win);
+                let _ = win.close();
+            }
+        }
+        // Focus etiquette: the keyboard returns to the main window's own webview once the last tab closes
+        if let Some(main) = app.get_webview("main") {
+            let _ = main.window().set_focus();
+            let _ = main.set_focus();
+        }
+    } else if let Some(next) = next {
+        activate(app, &next, true);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// shape: docked ⇄ detached
+// ---------------------------------------------------------------------------
+
+/// The shape switch: detaching moves every tab into the standalone window
+/// (`reparent`, no reload — the page, its scroll position and its history come
+/// along), docking moves them back under the main window's panel. Every toggle is
+/// persisted ("remember the last choice"), and the next tab opens in that shape.
+#[tauri::command]
+pub fn browser_set_docked(app: AppHandle, docked: bool) -> Result<(), String> {
+    let app2 = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(e) = set_shape(&app2, if docked { Shape::Docked } else { Shape::Detached }) {
+            eprintln!("browser shape switch failed: {e}");
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    let _ = crate::settings::update(&app, |s| {
+        let changed = s.browser_docked != docked;
+        s.browser_docked = docked;
+        changed
+    });
+    Ok(())
+}
+
+/// Main thread: apply the shape.
+fn set_shape(app: &AppHandle, shape: Shape) -> Result<(), String> {
+    let Some(s) = app.try_state::<AppState>() else { return Ok(()) };
+    let (current, labels) = {
+        let inner = s.browser.0.lock().unwrap();
+        (inner.shape, inner.tabs.keys().cloned().collect::<Vec<_>>())
+    };
+    if current == shape {
+        return Ok(());
+    }
+    match shape {
+        Shape::Docked => {
+            let main = main_window(app).ok_or_else(|| "the main window is gone".to_string())?;
+            for label in &labels {
+                if let Some(wv) = app.get_webview(label) {
+                    let _ = wv.reparent(&main);
+                }
+            }
+            s.browser.0.lock().unwrap().shape = Shape::Docked;
+            // Once the tabs are the main window's again, the detached window's close
+            // hook finds none of its own and just lets it go
+            if let Some(win) = app.get_window(DETACHED_LABEL) {
+                record_detached_geom(app, &win);
+                let _ = win.close();
+            }
+            apply_layout(app);
+            let _ = main.set_focus();
+        }
+        Shape::Detached => {
+            if !labels.is_empty() {
+                let win = ensure_detached_window(app)?;
+                for label in &labels {
+                    if let Some(wv) = app.get_webview(label) {
+                        let _ = wv.reparent(&win);
+                    }
+                }
+                raise_bar(app);
+                let title = {
+                    let mut inner = s.browser.0.lock().unwrap();
+                    inner.shape = Shape::Detached;
+                    inner.active.as_ref().and_then(|l| inner.tabs.get(l)).map(|e| e.title.clone()).unwrap_or_default()
+                };
+                if !title.trim().is_empty() {
+                    let _ = win.set_title(&title);
+                }
+                apply_layout(app);
+                let _ = win.show();
+                let _ = win.set_focus();
+            } else {
+                s.browser.0.lock().unwrap().shape = Shape::Detached;
+            }
+        }
+    }
+    emit(app, &BrowserEvent::ShapeChanged { shape });
+    Ok(())
+}
+
+/// Put the chrome bar above the tabs: a reparented view lands on top of its
+/// siblings, so after tabs move into the detached window the bar is re-added to
+/// stay in front (it overlaps the page while its picker is expanded).
+fn raise_bar(app: &AppHandle) {
+    if let (Some(bar), Some(win)) = (app.get_webview(BAR_LABEL), app.get_window(DETACHED_LABEL)) {
+        let _ = bar.reparent(&win);
+    }
+}
+
+/// The detached window, built on demand (hidden; the caller shows it once the tabs
+/// are placed): a plain window with no webview of its own, the chrome bar as its
+/// first child. Its geometry restores the last one (settings.browser_window) or is
+/// centred at nearly full height on the main window's screen.
+fn ensure_detached_window(app: &AppHandle) -> Result<tauri::Window, String> {
+    if let Some(w) = app.get_window(DETACHED_LABEL) {
+        return Ok(w);
+    }
+    let remembered = app
+        .try_state::<AppState>()
+        .and_then(|s| s.browser.0.lock().unwrap().detached_geom)
+        .or_else(|| crate::settings::load(app).browser_window);
+    let geom = independent_geom(app, remembered);
+    // The mut is only reassigned inside the cfg(macos) block
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut builder = tauri::window::WindowBuilder::new(app, DETACHED_LABEL)
+        .title(crate::i18n::t(crate::i18n::current(), "window.browserTitle"))
+        .min_inner_size(480.0, 360.0)
+        .visible(false);
+    builder = match geom {
+        Some(g) => builder.position(g.x, g.y).inner_size(g.w, g.h),
+        None => builder.inner_size(1080.0, 760.0).center(),
+    };
+    #[cfg(target_os = "macos")]
+    {
+        // The traffic lights float over the chrome bar's left end, and the bar's tab
+        // strip is the drag region (the page below is a WKWebView that would swallow a drag)
+        builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+    }
+    let win = builder.build().map_err(|e| e.to_string())?;
+    let width = logical_inner(&win).map(|s| s.width).unwrap_or(1080.0);
+    win.add_child(
+        WebviewBuilder::new(BAR_LABEL, WebviewUrl::App("index.html".into())).focused(false),
+        LogicalPosition::new(0.0, 0.0),
+        LogicalSize::new(width, BAR_H),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let handle = app.clone();
+    win.on_window_event(move |event| match event {
+        WindowEvent::Resized(_) => {
+            apply_layout(&handle);
+            if let Some(w) = handle.get_window(DETACHED_LABEL) {
+                record_detached_geom(&handle, &w);
+            }
+        }
+        WindowEvent::Moved(_) => {
+            if let Some(w) = handle.get_window(DETACHED_LABEL) {
+                record_detached_geom(&handle, &w);
+            }
+        }
+        WindowEvent::CloseRequested { .. } => {
+            // The red light or ⌘W on the last tab: every tab still living in this
+            // window goes with it (after a dock the tabs are the main window's again
+            // and nothing is touched)
+            let mine: Vec<String> = handle
+                .try_state::<AppState>()
+                .map(|s| s.browser.0.lock().unwrap().tabs.keys().cloned().collect::<Vec<String>>())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|l| handle.get_webview(l).is_some_and(|w| w.window().label() == DETACHED_LABEL))
+                .collect();
+            for label in mine {
+                if let Some(s) = handle.try_state::<AppState>() {
+                    let mut inner = s.browser.0.lock().unwrap();
+                    inner.tabs.remove(&label);
+                    inner.views.remove(&label);
+                    if inner.active.as_deref() == Some(label.as_str()) {
+                        inner.active = None;
+                    }
+                }
+                emit(&handle, &BrowserEvent::Closed { label });
+            }
+        }
+        WindowEvent::Destroyed => {
+            if let Some(s) = handle.try_state::<AppState>() {
+                let mut inner = s.browser.0.lock().unwrap();
+                inner.bar_expanded = false;
+                if let Some(g) = inner.detached_geom {
+                    drop(inner);
+                    // update: exclusive with browser_set_docked's write (a bare load→save would overwrite the other's fields)
+                    let _ = crate::settings::update(&handle, |s| {
+                        let changed = s.browser_window != Some(g);
+                        s.browser_window = Some(g);
+                        changed
+                    });
+                }
+            }
+            if let Some(main) = handle.get_webview("main") {
+                let _ = main.window().set_focus();
+            }
+        }
+        _ => {}
+    });
+    Ok(win)
+}
+
+/// Remember the detached window's normal-state geometry (written to disk on Destroyed).
+fn record_detached_geom(app: &AppHandle, win: &tauri::Window) {
+    if let Some(g) = crate::agent_window::read_geom(win) {
+        if let Some(s) = app.try_state::<AppState>() {
+            s.browser.0.lock().unwrap().detached_geom = Some(g);
+        }
+    }
+}
+
+/// The build geometry of the detached window: the position it was last closed at
+/// comes first, otherwise it is centred at nearly full height in the visible area
+/// (work_area, with the menu bar, Dock and taskbar already removed) of the main
+/// window's screen. None when the main window or the monitors cannot be read, and
+/// the caller falls back to builder.center().
 fn independent_geom(
     app: &AppHandle,
     remembered: Option<crate::agent_window::WindowGeom>,
 ) -> Option<crate::agent_window::WindowGeom> {
     use crate::agent_window::WindowGeom;
-    let cascade = app
-        .try_state::<AppState>()
-        .map(|s| s.browser.0.lock().unwrap().windows.len())
-        .unwrap_or(0) as f64;
-    let off = 28.0 * cascade;
     if let Some(g) = remembered {
-        let g = WindowGeom { x: g.x + off, y: g.y + off, ..g };
         // The remembered geometry may belong to an external display that has been
         // unplugged: when the title bar lands on no monitor at all it is discarded in
         // favour of the "centred on the main window's screen" below — a window must
@@ -743,14 +950,14 @@ fn independent_geom(
             return Some(g);
         }
     }
-    let main = app.get_webview_window("main")?;
+    let main = main_window(app)?;
     let monitor = main.current_monitor().ok()??;
     let scale = monitor.scale_factor();
     let wa = monitor.work_area();
     let pos = wa.position.to_logical::<f64>(scale);
     let size = wa.size.to_logical::<f64>(scale);
     let (x, y, w, h) = initial_browser_rect(pos.x, pos.y, size.width, size.height);
-    Some(WindowGeom { x: x + off, y: y + off, w, h })
+    Some(WindowGeom { x, y, w, h })
 }
 
 /// The usability check for a remembered geometry: the window's title bar (a point in
@@ -775,252 +982,68 @@ fn grabbable_on_some_monitor(app: &AppHandle, g: &crate::agent_window::WindowGeo
 /// The default geometry of the first detached window (pure geometry, all logical px):
 /// centred at nearly full height in the visible area. The width of 1080 keeps the
 /// desktop layout breakpoint (narrower and plenty of sites render their mobile
-/// version); the height takes as much as it can — a window for looking things up gains
-/// from vertical space (less scrolling) — capped at 1200 on a very tall screen so it
-/// does not become a thin strip, with a floor on both axes for a very small screen.
+/// version); the height takes as much as it can, capped at 1200 on a very tall
+/// screen, with a floor on both axes for a very small screen.
 fn initial_browser_rect(vx: f64, vy: f64, vw: f64, vh: f64) -> (f64, f64, f64, f64) {
     let w = 1080.0_f64.min(vw - 64.0).max(360.0);
     let h = (vh - 64.0).clamp(420.0, 1200.0);
     (vx + (vw - w) / 2.0, vy + (vh - h) / 2.0, w, h)
 }
 
-/// How wide a docked window has to be at least (logical px); below that it pins to the
-/// screen's right edge instead (partly overlapping the main window).
-const MIN_DOCK_WIDTH: f64 = 360.0;
-/// How much visible width the main window keeps at least when a window pins to the
-/// screen's right edge (the merged split view, logical px): the editor's content area
-/// and the research panel (the clipping entry point) both have to stay usable. On a
-/// small screen the browser window's width gives way to this — otherwise a 1080-wide
-/// browser window by default would cover the main window down to a sliver, with the
-/// clip button out of reach. It is matched to the sum of the frontend .layout flexible
-/// columns' minimum widths plus the activity bar (tree 140 + content 300 + panel 280 +
-/// activity bar 44 = 764, the same as tauri.conf.json's minWidth); changing it here
-/// means changing all three.
-const MIN_MAIN_VISIBLE: f64 = 804.0;
-
-/// Pure geometry (all physical px): the space available to the right of the main
-/// window, the browser window's current width, the main window's width and the
-/// screen's width → (the dock width, whether it pins to the screen's right edge). When
-/// pinned there, how much of the main window it covers is capped so the main window
-/// keeps MIN_MAIN_VISIBLE; on a screen too small to hold both, the browser window
-/// keeps its MIN_DOCK_WIDTH floor.
-fn fit_dock_width(avail: u32, bwidth: u32, mwidth: u32, monitor_w: u32, scale: f64) -> (u32, bool) {
-    let min_dock = (MIN_DOCK_WIDTH * scale).round() as u32;
-    if avail >= min_dock {
-        return (bwidth.min(avail), false);
-    }
-    let min_main = (MIN_MAIN_VISIBLE * scale).round() as u32;
-    let max_width = avail + mwidth.saturating_sub(min_main);
-    (bwidth.min(monitor_w).min(max_width.max(min_dock)), true)
-}
-
-/// The dock geometry: the main window's right edge, the same y, the same height; when
-/// there is not enough room to the right it narrows or pins to the screen's right edge.
-/// The third return value is how many physical pixels of the main window the browser
-/// window covers (0 when they sit side by side, > 0 when the main window is full-screen
-/// or the browser window is pinned to the screen's right edge, and the frontend moves
-/// out of the way by it).
-fn dock_geometry(
-    app: &AppHandle,
-    browser: &tauri::WebviewWindow,
-) -> Option<(tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>, u32)> {
-    let main = app.get_webview_window("main")?;
-    if main.is_minimized().unwrap_or(false) {
+/// macOS: the tab whose native view holds the keyboard focus (the first responder
+/// of the window the tabs live in), or None when the focus is in our own DOM. The
+/// menu bar routes ⌘W and friends by this: inside a page they mean the tab, outside
+/// it they keep their editor meaning.
+#[cfg(target_os = "macos")]
+pub fn focused_tab(app: &AppHandle) -> Option<String> {
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSView, NSWindow};
+    let (shape, views) = {
+        let s = app.try_state::<AppState>()?;
+        let inner = s.browser.0.lock().unwrap();
+        (inner.shape, inner.views.clone())
+    };
+    if views.is_empty() {
         return None;
     }
-    let mpos = main.outer_position().ok()?;
-    let msize = main.outer_size().ok()?;
-    let bsize = browser.outer_size().ok()?;
-    let main_right = mpos.x + msize.width as i32;
-    let mut x = main_right;
-    let mut width = bsize.width;
-    if let Ok(Some(monitor)) = main.current_monitor() {
-        let right = monitor.position().x + monitor.size().width as i32;
-        let avail = (right - x).max(0) as u32;
-        // The threshold conversion uses the scale of "the main window's monitor":
-        // avail/mwidth/monitor_w are all physical px in that monitor's coordinate
-        // space. Under mixed DPI the browser window may still be on the old display
-        // (Windows/Linux have no child-window following), and its own scale_factor
-        // would convert MIN_DOCK/MIN_MAIN by an entirely wrong factor
-        let scale = monitor.scale_factor();
-        let (w, pin_right) =
-            fit_dock_width(avail, bsize.width, msize.width, monitor.size().width, scale);
-        width = w;
-        if pin_right {
-            x = (right - width as i32).max(monitor.position().x);
-        }
-    }
-    let covered = (main_right - x).clamp(0, width as i32) as u32;
-    Some((
-        tauri::PhysicalPosition::new(x, mpos.y),
-        tauri::PhysicalSize::new(width, msize.height),
-        covered,
-    ))
-}
-
-/// Dock a window against the main window's right edge. `resize` decides whether the
-/// size is synced too (dragging the main window only moves it, which avoids the judder
-/// of continuous resizing). On macOS a child window has already moved with its parent,
-/// so the set_position here is usually a same-value no-op and only really takes effect
-/// in the clamping case of pinning to the screen's right edge.
-/// When the covered width (inset) changes a DockLayout is pushed and the frontend moves
-/// out of the way — with the main window full-screen the browser window lies over its
-/// right edge, and once the frontend gives way it becomes a merged split view.
-pub(crate) fn dock_window(app: &AppHandle, label: &str, resize: bool) {
-    let Some(webview) = app.get_webview_window(label) else { return };
-    let Some((pos, size, covered)) = dock_geometry(app, &webview) else { return };
-    if resize {
-        let _ = webview.set_size(size);
-    }
-    let _ = webview.set_position(pos);
-    let inset = covered as f64 / webview.scale_factor().unwrap_or(1.0);
-    let mut changed = false;
-    update_entry(app, label, |e| {
-        if (e.inset - inset).abs() > 0.5 {
-            e.inset = inset;
-            changed = true;
-        }
-    });
-    if changed {
-        emit(app, &BrowserEvent::DockLayout { label: label.to_string(), inset });
-    }
-    // The dock geometry moved, so the toolbar follows the bottom edge (on macOS a child window follows a move but not a resize)
-    super::clipbar::position_clipbar(app, label);
-}
-
-/// Bring every docked browser window along when the main window moves or resizes (called from lib.rs's main-window event hook).
-pub fn redock_all(app: &AppHandle, resize: bool) {
-    let labels: Vec<String> = {
-        let Some(s) = app.try_state::<AppState>() else { return };
-        let inner = s.browser.0.lock().unwrap();
-        inner.windows.iter().filter(|(_, e)| e.docked).map(|(l, _)| l.clone()).collect()
+    let win = match shape {
+        Shape::Docked => main_window(app)?,
+        Shape::Detached => app.get_window(DETACHED_LABEL)?,
     };
-    for label in labels {
-        dock_window(app, &label, resize);
-    }
-}
-
-/// The dock switch: "detach" = take the child window off and restore the title bar, so
-/// the window moves freely; docking again = remove the title bar, attach it as a child
-/// window again and reposition it immediately.
-#[tauri::command]
-pub fn browser_set_docked(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    label: Option<String>,
-    docked: bool,
-) -> Result<(), String> {
-    let label = state
-        .browser
-        .0
-        .lock()
-        .unwrap()
-        .target(label.as_deref())
-        .ok_or("no browser window is open")?;
-    update_entry(&app, &label, |e| e.docked = docked);
-    // The decoration switch and the child-window attachment run in order on the main
-    // thread, so a styleMask change cannot interleave with an attach or detach
-    let app2 = app.clone();
-    let label2 = label.clone();
-    app.run_on_main_thread(move || {
-        apply_dock_state(&app2, &label2, docked);
-        if !docked {
-            // Snapshot the geometry at the moment of detaching (the decoration switch
-            // has taken effect): a user who detaches and closes the window without
-            // moving it still has a position stored; Moved/Resized keep refreshing it
-            // afterwards
-            if let Some(w) = app2.get_webview_window(&label2) {
-                if let Some(g) = crate::agent_window::read_geom(&w) {
-                    update_entry(&app2, &label2, |e| e.geom = Some(g));
-                }
-            }
+    let ptr = win.ns_window().ok()?;
+    let ns: &NSWindow = unsafe { &*ptr.cast() };
+    let responder = ns.firstResponder()?;
+    let mut view: Option<Retained<NSView>> = responder.downcast::<NSView>().ok();
+    while let Some(v) = view {
+        let p = Retained::as_ptr(&v) as usize;
+        if let Some((label, _)) = views.iter().find(|(_, vp)| **vp == p) {
+            return Some(label.clone());
         }
-    })
-    .map_err(|e| e.to_string())?;
-    // "Remember the last choice": every toggle is persisted and the next window is built
-    // from it (update: exclusive with the window hook's geometry write, see
-    // settings::update)
-    let _ = crate::settings::update(&app, |s| {
-        let changed = s.browser_docked != docked;
-        s.browser_docked = docked;
-        changed
-    });
-    emit(&app, &BrowserEvent::DockChanged { label, docked });
-    Ok(())
+        view = unsafe { v.superview() };
+    }
+    None
 }
 
-/// Main thread: apply the dock state to the window itself. The macOS movability and
-/// traffic-light switching live in set_native_child; off macOS there is no
-/// child-window mechanism, so it falls back to the decoration switch.
-fn apply_dock_state(app: &AppHandle, label: &str, docked: bool) {
-    apply_dock_chrome(app, label, docked);
-    if docked {
-        set_native_child(app, label, true);
-        dock_window(app, label, true);
-    } else {
-        set_native_child(app, label, false);
-    }
-}
-
-/// Main thread: switch the window decorations for the dock shape (the title bar part
-/// alone, without attaching, detaching or positioning — claim_shell has to orchestrate
-/// those separately in its "position first, then attach" build order).
-fn apply_dock_chrome(app: &AppHandle, label: &str, docked: bool) {
-    #[cfg(not(target_os = "macos"))]
-    if let Some(webview) = app.get_webview_window(label) {
-        let _ = webview.set_decorations(!docked);
-    }
-    // macOS: docked = a transparent full-width title bar (the no-title-bar shape);
-    // detached = an ordinary title bar, a visible drag handle (under Overlay the
-    // WKWebView swallows the drag and the window cannot be moved). The title text's
-    // visibility has to be switched separately: a styleMask change does not affect
-    // titleVisibility
-    #[cfg(target_os = "macos")]
-    if let Some(webview) = app.get_webview_window(label) {
-        let _ = webview.set_title_bar_style(if docked {
-            tauri::TitleBarStyle::Overlay
-        } else {
-            tauri::TitleBarStyle::Visible
-        });
-        if let Ok(ptr) = webview.ns_window() {
-            use objc2_app_kit::{NSWindow, NSWindowTitleVisibility};
-            let ns: &NSWindow = unsafe { &*ptr.cast() };
-            ns.setTitleVisibility(if docked {
-                NSWindowTitleVisibility::Hidden
-            } else {
-                NSWindowTitleVisibility::Visible
-            });
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// registry access and the navigation commands
+// ---------------------------------------------------------------------------
 
 /// Modify one registry entry inside the lock, with the closure's return value passed
-/// through (None when the window is not in the registry) — "modify and read a field
-/// back" needs no second trip through the lock.
-fn update_entry<R>(
-    app: &AppHandle,
-    label: &str,
-    f: impl FnOnce(&mut BrowserEntry) -> R,
-) -> Option<R> {
+/// through (None when the tab is not in the registry).
+fn update_entry<R>(app: &AppHandle, label: &str, f: impl FnOnce(&mut BrowserEntry) -> R) -> Option<R> {
     let s = app.try_state::<AppState>()?;
     let mut inner = s.browser.0.lock().unwrap();
-    inner.windows.get_mut(label).map(f)
+    inner.tabs.get_mut(label).map(f)
 }
 
-/// The target window (an explicit label, or the one focused last); an error when it does not exist.
+/// The target tab (an explicit label, or the active one); an error when it does not exist.
 pub(crate) fn target_webview(
     app: &AppHandle,
     state: &State<'_, AppState>,
     label: Option<String>,
-) -> Result<tauri::WebviewWindow, String> {
-    let label = state
-        .browser
-        .0
-        .lock()
-        .unwrap()
-        .target(label.as_deref())
-        .ok_or("no browser window is open")?;
-    app.get_webview_window(&label).ok_or_else(|| "the browser window is closed".into())
+) -> Result<tauri::Webview, String> {
+    let label = state.browser.0.lock().unwrap().target(label.as_deref()).ok_or("no browser tab is open")?;
+    app.get_webview(&label).ok_or_else(|| "the browser tab is closed".into())
 }
 
 #[tauri::command]
@@ -1037,7 +1060,7 @@ pub fn browser_navigate(
 
 #[tauri::command]
 pub fn browser_back(app: AppHandle, state: State<'_, AppState>, label: Option<String>) -> Result<(), String> {
-    // The webview carries its own history; with none this is a no-op (v0.4 accepts the degradation of not knowing canGoBack)
+    // The webview carries its own history; with none this is a no-op (the degradation of not knowing canGoBack is accepted)
     target_webview(&app, &state, label)?.eval("history.back()").map_err(|e| e.to_string())
 }
 
@@ -1051,37 +1074,38 @@ pub fn browser_reload(app: AppHandle, state: State<'_, AppState>, label: Option<
     target_webview(&app, &state, label)?.reload().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn browser_close(app: AppHandle, state: State<'_, AppState>, label: Option<String>) -> Result<(), String> {
-    // The state cleanup happens through the Destroyed event; this only initiates the close
-    target_webview(&app, &state, label)?.close().map_err(|e| e.to_string())
-}
-
-/// Focus a given browser window (active is updated through the Focused window event).
+/// Hand the keyboard back to a tab (the focus-return contract: after any chrome
+/// interaction, space-bar paging and keyboard scrolling keep working).
 #[tauri::command]
 pub fn browser_focus(app: AppHandle, state: State<'_, AppState>, label: String) -> Result<(), String> {
-    target_webview(&app, &state, Some(label))?.set_focus().map_err(|e| e.to_string())
+    let webview = target_webview(&app, &state, Some(label))?;
+    if state.browser.0.lock().unwrap().shape == Shape::Detached {
+        if let Some(win) = app.get_window(DETACHED_LABEL) {
+            let _ = win.set_focus();
+        }
+    }
+    webview.set_focus().map_err(|e| e.to_string())
 }
 
 /// A backstop full-state fetch for when the frontend starts or reloads (a snapshot outside the event stream).
 #[tauri::command]
 pub fn browser_state(state: State<'_, AppState>) -> BrowserSnapshot {
     let inner = state.browser.0.lock().unwrap();
-    let mut windows: Vec<BrowserWindowView> = inner
-        .windows
+    let mut tabs: Vec<BrowserTabView> = inner
+        .tabs
         .iter()
-        .map(|(label, e)| BrowserWindowView { label: label.clone(), entry: e.clone() })
+        .map(|(label, e)| BrowserTabView { label: label.clone(), entry: e.clone() })
         .collect();
-    // The open order, matching the frontend's event-stream registry (a label's string order goes wrong past window 10)
-    windows.sort_by_key(|w| w.entry.id);
-    BrowserSnapshot { windows, active: inner.active.clone() }
+    // The open order, matching the frontend's event-stream registry (a label's string order goes wrong past tab 10)
+    tabs.sort_by_key(|w| w.entry.id);
+    BrowserSnapshot { tabs, active: inner.active.clone(), shape: inner.shape }
 }
 
 /// The single destination of an http(s) link click: it branches by the setting into the
 /// reading projection, the built-in browser or the system browser. The editor, the AI
 /// panel and the source cards all come through here. `invert=true` (⌘click) gives "the
 /// other way of opening it": Reading/System → Internal, Internal → System — so ⌘click
-/// always produces a real browser window (the projection's escape-hatch semantics).
+/// always produces a real browser tab (the projection's escape-hatch semantics).
 #[tauri::command]
 pub async fn url_open(
     app: AppHandle,
@@ -1100,9 +1124,7 @@ pub async fn url_open(
     }
     match mode {
         // The projection is state in the main window's frontend: this only sends the
-        // signal, and the frontend calls page_read back for the content.
-        // The funnel is still the only entry point — every link click branches inside
-        // this one match.
+        // signal, and the frontend calls page_read back for the content
         LinkOpenMode::Reading => {
             let parsed = normalize_url(&url)?;
             super::reader::emit_reading(
@@ -1161,23 +1183,5 @@ mod tests {
         let (x, _, w, _) = initial_browser_rect(0.0, 0.0, 1024.0, 768.0);
         assert_eq!(w, 960.0);
         assert_eq!(x, 32.0);
-    }
-
-    #[test]
-    fn dock_width_small_screen_keeps_main_usable() {
-        // A 14" laptop screen (1512 logical wide, scale 2): the main window is 1400
-        // logical wide, leaving only 112 logical to the right.
-        // It pins to the right edge, but the main window keeps ≥804 logical visible —
-        // what it covers is w - avail
-        let (w, pin) = fit_dock_width(224, 2160, 2800, 3024, 2.0);
-        assert!(pin);
-        assert!(2800 - (w as i32 - 224) >= 1608, "main window visible {}", 2800 - (w as i32 - 224));
-        assert!(w >= 720, "browser window floor width {w}");
-        // A roomy screen: docked side by side, the width unchanged
-        assert_eq!(fit_dock_width(2400, 2160, 2800, 5120, 2.0), (2160, false));
-        // Side by side but slightly narrow on the right: narrowed to the available space
-        assert_eq!(fit_dock_width(1800, 2160, 2800, 5120, 2.0), (1800, false));
-        // A very small screen (the main window itself is under 640 logical): the browser window keeps the MIN_DOCK_WIDTH floor
-        assert_eq!(fit_dock_width(0, 2160, 1200, 1600, 2.0), (720, true));
     }
 }

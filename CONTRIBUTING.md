@@ -20,7 +20,7 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | LLM transport (Chat Completions / DeepSeek Responses + search) | `crates/vemry-agent/src/{client,responses}.rs` | Rust |
 | Script sandbox / `vemry.*` API / workflows | `crates/vemry-script/src/` | Rust |
 | Clipping (extraction / html→md / frontmatter) | `crates/vemry-clip/src/` | Rust |
-| Browser windows / clip commands / ad blocking | `src-tauri/src/browser/` | Rust |
+| Browser tabs and panel / detached window / clip commands / ad blocking | `src-tauri/src/browser/` + `src/lib/components/BrowserPanel.svelte` | Rust + TS |
 | The detached AI chat window (creation / handoff / close handshake / relay) | `src-tauri/src/agent_window.rs` + `src/AgentWindow.svelte` + `src/lib/host.ts` | Rust + TS |
 | Parsing / indexing / search | `crates/vemry-core/src/` | Rust |
 | IPC commands | `src-tauri/src/commands.rs` + `src/lib/api.ts` | Rust + TS (change both together) |

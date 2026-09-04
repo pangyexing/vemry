@@ -143,7 +143,7 @@ pub fn install_monitor(app: &AppHandle) {
         // losing the flag on a navigation)
         let has_browser = app.try_state::<crate::AppState>().is_some_and(|s| {
             let inner = s.browser.0.lock().unwrap();
-            !inner.windows.is_empty() || inner.pool.is_some()
+            !inner.tabs.is_empty() || inner.pool.is_some()
         });
         if !has_browser {
             return event.as_ptr();
@@ -162,7 +162,7 @@ pub fn install_monitor(app: &AppHandle) {
             } else {
                 "window.__vemryWheelDiscrete=false"
             };
-            for (label, w) in app.webview_windows() {
+            for (label, w) in app.webviews() {
                 if label.starts_with("browser-") {
                     let _ = w.eval(js);
                 }

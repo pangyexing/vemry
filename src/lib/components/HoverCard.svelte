@@ -12,6 +12,7 @@
 </script>
 
 <script lang="ts">
+  import { usableRight } from "$lib/viewport";
   let { card }: { card: HoverCardData | null } = $props();
   let el = $state<HTMLElement | null>(null);
   let pos = $state<{ x: number; y: number } | null>(null);
@@ -24,7 +25,7 @@
       if (!el || card !== c) return;
       const r = el.getBoundingClientRect();
       pos = {
-        x: Math.min(c.x, Math.max(4, window.innerWidth - r.width - 4)),
+        x: Math.min(c.x, Math.max(4, usableRight() - r.width - 4)),
         y: c.y + r.height > window.innerHeight - 4 ? Math.max(4, c.y - r.height - 28) : c.y,
       };
     });

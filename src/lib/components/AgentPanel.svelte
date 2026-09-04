@@ -1,25 +1,19 @@
 <script lang="ts">
-  // The research panel: the AI conversation is the main axis, and the browsing state is
-  // pinned at the top as a "current page card" — the browser controls are the
-  // conversation's context rather than a parallel tab. The conversation body (the timeline
-  // plus the composer) lives in AgentChat: the same implementation the ⌘J window uses, with
-  // all the session state in the agent store.
+  // The research panel: the AI conversation (the session bar plus AgentChat's timeline and
+  // composer — the same implementation the ⌘J window uses, with all the session state in
+  // the agent store). The browser's chrome and clip entry points live in the browser panel
+  // column beside it since the same-window panel; a page joins the conversation as context
+  // through the panel's AI button or the @ picker.
   import { t } from "$lib/i18n/i18n.svelte";
   import { api } from "$lib/api";
   import { agent } from "$lib/stores/agent.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { browser } from "$lib/stores/browser.svelte";
-  import { clips } from "$lib/stores/clips.svelte";
-  import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
-  import { hostDispatch } from "$lib/host";
   import { isAgentWindow } from "$lib/window";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { displayTitle, editableTitle, renameKeydown } from "$lib/views/session";
-  import StarIcon from "$lib/components/StarIcon.svelte";
-  import { domainOf } from "$lib/markdown";
-  import { k } from "$lib/shortcut";
   import AgentChat from "./AgentChat.svelte";
 
   let sessionsOpen = $state(false);
@@ -103,24 +97,6 @@
 
   const run = (p: Promise<unknown>) => void p.catch((e) => toast.push(String(e), "error"));
 
-  // Whether the current page has been clipped (the citation-landed badge)
-  $effect(() => {
-    const url = browser.current?.url;
-    if (url) void clips.lookup([url]);
-  });
-
-  function openClipped(url: string) {
-    const p = clips.pathFor(url);
-    if (p) void hostDispatch({ kind: "open-note", path: p });
-  }
-  /** The clip commands on the page card belong to the main window (the editor and the clip destination are there), and in the chat window they run through the relay. */
-  const cmd = (id: string) => hostDispatch({ kind: "command", id });
-
-  // The context draft lives in the agent store: the reading projection and the @ picker hand theirs over in the same place
-  async function attachContext() {
-    const page = await agent.grabPage();
-    if (page) agent.attachPage(page);
-  }
 </script>
 
 <div class="agent">
@@ -220,71 +196,6 @@
       {/if}
     </div>
   {/snippet}
-
-  {#if browser.current}
-    {@const cur = browser.current}
-    {@const starred = browser.isBookmarked(cur.url)}
-    <div class="pagecard">
-      <div class="pc-title" title={cur.title || cur.url}>{cur.title || cur.url}</div>
-      <div class="pc-meta">
-        <span class="pc-domain">{domainOf(cur.url)}</span>
-        {#if clips.pathFor(cur.url)}
-          <button class="pc-clipped" title={t("agentPanel.openClippedNote")} onclick={() => openClipped(cur.url)}>{t("reader.alreadyClipped")}</button>
-        {/if}
-        {#if browser.adblock?.state === "ready"}
-          <span class="pc-shield" title={t("agentPanel.adblockOn", { n: browser.adblock.rules.toLocaleString() })}>🛡</span>
-        {:else if browser.adblock?.state === "failed"}
-          <span class="pc-shield err" title={t("agentPanel.adblockFailed", { error: browser.adblock.error })}>🛡</span>
-        {/if}
-        <span class="pc-nav">
-          <button title={t("common.back")} aria-label={t("common.back")} onclick={() => run(api.browserBack())}>←</button>
-          <button title={t("common.forward")} aria-label={t("common.forward")} onclick={() => run(api.browserForward())}>→</button>
-          <button title={t("agentPanel.reload")} aria-label={t("agentPanel.reload")} onclick={() => run(api.browserReload())}>⟳</button>
-          <button
-            title={t(cur.docked ? "clipBar.undockHint" : "agentPanel.redock")}
-            onclick={() => run(api.browserSetDocked(!cur.docked, cur.label))}
-          >{t(cur.docked ? "clipBar.undock" : "clipBar.dock")}</button>
-          <button
-            class:starred
-            title={t(starred ? "clipBar.unstar" : "clipBar.star")}
-            aria-label={t(starred ? "clipBar.unstar" : "clipBar.star")}
-            onclick={() => run(api.bookmarkToggle(cur.url, cur.title))}
-          >
-            <StarIcon filled={starred} size={13} />
-          </button>
-          <button title={t("reader.openInSystemBrowser")} onclick={() => run(api.urlOpenSystem(cur.url))}>↗</button>
-          <button class="danger" title={t("agentPanel.closeBrowser")} aria-label={t("agentPanel.closeBrowser")} onclick={() => run(api.browserClose())}>✕</button>
-        </span>
-      </div>
-      <div class="pc-actions">
-        <button
-          class="act target"
-          title={clipTarget.path
-            ? t("agentPanel.selectionToTargetHint", { path: `${clipTarget.path}${clipTarget.heading ? ` › ${clipTarget.heading}` : ""}`, key: k("Alt") })
-            : t("agentPanel.selectionDefaultHint", { key: k("Alt") })}
-          onclick={(e) => void cmd(e.altKey ? "clip-selection-to-note" : "clip-selection")}
-        >{t("reader.selectionToTarget", { name: clipTarget.name ?? t("reader.note") })}</button>
-        <button class="act mini" title={t("reader.pickTargetHint")} onclick={() => void cmd("clip-selection-to-note")}>▾</button>
-        {#if clipTarget.path}
-          <button class="act mini" title={t("reader.clearTargetHint")} onclick={() => clipTarget.clear()}>✕</button>
-        {/if}
-        <button class="act" title={t("agentPanel.clipPageHint", { key: k("Mod+Shift+S") })} onclick={() => void cmd("clip-page")}>{t("clipBar.clipPage")}</button>
-        <button class="act" title={t("agentPanel.clipLinkHint")} onclick={() => void cmd("clip-link")}>{t("clipBar.clipLink")}</button>
-        <button class="act primary" disabled={agent.grabbingPage} title={t("agentPanel.attachContextHint")} onclick={attachContext}>
-          {agent.grabbingPage ? t("atPicker.extracting") : t("reader.addToContext")}
-        </button>
-      </div>
-      {#if browser.windows.length > 1}
-        <div class="pc-windows">
-          {#each browser.windows as w (w.label)}
-            <button class="win" class:active={w.label === cur.label} title={w.url} onclick={() => run(api.browserFocus(w.label))}>
-              {w.title || w.url}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  {/if}
 
   <AgentChat />
 {/if}
@@ -532,125 +443,4 @@
     cursor: help;
   }
   /* ---- the current page card: the browsing state is the conversation's context ---- */
-  .pagecard {
-    border-bottom: 1px solid var(--border);
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    background: var(--bg);
-    flex-shrink: 0;
-  }
-  .pc-title {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pc-meta {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: var(--fs-xs);
-    color: var(--fg-faint);
-    min-width: 0;
-  }
-  .pc-domain {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pc-clipped {
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    padding: 0 5px;
-    font-size: 10px;
-    flex-shrink: 0;
-  }
-  .pc-shield {
-    flex-shrink: 0;
-  }
-  .pc-shield.err {
-    color: var(--danger);
-  }
-  .pc-nav {
-    margin-left: auto;
-    display: flex;
-    gap: 2px;
-    flex-shrink: 0;
-  }
-  .pc-nav button {
-    min-width: 22px;
-    height: 22px;
-    padding: 0 4px;
-    display: grid;
-    place-items: center;
-    border-radius: 5px;
-    color: var(--fg-muted);
-    font-size: var(--fs-xs);
-  }
-  .pc-nav button:hover {
-    background: var(--bg-hover);
-    color: var(--fg);
-  }
-  .pc-nav button.danger:hover {
-    color: var(--danger);
-  }
-  .pc-nav button.starred {
-    color: var(--accent);
-  }
-  .pc-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .act {
-    font-size: var(--fs-xs);
-    padding: 3px 9px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--fg-muted);
-  }
-  .act:hover {
-    background: var(--bg-hover);
-    color: var(--fg);
-  }
-  .act.primary {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  .act.target {
-    max-width: 150px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .act.mini {
-    padding: 3px 5px;
-  }
-  .act.primary:disabled {
-    opacity: 0.6;
-  }
-  .pc-windows {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .win {
-    text-align: left;
-    font-size: var(--fs-xs);
-    color: var(--fg-muted);
-    padding: 3px 8px;
-    border-radius: 5px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .win:hover,
-  .win.active {
-    background: var(--bg-hover);
-    color: var(--fg);
-  }
 </style>

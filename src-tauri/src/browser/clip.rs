@@ -10,7 +10,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Duration;
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Manager, State};
 use vemry_clip::{clip_rel_path, compose_clip_note, extract_page, quote_block, ClipMeta, ExtractedPage};
 
 use super::window::target_webview;
@@ -358,7 +358,7 @@ pub(crate) static GRAB_PAGE: std::sync::LazyLock<String> = std::sync::LazyLock::
 });
 
 /// eval_with_callback plus a oneshot bridge back. With a timeout as a backstop: a stalled page must not hold up the command.
-pub(crate) async fn eval_json(webview: &WebviewWindow, js: &str) -> Result<serde_json::Value, String> {
+pub(crate) async fn eval_json(webview: &tauri::Webview, js: &str) -> Result<serde_json::Value, String> {
     let (tx, rx) = tokio::sync::oneshot::channel::<String>();
     let tx = std::sync::Mutex::new(Some(tx));
     webview
@@ -658,7 +658,7 @@ pub struct ClipLinkResult {
 pub fn clip_link(state: State<'_, AppState>, label: Option<String>) -> Result<ClipLinkResult, String> {
     let inner = state.browser.0.lock().unwrap();
     let label = inner.target(label.as_deref()).ok_or("no browser window is open")?;
-    let entry = inner.windows.get(&label).ok_or("the browser window is closed")?;
+    let entry = inner.tabs.get(&label).ok_or("the browser tab is closed")?;
     let meta =
         ClipMeta { url: entry.url.clone(), title: entry.title.clone(), clipped_at: chrono::Local::now() };
     Ok(ClipLinkResult { text: vemry_clip::link_entry(&meta), url: meta.url.clone(), title: meta.display_title() })

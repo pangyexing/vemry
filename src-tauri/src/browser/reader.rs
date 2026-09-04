@@ -179,7 +179,7 @@ fn grab_good(page: &ExtractedPage) -> bool {
 
 /// One grab: outerHTML → extract_page. Returns (the actual URL, document.title, the body).
 async fn grab(webview: &tauri::WebviewWindow) -> Result<(String, String, ExtractedPage), String> {
-    let data = eval_json(webview, &GRAB_PAGE).await?;
+    let data = eval_json(webview.as_ref(), &GRAB_PAGE).await?;
     let html = str_field(&data, "html");
     if html.trim().is_empty() {
         return Err("the page has not finished loading".into());
@@ -235,7 +235,7 @@ pub async fn page_read(
 
     // The old document's marker has to be settled before navigating (an awaited callback), or it might land on the new document instead
     let old_url = if let Some(webview) = app.get_webview_window(READER_LABEL) {
-        let marked = eval_json(&webview, MARK_PROBE).await.ok();
+        let marked = eval_json(webview.as_ref(), MARK_PROBE).await.ok();
         marked.map(|v| str_field(&v, "url")).unwrap_or_default()
     } else {
         "about:blank".to_string()
@@ -286,7 +286,7 @@ pub async fn page_read(
             return Ok(None);
         }
         let webview = app.get_webview_window(READER_LABEL).ok_or("the reading fetch window is closed")?;
-        let Ok(probe) = eval_json(&webview, PROBE).await else {
+        let Ok(probe) = eval_json(webview.as_ref(), PROBE).await else {
             // An eval can fail at the instant a navigation switches over, which is not fatal
             if timed_out {
                 break;

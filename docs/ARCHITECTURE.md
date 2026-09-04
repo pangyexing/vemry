@@ -107,12 +107,14 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   `vemry.prompt` block on a round trip through a pending map (the same oneshot
   pattern as agent_bridge, in its std-channel form; a grant times out after 300 s
   and a prompt after 120 s, both denying).
-- `browser/` (v0.4): `window.rs` creates, navigates and manages the lifecycle of
-  the standalone browser window (`browser://event` pushes state to the control
-  panel); `clip.rs` holds the clip commands (`eval_with_callback` plus a oneshot to
-  fetch the selection or DOM; writing goes through `write_note` + `broadcast`, so
-  indexing, frontend refresh and workflow triggering are all free); `adblock.rs` is
-  the rule compilation pipeline (see "The built-in knowledge browser").
+- `browser/` (v0.4; the same-window panel since v0.9): `window.rs` builds the
+  tabs (child webviews), places them, moves them between the main window and the
+  detached window and manages their lifecycle (`browser://event` pushes state to
+  the chrome); `browserbar.rs` is the detached window's chrome relay; `clip.rs`
+  holds the clip commands (`eval_with_callback` plus a oneshot to fetch the
+  selection or DOM; writing goes through `write_note` + `broadcast`, so indexing,
+  frontend refresh and workflow triggering are all free); `adblock.rs` is the rule
+  compilation pipeline (see "The built-in knowledge browser").
 - `menu.rs` (macOS): the native window menu bar. **A menu item's id is the
   frontend registry's command id**, and a click bridges back through
   `menu://command` to `executeCommand` — the menu never grows a second set of
@@ -333,13 +335,14 @@ a file paste, the clipboard's plain text is inserted manually instead.
 - **The second webview**: the standalone AI chat window (label `agent`,
   `agent_window.rs`) runs our own frontend bundle, and `capabilities/agent.json`
   grants it the same core IPC as the main window, matched exactly on that label.
-  This is a deliberate widening and does not conflict with the browser window's
-  "remote pages get zero IPC" (`browser-*` still matches no capability).
-  Capabilities always match a label exactly, never a wildcard — the one exception
-  is `clipbar-*` in `capabilities/clipbar.json`: the clip bar's label is numbered
-  dynamically alongside the browser window and there is no other way, but that
-  prefix is minted only by Rust (clipbar.rs), while a window holding remote
-  content is always `browser-*` or `reader` and can never match.
+  This is a deliberate widening and does not conflict with the browser tabs'
+  "remote pages get zero IPC" (`browser-*` still matches no capability). The
+  third of our own webviews, the detached browser window's chrome bar
+  (`browserbar`, `capabilities/browserbar.json`), is matched exactly too.
+  Capabilities always match a label exactly, never a wildcard, and they are
+  scoped to **webviews**, not windows — the main window has had child webviews
+  (the browser tabs) since v0.9, and a window-scoped capability would have let
+  every remote page inherit the main webview's IPC.
 - **The script sandbox**: user scripts have no fs, net or process, only the
   `vemry.*` whitelist; writing needs a one-time grant and is fully audited; the
   agent cannot trigger a script and has no run_code tool — programmability does not
@@ -482,7 +485,7 @@ The stamp reaches every consumer as
 | vemry Publish (distant) | vemry-core has no Tauri dependency and can be reused server-side |
 | An AI gateway (distant) | the `ProviderConfig` abstraction |
 | PDF and image Q&A, side-by-side translation (below) | `read_file_bytes` / `file_read_binary`; the `currentPath` context channel is type-agnostic; `FilePreview` is parameterised by path with a replaceable rendering engine; `tool_defs()` is an incrementally extensible registry |
-| The built-in browser (v0.4, below) | Tauri 2 multi-webview; `FilePreview`'s split direction; the attachments and Markdown-link conventions already accept clipped material; a clip lands on disk and is indexed |
+| The built-in browser: detaching a single tab, favicons, a page snapshot as the veil placeholder (below) | Tauri 2 multi-webview is in use (v0.9); `Webview::reparent` works per tab; the veil placeholder is a DOM slot that can take an image |
 | The agent triggering scripts (distant; needs fine-grained permissions first) | every script binding already takes a `Perspective{hide_private}` parameter, with the filtering implemented and tested; script-level skills could grow on top |
 | Block-level backlinks ("which blocks reference this block") | `LinkEdge` already records the source block; the target fragment (`heading` / `block_ref`) survives on `Block.links` and would move into the edge |
 | The agent reading one block or an embed's content (`read_block`, embed expansion) | `Vault::resolve_ref` is the primitive; a tool wraps it behind the read-level privacy gate like every other read |
@@ -747,12 +750,12 @@ palette.
   `.shell` wrapper — which is why the `gridCols` source of truth and
   `.layout.swapped`'s order needed no changes, and why swapping sides is just
   `row-reverse` on `.shell.swapped`, leaving the rail naturally against the outer
-  edge of the window. The `padding-right` that yields to a docked browser window
-  hangs on `.frame` (the vertical wrapper around `.shell` plus the status bar), not
-  on `.layout`: after a side swap the rail is at the right edge and the status
-  bar's right segment is the cursor readout, and a docked window is the full height
-  of the main window — miss either and the native child window covers it. Its width
-  is the common term in three coupled minimum widths, and widening it means
+  edge of the window. The docked browser panel is a column of `.frame` (which is a
+  row: `.frame-main` — the vertical wrapper around `.shell` plus the status bar —
+  then the panel), not of `.layout`: it never swaps sides with the sidebars and it
+  is the full height of the main window, the native tab view laid over it below the
+  panel's chrome. Its width is the common term in three coupled minimum widths, and
+  widening it means
   changing all three: `tauri.conf`'s `minWidth` 764, `window.rs`'s
   `MIN_MAIN_VISIBLE` 804, and the sidebar `startResize` ceiling minus `ABAR_W`.
 - **Editor tabs** (`TabBar.svelte` plus the tab model in `vault.svelte.ts`): the
@@ -792,7 +795,8 @@ palette.
   **native window** hosting the same `AgentPanel` — draggable out of the main
   window and onto another screen, which a DOM overlay physically cannot do since it
   cannot paint a webview. One bundle mounts different root components by
-  `getCurrentWindow().label` (`main.ts`), not by a URL parameter. The two webviews
+  `getCurrentWebview().label` (`main.ts`; the webview's label, since the browser
+  bar's window is not the bar), not by a URL parameter. The two webviews
   are two stores, and **the truth for conversation state is always the session
   jsonl on the Rust side** — both windows are projections. On opening, the main
   window hands the composer state (draft, chips, effort level, dismissedNote) to
@@ -1311,177 +1315,166 @@ The browser is the intake, the vault is the settling tank. It is positioned as a
 **knowledge browser**, not a general-purpose one: reading, retrieval and clipping;
 no extension ecosystem, no sync account.
 
-### Shape: standalone and centred by default, docking demoted to a remembered switch (batch D)
+### Shape: one browser surface with two homes (v0.9)
 
-External pages open in a standalone `browser-N` window (`WebviewWindowBuilder` +
-`WebviewUrl::External`, all stable API). **Zero IPC for remote content is
-guaranteed at the configuration layer**: the capability matches the main webview
-exactly with `"webviews": ["main"]` (a defensive tightening, so a future
-multi-webview main window cannot inherit indiscriminately), and a browser window's
-label matches no capability at all → `window.__TAURI_INTERNALS__` does not exist.
-The navigation guard is belt and braces: `on_navigation` allows only http(s) and
-rejects the app origin (localhost:1420, tauri://); `on_new_window` always denies and
-opens in the same window (popup suppression).
+Every page is a **tab**: a `browser-N` child webview (`Window::add_child`, Tauri 2's
+`unstable` multi-webview API), built hidden as a child of the main window and moved
+between windows with `Webview::reparent` — no reload; the page, its scroll position
+and its history come along. The surface has two shapes, remembered through
+`settings.browser_docked` (docked by default):
 
-Window creation (batch D inverted v0.5.2's docked-by-default): the first window
-opens centred and nearly full height in the visible area of **the display the main
-window is on** (`initial_browser_rect` is a pure function — 1080 wide to preserve
-desktop layout breakpoints, height filling the visible area capped at 1200;
-computed explicitly from `current_monitor().work_area()` rather than `.center()`,
-whose choice of display is not controllable and would open the window on a
-different screen when the main window is on an external monitor). A standalone
-window's geometry is kept in memory on Moved/Resized and written to
-`settings.browser_window` on Destroyed, so the next one opens in place (the same as
-the chat window; multiple windows cascade by count so they do not stack exactly).
-"Dock" is demoted to a switch: `browser_set_docked` writes
-`settings.browser_docked` on every toggle (remembering the last choice), and the
-docking machinery (dock_geometry clamping, DockLayout yielding, the reattach
-backstop) is preserved as-is and used only by docked windows. ⌘L opening a
-standalone window **no longer auto-expands the research panel** (its clip entry
-points are on the window's own toolbar, so the main window's layout is not changed
-out from under you; a docked window keeps the auto-expand, because its control
-panel is in the main window).
+- **Docked**: the tabs are children of the main window, laid over the **browser
+  panel column** at its right edge (`src/lib/components/BrowserPanel.svelte`, the
+  outermost column of `.frame`, the window's full height). The chrome — the tab
+  strip, the address row, the clip and AI entry points — is the main window's own
+  DOM, and the native tab view is placed under it. Only the active tab is shown
+  (`show`/`hide`); the others stay alive hidden, as does the whole set while the
+  panel is collapsed.
+- **Detached**: the tabs move into a standalone window `browserwin` — a plain
+  `WindowBuilder` window with no webview of its own — whose first child is
+  `browserbar`, our bundle mounting the same `BrowserPanel` in bar mode as a 72 px
+  chrome across the top (`capabilities/browserbar.json`, matched exactly on that
+  label). The tab strip is the window's drag region; on macOS the title bar is
+  Overlay with the traffic lights floating over the bar's left end (a page is a
+  WKWebView that swallows a drag, so the chrome has to be the handle). The window's
+  title follows the active tab. Closing the window (the red light, ⌘W on the last
+  tab) closes every tab still living in it and returns the focus to the main window;
+  the shape stays remembered, so the next page opens detached again.
 
-Browser controls merged into the right sidebar's **research panel** (v0.5; the
-former "Browse" tab was removed): when a browser window is active, a "current page"
-card is pinned above the conversation (title, domain, back/forward, three clip
-buttons, add-to-context, the dock switch, a ☆ bookmark, adblock status), kept in
-sync through `browser://event` with the Rust-side `BrowserState` (a label →
-url/title/docked registry). The research panel's input is dual-mode — a URL shape
-navigates on ↵, anything else goes to the AI (⌥↵ forces it to be a question) — and
-⌘L in the palette also opens a URL. More windows means more tabs; **within** a
-window, back and forward are left entirely to the webview's own history and never
-mix with the document navStack (on macOS the browser window enables
-`allowsBackForwardNavigationGestures`, so a two-finger swipe goes back and forward —
-with zero IPC there is no way to inject a back button, and the native gesture is the
-only navigation the window owns).
+**Zero IPC for remote content is guaranteed at the configuration layer**: the
+capabilities match exactly on `main`, `agent` and `browserbar`, and a tab's label
+matches none → `window.__TAURI_INTERNALS__` does not exist. The navigation guard is
+belt and braces: `on_navigation` allows only http(s) and rejects the app origin
+(localhost:1420, tauri://); `on_new_window` always denies and opens in the same tab
+(popup suppression). A **warm-up shell** — a hidden about:blank child webview of the
+main window built 3 s after startup and refilled after each claim — has its
+WKWebView, its subprocess and its ad-blocking rules in place before a page is asked
+for, so opening one is left with navigating, placing and showing (`claim_tab`; in
+the detached shape it is reparented first).
+
+**Geometry — who computes the bounds.** Docked: the frontend reports the panel's
+anchors (`browser_panel_layout`: on screen or collapsed, the column's width, the
+chrome's height) only when they change; on a window resize Rust re-places the tab
+from the anchors with no round trip (`apply_layout`, the main window's Resized
+hook), so a live resize does not lag. The width is the user's (a sash on the notes
+side of the boundary; 360 ≤ width ≤ innerWidth − 804, the same floor as the
+layout's three minimum columns plus the activity bar). Detached: the bar is (0, 0,
+w, 72) and the page (0, 72, w, h − 72), re-placed on that window's Resized; the
+window geometry restores `settings.browser_window` or is centred at nearly full
+height on the main window's screen (`initial_browser_rect`; a remembered position
+that lands on no monitor is discarded, so it never opens off-screen).
+
+**A native view covers the DOM** — the one cost of same-window embedding, handled
+by three rules with one collection point each:
+
+1. *Full-window overlays veil the tab.* App derives `overlayOpen` from the
+   palette, the settings and permission dialogs, a script grant or prompt, the image
+   lightbox and a panel-sash drag, and sends `browser_panel_veil`; Rust hides the
+   active tab, the panel paints a placeholder (title and domain) that dims with the
+   backdrop, and the tab is shown again once the overlay closes.
+2. *Popups stay left of the panel.* `usableRight()` (`src/lib/viewport.ts`)
+   replaces `window.innerWidth` in every popup clamp (popmenu, ContextMenu,
+   HoverCard) and in the toast stack's inset; the chrome's own menus (the clip ▾,
+   ⋯, a tab's context menu) are **native** popup menus (`@tauri-apps/api/menu`),
+   which float above every view.
+3. *A DOM drag ends at the panel's edge.* The pointer is lost to the native view the
+   moment it crosses into the page, so the panel sash veils the tab for the whole
+   drag (the width is live in the DOM, the final value reaches Rust when the drag
+   ends), and any other drag simply stops at the boundary.
+
+**Keyboard and focus.** A page holding the first responder swallows every key before
+the main window's keydown chain sees it, so the browser's keys are menu-bar
+accelerators (class 1 in menu.rs): ⌘L open URL, ⌘T new tab, ⌘R reload, and ⌘W. They
+are routed by where the keyboard focus is: `focused_tab` walks the first responder's
+superview chain against the native view pointers recorded at build
+(`BrowserInner.views`) — inside a page ⌘W closes the tab, elsewhere it keeps its
+editor meaning; with the detached window focused, ⌘L and ⌘T go to the bar
+(`browserbar://command`). The focus-return contract stays: after any chrome
+interaction `browser_focus` hands the keyboard back to the page, so space-bar paging
+and keyboard scrolling never break. Switching is `browser_activate`; closing follows
+the open order (the next tab to the right, else the nearest to the left).
+
+`get_webview_window("main")` is None as soon as the main window has a child webview
+(a WebviewWindow is a window whose only webview carries its own label), so the main
+window is reached through `browser::window::main_window` (`get_webview("main")` →
+`.window()`) everywhere, and `webview_windows()` never lists it; with the warm-up
+shell that is true for the whole session.
 
 **App-level history and bookmarks** (v0.8): `browser_history.json` and
 `bookmarks.json` under `app_config_dir` (the same "shared across vaults, never
 inside a vault" decision as settings, with an RwLock in-process cache), deliberately
 not stuffed into `Settings` — `settings::load` is cloned per request on the
 navigation and image-proxy hot paths, and a large list in there would be copied over
-and over. History has exactly one writer, the window-creation hooks:
-`on_navigation` records the visit and `on_document_title_changed` fills in the title
-by label → registry url (url and title arrive on separate beats). The same URL
-**merges and moves to the top globally** (visits accumulate, capped at 500), so
-"the last page" is simply the first row and the ⌘L list needs no second
-deduplication — at the cost of exact ordering, which is fine because this is "places
-you have been", not a forensic log. The hidden reader window has none of these
-hooks, so the reading projection stays out of history by construction. Bookmark
-changes (`bookmark_toggle`, `bookmark_remove`) broadcast a full `BookmarksChanged`
-snapshot through `browser://event`, keeping the ★ mirrors in the main window's page
-card and the clip toolbar in sync (single writer in Rust, the same "ride along on
-something that is not window state" pattern as `AdblockStatus`). The UI converges on
-⌘L: an empty query offers "return to the browser window / reopen the last page" plus
-bookmarks and recents; with a query it fuzzy-filters bookmarks and history across
-both title and url (the direct row preserves the "what I type is a URL" model), and a
-bookmark row can be removed inline. **Direct invocation** (the menu's Research →
-Open browser, ⌘P, and an empty ⌘L Enter) all share one Rust implementation,
-`browser_open_last`: focus an existing window, or reopen the most recent page from
-history if there is none — neither of which the frontend has to prompt for.
+and over. History has exactly one writer, the tab's build hooks: `on_navigation`
+records the visit and `on_document_title_changed` fills in the title by label →
+registry url (url and title arrive on separate beats; the title hook is also the SPA
+backstop, reading the real URL back when a pushState changed the page without a
+navigation). The same URL **merges and moves to the top globally** (visits
+accumulate, capped at 500), so "the last page" is simply the first row and the ⌘L
+list needs no second deduplication — at the cost of exact ordering, which is fine
+because this is "places you have been", not a forensic log. The hidden reader window
+has none of these hooks, so the reading projection stays out of history by
+construction. Bookmark changes (`bookmark_toggle`, `bookmark_remove`) broadcast a
+full `BookmarksChanged` snapshot through `browser://event`, keeping the ★ mirrors of
+the panel chrome and the detached bar in sync (single writer in Rust, the same "ride
+along on something that is not tab state" pattern as `AdblockStatus`). The UI
+converges on ⌘L: an empty query offers "back to the browser / reopen the last page"
+plus bookmarks and recents; with a query it fuzzy-filters bookmarks and history
+across both title and url (the direct row preserves the "what I type is a URL"
+model), and a bookmark row can be removed inline. **Direct invocation** (the menu's
+Research → Open browser, ⌘P, and an empty ⌘L Enter) all share one Rust
+implementation, `browser_open_last`: bring the active tab out, or reopen the most
+recent page from history if there is none — neither of which the frontend has to
+prompt for.
 
-Window relationships (v0.5.2's "pseudo-merged docking", successor to v0.5's magnetic
-docking; since batch D docking is an **optional** shape and standalone is the
-default): a docked browser window has **no title bar** (on macOS,
-`TitleBarStyle::Overlay` plus hiddenTitle, with the traffic lights floating over the
-top-left of the page and only the red close button kept — a visible exit for a new
-user at all times, and ⌘W also works; `setMovable(false)` prevents dragging it away
-by the invisible title bar. Other platforms use `decorations(false)`). On macOS it is
-attached as a **native child window** of the main window through
-`NSWindow addChildWindow:` — dragging, stacking order and minimising are grouped by
-AppKit (with none of the lag of replaying events), it does not appear separately in
-the Window menu, and it reads visually as a panel the main window extended.
-Navigation, detach and close UI all live in the main window's page card, because the
-browser window has zero IPC and cannot grow a button of its own. The main window's
-`Moved`/`Resized` → `redock_all` is still there: on a move it is usually a
-same-value no-op, and its real job is syncing height and clamping to the screen edge
-on a resize. Minimising on macOS breaks the child relationship, and
-`reattach_docked` idempotently reattaches when the main window regains focus. When
-the main window is **full-screen or flush against the right edge of the screen**
-there is no room beside it and the browser window can only overlap the main window's
-right edge (a native child window always covers DOM) — `dock_geometry` computes the
-covered width (an inset, in logical px) and pushes a `DockLayout` event when it
-changes; the App layout yields with a matching `padding-right`, so it reads as
-"notes on the left, web on the right", with the research panel always visible.
-"Detach" means removing the child relationship and switching back to a **regular
-title bar** (batch D: a visible drag handle plus the page title,
-`set_title_bar_style(Visible)` + `setTitleVisibility` — in the Overlay shape the page
-runs up to the top of the window and WKWebView eats the drag, so the window simply
-cannot be moved, and a standalone window must have a real title bar), free to be
-placed anywhere; "dock" reverses it (a docked window cannot be dragged away, which is
-why the old `expected_pos` drag detection was deleted). The window title follows the
-page title so it can be told apart in Mission Control; a new window is hidden first,
-positioned, attached as a child, and only then shown (no jump). Focus etiquette:
-opening from a citation passes `focus=false` so keyboard focus is not stolen, and
-closing the last browser window returns focus to the main window. Same-window
-splitting (web on one side, notes on the other) still waits on Tauri's multi-webview
-support stabilising; when it lands, the page card and the reading projection can move
-across wholesale.
+### The chrome: tab strip, address row, clip and AI entry points
 
-### The clip toolbar (batch D, implemented)
+One component for both shapes (`BrowserPanel.svelte`; `mode="docked"` in the panel
+column, `mode="bar"` as the root of the `browserbar` webview). The tab strip: a tab
+per `browser-N` (title, else domain; × closes, middle click too, a native context
+menu), `+` for a new tab, then detach (docked) or dock back (bar), and hide the
+panel (docked; the tabs stay alive collapsed, and `show-browser` toggles it). The
+address row: ← → ↻ (history.back/forward sent blind — canGoBack is unknowable), the
+address (domain plus title; a click edits it inline: ↵ navigates the active tab,
+⌘↵ or an address opened by `+` opens a new one; in the main window ⌘L opens the
+palette's URL mode with its recents and bookmarks, and `+`/⌘T open it with a new-tab
+intent), ★, **AI**, the **clip** split button and ⋯ (the ad-blocking status, open in
+the system browser, clear history, hide the panel).
 
-Clipping entry points moved into the browser window itself: a 40 logical-px **clip
-toolbar** sits inside the bottom of each `browser-N` — a separate `clipbar-N` window
-(`src-tauri/src/browser/clipbar.rs` + `src/ClipBar.svelte`, the same "our own bundle,
-authorised by label" as the chat window; its capability is the wildcard exception
-noted under Security boundaries). The browser window has zero IPC, so UI cannot grow
-inside it; the toolbar overlays the bottom rather than the top, because the top has
-the floating traffic lights (an Above-level child window would cover the close
-button) and nearly every site has a sticky header — the top belongs to the page, the
-bottom belongs to vemry (the positional language of a browser status bar). It is a
-transparent window (macos-private-api) whose CSS bottom corners match the window's
-own radius; on macOS it is attached as a native child of the **browser** window (in
-docked mode that makes it a child of a child, with AppKit propagating moves; it
-reattaches idempotently when the browser window is Focused), and elsewhere
-`builder.parent` preserves z-order with the position following the browser window's
-Moved/Resized manually. Its lifecycle follows the browser window entirely (Destroyed
-closes it too) and it does not enter the `BrowserState` registry (the same as the
-reader window — the registry means "pages").
-
-On the bar: a URL input (`browser_navigate` opens the new page in place, URL-only,
-the same semantics as ⌘L); an AI button (the dedicated `summon-agent` action: the
-main window **opens the standalone chat window first** for immediate feedback, then
-extracts the current page through `browser_page_context` by the paired window's
-label and attaches it as a page chip through `agent_window_to_agent`'s `attach-page`
-command — once the window is open the handoff package is out of reach, so everything
-goes down this one path; attachPage replaces a single page, so invoking it again
-just refreshes; an extraction failure is reported into the chat window. It
-deliberately does not go through `focus-agent`, whose panel branch would pull the
-person back to the main window); selection → the pinned target; a ▾ two-stage
-landing picker in simplified form (`clipbar_set_expanded` grows the bar upward,
-anchored at the bottom; the data path shares its source with CommandPalette's
-pick-note — fuzzyFilter plus `query({kind:"heading"})` — and the component is not
-reused because it is tightly coupled to App's pending state); page → clips; link →
-note; a clipped badge; detach/dock; and a flashed receipt. **Every action is relayed
-to the main window for execution** (`clipbar_to_main` → `clipbar://action` → App's
-clip*Flow; delivery must go through the main window's editor buffer, and the landing
-record is kept there too), with the receipt going back through a targeted `emitTo`
-on `clipbar://result` to flash on the bar (it cannot see the main window's toast).
-Only the "already clipped → open the note" relay brings the main window forward.
-**The focus-return contract**: after any interaction, `browser_focus` returns focus
-to the paired browser window — space-bar paging and keyboard scrolling never break,
-and reading is not interrupted. The pinned target (clipTarget) syncs across windows:
-**the main window is the only writer** and broadcasts `clip-target://target`
-globally from its persistence effect, while non-main windows (chat, toolbar) are
-read-only mirrors — so both labels agree in real time. The main window's research
-panel keeps its page card and three clip buttons (two coexisting entry points with
-identical command semantics).
+**AI** follows the shape: docked, the page joins the research panel's conversation
+as context (the panel is brought out); detached, the floating chat window is
+summoned with the page attached (relayed as `summon-agent`: the main window opens
+the window first for immediate feedback, then extracts the page through
+`browser_page_context` and attaches it through `agent_window_to_agent`'s
+`attach-page`). **Clip**: the main button is selection → the pinned target (the label
+shows the destination; `clipTarget` is written by the main window alone and
+mirrored to the bar), and ▾ is a native menu: pick a destination…, page → clips,
+link → note, unpin, open the clipped note. Docked, every action runs in place
+through the registry commands (`clip-selection`, `clip-page`, `clip-link`,
+`clip-selection-to-note`); in the bar **every action is relayed to the main window
+for execution** (`browserbar_to_main` → `browserbar://action` → App's clip*Flow;
+delivery must go through the main window's editor buffer, and the landing record is
+kept there too), with the receipt going back through a targeted `emitTo` on
+`browserbar://result` to flash on the bar (it cannot see the main window's toast).
+The bar's destination picker is the simplified two-stage pick-note (the data
+contract shared with the palette in `$lib/pickNote`); it grows the bar downwards
+over the page (`browserbar_set_expanded`; Rust re-adds the bar above the tabs after
+every reparent, since a reparented view lands on top of its siblings). Only "already
+clipped → open the note" brings the main window forward. The research panel no
+longer carries a page card: the browser's state lives in one place, the panel
+chrome, and the @ picker's "the page in the browser" is the conversation's other
+door.
 
 **Returning to the landing note on close** (closing the loop): during a browsing
-session (from the first browser window opening to the last one closing) the note
-that the most recent clip landed in is recorded in the main window
-(`lastClipLanding`, recorded only in clip*Flow and deliverPicked; the reading
-projection, an agent pin and quick capture do not count). When the last window
-closes, Rust has already returned focus to the main window and the frontend
-navigates with `openNote`, then — if there is a section — scrolls to it with
-`revealPos` using the frontend's `extractOutline` (a UTF-16 measure; `query_blocks`
-spans are byte offsets and cannot be fed to CM directly). The close gesture: the
-menu's Window → Close Window ⌘W is special-cased in Rust (menu.rs) — a focused
-browser window closes, a focused toolbar closes its paired browser window, the chat
-window goes through the existing CloseRequested handshake, and the main window does
-nothing. On non-macOS a standalone window has a native close button, and a docked
-window uses the page card's ✕.
+session (from the first tab opening to the last one closing) the note that the most
+recent clip landed in is recorded in the main window (`lastClipLanding`, recorded
+only in clip*Flow and deliverPicked; the reading projection, an agent pin and quick
+capture do not count). When the last tab closes, Rust has already returned the focus
+to the main window and the frontend navigates with `openNote`, then — if there is a
+section — scrolls to it with `revealPos` using the frontend's `extractOutline` (a
+UTF-16 measure; `query_blocks` spans are byte offsets and cannot be fed to CM
+directly). The close gesture is ⌘W inside the page (see keyboard and focus above);
+off macOS the panel's × and the detached window's native close button.
 
 ### Ad blocking (macOS, native WebKit)
 
@@ -1973,7 +1966,8 @@ Two non-obvious constraints:
   in whatever language was active at first mount.
 
 **Cross-window propagation**: the same bundle runs in three webviews — the main
-window, the standalone chat window and the clip toolbar — each holding its own
+window, the standalone chat window and the detached browser window's chrome bar —
+each holding its own
 language state. `settings_set` broadcasts `settings://language` and each window
 follows with `setLang()`; the native menu is replaced wholesale by calling
 `install()` again on the Rust side (`set_menu` is a full replacement). CodeMirror

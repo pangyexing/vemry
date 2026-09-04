@@ -1,83 +1,97 @@
-// The built-in browser's state (Svelte 5 runes). The source of truth is Rust's
-// BrowserState, and this is the mirror assembled from browser://event pushes plus the
-// browser_state backstop snapshot.
+// The built-in browser's state (Svelte 5 runes). The source of truth for the tabs,
+// the active tab and the shape is Rust's BrowserState, and this is the mirror
+// assembled from browser://event pushes plus the browser_state backstop snapshot.
+// The panel's own presentation state (open or collapsed, its width) belongs to the
+// main window's frontend alone and is kept in localStorage, the same as the sidebars.
 import {
   api,
   type AdblockStatusView,
   type BookmarkView,
   type BrowserEvent,
-  type BrowserWindowView,
+  type BrowserShape,
+  type BrowserTabView,
 } from "$lib/api";
-import { vault } from "$lib/stores/vault.svelte";
+import { isMainWindow } from "$lib/window";
 
-/** Only the docked shape brings the research panel out: the page card (clip, add to
- *  context) sits in the main window's right column, and it only means something beside
- *  a docked window; a detached window (batch D's default) has its clipping entry point
- *  in its own bottom toolbar and does not move the main window's layout — looking
- *  something up must not interrupt the writing in progress.
- *
- *  `label` = which window this is going to land in; when it is not in the registry yet
- *  (a newly opened window's Opened event may not have arrived) or the caller knowingly
- *  passed nothing for a new window, it falls back to settings.browser_docked, the same
- *  source the window was built from. Both callers (⌘P's "open the browser" and ⌘L's
- *  return) share this one verdict, so the fallback rule is not written twice. */
-export async function revealPanelIfDocked(label?: string | null): Promise<void> {
-  const known = label ? browser.windows.find((w) => w.label === label) : undefined;
-  const docked =
-    known?.docked ?? (await api.settingsGet().then((s) => s.browser_docked).catch(() => false));
-  if (!docked) return;
-  vault.rightOpen = true;
-  vault.rightTab = "agent";
+const UI_KEY = "vemry-browser-ui";
+type UiState = { open?: boolean; width?: number };
+function loadUi(): UiState {
+  try {
+    return JSON.parse(localStorage.getItem(UI_KEY) ?? "{}") as UiState;
+  } catch {
+    return {};
+  }
 }
 
+/** The docked panel column's width floor (logical px): narrower and most sites render their mobile layout in a strip. */
+export const PANEL_MIN = 360;
+/** How much of the main window the panel may take at most: the rest keeps the file tree, the content area and the research panel usable (matches Rust's former MIN_MAIN_VISIBLE). */
+export const MAIN_MIN_BESIDE_PANEL = 804;
+const ui = loadUi();
+
 class BrowserStore {
-  windows = $state<BrowserWindowView[]>([]);
+  tabs = $state<BrowserTabView[]>([]);
   active = $state<string | null>(null);
+  shape = $state<BrowserShape>("docked");
   /** The ad-blocking pipeline's state (broadcast at startup; null = nothing received yet). */
   adblock = $state<AdblockStatusView | null>(null);
   /** The bookmarks mirror (the source of truth is bookmarks.json, and a change replaces it wholesale through bookmarks_changed). */
   bookmarks = $state<BookmarkView[]>([]);
 
-  /** The window the control panel shows and acts on: the one focused last, or null when there are no windows left. */
-  get current(): BrowserWindowView | null {
-    return this.windows.find((w) => w.label === this.active) ?? this.windows[0] ?? null;
+  /** The panel column is on screen (docked shape). Collapsing keeps the tabs alive; opening a page brings it back. */
+  panelOpen = $state(ui.open ?? false);
+  panelWidth = $state<number>(Math.max(PANEL_MIN, ui.width ?? 440));
+  /** A full-window overlay is open (the palette, a dialog, the lightbox, a sash drag): the
+   *  native tab is hidden by Rust meanwhile, and the panel paints a placeholder. Written by
+   *  App from its overlay states. */
+  veiled = $state(false);
+  /** The image lightbox is open (an overlay outside any component, so it reports here). */
+  lightboxOpen = $state(false);
+  /** The next URL submitted opens a new tab rather than navigating the active one (set by the tab strip's + and ⌘T, consumed by the palette). */
+  newTabIntent = false;
+
+  /** The tab shown: the chrome shows and acts on it; null when there are no tabs. */
+  get current(): BrowserTabView | null {
+    return this.tabs.find((w) => w.label === this.active) ?? this.tabs[0] ?? null;
   }
 
-  /** How much of the main window's right edge a docked browser window covers (logical
-   *  px). With the main window full-screen or against the screen's right edge, the
-   *  child window can only lie over it, and App's layout gives way with that much
-   *  padding-right. */
-  get overlayInset(): number {
-    return this.windows.reduce((m, w) => (w.docked && w.inset > m ? w.inset : m), 0);
+  /** How much of the main window's right edge the native panel covers (logical px):
+   *  the popups, the toasts and the sash budget keep out of it, since a native view
+   *  covers any DOM underneath. */
+  get panelInset(): number {
+    return isMainWindow && this.panelOpen && this.shape === "docked" ? this.panelWidth : 0;
   }
 
-  /** Patch fields onto the window matching label (an immutable update; a no-op when the label does not match). */
-  private patch(label: string, p: Partial<BrowserWindowView>) {
-    this.windows = this.windows.map((w) => (w.label === label ? { ...w, ...p } : w));
+  /** Whether the main window is wide enough to dock the panel beside a usable layout. */
+  get canDock(): boolean {
+    return window.innerWidth >= MAIN_MIN_BESIDE_PANEL + PANEL_MIN;
+  }
+
+  /** Patch fields onto the tab matching label (an immutable update; a no-op when the label does not match). */
+  private patch(label: string, p: Partial<BrowserTabView>) {
+    this.tabs = this.tabs.map((w) => (w.label === label ? { ...w, ...p } : w));
   }
 
   handle(e: BrowserEvent) {
     if (e.type === "opened") {
-      if (!this.windows.some((w) => w.label === e.label)) {
-        this.windows = [
-          ...this.windows,
-          { label: e.label, url: e.url, title: "", docked: e.docked, inset: 0 },
-        ];
+      if (!this.tabs.some((w) => w.label === e.label)) {
+        this.tabs = [...this.tabs, { label: e.label, url: e.url, title: "" }];
       }
       this.active = e.label;
+      this.panelOpen = true;
     } else if (e.type === "navigated") {
       this.patch(e.label, { url: e.url });
     } else if (e.type === "title_changed") {
       this.patch(e.label, { title: e.title });
-    } else if (e.type === "focused") {
+    } else if (e.type === "activated") {
       this.active = e.label;
-    } else if (e.type === "dock_changed") {
-      this.patch(e.label, { docked: e.docked });
-    } else if (e.type === "dock_layout") {
-      this.patch(e.label, { inset: e.inset });
+      this.panelOpen = true;
     } else if (e.type === "closed") {
-      this.windows = this.windows.filter((w) => w.label !== e.label);
-      if (this.active === e.label) this.active = this.windows[0]?.label ?? null;
+      this.tabs = this.tabs.filter((w) => w.label !== e.label);
+      if (this.active === e.label) this.active = null;
+    } else if (e.type === "shape_changed") {
+      this.shape = e.shape;
+      if (e.shape === "docked" && this.tabs.length > 0) this.panelOpen = true;
     } else if (e.type === "adblock_status") {
       this.adblock = e.status;
     } else if (e.type === "bookmarks_changed") {
@@ -94,8 +108,9 @@ class BrowserStore {
   async refresh() {
     try {
       const [s, bookmarks] = await Promise.all([api.browserState(), api.bookmarkList()]);
-      this.windows = s.windows;
+      this.tabs = s.tabs;
       this.active = s.active;
+      this.shape = s.shape;
       this.bookmarks = bookmarks;
     } catch {
       /* a failure to fetch the browser state blocks no local feature */
@@ -104,3 +119,17 @@ class BrowserStore {
 }
 
 export const browser = new BrowserStore();
+
+// The panel's presentation state is written through to localStorage by the main window (the bar mirrors it and never writes)
+if (isMainWindow) {
+  $effect.root(() => {
+    $effect(() => {
+      const snapshot = JSON.stringify({ open: browser.panelOpen, width: browser.panelWidth });
+      try {
+        localStorage.setItem(UI_KEY, snapshot);
+      } catch {
+        /* storage unavailable */
+      }
+    });
+  });
+}

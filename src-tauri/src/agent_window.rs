@@ -187,7 +187,7 @@ fn build(app: &AppHandle, geom: Option<WindowGeom>) -> Result<(), String> {
         }
         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
             if let Some(w) = handle.get_webview_window(AGENT_LABEL) {
-                if let Some(g) = read_geom(&w) {
+                if let Some(g) = read_geom(&w.as_ref().window()) {
                     handle.state::<AppState>().agent_window.lock().geom = Some(g);
                 }
             }
@@ -220,9 +220,9 @@ fn build(app: &AppHandle, geom: Option<WindowGeom>) -> Result<(), String> {
 
 /// The geometry of a minimised or hidden window cannot be trusted (some platforms
 /// report 0 or a large negative), so only the normal state is recorded.
-/// The geometry memory of a detached browser window (browser/window.rs) reuses this
-/// same guard.
-pub(crate) fn read_geom(w: &tauri::WebviewWindow) -> Option<WindowGeom> {
+/// The geometry memory of the detached browser window (browser/window.rs) reuses
+/// this same guard.
+pub(crate) fn read_geom(w: &tauri::Window) -> Option<WindowGeom> {
     if w.is_minimized().unwrap_or(false) {
         return None;
     }
@@ -325,7 +325,7 @@ pub fn agent_window_set_selection(app: AppHandle, state: State<'_, AppState>, se
 pub fn agent_window_to_main(app: AppHandle, action: serde_json::Value, focus: Option<bool>) -> Result<(), String> {
     app.emit_to("main", EV_ACTION, action).map_err(|e| e.to_string())?;
     if focus.unwrap_or(false) {
-        if let Some(w) = app.get_webview_window("main") {
+        if let Some(w) = crate::browser::window::main_window(&app) {
             let _ = w.set_focus();
         }
     }

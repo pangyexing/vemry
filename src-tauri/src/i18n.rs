@@ -153,7 +153,6 @@ mod tests {
         "cmd.init-memory.title",
         "cmd.init-research-skill.title",
         "window.agentTitle",
-        "window.clipbarTitle",
         "window.browserTitle",
         "window.readerTitle",
         "clip.sourceLabel",

@@ -49,11 +49,17 @@ mod imp {
     /// The help menu's special-case id: not a registry command, it opens the system browser directly.
     const HELP_GITHUB: &str = "menu:help-github";
     const HELP_URL: &str = "https://github.com/pangyexing/vemry";
-    /// The ⌘W special-case id (batch D): it closes the focused browser window, its
-    /// paired toolbar or the chat window, and does nothing on the main window —
-    /// "clip it and ⌘W away" is the closing gesture of the clipping loop, and the
-    /// user should not be forced to aim at the red light.
+    /// The ⌘W special-case id: it closes the browser tab that holds the keyboard
+    /// focus, or the chat window, and closes the current editor tab in the main
+    /// window — "clip it and ⌘W away" is the closing gesture of the clipping loop,
+    /// and the user should not be forced to aim at the red light.
     const CLOSE_WINDOW: &str = "menu:close-window";
+    /// The browser's keyboard entry points are menu accelerators (class 1): a page
+    /// is a native webview that swallows every key while it has the focus, so the
+    /// frontend's keydown chain never sees ⌘L/⌘T/⌘R there. With the detached browser
+    /// window focused the command goes to its chrome bar, otherwise to the main
+    /// window's registry like every other menu item.
+    const BROWSER_BAR_COMMANDS: [&str; 2] = ["open-url", "browser-new-tab"];
 
     /// `key` is a `locales/*.json` key; menu items that mirror a palette command
     /// pass that command's own `cmd.<id>.title` so the two can never disagree.
@@ -133,7 +139,10 @@ mod imp {
             .item(&item(app, lang, "focus-agent", &cmd("focus-agent"))?) // ⌘J is frontend-only (class 2 above), so the menu item sets no accelerator
             .item(&item(app, lang, "clear-agent", &cmd("clear-agent"))?)
             .separator()
-            .item(&item(app, lang, "open-browser", &cmd("open-browser"))?) // no accelerator: ⌘L (frontend-only) already covers the keyboard path
+            .item(&item(app, lang, "open-browser", &cmd("open-browser"))?)
+            .item(&item_key(app, lang, "open-url", &cmd("open-url"), "Cmd+L")?)
+            .item(&item_key(app, lang, "browser-new-tab", &cmd("browser-new-tab"), "Cmd+T")?)
+            .item(&item_key(app, lang, "browser-reload", &cmd("browser-reload"), "Cmd+R")?)
             .separator()
             .item(&item_key(app, lang, "clip-page", &cmd("clip-page"), "Cmd+Shift+S")?)
             .item(&item(app, lang, "clip-link", &cmd("clip-link"))?)
@@ -164,6 +173,8 @@ mod imp {
                 let _ = opener::open(HELP_URL);
             } else if id == CLOSE_WINDOW {
                 close_focused_window(app);
+            } else if BROWSER_BAR_COMMANDS.contains(&id.as_str()) && browser_window_focused(app) {
+                let _ = app.emit_to(crate::browser::window::BAR_LABEL, "browserbar://command", id);
             } else {
                 // The payload convention: a string is a registry command id (a
                 // Predefined item goes through the native selector and never reaches here)
@@ -173,39 +184,38 @@ mod imp {
         Ok(())
     }
 
-    /// ⌘W: dispatched by the focused window — a browser window is closed outright
-    /// (with the toolbar focused it closes the browser window it is paired with, and
-    /// the toolbar follows it through Destroyed); the chat window goes through
-    /// close(), which triggers the existing CloseRequested handshake (the same
-    /// behaviour as its own frontend ⌘W); the main window closes the current editor
+    /// The window holding the keyboard focus (`windows()`, not `webview_windows()`:
+    /// the main window stops being a WebviewWindow once a browser tab is its child).
+    fn focused_window(app: &AppHandle) -> Option<String> {
+        use tauri::Manager;
+        app.windows().into_iter().find(|(_, w)| w.is_focused().unwrap_or(false)).map(|(l, _)| l)
+    }
+
+    fn browser_window_focused(app: &AppHandle) -> bool {
+        focused_window(app).as_deref() == Some(crate::browser::window::DETACHED_LABEL)
+    }
+
+    /// ⌘W: dispatched by where the keyboard focus is — inside a browser tab (the
+    /// detached window, or a docked page holding the first responder) it closes that
+    /// tab; the chat window goes through close(), which triggers the existing
+    /// CloseRequested handshake; the main window otherwise closes the current editor
     /// tab — bridged through menu://command back to the frontend registry's
-    /// close-tab command (the same channel as every other menu item), a no-op in the
-    /// frontend when there is no tab, and the main window itself is never closed by
-    /// ⌘W (the old semantics stand).
+    /// close-tab command, a no-op in the frontend when there is no tab, and the main
+    /// window itself is never closed by ⌘W.
     fn close_focused_window(app: &AppHandle) {
         use tauri::Manager;
-        let Some(label) = app
-            .webview_windows()
-            .into_iter()
-            .find(|(_, w)| w.is_focused().unwrap_or(false))
-            .map(|(l, _)| l)
-        else {
-            return;
-        };
-        let target = if label.starts_with("browser-") || label == "agent" {
-            Some(label)
-        } else if label.starts_with("clipbar-") {
-            // The pairing convention lives in clipbar.rs alone (covered by the labels_pair_up test); no third copy
-            Some(crate::browser::clipbar::browser_label_of(&label))
-        } else {
-            if label == "main" {
-                let _ = app.emit("menu://command", "close-tab");
-            }
-            None
-        };
-        if let Some(t) = target {
-            if let Some(w) = app.get_webview_window(&t) {
+        let Some(label) = focused_window(app) else { return };
+        if label == crate::browser::window::DETACHED_LABEL {
+            crate::browser::window::close_active_tab(app);
+        } else if label == "agent" {
+            if let Some(w) = app.get_webview_window("agent") {
                 let _ = w.close();
+            }
+        } else if label == "main" {
+            if crate::browser::window::focused_tab(app).is_some() {
+                crate::browser::window::close_active_tab(app);
+            } else {
+                let _ = app.emit("menu://command", "close-tab");
             }
         }
     }

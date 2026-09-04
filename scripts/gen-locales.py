@@ -126,7 +126,23 @@ CMD = {
     ),
     "open-browser": (
         ("Open browser", "打开浏览器"),
-        ("Focus the browser window, or reopen the last page", "聚焦浏览窗口,或重开上次浏览的页面"),
+        ("Bring the browser out, or reopen the last page", "唤出浏览器,或重开上次浏览的页面"),
+    ),
+    "browser-new-tab": (
+        ("New browser tab", "新标签页"),
+        ("Open a new tab in the built-in browser", "在内置浏览器里新开一个标签页"),
+    ),
+    "browser-close-tab": (
+        ("Close browser tab", "关闭浏览标签页"),
+        ("Close the browser's current tab", "关闭内置浏览器的当前标签页"),
+    ),
+    "browser-reload": (
+        ("Reload page", "刷新页面"),
+        ("Reload the browser's current tab", "刷新内置浏览器的当前标签页"),
+    ),
+    "browser-toggle-dock": (
+        ("Detach / dock the browser", "分离 / 贴回浏览器"),
+        ("Move the browser between the side panel and its own window", "浏览器在侧栏面板与独立窗口之间切换"),
     ),
     "clear-browser-history": (
         ("Clear browsing history", "清除浏览历史"),
@@ -134,9 +150,9 @@ CMD = {
          "清空内置浏览器的历史记录(收藏不受影响)"),
     ),
     "show-browser": (
-        ("Browser controls", "浏览控制"),
-        ("Now part of the research panel: the current page card and clip actions",
-         "已并入研究面板:当前页面卡 + 剪藏入口"),
+        ("Browser panel", "浏览面板"),
+        ("Show or hide the browser panel at the right edge (tabs stay alive while hidden)",
+         "显示或收起右侧浏览面板(收起时标签页仍保留)"),
     ),
     "bookmark-toggle": (
         ("Bookmark current page", "收藏/取消收藏当前页面"),
@@ -845,9 +861,30 @@ add("reader.", {
               "点击 AI 回答里的引用,或来源卡片,在这里阅读抽取后的正文。"),
 })
 
-# ---------------------------------------------------------------- clip bar (browser window)
+# ---------------------------------------------------------------- browser panel chrome (docked panel and the detached bar)
+add("browserPanel.", {
+    "tabs": ("Browser tabs", "浏览标签页"),
+    "newTab": ("New tab", "新标签页"),
+    "closeTab": ("Close tab", "关闭标签页"),
+    "detach": ("Detach into its own window", "分离成独立窗口"),
+    "dock": ("Dock back into the main window", "贴回主窗"),
+    "tooNarrow": ("The main window is too narrow to dock the browser", "主窗太窄,贴不下浏览面板"),
+    "closePanel": ("Hide the panel (tabs stay alive)", "收起面板(标签页保留)"),
+    "more": ("More", "更多"),
+    "clip": ("Clip", "剪藏"),
+    "clipMenuHint": ("Other clip destinations", "其它剪藏落点"),
+    "pickTarget": ("Pick a destination…", "选落点…"),
+    "emptyTitle": ("Start browsing", "开始浏览"),
+    "emptyHint": ("Type a URL above, or press {key} for recents and bookmarks", "在上方输入网址,或按 {key} 从最近与收藏里挑一个"),
+    "aiDockedHint": ("Add this page to the conversation as context", "把这一页作为上下文加入对话"),
+    "veiled": ("The page is hidden while a dialog is open", "对话框打开时页面暂时隐藏"),
+    "zoomIn": ("Zoom in", "放大"),
+    "zoomOut": ("Zoom out", "缩小"),
+    "zoomReset": ("Actual size", "实际大小"),
+})
+
+# ---------------------------------------------------------------- clip bar strings (reused by the browser panel chrome)
 add("clipBar.", {
-    "label": ("Clip bar", "剪藏工具条"),
     "bookmarked": ("Bookmarked", "已收藏"),
     "unbookmarked": ("Bookmark removed", "已取消收藏"),
     "createAndClip": ("Create and clip into it", "创建并剪入"),
@@ -879,10 +916,7 @@ add("clipBar.", {
                      "当前页链接作为参考条目插入主窗当前笔记"),
     "openClippedHint": ("Open the local clip note {path} (back in the main window)",
                         "打开本地剪藏笔记 {path}(回主窗)"),
-    "undock": ("Detach", "分离"),
-    "undockHint": ("Detach the window and place it freely", "分离窗口,自由摆放"),
-    "dock": ("Dock", "吸附"),
-    "dockHint": ("Dock to the right of the main window", "吸附到主窗右侧"),
+
 })
 
 # ---------------------------------------------------------------- research panel
@@ -917,22 +951,10 @@ add("agentPanel.", {
     "legacyDrawer": ("Old records · {n}", "旧记录 · {n} 条"),
     "turns": ("{n} turns", "{n} 轮"),
     "confirmDelete": ("Confirm delete", "确认删除"),
-    "openClippedNote": ("Open the local clip note", "打开本地剪藏笔记"),
     "adblockOn": ("Ad blocking active · {n} rules", "去广告已生效 · {n} 条规则"),
     "adblockFailed": ("Ad blocking failed: {error}", "去广告失败: {error}"),
     "reload": ("Reload", "刷新"),
-    "redock": ("Dock to the right of the main window again", "重新吸附到主窗右侧"),
-    "closeBrowser": ("Close the browser window", "关闭浏览窗口"),
-    "selectionToTargetHint": ("Clip the browser selection into {path}; {key}-click to change target",
-                              "浏览器选区剪入 {path};{key} 点击换目标"),
-    "selectionDefaultHint": ("Turn the browser selection into a quote block at the cursor in the current "
-                             "note; {key} or ▾ picks a target note",
-                             "浏览器里选中的文字变引用块,插入当前笔记光标处;{key} 或 ▾ 选择目标笔记"),
-    "clipPageHint": ("Extract the article, convert to Markdown, save in clips/ ({key})",
-                     "整页抽正文转 markdown,存 clips/ ({key})"),
-    "clipLinkHint": ("Insert this page as a reference in the current note", "当前页链接作为参考条目插入当前笔记"),
-    "attachContextHint": ("Extract this page and hand it to the AI as reference for your next message",
-                          "抽取当前页正文,作为下一条消息的参考资料递给 AI"),
+
 })
 
 # ---------------------------------------------------------------- agent chat
@@ -1714,7 +1736,6 @@ add("err.", {
 # clip note): the catalog is still the only place the wording lives.
 add("window.", {
     "agentTitle": ("AI chat — vemry", "AI 对话 — vemry"),
-    "clipbarTitle": ("Clip", "剪藏"),
     "browserTitle": ("vemry browser", "vemry 浏览"),
     "readerTitle": ("vemry reading fetch", "vemry 阅读取数"),
 })

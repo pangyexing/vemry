@@ -7,6 +7,8 @@
 // onclickcapture + suppressClick — a click listener here would have that click close
 // the menu instantly, and it only reproduces under a real drag.
 
+import { usableRight } from "$lib/viewport";
+
 /** How far the panel stays from the viewport's edges. */
 const MARGIN = 4;
 
@@ -17,7 +19,7 @@ const MARGIN = 4;
 export function clampToViewport(el: HTMLElement, x: number, y: number): { x: number; y: number } {
   const r = el.getBoundingClientRect();
   return {
-    x: Math.min(x, Math.max(MARGIN, window.innerWidth - r.width - MARGIN)),
+    x: Math.min(x, Math.max(MARGIN, usableRight() - r.width - MARGIN)),
     y: Math.min(y, Math.max(MARGIN, window.innerHeight - r.height - MARGIN)),
   };
 }

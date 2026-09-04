@@ -106,11 +106,10 @@ pub struct Settings {
     /// last closed, so it reopens where it was.
     #[serde(default)]
     pub agent_window: Option<crate::agent_window::WindowGeom>,
-    /// The shape a built-in browser window is built in: false = a detached, centred
-    /// window (the default), true = docked against the main window's right edge.
-    /// browser_set_docked persists every toggle — "remember the last choice", with
-    /// no entry in the settings page.
-    #[serde(default)]
+    /// The browser's shape: true = the panel docked in the main window (the
+    /// default), false = the detached standalone window. browser_set_docked persists
+    /// every toggle — "remember the last choice", with no entry in the settings page.
+    #[serde(default = "default_true")]
     pub browser_docked: bool,
     /// The geometry (in logical pixels) a detached browser window had when it was
     /// last closed, so it reopens where it was (the same as agent_window; with
@@ -196,7 +195,7 @@ impl Default for Settings {
             readable_line_width: true,
             reasoning_effort: default_reasoning_effort(),
             agent_window: None,
-            browser_docked: false,
+            browser_docked: true,
             browser_window: None,
         }
     }
@@ -423,16 +422,16 @@ mod tests {
         assert_eq!(s.reasoning_effort, "none");
     }
 
-    /// Browser docking is a switch batch D turned into one: an old config missing it
-    /// takes the default false (a detached, centred window, batch D's new default
-    /// shape), and a stored true (docked) must be kept.
+    /// The browser's shape is a remembered switch: an old config missing it takes
+    /// the default true (the panel docked in the main window, the same-window
+    /// panel's default), and a stored false (the detached window) must be kept.
     #[test]
-    fn browser_docked_defaults_false_keeps_stored() {
+    fn browser_docked_defaults_true_keeps_stored() {
         let s: Settings = serde_json::from_str("{}").unwrap();
-        assert!(!s.browser_docked);
-        assert!(s.browser_window.is_none());
-        let s: Settings = serde_json::from_str(r#"{"browser_docked":true}"#).unwrap();
         assert!(s.browser_docked);
+        assert!(s.browser_window.is_none());
+        let s: Settings = serde_json::from_str(r#"{"browser_docked":false}"#).unwrap();
+        assert!(!s.browser_docked);
     }
 
     /// Click-opens-links is a switch added later: an old config missing it takes the
