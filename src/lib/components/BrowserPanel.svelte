@@ -447,11 +447,10 @@
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="1.75" /><path d="M12.5 3.5 V16.5" /></svg>
         </button>
       {:else}
+        <!-- Detach only: the panel's show/hide switch lives on the activity bar (a switch inside
+          the panel vanishes with it, and its look-alike on the research panel gets the click) -->
         <button class="ico" title={t("browserPanel.detach")} aria-label={t("browserPanel.detach")} onclick={toggleDock}>
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5 H11.5 M16.5 3.5 V8.5 M16.5 3.5 L9.5 10.5 M8.5 4.5 H4.5 A1 1 0 0 0 3.5 5.5 V15.5 A1 1 0 0 0 4.5 16.5 H14.5 A1 1 0 0 0 15.5 15.5 V11.5" /></svg>
-        </button>
-        <button class="ico" title={t("browserPanel.closePanel")} aria-label={t("browserPanel.closePanel")} onclick={closePanel}>
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="1.75" /><path d="M12.5 3.5 V16.5 M6.5 8 L8.5 10 L6.5 12" /></svg>
         </button>
       {/if}
     </div>

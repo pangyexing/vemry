@@ -355,6 +355,11 @@ for cid, (title, desc) in CMD.items():
 
 # ---------------------------------------------------------------- activity bar
 add("activityBar.", {
+    "browser": ("Browser panel", "浏览面板"),
+    "showBrowser": ("Show the browser panel", "显示浏览面板"),
+    "hideBrowser": ("Hide the browser panel (tabs stay alive)", "收起浏览面板(标签页保留)"),
+    "browserDetached": ("The browser is in its own window — click to bring it forward", "浏览器在独立窗口,点击唤到前台"),
+    "tabsKept": ("{n} tabs kept", "保留 {n} 个标签页"),
     "label": ("Activity bar", "活动栏"),
     "fileTree": ("File tree", "文件树"),
     "openFileTree": ("Show file tree", "打开文件树"),
