@@ -350,6 +350,7 @@ for cid, (title, desc) in CMD.items():
 
 # ---------------------------------------------------------------- activity bar
 add("activityBar.", {
+    "find": ("Search notes · open a web address", "搜索笔记 · 打开网址"),
     "label": ("Activity bar", "活动栏"),
     "fileTree": ("File tree", "文件树"),
     "openFileTree": ("Show file tree", "打开文件树"),
@@ -389,6 +390,9 @@ add("tabBar.", {
 
 # ---------------------------------------------------------------- command palette
 add("palette.", {
+    "findSpaces": ("Where to look", "找什么"),
+    "modeNotes": ("Notes", "笔记"),
+    "modeWeb": ("Web address", "网址"),
     "commands": ("Run a command…", "执行命令…"),
     "notes": ("Open a note…", "打开笔记…"),
     "pickNote": ("Pick a target note… (type a new name to create it; Tab or # for a section)",

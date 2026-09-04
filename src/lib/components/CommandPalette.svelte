@@ -93,14 +93,25 @@
         : "",
   );
 
+  /** The two "find something" spaces share one entry (the activity bar's magnifier, and the
+   *  segmented head at the top of the palette): notes, and the web. They never mix in one
+   *  list — a typed query is either a note search or an address — but switching between them
+   *  carries the text over, so a query aimed at the wrong space is one click or one shortcut
+   *  from the right one. */
+  const FIND_MODES: PaletteMode[] = ["search", "url"];
+  const isFind = $derived(mode === "search" || mode === "url");
+  let prevMode: PaletteMode | null = null;
   $effect(() => {
     if (mode) {
-      query = "";
+      // The text carries over only between the two find spaces; every other mode starts clean
+      const carry = prevMode !== null && prevMode !== mode && FIND_MODES.includes(prevMode) && FIND_MODES.includes(mode);
+      if (!carry) query = "";
       selected = 0;
       searchHits = [];
       pickStage = null;
       queueMicrotask(() => inputEl?.focus());
     }
+    prevMode = mode;
     if (mode === "url") {
       // Fetching once when it opens is enough: the history only changes on a navigation, and there is no need to keep up while the palette is open
       api
@@ -498,6 +509,19 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    // ⌘L / ⌘⇧F switch between the two find spaces while the palette is open (off mac; on mac
+    // both are menu accelerators that reach the same commands and never arrive here)
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && isFind && e.key.toLowerCase() === "l" && !e.shiftKey) {
+      e.preventDefault();
+      mode = "url";
+      return;
+    }
+    if (mod && isFind && e.key.toLowerCase() === "f" && e.shiftKey) {
+      e.preventDefault();
+      mode = "search";
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       // Esc in the second stage means "back to choosing a note" rather than closing the palette
@@ -536,6 +560,16 @@
       aria-label={t("cmd.command-palette.title")}
       tabindex="-1"
     >
+      {#if isFind}
+        <div class="seg" role="tablist" aria-label={t("palette.findSpaces")}>
+          <button class="seg-btn" class:on={mode === "search"} role="tab" aria-selected={mode === "search"} onclick={() => (mode = "search")}>
+            {t("palette.modeNotes")}<kbd class="key">{k("Mod+Shift+F")}</kbd>
+          </button>
+          <button class="seg-btn" class:on={mode === "url"} role="tab" aria-selected={mode === "url"} onclick={() => (mode = "url")}>
+            {t("palette.modeWeb")}<kbd class="key">{k("Mod+L")}</kbd>
+          </button>
+        </div>
+      {/if}
       <input
         bind:this={inputEl}
         bind:value={query}
@@ -628,6 +662,33 @@
     background: transparent;
     padding: 14px 16px;
     font-size: var(--fs-lg);
+  }
+  /* The find spaces' segmented head: two pills above the input, the current one in the accent's soft tile */
+  .seg {
+    display: flex;
+    gap: 4px;
+    padding: 10px 12px 0;
+  }
+  .seg-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    color: var(--fg-muted);
+    font-size: var(--fs-sm);
+  }
+  .seg-btn:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
+  }
+  .seg-btn.on {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .seg-btn .key {
+    opacity: 0.7;
   }
   input:focus-visible {
     outline: none;

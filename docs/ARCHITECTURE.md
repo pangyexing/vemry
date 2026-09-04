@@ -1408,7 +1408,11 @@ shell that is true for the whole session.
 inside a vault" decision as settings, with an RwLock in-process cache), deliberately
 not stuffed into `Settings` — `settings::load` is cloned per request on the
 navigation and image-proxy hot paths, and a large list in there would be copied over
-and over. History has exactly one writer, the tab's build hooks: `on_navigation`
+and over. The palette's two "find" spaces — notes (⌘⇧F) and the web (⌘L) — share
+one entry, the activity bar's magnifier, and a segmented head at the top of the
+palette switches between them with the typed text carried over; the lists never
+mix (a query is either a note search or an address), so the browser needs no
+launcher of its own on the rail. History has exactly one writer, the tab's build hooks: `on_navigation`
 records the visit and `on_document_title_changed` fills in the title by label →
 registry url (url and title arrive on separate beats; the title hook is also the SPA
 backstop, reading the real URL back when a pushState changed the page without a

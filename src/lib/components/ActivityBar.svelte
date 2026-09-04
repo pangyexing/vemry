@@ -149,9 +149,11 @@
     {@render icon(filesIcon, vault.swapSides)}
     {@render tip(vault.leftOpen ? t("activityBar.collapseFileTree") : t("activityBar.openFileTree"), k("Mod+B"))}
   </button>
-  <button class="ab-btn" aria-label={t("cmd.search.title")} onclick={() => void executeCommand("search")}>
+  <!-- "Find something": the palette it opens has two spaces, notes and the web, switched at
+    its head — so the browser needs no launcher of its own on the rail -->
+  <button class="ab-btn" aria-label={t("activityBar.find")} onclick={() => void executeCommand("search")}>
     {@render icon(searchIcon)}
-    {@render tip(t("cmd.search.title"), k("Mod+Shift+F"))}
+    {@render tip(t("activityBar.find"), k("Mod+Shift+F"))}
   </button>
   {#each viewGroups as group, gi (gi)}
     <span class="ab-sep"></span>

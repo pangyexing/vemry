@@ -1774,9 +1774,16 @@
         onclick={() => submit(false)}
         disabled={!agent.draft.trim()}
       >
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M10 15.5v-11M5 9.5l5-5 5 5" />
-        </svg>
+        {#if mode === "url"}
+          <!-- A URL-shaped draft: ↵ opens the page in the browser, and the button says so -->
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 10 a7 7 0 1 0 14 0 a7 7 0 1 0 -14 0 M3 10 H17 M10 3 c-3.6 3.2 -3.6 10.8 0 14 M10 3 c3.6 3.2 3.6 10.8 0 14" />
+          </svg>
+        {:else}
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10 15.5v-11M5 9.5l5-5 5 5" />
+          </svg>
+        {/if}
       </button>
     </div>
     </div>
