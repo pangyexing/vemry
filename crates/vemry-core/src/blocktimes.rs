@@ -21,13 +21,23 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::note::Note;
 use crate::provenance::fnv1a64;
 
 /// Where the cache lives, relative to the vault root.
 pub const FILE: &str = ".vemry/block-times.json";
+
+/// How long a change may sit unsaved. The table is rewritten whole, under the
+/// vault lock, and an autosave arrives about once a second while the user types;
+/// writing it on every one of those would be most of what an autosave costs. A
+/// `save` within this interval of the last write leaves the change in memory for
+/// the next `save` (the watcher's echo of the write, the next autosave) or the
+/// `flush` when the vault is dropped. What a crash inside the interval loses is
+/// only precision: the blocks changed in those seconds are then stamped with the
+/// note's mtime, which is when they changed anyway.
+const SAVE_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The change key of one block: FNV-1a over its lines, each trimmed, with a
 /// trailing ` ^id` on the last line dropped.
@@ -51,6 +61,8 @@ pub struct BlockTimes {
     path: PathBuf,
     notes: BTreeMap<String, BTreeMap<u64, u64>>,
     dirty: bool,
+    /// When the file was last written, for `save`'s throttle.
+    last_save: Option<Instant>,
 }
 
 impl BlockTimes {
@@ -69,7 +81,7 @@ impl BlockTimes {
                     .collect()
             })
             .unwrap_or_default();
-        BlockTimes { path, notes, dirty: false }
+        BlockTimes { path, notes, dirty: false, last_save: None }
     }
 
     /// Stamp every block of a freshly parsed note: a block whose key was seen
@@ -129,12 +141,22 @@ impl BlockTimes {
         }
     }
 
-    /// Write the cache if anything changed. `create` allows making `.vemry/`
+    /// Write the cache if anything changed, unless the last write is younger than
+    /// `SAVE_INTERVAL` (see there) — the routine save, for a note written or seen
+    /// changed. `flush` is the unconditional one.
+    pub fn save(&mut self, create: bool) {
+        if self.last_save.is_some_and(|t| t.elapsed() < SAVE_INTERVAL) {
+            return;
+        }
+        self.flush(create);
+    }
+
+    /// Write the cache now if anything changed. `create` allows making `.vemry/`
     /// for it: the vault's own writes may, an external change seen by the
     /// watcher may not — a directory merely being browsed must not grow a
     /// `.vemry` (see `Vault::meta_dir`). A failed write is not an error: the
     /// table is a cache and the next successful save carries everything.
-    pub fn save(&mut self, create: bool) {
+    pub fn flush(&mut self, create: bool) {
         if !self.dirty {
             return;
         }
@@ -155,6 +177,7 @@ impl BlockTimes {
         if let Ok(s) = serde_json::to_string(&raw) {
             if fs::write(&self.path, s).is_ok() {
                 self.dirty = false;
+                self.last_save = Some(Instant::now());
             }
         }
     }
@@ -230,6 +253,16 @@ mod tests {
         assert!(!dir.path().join(FILE).exists(), "a watcher-side save must not create .vemry");
         t.save(true);
         assert!(dir.path().join(FILE).exists());
+        // a second change right after: `save` leaves it for later, `flush` writes it
+        t.stamp(&mut note("m.md", "text\n", 8));
+        t.save(true);
+        assert!(t.dirty, "a save inside the interval keeps the change in memory");
+        t.flush(true);
+        assert!(!t.dirty);
+        t.last_save = Some(Instant::now() - SAVE_INTERVAL);
+        t.stamp(&mut note("o.md", "text\n", 8));
+        t.save(true);
+        assert!(!t.dirty, "a save past the interval writes");
         let mut again = BlockTimes::load(dir.path());
         let mut n = note("n.md", "- [ ] one\n- [ ] two\n", 9);
         again.stamp(&mut n);

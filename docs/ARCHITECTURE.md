@@ -465,7 +465,12 @@ Opening a vault stamps but never saves (a directory merely being browsed must no
 grow a `.vemry`, the rule `Vault::meta_dir` states); the vault's own writes save
 and may create the directory, an external change seen by the watcher saves only
 where `.vemry/` already exists, a rename carries the stamps over, and a rescan
-prunes the notes that are gone. The stamp reaches every consumer as
+prunes the notes that are gone. A save is throttled to one write in five seconds
+(the table is rewritten whole, under the vault lock, and an autosave arrives about
+once a second while the user types); a change left in memory goes out with the
+next save — the watcher's echo of the write, the next autosave — or when the vault
+is dropped, and what a crash inside the interval loses is again only precision.
+The stamp reaches every consumer as
 `Block.modified_ms` through the same `query()` as everything else; the agent's
 `query_blocks` renders its own fields and does not print it.
 

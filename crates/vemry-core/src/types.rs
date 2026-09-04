@@ -63,6 +63,11 @@ pub struct BlockType {
 }
 
 /// The example written by "create an example block type".
+///
+/// English on purpose, like the research skill's template: the keys are syntax
+/// (the parser's and the model's), `name` and `description` go into the system
+/// prompt, and the file is a code sample that opens in the editor rather than
+/// prose the user reads — so it takes the model's language, not the catalog's.
 pub const BOOK_TYPE_TEMPLATE: &str = "---
 name: book
 description: A book you read or plan to read
@@ -82,7 +87,8 @@ fields:
 
 /// The file a new type starts from ("block type…" given a name with no file yet):
 /// every knob once, so the file explains itself when it opens in the editor.
-/// `book` gets `BOOK_TYPE_TEMPLATE` instead (the caller's choice).
+/// `book` gets `BOOK_TYPE_TEMPLATE` instead (the caller's choice), and the language
+/// ruling there applies here.
 pub fn type_skeleton(name: &str) -> String {
     let name = name.trim();
     let tag = tag_of(name);
@@ -177,40 +183,6 @@ pub fn parse_block_type(file: &str, raw: &str) -> BlockType {
     }
 }
 
-/// Set or clear the `disabled` key of a type file, every other line kept as it
-/// is (the file is the user's, comments and order included). Disabling rewrites
-/// an existing top-level `disabled:` line or adds one before the closing `---`
-/// (a file with no frontmatter gets one); enabling drops the line, false being
-/// the default. A frontmatter too damaged to parse takes the line without
-/// effect — the caller checks `parse_block_type` and reports it.
-pub fn set_type_disabled(raw: &str, disabled: bool) -> String {
-    let eol = if raw.contains("\r\n") { "\r\n" } else { "\n" };
-    let line = format!("disabled: true{eol}");
-    let mut lines: Vec<&str> = raw.split_inclusive('\n').collect();
-    // The boundary is `parser::extract_frontmatter`'s, which owns the rule: the opener is
-    // `---`, the closer `---` or YAML's `...`. Reading a `...` close as ordinary text would
-    // prepend a second frontmatter block ahead of the file's own.
-    let opens = |l: &str| l.trim_end() == "---";
-    let closes = |l: &str| matches!(l.trim_end(), "---" | "...");
-    let close = match lines.first() {
-        Some(first) if opens(first) => lines.iter().skip(1).position(|l| closes(l)).map(|i| i + 1),
-        _ => None,
-    };
-    let Some(close) = close else {
-        return if disabled { format!("---{eol}{line}---{eol}{raw}") } else { raw.to_string() };
-    };
-    let existing = lines[1..close].iter().position(|l| l.starts_with("disabled:")).map(|i| i + 1);
-    match (existing, disabled) {
-        (Some(i), true) => lines[i] = &line,
-        (Some(i), false) => {
-            lines.remove(i);
-        }
-        (None, true) => lines.insert(close, &line),
-        (None, false) => {}
-    }
-    lines.concat()
-}
-
 /// Every type file (disabled ones included), sorted by name. Regular `.md`
 /// files directly in the directory; a symlink is refused.
 pub fn list_block_types(meta_dir: &Path) -> Vec<BlockType> {
@@ -290,36 +262,6 @@ mod tests {
         assert_eq!(t.kind, "paragraph");
         assert_eq!(t.fields.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(), vec!["ok"]);
         assert!(t.disabled);
-    }
-
-    #[test]
-    fn set_disabled_touches_the_one_frontmatter_line() {
-        let off = set_type_disabled(BOOK_TYPE_TEMPLATE, true);
-        assert!(parse_block_type("book.md", &off).disabled);
-        assert!(
-            off.ends_with("disabled: true\n---\n{{cursor}} [author:: {{author}}] [status:: {{status}}]\n"),
-            "{off}"
-        );
-        // enabling drops the line and gives the original back; enabling twice is a no-op
-        assert_eq!(set_type_disabled(&off, false), BOOK_TYPE_TEMPLATE);
-        assert_eq!(set_type_disabled(BOOK_TYPE_TEMPLATE, false), BOOK_TYPE_TEMPLATE);
-        // an existing line is rewritten where it is, whatever it said
-        assert_eq!(
-            set_type_disabled("---\ndisabled: false\nname: x\n---\nbody\n", true),
-            "---\ndisabled: true\nname: x\n---\nbody\n"
-        );
-        // no frontmatter: disabling adds one, enabling changes nothing
-        assert_eq!(set_type_disabled("body\n", true), "---\ndisabled: true\n---\nbody\n");
-        assert_eq!(set_type_disabled("body\n", false), "body\n");
-        // CRLF files keep their line endings
-        assert_eq!(
-            set_type_disabled("---\r\nname: x\r\n---\r\n", true),
-            "---\r\nname: x\r\ndisabled: true\r\n---\r\n"
-        );
-        // a damaged frontmatter takes the line but the parser cannot read it (the command reports that)
-        let bad = set_type_disabled("---\nname: [unclosed\n---\nbody\n", true);
-        assert!(bad.contains("[unclosed\ndisabled: true\n---"));
-        assert!(!parse_block_type("odd.md", &bad).disabled);
     }
 
     #[test]

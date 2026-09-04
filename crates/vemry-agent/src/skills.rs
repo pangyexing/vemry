@@ -101,40 +101,6 @@ pub fn list_skills(meta_dir: &Path) -> Vec<SkillMeta> {
         .collect()
 }
 
-/// Set or remove `disabled: true` in the frontmatter, adding a frontmatter block
-/// when there is none. The single write point for enabling and disabling — how
-/// `disabled` is read lives in `parse`, and how it is written lives here; the
-/// rewrite is line by line rather than a YAML round trip, so the user's layout
-/// and comments survive.
-pub fn set_frontmatter_disabled(raw: &str, disabled: bool) -> String {
-    let (_fm, body_offset) = extract_frontmatter(raw);
-    if body_offset == 0 {
-        // No frontmatter
-        return if disabled { format!("---\ndisabled: true\n---\n{raw}") } else { raw.to_string() };
-    }
-    let head = &raw[..body_offset];
-    let body = &raw[body_offset..];
-    // Work through the frontmatter text line by line: drop any existing disabled
-    // line, then insert one if needed
-    let mut lines: Vec<&str> = head.lines().collect();
-    lines.retain(|l| !l.trim_start().starts_with("disabled:"));
-    if disabled {
-        // Inserted before the closing separator
-        let close = lines
-            .iter()
-            .rposition(|l| {
-                let t = l.trim_end();
-                t == "---" || t == "..."
-            })
-            .unwrap_or(lines.len());
-        lines.insert(close, "disabled: true");
-    }
-    let mut out = lines.join("\n");
-    out.push('\n');
-    out.push_str(body);
-    out
-}
-
 /// Full instructions (body, frontmatter stripped) of an enabled skill,
 /// resolved by exact listed name. `None` covers missing and disabled alike —
 /// callers report both as `skill not found`.
@@ -240,6 +206,7 @@ mod tests {
 
     #[test]
     fn frontmatter_disabled_toggle_roundtrip() {
+        use vemry_core::set_frontmatter_disabled;
         // With frontmatter: inserted before the closing line; removed again when
         // re-enabled, with the other keys untouched
         let raw = "---\nname: research\ndescription: d\n---\n正文\n";

@@ -58,8 +58,29 @@
   let knownTargets = new Set<string>();
   let targetList: string[] = [];
   let tagList: string[] = [];
-  /** Inline-field keys and values across the vault (for `key::` completion), refreshed with the index. */
+  /** Inline-field keys and values across the vault (for `key::` completion and a chip's
+   *  value menu). Read on demand — the first `::` after an index update fetches, the rest
+   *  of that version reuse the list — rather than on every index update, most of which
+   *  happen while no field is being typed. */
   let fieldStats: FieldStat[] = [];
+  let fieldStatsVersion = -1;
+  let fieldStatsPending: Promise<FieldStat[]> | null = null;
+  function currentFieldStats(): FieldStat[] | Promise<FieldStat[]> {
+    const version = vault.indexVersion;
+    if (version === fieldStatsVersion) return fieldStats;
+    if (!fieldStatsPending) {
+      fieldStatsPending = api
+        .fieldsList()
+        .then((list) => {
+          fieldStats = list;
+          fieldStatsVersion = version;
+          return list;
+        })
+        .catch(() => fieldStats) // the stale list is better than none
+        .finally(() => (fieldStatsPending = null));
+    }
+    return fieldStatsPending;
+  }
   /** The date menu raised by a chip: which line and key it edits. */
   let fieldMenu = $state<{ x: number; y: number; pos: number; key: string; current?: string; field: DateField } | null>(null);
   /** The value menu raised by any other chip: the candidates (the block types' declared
@@ -67,15 +88,6 @@
   let valueMenu = $state<{ x: number; y: number; pos: number; key: string; current: string; values: string[]; number: boolean } | null>(null);
   /** How many candidate values the menu lists at most. */
   const MENU_VALUES_MAX = 12;
-
-  $effect(() => {
-    void vault.indexVersion;
-    if (!vault.currentPath?.endsWith(".md")) return;
-    api
-      .fieldsList()
-      .then((v) => (fieldStats = v))
-      .catch(() => undefined);
-  });
 
   /** A menu's pick lands on the line: a task's due/scheduled goes through rescheduleLine
    *  (it knows the emoji spellings); any other field is rewritten in place by
@@ -988,18 +1000,18 @@
       loadAsset,
       copyImage,
       tags: () => tagList,
-      fieldStats: () => fieldStats,
+      fieldStats: currentFieldStats,
       blockTypes: () => types.enabled,
       // A chip's click: a date (a task date, a date-typed key, a YYYY-MM-DD value) gets the
       // date menu; everything else the value menu — the declared values first, then the
       // vault's, deduplicated, and a numeric input when the type says number or the value is one
-      onFieldChip: (_v: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }) => {
+      onFieldChip: async (_v: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }) => {
         const spec = declaredField(types.enabled, key);
         if (key in DATE_FIELDS || spec.kind === "date" || fieldValueKind(value) === "date") {
           fieldMenu = { x: at.x, y: at.y, pos, key, current: value || undefined, field: key === "scheduled" ? "scheduled" : "due" };
           return;
         }
-        const seen = fieldStats.find((s) => s.key.toLowerCase() === key.toLowerCase())?.values ?? [];
+        const seen = (await currentFieldStats()).find((s) => s.key.toLowerCase() === key.toLowerCase())?.values ?? [];
         const values = [...new Set([...spec.values.map((v) => v.value), ...seen])].slice(0, MENU_VALUES_MAX);
         const number = spec.kind === "number" || (value !== "" && fieldValueKind(value) === "number");
         valueMenu = { x: at.x, y: at.y, pos, key, current: value, values, number };

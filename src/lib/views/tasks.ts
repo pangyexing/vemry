@@ -1,6 +1,6 @@
 // Agenda-view task actions: flip a checkbox / reschedule a date on disk, span-accurate.
 import { t, tn } from "$lib/i18n/i18n.svelte";
-import { setFieldValue, stripFields } from "$lib/fields";
+import { setFieldValue, stripAnchor, stripFields } from "$lib/fields";
 import { api, type BlockHit } from "$lib/api";
 import { byNote } from "$lib/views/queryrows";
 import { plainText } from "$lib/markdown";
@@ -323,11 +323,13 @@ export async function updateTask(hit: BlockHit, edit: TaskEdit): Promise<boolean
  *  with the claim and evidence cards), so "the plain-text form" has one rule only. */
 export function taskText(content: string): string {
   return plainText(
-    stripFields(content) // `[key:: value]` metadata is a chip on the card, not part of the words
-      .replace(/^\s*[-*+]\s+\[[ /xX]\]\s*/, "")
-      .replace(MARKER_STRIP_RE, "") // the date markers
-      .replace(STAMP_RE, "") // the memo or clip signature
-      .replace(/\s+\^[A-Za-z0-9-]+$/, ""), // a block id minted on the line: a badge in the editor, not a word
+    stripAnchor(
+      // a block id minted on the line is a badge in the editor, not a word
+      stripFields(content) // `[key:: value]` metadata is a chip on the card, not part of the words
+        .replace(/^\s*[-*+]\s+\[[ /xX]\]\s*/, "")
+        .replace(MARKER_STRIP_RE, "") // the date markers
+        .replace(STAMP_RE, ""), // the memo or clip signature
+    ),
   );
 }
 

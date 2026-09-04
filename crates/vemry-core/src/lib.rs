@@ -38,9 +38,10 @@ pub use provenance::{
     ProvenanceLedger, Replacement, RevertPlan,
 };
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
+pub use parser::set_frontmatter_disabled;
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
 pub use types::{
-    list_block_types, parse_block_type, set_type_disabled, type_skeleton, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE,
+    list_block_types, parse_block_type, type_skeleton, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE,
     TYPES_SUBDIR,
 };
 pub use vault::{is_meta_id, sanitize_filename, BacklinkEntry, InsertLanded, RefHit, RefResolution, RefTarget, Vault};

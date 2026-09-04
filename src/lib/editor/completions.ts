@@ -119,16 +119,24 @@ export function atCompletions(targets: () => string[]): CompletionSource {
  *  or a digit is not a field (the parser's rule), so `std::vector` gets nothing;
  *  code, frontmatter and an unclosed `[[` are left alone. */
 export function fieldCompletions(
-  stats: () => FieldStat[],
+  stats: () => FieldStat[] | Promise<FieldStat[]>,
   blockTypes: () => BlockType[] = () => [],
   onFieldChip?: FieldChipHandler,
 ): CompletionSource {
   const DATE_KEYS = new Set(["due", "scheduled", "date", "start", "end", "created", "deadline"]);
-  return (context: CompletionContext): CompletionResult | null => {
+  // The vault's stats are fetched on demand (a promise the first time after an index
+  // update, the cached list afterwards); the cheap guards run before asking for them,
+  // so the plain keystrokes that produce nothing never wait
+  return (context: CompletionContext): CompletionResult | null | Promise<CompletionResult | null> => {
     const line = context.state.doc.lineAt(context.pos);
     if (line.from < frontmatterEnd(context.state.doc)) return null;
     if (inCode(context.state, context.pos)) return null;
     if (/\[\[[^\]\n]*$/.test(context.state.sliceDoc(line.from, context.pos))) return null;
+    if (!context.matchBefore(/[\p{L}\p{N}_-]+(:|:: ?[^\s\])]*)$/u)) return null;
+    const list = stats();
+    return list instanceof Promise ? list.then((all) => build(context, all)) : build(context, list);
+  };
+  function build(context: CompletionContext, all: FieldStat[]): CompletionResult | null {
     const value = context.matchBefore(/(^|[\s[(])([\p{L}\p{N}_-]+)::( ?)([^\s\])]*)$/u);
     if (value) {
       const m = /(^|[\s[(])([\p{L}\p{N}_-]+)::( ?)([^\s\])]*)$/u.exec(value.text)!;
@@ -138,7 +146,7 @@ export function fieldCompletions(
       if (/^\d+$/.test(key)) return null;
       // `std::vector`: no space and a non-digit value is not a field
       if (!spaced && typed !== "" && !/^\d/.test(typed)) return null;
-      const stat = stats().find((s) => s.key.toLowerCase() === key.toLowerCase());
+      const stat = all.find((s) => s.key.toLowerCase() === key.toLowerCase());
       const options: Completion[] = [];
       const seen = new Set<string>();
       const push = (label: string, detail?: string, boost = 0) => {
@@ -208,7 +216,7 @@ export function fieldCompletions(
         seenKeys.add(lower);
         keys.push({ key: f.key, detail: t("field.fromType", { name: ty.name }) });
       }
-    for (const s of stats()) {
+    for (const s of all) {
       const lower = s.key.toLowerCase();
       if (!lower.startsWith(typed) || /^\d+$/.test(s.key) || seenKeys.has(lower)) continue;
       seenKeys.add(lower);
@@ -229,7 +237,7 @@ export function fieldCompletions(
       })),
       validFor: /^[\p{L}\p{N}_-]*:?$/u,
     };
-  };
+  }
 }
 
 /** `#tag` completion: the candidates are the vault's tags (the caller keeps them fresh and sorted by how often they are used). */

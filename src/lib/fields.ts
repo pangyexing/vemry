@@ -33,6 +33,13 @@ export function stripAnchor(line: string): string {
   return line.replace(ANCHOR_TAIL_RE, "").trimEnd();
 }
 
+const ANCHOR_TAILS_RE = new RegExp(ANCHOR_TAIL_RE.source, "gm");
+/** Every line of `text` without its trailing ` ^id` anchor. The lines' other trailing
+ *  whitespace stays: in a slice that is still Markdown, two spaces are a hard break. */
+export function stripAnchors(text: string): string {
+  return text.replace(ANCHOR_TAILS_RE, "");
+}
+
 export function isFieldKey(s: string): boolean {
   if (!s) return false;
   let allDigits = true;

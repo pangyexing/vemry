@@ -111,7 +111,7 @@ export interface EditorOptions {
   /** note mode: vault tag universe for `#` completion (kept fresh by caller) */
   tags?: () => string[];
   /** note mode: inline-field keys and values for `key::` completion (kept fresh by the caller) */
-  fieldStats?: () => FieldStat[];
+  fieldStats?: () => FieldStat[] | Promise<FieldStat[]>;
   /** note mode: the vault's enabled block types (the `/` menu's "types" section) */
   blockTypes?: () => BlockType[];
   /** note mode: a click on a chip (a task date, or any inline `key:: value` field) */

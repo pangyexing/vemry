@@ -495,7 +495,7 @@ impl Vault {
             self.search.index_note(&note.id, note.effective_title(), &note.raw);
         }
         self.times.retain(|id| self.index.contains(&NoteId::new(id)));
-        self.times.save(false);
+        self.times.flush(false);
         self.reload_privacy();
         Ok(())
     }
@@ -899,14 +899,14 @@ impl Vault {
         self.index.remove(id);
         self.search.remove_note(id);
         self.times.remove(id.as_str());
-        self.times.save(true);
+        self.times.flush(true);
         Ok(VaultEvent::NoteRemoved { id: id.clone() })
     }
 
     /// Re-read one note from disk into the index. It stamps the block times and leaves
     /// the saving to its caller — `write_note` after its one note, `handle_fs_change`
-    /// after the whole batch — so a checkout touching N notes rewrites the table once
-    /// rather than N times.
+    /// after the whole batch — so a checkout touching N notes offers the table for
+    /// saving once rather than N times (and `BlockTimes::save` throttles even that).
     fn reindex_note(&mut self, id: &NoteId) -> Result<()> {
         let rel = PathBuf::from(id.as_str());
         let mut note = load_note(&self.root, &rel)?;
@@ -995,7 +995,8 @@ impl Vault {
         // One save for the batch (the loop only ever continues, so this is reached from
         // every branch). The stamps are saved only where `.vemry/` already exists — an
         // external change to a directory merely being browsed must not leave one; the
-        // vault's own writes save with `create`.
+        // vault's own writes save with `create`. The echo of an own write lands here
+        // too, which is what carries a change `write_note`'s throttled save left behind.
         self.times.save(false);
         if files_changed {
             events.push(VaultEvent::FilesChanged);
@@ -1298,6 +1299,15 @@ impl Vault {
         fs::write(&path, out)?;
         self.reload_privacy();
         Ok(())
+    }
+}
+
+/// A vault going away (the user opened another) writes the block times its
+/// throttled saves left in memory. Without creating `.vemry/`: a vault whose
+/// own writes never made one was only being browsed.
+impl Drop for Vault {
+    fn drop(&mut self) {
+        self.times.flush(false);
     }
 }
 

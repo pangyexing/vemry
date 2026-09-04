@@ -20,6 +20,7 @@ import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemir
 import type { RefResolution } from "$lib/api";
 import { handleCodeCopyClick, renderNoteMarkdown } from "$lib/markdown";
 import { byteToChar } from "$lib/bytes";
+import { stripAnchors } from "$lib/fields";
 import { IMAGE_EXT_RE, inCode } from "./livepreview";
 import { queryRefresh } from "./queryblock";
 import { selectionReveals, selectionTouches } from "./reveal";
@@ -93,7 +94,7 @@ export async function openEmbedSource(host: EmbedHost, inner: string): Promise<v
 /** The slice as it is shown: trailing block anchors dropped (an id is an internal
  *  name), and a heading target loses its first line (the header row names it). */
 function prepareSlice(r: RefResolution & { state: "resolved" }): string {
-  let text = r.content.replace(/[ \t]\^[A-Za-z0-9-]+$/gm, "");
+  let text = stripAnchors(r.content);
   if (r.target.kind === "heading") text = text.split("\n").slice(1).join("\n");
   return text;
 }

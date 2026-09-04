@@ -446,7 +446,7 @@ pub fn type_create(app: AppHandle, state: State<'_, AppState>, name: String) -> 
 }
 
 /// The "block type…" row's disable/enable: the file's `disabled:` line is rewritten
-/// (`set_type_disabled`) and written through `Vault::write_meta` like an editor save.
+/// (`set_frontmatter_disabled`) and written through `Vault::write_meta` like an editor save.
 /// `file` must be one of `types_list`'s — the listing is what refuses a symlink — and a
 /// frontmatter too damaged to carry the key is reported rather than left as it was.
 /// `TypesChanged` is broadcast here too, so the row flips ahead of the watcher's echo.
@@ -463,7 +463,7 @@ pub fn type_set_disabled(
             return Err(crate::i18n::t(lang, "ipc.typeNotFound"));
         }
         let id = v.note_id(&format!("{}/{file}", vemry_core::vault::TYPES_DIR)).map_err(crate::i18n::err)?;
-        let next = vemry_core::set_type_disabled(&v.read_note(&id).map_err(crate::i18n::err)?, disabled);
+        let next = vemry_core::set_frontmatter_disabled(&v.read_note(&id).map_err(crate::i18n::err)?, disabled);
         if vemry_core::parse_block_type(&file, &next).disabled != disabled {
             return Err(crate::i18n::t(lang, "ipc.typeFrontmatterBroken"));
         }
@@ -1629,7 +1629,7 @@ pub fn skill_set_enabled(state: State<'_, AppState>, file: String, enabled: bool
         return Err("skill not found".into());
     }
     let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let new = vemry_agent::skills::set_frontmatter_disabled(&raw, !enabled);
+    let new = vemry_core::set_frontmatter_disabled(&raw, !enabled);
     std::fs::write(&path, new).map_err(|e| e.to_string())
 }
 
