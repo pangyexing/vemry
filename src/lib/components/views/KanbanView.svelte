@@ -2,6 +2,7 @@
   import { api, type BlockHit } from "$lib/api";
   import { vault, stemOf } from "$lib/stores/vault.svelte";
   import {
+    chipDate,
     DATE_FIELDS,
     dateFieldLabel,
     type DateField,
@@ -47,6 +48,7 @@
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
   import PrivacyIcon from "../PrivacyIcon.svelte";
+  import Chevron from "../Chevron.svelte";
 
   let hits = $state<BlockHit[]>([]);
   let query = $state("");
@@ -344,8 +346,18 @@
     const key = parseSortKey(v);
     groupBy = key?.by === "field" ? key : { by: "state" };
     collapsed = {};
+    expanded = {};
     persistUi();
   }
+  /** How many cards a column renders before it stops and offers the rest behind one
+   *  click. The done column is the one that grows without bound (this vault: 77 done
+   *  against 28 open), and every card of it is one the reader has already dealt with;
+   *  rendering all of them costs the whole board's first paint and drowns the few that
+   *  are still open. The cap counts rendered cards only — the header's count and the
+   *  drop target are the whole column's. Not persisted: it is a way of reading one
+   *  session's board, not a setting. */
+  const MAX_VISIBLE = 40;
+  let expanded = $state<Record<string, boolean>>({});
   const sortSel = $derived(sortKeyId(order.key));
   /** Picking a key starts it in its natural direction (newest first for the modification time, ascending for the rest); the arrow flips it from there. */
   function setSort(v: string) {
@@ -567,13 +579,20 @@
             <i class="dot" data-tone={colDef.tone}></i><span class="col-title">{colDef.title}</span><span class="count"
               >{cards.length}</span
             >
+            <!-- The affordance of "this header collapses": the same chevron as Agenda's
+              groups, pointing down while open and right once folded into the strip. Shown
+              on hover only while open — five permanent chevrons across the top would be
+              noise — and always on the strip, where it is what says the strip opens -->
+            <span class="fold"><Chevron /></span>
           </button>
           {#if collapsed[colDef.id]}
             <!-- The strip placeholder: full height, so the drop hit area does not collapse -->
             <div class="col-strip"></div>
           {:else}
+            <!-- visible: the cards actually rendered (MAX_VISIBLE); the rest come with one click -->
+            {@const visible = expanded[colDef.id] || cards.length <= MAX_VISIBLE ? cards : cards.slice(0, MAX_VISIBLE)}
             <ul class="cards">
-            {#each cards as card (taskKey(card))}
+            {#each visible as card (taskKey(card))}
               {@const pend = pendingKey === taskKey(card) ? pendingDrop : null}
               <!-- The field the pending drop writes: activeField, the same one dropEdit picks -->
               {@const pendField = pend ? activeField(card) : null}
@@ -584,6 +603,7 @@
                   class:doing={card.state === "doing"}
                   class:done={card.state === "done" && !pend}
                   class:pending={!!pend}
+                  title={card.text}
                   role="button"
                   tabindex="0"
                   onpointerdown={(e) => pressCard(e, card)}
@@ -608,14 +628,14 @@
                       <!-- The provisional date chip stands in for the chip of the field the drop
                         writes: an ellipsis while the day is being picked, the day itself until
                         the write lands. A label, not a button — the menu is already open -->
-                      <span class="chip pending-chip">{@html dateIconSvg(pendField ?? "due")}{pend.date ?? "…"}</span>
+                      <span class="chip pending-chip">{@html dateIconSvg(pendField ?? "due")}{pend.date ? chipDate(pend.date) : "…"}</span>
                     {/if}
                     {#if card.due && pendField !== "due"}
                       {@const od = card.col === "overdue"}
                       {@render dateChip(card, "due", t("task.editDateWith", { field: dateFieldLabel("due"), date: card.due }), dueLabel(card.due, od, "short"), od ? "overdue" : "")}
                     {/if}
                     {#if card.scheduled && pendField !== "scheduled"}
-                      {@render dateChip(card, "scheduled", t("task.editDate", { field: dateFieldLabel("scheduled") }), card.scheduled)}
+                      {@render dateChip(card, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: card.scheduled }), chipDate(card.scheduled))}
                     {/if}
                     {#each card.tags as tag (tag)}
                       <span class="chip tag-chip">#{tag}</span>
@@ -623,7 +643,7 @@
                     {#each card.fieldChips as [key, value] (key)}
                       <span class="chip field-chip" title={`${key}:: ${value}`}><span class="fk">{key}</span>{value}</span>
                     {/each}
-                    <span class="chip note-chip">{card.hit.note_title}</span>
+                    <span class="chip note-chip" title={card.hit.note}>{card.hit.note_title}</span>
                     {#if !card.due && !card.scheduled && card.state !== "done" && !pend}
                       <!-- A card with no date shows a calendar ghost chip on hover: a new field
                         goes through activeField = due. It is absolutely positioned over the
@@ -645,6 +665,13 @@
                 {drag && colDef.drop ? t("kanban.dropHere") : ""}
               </li>
             {/each}
+            {#if visible.length < cards.length}
+              <li>
+                <button class="show-more" onclick={() => (expanded[colDef.id] = true)}>
+                  {t("kanban.showMore", { n: cards.length - visible.length })}
+                </button>
+              </li>
+            {/if}
             </ul>
             {#if colDef.add}
               {#if adding === colDef.id}
@@ -802,6 +829,24 @@
   .col.collapsed .count {
     writing-mode: horizontal-tb;
   }
+  /* The collapse chevron: Agenda's group language — down while open, right once folded.
+     Hidden until the header is hovered while open; on the strip it stays, since the strip
+     has nothing else that says it opens. An inline svg is not turned by vertical-rl (only
+     text glyphs are), so on the strip it points right without a rotation of its own */
+  .fold {
+    display: inline-flex;
+    color: var(--fg-faint);
+    opacity: 0;
+    transform: rotate(90deg);
+    transition: opacity 0.12s;
+  }
+  .col-head:hover .fold,
+  .col.collapsed .fold {
+    opacity: 1;
+  }
+  .col.collapsed .fold {
+    transform: none;
+  }
   .col-strip {
     flex: 1;
   }
@@ -900,9 +945,12 @@
     background: var(--bg-hover);
     border-color: var(--fg-faint);
   }
-  /* doing is orthogonal to the dates: an accent bar on the left edge plus the half-filled check icon, already sorted to the top of its column */
+  /* doing is orthogonal to the dates: an accent bar on the left edge plus the half-filled
+     check icon, already sorted to the top of its column. The bar is an inset shadow rather
+     than a wider border: a border would push the card's content 2px to the right, and the
+     checkboxes of a column would no longer sit on one line */
   .card.doing {
-    border-left: 3px solid var(--accent);
+    box-shadow: inset 3px 0 0 var(--accent);
   }
   /* A done card is quietened as a whole and becomes readable again on hover */
   .card.done {
@@ -911,9 +959,13 @@
   .card.done:hover {
     opacity: 1;
   }
+  /* Done cards are read as a record, not worked on: one line of text (the title says the
+     rest) makes the column a list, and the open columns beside it the board */
   .card.done .text {
     color: var(--fg-faint);
     text-decoration: line-through;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
   }
   /* The card of a drop still landing (pendingDrop): a dashed accent frame says "provisional",
      kept through the write's few milliseconds until the reload draws the card plain */
@@ -927,11 +979,14 @@
     align-items: flex-start;
     gap: 6px;
   }
+  /* 3px of padding pulled back by a negative margin: a 20px hit area in the same 18px of
+     layout, so the text's position is unchanged */
   .check {
     flex-shrink: 0;
     font-size: var(--fs-md);
     color: var(--fg-muted);
-    padding: 2px;
+    padding: 3px;
+    margin: -1px;
     border-radius: 4px;
     display: inline-flex;
   }
@@ -1072,6 +1127,20 @@
   .col-empty.armed {
     border-color: var(--accent);
     color: var(--accent);
+  }
+  /* The rest of a capped column, behind one click: the same quiet row as "+ new task",
+     and inside the list so it scrolls with the cards */
+  .show-more {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    text-align: left;
+  }
+  .show-more:hover {
+    color: var(--fg);
+    background: var(--bg-hover);
   }
   /* ---- Quick create inside a column: the button lives at the bottom of the column and does not scroll away with the cards ---- */
   .add-open {

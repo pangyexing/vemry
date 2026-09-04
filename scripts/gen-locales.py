@@ -598,6 +598,7 @@ add("kanban.", {
     "noMatchingNote": ("No matching note", "无匹配笔记"),
     "newTask": ("+ New task", "+ 新建任务"),
     "dropWhen": ("Schedule for which day", "排到哪天"),
+    "showMore": ("Show {n} more", "还有 {n} 项，展开"),
 })
 
 add("timeline.", {

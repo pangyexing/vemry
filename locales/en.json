@@ -604,6 +604,7 @@
   "kanban.reopen": "Reopen",
   "kanban.scheduleDate": "Schedule date",
   "kanban.searchNotes": "Search notes…",
+  "kanban.showMore": "Show {n} more",
   "kanban.sortAsc": "Ascending — click for descending",
   "kanban.sortAuto": "Default",
   "kanban.sortAutoHint": "Default order: by due date; the unscheduled and done columns by when the task was last edited, newest first",

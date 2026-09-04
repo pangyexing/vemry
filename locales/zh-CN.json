@@ -604,6 +604,7 @@
   "kanban.reopen": "重新打开",
   "kanban.scheduleDate": "排期日期",
   "kanban.searchNotes": "搜索笔记…",
+  "kanban.showMore": "还有 {n} 项，展开",
   "kanban.sortAsc": "升序，点击改为降序",
   "kanban.sortAuto": "默认",
   "kanban.sortAutoHint": "默认顺序：按截止日期；未排期与已完成两列按任务修改时间，最新在前",

@@ -445,16 +445,26 @@ function daysUntil(date: string): number {
  *     lateness both fit
  *   - short: a kanban card's meta line has only about 110px, where the full form
  *     overflows the card (a measured screenshot had it cut to "2026-08-08 · ov"), and
- *     the absolute date falls back to the title */
+ *     the absolute date falls back to the title; a date that is not late is written
+ *     without the current year (chipDate) */
 export function dueLabel(due: string, overdue: boolean, density: "full" | "short" = "full"): string {
   // The gate is checked before the days are computed: the non-overdue rows (all of
   // "today / later / done") are the majority, and they should not pay for three Date
   // constructions to produce a value that is dropped straight away
-  if (!overdue) return due;
+  if (!overdue) return density === "short" ? chipDate(due) : due;
   const late = -daysUntil(due);
   if (late <= 0) return due;
   const phrase = tn("task.overdue", late);
   return density === "short" ? phrase : `${due} · ${phrase}`;
+}
+
+/** A date at a kanban chip's density: the year is dropped while it is the current one
+ *  ("09-10"), so the chip fits beside the note chip on the ~130px meta row of a 176px
+ *  card instead of pushing the note chip onto a second line. The full date stays in the
+ *  chip's title. A date in another year keeps the year: that is the one case where it
+ *  carries information. */
+export function chipDate(ymd: string): string {
+  return ymd.startsWith(localDate().slice(0, 4) + "-") ? ymd.slice(5) : ymd;
 }
 
 /** A date field's display name ("Due date" / "Start date"). Shared by the menu items and the chip's tooltip. */
