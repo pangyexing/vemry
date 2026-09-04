@@ -13,6 +13,7 @@
 // reads it at event time with posAtDOM.
 import { t } from "$lib/i18n/i18n.svelte";
 import { blockRoot } from "./blockwidget";
+import { focusEditor } from "./clickguard";
 import { syntaxTree } from "@codemirror/language";
 import { type EditorState, type Extension, type Line, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
@@ -118,7 +119,7 @@ function wire(view: EditorView, el: HTMLElement, host: EmbedHost, inner: string)
       // the widget's current line: it outlives position shifts, so a position baked
       // in at creation would go stale
       view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
-      view.focus();
+      focusEditor(view);
       return;
     }
     if (target.closest(".cm-embed-head, .cm-embed-chip")) {

@@ -127,8 +127,8 @@
           disabled={entry.disabled}
           onclick={(e) => onItemClick(entry, i, e.currentTarget)}
           onmouseenter={(e) => onItemEnter(entry, i, e.currentTarget)}
-          role={hasChecks ? "menuitemcheckbox" : "menuitem"}
-          aria-checked={hasChecks ? entry.checked === true : undefined}
+          role={entry.checked != null ? "menuitemcheckbox" : "menuitem"}
+          aria-checked={entry.checked != null ? entry.checked : undefined}
         >
           {#if entry.checked}
             <svg class="check" width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

@@ -326,17 +326,6 @@
     if (!vault.root) return;
     void types.refresh();
   });
-  // The store's sticky error slot is announced through the same stack as every other notice,
-  // so there is one place at the bottom of the window to look at, not a second strip in a
-  // second place. The slot is cleared once shown: the same text failing twice is said twice,
-  // and no later reader mistakes an old failure for the result of its own operation. The
-  // welcome page (no vault yet) keeps rendering the slot inline.
-  $effect(() => {
-    if (vault.root && vault.error) {
-      toast.push(vault.error, "error");
-      vault.error = null;
-    }
-  });
 
   async function pickVault() {
     const dir = await openDialog({ directory: true, title: t("app.pickVaultFolder") });

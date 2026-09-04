@@ -28,37 +28,43 @@ class ToastStore {
   items = $state<ToastItem[]>([]);
   #next = 1;
   #timers = new Map<number, ReturnType<typeof setTimeout>>();
+  /** The toasts the pointer is over: their clock stays stopped, a repeat included. */
+  #held = new Set<number>();
 
   push(message: string, level: "info" | "error" = "info") {
     const dup = this.items.find((t) => t.message === message && t.level === level);
     if (dup) {
       dup.count += 1;
-      this.#arm(dup.id, level, readingTime(message)); // a repeat is news too: its clock restarts
+      this.#arm(dup.id, readingTime(message)); // a repeat is news too: its clock restarts
       return;
     }
     const id = this.#next++;
     this.items = [...this.items, { id, message, level, count: 1 }].slice(-MAX_ITEMS);
-    this.#arm(id, level, readingTime(message));
+    this.#arm(id, readingTime(message));
   }
 
   /** The pointer over a toast holds it: it is being read, or its text is being selected to copy. */
   hold(id: number) {
+    this.#held.add(id);
     this.#disarm(id);
   }
 
   release(id: number) {
-    const it = this.items.find((t) => t.id === id);
-    if (it) this.#arm(id, it.level, RELEASE_GRACE_MS);
+    this.#held.delete(id);
+    this.#arm(id, RELEASE_GRACE_MS);
   }
 
   dismiss(id: number) {
+    this.#held.delete(id);
     this.#disarm(id);
     this.items = this.items.filter((t) => t.id !== id);
   }
 
-  #arm(id: number, level: "info" | "error", ms: number) {
+  /** Start (or restart) the clock of the item with `id`; a held toast, an error toast, or an id no longer shown gets none. */
+  #arm(id: number, ms: number) {
+    if (this.#held.has(id)) return;
     this.#disarm(id);
-    if (level === "info") this.#timers.set(id, setTimeout(() => this.dismiss(id), ms));
+    if (this.items.find((t) => t.id === id)?.level === "info") this.#timers.set(id, setTimeout(() => this.dismiss(id), ms));
   }
 
   #disarm(id: number) {

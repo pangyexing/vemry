@@ -30,6 +30,7 @@ import { DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, localDate, sc
 import { scanFields } from "$lib/fields";
 import { privateRangeAt } from "./privateblock";
 import { blockRoot } from "./blockwidget";
+import { focusEditor } from "./clickguard";
 import { openImageLightbox } from "$lib/lightbox";
 import { copyText } from "$lib/copytext";
 
@@ -489,7 +490,7 @@ class FrontmatterWidget extends WidgetType {
       const doc = view.state.doc;
       const anchor = doc.lines >= 2 && doc.line(1).text === "---" ? doc.line(2).from : 0;
       view.dispatch({ selection: { anchor } });
-      view.focus();
+      focusEditor(view);
     };
     return blockRoot(el);
   }

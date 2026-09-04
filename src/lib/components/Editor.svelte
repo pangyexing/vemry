@@ -89,7 +89,7 @@
     const placeholder = scanFields(line.text, 0, { empty: true }).some((f) => f.value === "" && f.key.toLowerCase() === lower);
     const isTaskDate = !placeholder && TASK_LINE_RE.test(line.text) && m.key in DATE_FIELDS;
     const next = isTaskDate ? rescheduleLine(line.text, m.key as DateField, value) : setFieldValue(line.text, m.key, value, m.pos - line.from);
-    focusEditor(view);
+    focusEditor(view, line.from);
     if (next === line.text) return;
     view.dispatch({ changes: { from: line.from, to: line.to, insert: next }, userEvent: "input.field" });
   }

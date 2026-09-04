@@ -22,8 +22,9 @@
 import { EditorSelection, EditorState, Prec, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
-/** The pointer travel that turns a press into a drag (the platform's own drag threshold). */
-const DRAG_THRESHOLD = 4;
+/** The pointer travel that turns a press into a drag: the one threshold every press-to-drag
+ *  gesture in the app reads (the block grip, the file tree, the board, the tab bar). */
+export const DRAG_THRESHOLD = 5;
 
 /** Before the editor is focused, put the native caret at document position `pos`. WebKit
  *  reveals an editable element's own selection when it is focused, whatever preventScroll
@@ -47,11 +48,13 @@ function parkNativeCaret(view: EditorView, pos: number) {
  *  from another view). The same stale-selection reveal as the click case, traced live on the
  *  block menu's "copy link": the first copy after opening a note scrolled the document down,
  *  since the entry's focus() had WebKit show a caret left far below from the previous
- *  document. The native caret is parked at the selection head first — for a menu entry the
- *  head is inside the block the menu was opened on, which is in view. An editor that already
- *  has focus needs nothing. */
-export function focusEditor(view: EditorView) {
-  if (!view.hasFocus) parkNativeCaret(view, view.state.selection.main.head);
+ *  document. The native caret is parked first at `pos` — the place the user is working, which
+ *  is in view — or, by default, at the selection head: for a menu entry the head is inside
+ *  the block the menu was opened on. A caller whose head may be far from that place (a field
+ *  chip's menu, on a note opened and scrolled but never clicked into: the head is still at
+ *  the top) passes the position. An editor that already has focus needs nothing. */
+export function focusEditor(view: EditorView, pos = view.state.selection.main.head) {
+  if (!view.hasFocus) parkNativeCaret(view, pos);
   view.focus();
 }
 
@@ -62,7 +65,7 @@ export function clickGuard(): Extension {
   // own mouse selection does: a drag leaves the content area at once when it starts near an
   // edge, and a listener on the editor alone would miss it and collapse a real drag
   const onMove = (e: MouseEvent) => {
-    if (press && !press.moved && Math.hypot(e.clientX - press.x, e.clientY - press.y) > DRAG_THRESHOLD) press.moved = true;
+    if (press && !press.moved && Math.hypot(e.clientX - press.x, e.clientY - press.y) >= DRAG_THRESHOLD) press.moved = true;
   };
   const onUp = () => {
     press = null;

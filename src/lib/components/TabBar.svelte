@@ -11,6 +11,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { k } from "$lib/shortcut";
   import { tick } from "svelte";
+  import Chevron from "./Chevron.svelte";
 
   let stripEl = $state<HTMLElement | null>(null);
 
@@ -40,8 +41,12 @@
   });
 
   $effect(() => {
-    // read what changes a tab's width: the set of tabs, and the italic of the preview slot
+    // read what changes a tab's width: the set of tabs, the italic of the preview slot, and
+    // which tab is active (the active tab keeps its natural width while the rest give way, so
+    // an activation alone can push the strip into overflow, or out of it, with no scroll to
+    // report it; the observer above sees only the strip's own box, not its content)
     void vault.tabs.map((t) => t.pinned);
+    void vault.activeTabId;
     void tick().then(measureOverflow);
   });
 
@@ -298,9 +303,7 @@
       onclick={(e) => listTabs(e.currentTarget)}
     >
       <span class="count">{vault.tabs.length}</span>
-      <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M5 8 L10 13 L15 8" />
-      </svg>
+      <span class="chevron"><Chevron /></span>
     </button>
   {/if}
 </div>
@@ -372,24 +375,26 @@
     overflow-x: auto;
     /* The thin scrollbar is hidden: the wheel or a drag moves it sideways, and an always-visible bar would lower the bar's height */
     scrollbar-width: none;
-    /* scrollIntoView lands the active tab clear of the faded edge, not under it */
-    scroll-padding-inline: 28px;
+    /* The width of the faded edge; the scroll padding is the same length, so scrollIntoView
+       lands the active tab clear of the fade, not under it */
+    --fade: 28px;
+    scroll-padding-inline: var(--fade);
   }
   .tabstrip::-webkit-scrollbar {
     display: none;
   }
   /* The overflowing edge fades out: the one cue, with the scrollbar hidden, that tabs continue past it */
   .tabstrip.fade-left {
-    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px);
-    mask-image: linear-gradient(to right, transparent 0, #000 28px);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade));
+    mask-image: linear-gradient(to right, transparent 0, #000 var(--fade));
   }
   .tabstrip.fade-right {
-    -webkit-mask-image: linear-gradient(to left, transparent 0, #000 28px);
-    mask-image: linear-gradient(to left, transparent 0, #000 28px);
+    -webkit-mask-image: linear-gradient(to left, transparent 0, #000 var(--fade));
+    mask-image: linear-gradient(to left, transparent 0, #000 var(--fade));
   }
   .tabstrip.fade-left.fade-right {
-    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
-    mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%);
   }
   .list-btn {
     display: flex;
@@ -406,6 +411,11 @@
   .list-btn:hover {
     background: var(--bg-hover);
     color: var(--fg);
+  }
+  /* The shared chevron points right; the list hangs below the button, so it points down */
+  .list-btn .chevron {
+    display: inline-flex;
+    transform: rotate(90deg);
   }
   .tab {
     display: flex;

@@ -3,7 +3,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
-  import { byDate, byModified, DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, type TaskRow, taskStateIconSvg, toggleTask, whenOf } from "$lib/views/tasks";
+  import { byDate, byModified, DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, taskKey, type TaskRow, taskStateIconSvg, toggleTask, whenOf } from "$lib/views/tasks";
   import { k as kbd } from "$lib/shortcut";
   import Chevron from "../Chevron.svelte";
   import TaskDateMenu from "./TaskDateMenu.svelte";
@@ -61,9 +61,14 @@
     dateKind = undefined;
   };
 
+  /** The day the rows are read against, taken once per requery: the grouping and the chips
+   *  of one render agree on it. */
+  const today = $derived.by(() => {
+    void hits;
+    return localDate();
+  });
   /** The groups: overdue / today / the next 7 days / later / doing / no date / done */
   const groups = $derived.by(() => {
-    const today = localDate();
     const weekEnd = localDate(7);
     const kind = dateKind;
     const g = { overdue: [] as Row[], today: [] as Row[], week: [] as Row[], later: [] as Row[], doing: [] as Row[], nodate: [] as Row[], done: [] as Row[] };
@@ -151,7 +156,7 @@
     task's date is its due date whenever it has one); with the start date pressed the group
     follows the start date, and a task that started last month but is due next week must
     not be painted late -->
-  {@const dueOverdue = r.state !== "done" && !!r.due && r.due < localDate()}
+  {@const dueOverdue = r.state !== "done" && !!r.due && r.due < today}
   <li>
     <div
       class="row"
@@ -211,10 +216,7 @@
         <span class:overdue-title={overdue}>{title}</span><span class="count">{rows.length}</span>
       </summary>
       <ul>
-        <!-- The key is the block's byte span start: physically unique within a note (an
-          explicit ^id may be copied into duplicates and cannot be a key); a stable key keeps
-          the DOM of unchanged rows from being rebuilt after a requery -->
-        {#each rows as r (r.hit.note + ":" + r.hit.block.span.start)}
+        {#each rows as r (taskKey(r))}
           {@render taskRow(r)}
         {/each}
       </ul>

@@ -16,6 +16,7 @@ import { foldEffect, foldedRanges, syntaxTree, unfoldEffect } from "@codemirror/
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { type EditorState, StateField, type Transaction } from "@codemirror/state";
 import { selectionTouches } from "./reveal";
+import { focusEditor } from "./clickguard";
 
 interface Cell {
   text: string;
@@ -158,7 +159,7 @@ class TableWidget extends WidgetType {
       }
       if (base < 0) return;
       view.dispatch({ selection: { anchor: base + Number(cell.dataset.pos) } });
-      view.focus();
+      focusEditor(view);
     };
     return wrap;
   }

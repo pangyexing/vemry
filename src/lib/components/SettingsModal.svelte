@@ -204,11 +204,6 @@
     vault.revealInTree();
   }
 
-  /** The store's own dirty guard applies (its vault.error is announced above every overlay). */
-  function unmarkNote(id: string) {
-    void vault.unmarkPrivate(id, "note");
-  }
-
   /** Only "pressed and released on the overlay" really counts as clicking outside; with
    *  unsaved changes even that does not close it, so switching to the browser and back and
    *  clicking once does not lose the content — the nudge says the dialog is deliberately
@@ -604,7 +599,7 @@
                     <li>
                       <span class="lock"><PrivacyIcon size={12} /></span>
                       <button class="rule-text note-open" title={t("settings.openNote")} onclick={() => void openMarked(n.id)}>{n.id}</button>
-                      <button class="rule-del" title={t("cmd.unmark-private.desc")} onclick={() => unmarkNote(n.id)}>{t("settings.unmarkNote")}</button>
+                      <button class="rule-del" title={t("cmd.unmark-private.desc")} onclick={() => void vault.unmarkPrivate(n.id, "note")}>{t("settings.unmarkNote")}</button>
                     </li>
                   {/each}
                 </ul>

@@ -11,6 +11,7 @@
     localDate,
     rescheduleTask,
     taskFilterKey,
+    taskKey,
     taskStateIconSvg,
     updateTask,
     type TaskEdit,
@@ -56,13 +57,7 @@
     const seq = ++loadSeq;
     try {
       const res = await api.queryBlocks({ kind: "task", limit: 5000 });
-      if (seq === loadSeq) {
-        hits = res;
-        // The reload after a drop's write carries the date the card was given, so the
-        // provisional placement gives way to the real one. A reload from elsewhere clears
-        // it a moment early; the write's own reload then lands the card anyway
-        if (pendingDrop?.date) pendingDrop = null;
-      }
+      if (seq === loadSeq) hits = res;
     } catch (e) {
       vault.error = String(e);
     }
@@ -78,9 +73,6 @@
    *  so the two views give the same answer to the same keystroke; and building a card happens
    *  once per block rather than on every keystroke. */
   const allCards = $derived(cardsOf(hits, localDate()));
-  /** A card's identity across reloads: the note plus the block's byte span start (physically
-   *  unique within a note). The list key and the pending drop's lookup read this one. */
-  const cardKey = (c: Card) => c.hit.note + ":" + c.hit.block.span.start;
   const shown = $derived(fuzzyKeep(allCards, query, taskFilterKey));
   const total = $derived(shown.length);
 
@@ -130,6 +122,16 @@
   let drag = $state<{ card: Card; x: number; y: number } | null>(null);
   let dropTarget = $state<string | null>(null);
   let suppressClick = false;
+  /** Swallow the click that follows this release. It comes within the same task as the
+   *  pointerup, and the capture handler below consumes the flag then. It comes only when the
+   *  card's element is still in the document: a drop into "scheduled" moves the card to
+   *  another column in the render right after the release, and no click is sent for a
+   *  detached element. The flag must not live on past that task, or it swallows the user's
+   *  next click — the first one on the date menu */
+  function swallowNextClick() {
+    suppressClick = true;
+    setTimeout(() => (suppressClick = false), 0);
+  }
   /** The date menu has two origins: drop = dragged into the "scheduled" column (which needs a
    *  concrete date, since any default would be arbitrary, and cancelling cancels the whole
    *  drop — the card already sits in that column meanwhile, see pendingDrop); chip = clicking
@@ -140,10 +142,14 @@
   let menu = $state<MenuState | null>(null);
   /** A card dropped into "scheduled" shows there at once, at the top of the column, rather
    *  than only after its date is picked: date null while the menu is open (Esc or a click
-   *  outside puts the card back where it was), then the picked date until the write's reload
-   *  lands the card in its real place. The card is looked up by key in whatever hits are
-   *  current, so a reload while the menu is open does not lose it. */
-  let pendingDrop = $state<{ card: Card; date: string | null } | null>(null);
+   *  outside puts the card back where it was), then the picked date until a query made after
+   *  the write has landed the card in its real place. The card is looked up by key in
+   *  whatever hits are current, so a reload while the menu is open does not lose it, and a
+   *  reload from elsewhere while the write is in flight (still showing the old date) does not
+   *  put it back early — only the write's own completion clears it. */
+  let pendingDrop = $state.raw<{ card: Card; date: string | null } | null>(null);
+  /** The pending card's key, read once per render by the column pass and by every card. */
+  const pendingKey = $derived(pendingDrop ? taskKey(pendingDrop.card) : null);
 
   function pressCard(e: PointerEvent, card: Card) {
     if (e.button !== 0) return;
@@ -170,19 +176,17 @@
 
   function dragEnd(e: PointerEvent) {
     pressed = null;
-    if (!drag) return;
+    if (!drag) {
+      // A drag Escape cancelled armed the flag for this release's click; it is bounded here
+      // the same way as a drop's
+      if (suppressClick) swallowNextClick();
+      return;
+    }
     const d = drag.card;
     const target = dropTarget;
     drag = null;
     dropTarget = null;
-    suppressClick = true;
-    // The click that follows the release comes within the same task as the pointerup, and
-    // the capture handler below consumes the flag then. It comes only when the card's
-    // element is still in the document: a drop into "scheduled" moves the card to another
-    // column in the render right after this handler, and no click is sent for a detached
-    // element. The flag must not live on past that task, or it swallows the user's next
-    // click — the first one on the date menu
-    setTimeout(() => (suppressClick = false), 0);
+    swallowNextClick();
     if (target === null) return;
     if (target === "scheduled" && groupBy.by === "state") {
       // The date menu pops up at the drop point and only writes once a date is chosen (Esc or
@@ -234,11 +238,14 @@
         pendingDrop = null;
         return;
       }
-      // The provisional card carries the date now, until the write's reload; a refused, stale
-      // or failed write has no reload coming, so the card goes back at once
+      // The provisional card carries the date now, until a query made after the write has
+      // come back — the note is reindexed before the write's IPC resolves, so that query
+      // necessarily carries the date (a newer load superseding it post-dates the write too).
+      // A refused, stale or failed write has no reload coming, so the card goes back at once
       pendingDrop = { card: m.card, date };
-      void applyEdit(m.card.hit, edit, t("task.act.editDate")).then((ok) => {
-        if (!ok) pendingDrop = null;
+      void applyEdit(m.card.hit, edit, t("task.act.editDate")).then(async (ok) => {
+        if (ok) await load();
+        pendingDrop = null;
       });
     } else {
       const { hit } = m.card;
@@ -312,10 +319,9 @@
     const cols = columnsOf(shown, defs, groupBy, order);
     // The card of a drop still landing sits at the top of "scheduled" (it has no date yet to
     // sort by), whichever column its data still puts it in; the write's reload sorts it in
-    if (pendingDrop && groupBy.by === "state") {
-      const key = cardKey(pendingDrop.card);
+    if (pendingKey && groupBy.by === "state") {
       for (const list of Object.values(cols)) {
-        const i = list.findIndex((c) => cardKey(c) === key);
+        const i = list.findIndex((c) => taskKey(c) === pendingKey);
         if (i < 0) continue;
         cols.scheduled.unshift(...list.splice(i, 1));
         break;
@@ -567,9 +573,8 @@
             <div class="col-strip"></div>
           {:else}
             <ul class="cards">
-            <!-- The key is the block's byte span: physically unique within a note, so a drag or a requery does not rebuild the DOM -->
-            {#each cards as card (cardKey(card))}
-              {@const pend = pendingDrop && cardKey(pendingDrop.card) === cardKey(card) ? pendingDrop : null}
+            {#each cards as card (taskKey(card))}
+              {@const pend = pendingKey === taskKey(card) ? pendingDrop : null}
               <!-- The field the pending drop writes: activeField, the same one dropEdit picks -->
               {@const pendField = pend ? activeField(card) : null}
               <li>

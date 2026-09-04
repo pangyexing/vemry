@@ -12,9 +12,8 @@ import { type EditorBlock, blockAt, extentTo, frontmatterEnd } from "./blocks";
 import { CONTENT_PAD } from "./blockhandle";
 import { moveBlockTo } from "./blockops";
 import { selectBlock } from "./blocksel";
-import { focusEditor } from "./clickguard";
+import { DRAG_THRESHOLD, focusEditor } from "./clickguard";
 
-const THRESHOLD = 5;
 const DEPTH_PX = 24;
 const EDGE = 40;
 const SCROLL_STEP = 8;
@@ -186,7 +185,7 @@ export function startBlockDrag(
     x = ev.clientX;
     y = ev.clientY;
     if (!dragging) {
-      if (Math.hypot(x - pressX, y - pressY) < THRESHOLD) return;
+      if (Math.hypot(x - pressX, y - pressY) < DRAG_THRESHOLD) return;
       begin();
     }
     ev.preventDefault();

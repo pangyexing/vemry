@@ -365,6 +365,12 @@ export function rowOf(hit: BlockHit): TaskRow {
 export const taskFilterKey = (r: TaskRow) =>
   `${r.text} ${r.hit.note_title} ${r.hit.note} ${r.due ?? ""} ${r.scheduled ?? ""}`;
 
+/** A task's identity across requeries: the note plus the block's byte span start,
+ *  physically unique within a note (an explicit ^id may be copied into duplicates and
+ *  cannot be a key). Both views key their lists by it, so the DOM of an unchanged row
+ *  survives a requery, and the board finds a card again in whatever hits are current. */
+export const taskKey = (r: TaskRow) => r.hit.note + ":" + r.hit.block.span.start;
+
 /** The date a task groups by: due first, and without a due the ⏳scheduled date counts
  *  too — otherwise a task "⏳ starting tomorrow" would carry a date chip while lying
  *  under "no date". Agenda's grouping and the kanban's column assignment read this one
@@ -424,9 +430,11 @@ function daysUntil(date: string): number {
  *  does not show (the reader would have to count from today). Only overdue gets the
  *  relative amount — giving a future date "in 3 days" as well would mix two units in
  *  one column and make it harder to scan.
- *  The gate is the group's or column's overdue rather than "the date is in the past": a
- *  finished task is not late however long ago its due date was, and it belongs to
- *  "done".
+ *  The gate is the task's own lateness — an unfinished task whose due date has passed —
+ *  rather than "the date is in the past": a finished task is not late however long ago
+ *  its due date was, and it belongs to "done". On the board the column's overdue is the
+ *  same test wherever a due chip is painted; Agenda spells it out, since with a date kind
+ *  pressed its groups follow that date and not the due one.
  *
  *  Two densities, because the two views' horizontal budgets differ by an order of
  *  magnitude — but the wording is the same sentence, and "N days late" reads as the
