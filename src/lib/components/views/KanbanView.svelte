@@ -411,6 +411,34 @@
     pickingTarget = false;
   }
 
+  /** The text input of the open create form: the picker hands the focus back to it. */
+  let addInputEl = $state<HTMLInputElement | null>(null);
+
+  /** Closes the destination picker and returns the focus to the text input: with the picker's
+   *  search box gone the focus would otherwise fall to the body, and the next Escape would then
+   *  be App's (closing the kanban view) instead of closing the create row. */
+  function closePicker() {
+    pickingTarget = false;
+    addInputEl?.focus();
+  }
+
+  /** One handler for the whole create form, so Escape and Enter behave the same in every
+   *  control of it. Escape closes the innermost layer only — the destination picker if it is
+   *  open, otherwise the create row — and is stopped: with the focus in the date input or on
+   *  the destination button it used to bubble to App's layered Escape, which blurred the date
+   *  input and closed the kanban view from the button. Enter submits from either input of the
+   *  entry line; on the destination button it stays the button's own activation. */
+  function onAddKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      if (pickingTarget) closePicker();
+      else closeAdd();
+    } else if (e.key === "Enter" && e.target instanceof HTMLInputElement && e.target.closest(".add-line")) {
+      e.preventDefault();
+      void submitAdd();
+    }
+  }
+
   async function submitAdd() {
     const col = adding;
     if (!col || addBusy) return;
@@ -553,9 +581,13 @@
     <div class="board" class:dragging={!!drag}>
       {#each defs as colDef (colDef.id)}
         {@const cards = cols[colDef.id]}
+        <!-- adding: the quick-create form needs the full column width (in the scheduled column
+          it carries a native date input that cannot shrink), so an empty column grows back
+          while its form is open -->
         <section
           class="col"
           class:is-empty={cards.length === 0}
+          class:adding={adding === colDef.id}
           class:collapsed={collapsed[colDef.id]}
           class:drop-armed={dropTarget === colDef.id}
           data-drop-col={colDef.drop ? colDef.id : undefined}
@@ -669,23 +701,15 @@
             </ul>
             {#if colDef.add}
               {#if adding === colDef.id}
-                <div class="add-form">
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="add-form" onkeydown={onAddKeydown}>
                   <div class="add-line">
                     <input
                       class="add-input"
                       placeholder={t("kanban.newTaskPlaceholder")}
                       bind:value={addText}
+                      bind:this={addInputEl}
                       use:focusIt
-                      onkeydown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void submitAdd();
-                        } else if (e.key === "Escape") {
-                          // Only the create row closes: it does not bubble to App's layered Escape (which would close the kanban view)
-                          e.stopPropagation();
-                          closeAdd();
-                        }
-                      }}
                     />
                     {#if colDef.id === "scheduled" && groupBy.by === "state"}
                       <input type="date" class="add-date" title={t("kanban.scheduleDate")} bind:value={addDate} />
@@ -703,23 +727,13 @@
                   </button>
                   {#if pickingTarget}
                     <div class="target-pick">
-                      <input
-                        placeholder={t("kanban.searchNotes")}
-                        bind:value={targetQuery}
-                        use:focusIt
-                        onkeydown={(e) => {
-                          if (e.key === "Escape") {
-                            e.stopPropagation();
-                            pickingTarget = false;
-                          }
-                        }}
-                      />
+                      <input placeholder={t("kanban.searchNotes")} bind:value={targetQuery} use:focusIt />
                       {#each targetChoices as n (n.id)}
                         <button
                           class="target-item"
                           onclick={() => {
                             addTarget = n.id;
-                            pickingTarget = false;
+                            closePicker();
                             persistUi();
                           }}
                         >
@@ -798,9 +812,11 @@
     cursor: grabbing;
   }
   /* An empty column narrows (its header "Scheduled 0" stays fully readable); while dragging it
-    grows back to full size so a drop target does not shrink. A collapsed column is excluded —
-    collapsing wins over the empty narrowing */
-  .board:not(.dragging) .col.is-empty:not(.collapsed) {
+    grows back to full size so a drop target does not shrink, and so does a column whose
+    quick-create form is open (108px cannot hold the text and date inputs side by side: the
+    text input was squeezed to a sliver and the date input poked out of the column). A
+    collapsed column is excluded — collapsing wins over the empty narrowing */
+  .board:not(.dragging) .col.is-empty:not(.collapsed):not(.adding) {
     flex-grow: 0.35;
     min-width: 108px;
   }
@@ -1158,17 +1174,22 @@
     flex-direction: column;
     gap: 4px;
   }
+  /* wrap: a native date input has a fixed intrinsic width, so when the column is too narrow
+    for both inputs on one line it drops onto its own line instead of overflowing the column */
   .add-line {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
   }
   .add-input {
     flex: 1;
-    min-width: 0;
+    min-width: 96px;
     padding: 5px 8px;
     font-size: var(--fs-sm);
   }
   .add-date {
+    min-width: 0;
+    max-width: 100%;
     padding: 3px 6px;
     font-size: var(--fs-xs);
   }
