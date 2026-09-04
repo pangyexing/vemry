@@ -531,6 +531,29 @@ export function duplicateBlocks(state: EditorState, run: EditorBlock[]): Transac
   };
 }
 
+// ---------------------------------------------------------------- inserting
+
+/** An empty block right after `b`'s extent, ready to type into: for a list item a
+ *  sibling item packed tight — the same bullet, an unchecked box for a task, the
+ *  next number for an ordered item, at the item's own indentation — and for anything
+ *  else an empty line after the seam separator (directly under a heading, a blank
+ *  line away from everything else). */
+export function insertBelow(state: EditorState, b: EditorBlock): TransactionSpec {
+  const at = extentTo(state, b);
+  let insert: string;
+  if (LIST_KINDS.includes(b.kind)) {
+    const marker = b.marker ?? "- ";
+    let next: string;
+    if (b.kind === "task") next = marker.replace(/\[.\]/, "[ ]");
+    else if (b.ordered) next = `${(parseInt(marker, 10) || 1) + 1}${/[.)]/.exec(marker)?.[0] ?? "."} `;
+    else next = marker;
+    insert = "\n" + " ".repeat(b.indentCols ?? 0) + next;
+  } else {
+    insert = "\n" + seamSeparator(kindOfLastDescendant(b), "paragraph");
+  }
+  return { changes: { from: at, insert }, selection: { anchor: at + insert.length }, userEvent: "input.type" };
+}
+
 /** Delete the run with its separator; the cursor lands on the block that
  *  follows (else the one before). */
 export function deleteBlocks(state: EditorState, run: EditorBlock[]): TransactionSpec | null {

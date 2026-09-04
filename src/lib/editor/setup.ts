@@ -1,10 +1,10 @@
 import type { FieldStat, BlockType } from "$lib/api";
 // CodeMirror assembly for the note editor and the plain/code file editor.
 import { t } from "$lib/i18n/i18n.svelte";
-import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView, keymap, drawSelection, highlightSpecialChars, placeholder } from "@codemirror/view";
+import { EditorState, Prec, type Extension } from "@codemirror/state";
+import { EditorView, keymap, drawSelection, highlightSpecialChars, placeholder, type Command } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { markdown, markdownLanguage, insertNewlineContinueMarkupCommand, deleteMarkupBackward } from "@codemirror/lang-markdown";
 import { syntaxHighlighting, HighlightStyle, LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
@@ -171,6 +171,41 @@ function filePaste(handler?: (files: File[]) => Promise<string | null>): Extensi
   });
 }
 
+// Enter in a list: CodeMirror's continuation command, with lists kept tight. Its
+// defaults loosen a list in two ways — Enter on an empty second item inserts a
+// blank line above it instead of ending the list (the `nonTightLists` option), and
+// once any two items are separated by a blank line, every further Enter inserts a
+// blank line along with the marker. Under the seam rule (blockops.ts: an item packs
+// against an item) that is one stray blank line spreading down the list with each
+// keystroke. The command has no option for the second behaviour, so its transaction
+// is rewritten: an insertion shaped "\n<blank line>\n<markers>" loses the blank
+// line. A blank line between items is still typed the same way as anywhere else —
+// Enter on an empty item ends the list, Enter again opens the gap.
+const continueMarkup = insertNewlineContinueMarkupCommand({ nonTightLists: false });
+const LOOSE_CONTINUATION = /^\n[ \t>]*\n/;
+const continueListTight: Command = (view) =>
+  continueMarkup({
+    state: view.state,
+    dispatch: (tr) => {
+      const changes: { from: number; to: number; text: string }[] = [];
+      tr.changes.iterChanges((from, to, _f, _t, inserted) => changes.push({ from, to, text: inserted.toString() }));
+      const m = changes.length === 1 ? LOOSE_CONTINUATION.exec(changes[0].text) : null;
+      if (!m) {
+        view.dispatch(tr);
+        return;
+      }
+      const { from, to, text } = changes[0];
+      const insert = "\n" + text.slice(m[0].length);
+      view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, scrollIntoView: true, userEvent: "input" });
+    },
+  });
+const listKeymap = Prec.high(
+  keymap.of([
+    { key: "Enter", run: continueListTight },
+    { key: "Backspace", run: deleteMarkupBackward },
+  ]),
+);
+
 export function createEditor(opts: EditorOptions): EditorView {
   const view = new EditorView({ parent: opts.parent, state: buildState(opts) });
   return view;
@@ -189,7 +224,8 @@ function buildState(opts: EditorOptions): EditorState {
     mode.push(
       noteFont,
       placeholder(t("editor.placeholder")),
-      markdown({ base: markdownLanguage, extensions: [Highlight] }),
+      markdown({ base: markdownLanguage, extensions: [Highlight], addKeymap: false }),
+      listKeymap,
       syntaxHighlighting(mdHighlight),
       livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage, onFieldChip: opts.onFieldChip }),
       foldExtension(),

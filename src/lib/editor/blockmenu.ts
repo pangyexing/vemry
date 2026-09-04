@@ -10,13 +10,14 @@ import { k } from "$lib/shortcut";
 import { foldedRanges } from "@codemirror/language";
 import type { EditorView } from "@codemirror/view";
 import type { MenuEntry, MenuItem } from "$lib/stores/contextMenu.svelte";
-import { type EditorBlock, blockAt, blockContentStart, extentTo, nextSibling, prevSibling } from "./blocks";
+import { type EditorBlock, blockAt, blockContentStart, nextSibling, prevSibling } from "./blocks";
 import {
   type TurnTarget,
   canTurnInto,
   deleteBlocks,
   duplicateBlocks,
   indentBlock,
+  insertBelow,
   isPrivateBlock,
   moveBlocks,
   outdentBlock,
@@ -142,10 +143,7 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
   return [
     {
       label: t("block.insertBelow"),
-      action: act(view, b, (now) => {
-        const at = extentTo(view.state, now);
-        view.dispatch({ changes: { from: at, insert: "\n\n" }, selection: { anchor: at + 2 }, userEvent: "input.type" });
-      }),
+      action: act(view, b, (now) => view.dispatch(insertBelow(view.state, now))),
     },
     { separator: true },
     copyLink,
