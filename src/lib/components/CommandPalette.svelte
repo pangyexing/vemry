@@ -561,12 +561,13 @@
       tabindex="-1"
     >
       {#if isFind}
-        <div class="seg" role="tablist" aria-label={t("palette.findSpaces")}>
-          <button class="seg-btn" class:on={mode === "search"} role="tab" aria-selected={mode === "search"} onclick={() => (mode = "search")}>
-            {t("palette.modeNotes")}<kbd class="key">{k("Mod+Shift+F")}</kbd>
+        <!-- The two find spaces as underline tabs, the same header language as the sidebar's 大纲 | 研究 -->
+        <div class="spaces" role="tablist" aria-label={t("palette.findSpaces")}>
+          <button class="space" class:active={mode === "search"} role="tab" aria-selected={mode === "search"} onclick={() => (mode = "search")}>
+            {t("palette.modeNotes")}<kbd class="space-key">{k("Mod+Shift+F")}</kbd>
           </button>
-          <button class="seg-btn" class:on={mode === "url"} role="tab" aria-selected={mode === "url"} onclick={() => (mode = "url")}>
-            {t("palette.modeWeb")}<kbd class="key">{k("Mod+L")}</kbd>
+          <button class="space" class:active={mode === "url"} role="tab" aria-selected={mode === "url"} onclick={() => (mode = "url")}>
+            {t("palette.modeWeb")}<kbd class="space-key">{k("Mod+L")}</kbd>
           </button>
         </div>
       {/if}
@@ -663,32 +664,38 @@
     padding: 14px 16px;
     font-size: var(--fs-lg);
   }
-  /* The find spaces' segmented head: two pills above the input, the current one in the accent's soft tile */
-  .seg {
+  /* The find spaces' head: underline tabs flush with the top edge (App's .tabs, the sidebar
+     header, is the reference — same padding, radius and accent underline), the shortcut set
+     faint beside each label so the head teaches the keys without shouting them */
+  .spaces {
     display: flex;
-    gap: 4px;
-    padding: 10px 12px 0;
+    gap: 2px;
+    padding: 8px 10px 0;
+    border-bottom: 1px solid var(--border);
   }
-  .seg-btn {
+  .space {
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     gap: 8px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    border: 1px solid transparent;
-    color: var(--fg-muted);
     font-size: var(--fs-sm);
+    color: var(--fg-muted);
+    padding: 5px 12px;
+    border-radius: 5px 5px 0 0;
+    border-bottom: 2px solid transparent;
   }
-  .seg-btn:hover {
-    background: var(--bg-hover);
+  .space:hover {
     color: var(--fg);
+    background: var(--bg-hover);
   }
-  .seg-btn.on {
-    background: var(--accent-soft);
-    color: var(--accent);
+  .space.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
   }
-  .seg-btn .key {
-    opacity: 0.7;
+  .space-key {
+    font-family: inherit;
+    font-size: var(--fs-xs);
+    color: var(--fg-faint);
+    white-space: nowrap;
   }
   input:focus-visible {
     outline: none;
