@@ -375,6 +375,8 @@ export type AgentEvent =
   | { type: "plan_updated"; items: PlanItem[] }
   /** propose_actions is suspended awaiting the user's review of the list (the actions gate). */
   | { type: "actions_request"; request: ActionsRequest }
+  /** open_for_reading is suspended awaiting the user's click on the URLs (the read gate). */
+  | { type: "read_request"; request: ReadRequest }
   /** A write landed in this turn: the UI counts them per turn to offer "undo this turn's writes". */
   | { type: "write_landed"; turn: string | null; tool: string; path: string }
   /** The web sources this turn cited, settled by Rust at the end of the turn with their verification (authoritative for the turn's source card). */
@@ -449,6 +451,13 @@ export interface ActionsRequest {
 }
 
 export type ActionsDecision = { kind: "approve"; items: ActionItem[] } | { kind: "reject"; reason: string };
+
+/** The read gate's request (open_for_reading; mirroring vemry_agent::permission::ReadRequest) and the user's answer (agent_bridge::ReadAnswer). */
+export interface ReadRequest {
+  id: string;
+  urls: string[];
+}
+export type ReadAnswer = { kind: "allow"; urls: string[]; auto_sources: boolean } | { kind: "deny"; reason: string };
 
 /** A row of the example-skills catalogue in Settings (mirroring commands.rs::SkillExample). */
 export interface SkillExample {
@@ -927,6 +936,8 @@ export const api = {
     invoke<void>("agent_plan_respond", { requestId, decision }),
   agentActionsRespond: (requestId: string, decision: ActionsDecision) =>
     invoke<void>("agent_actions_respond", { requestId, decision }),
+  /** The read gate's answer: which URLs to fetch, and whether source-table URLs may be fetched without asking from now on. */
+  agentReadRespond: (requestId: string, answer: ReadAnswer) => invoke<void>("agent_read_respond", { requestId, answer }),
   /** Put back every write one turn landed (skipping notes edited since); refused while the agent runs. */
   agentUndoTurn: (turn: string) => invoke<UndoReport>("agent_undo_turn", { turn }),
   /** The example-skills catalogue and its installer (a file already there is never overwritten). */

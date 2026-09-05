@@ -171,6 +171,7 @@ pub fn run() {
             commands::agent_cancel,
             commands::agent_follow_set,
             commands::agent_actions_respond,
+            commands::agent_read_respond,
             commands::agent_undo_turn,
             commands::format_markdown,
             commands::html_to_markdown,

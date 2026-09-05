@@ -433,7 +433,7 @@ fn truncate_ctx(text: &str) -> Option<String> {
 /// Reading a text attachment: an agent-visible read path, gated by `gate_private`.
 /// A note sent as a file is read as a note — `read_file` knows nothing of
 /// private blocks, so a `.md` path must take the note path that cuts them.
-fn read_text_file(vault: &Vault, path: &str, filtered: &mut usize) -> Result<String, String> {
+pub(crate) fn read_text_file(vault: &Vault, path: &str, filtered: &mut usize) -> Result<String, String> {
     let rel = gate_private(vault, path, filtered)?;
     if rel.to_ascii_lowercase().ends_with(".md") {
         return run_read(vault, "read_note", json!({ "path": rel }), filtered);
@@ -449,7 +449,7 @@ fn read_text_file(vault: &Vault, path: &str, filtered: &mut usize) -> Result<Str
     }
 }
 
-fn is_pdf(path: &str) -> bool {
+pub(crate) fn is_pdf(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     name.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("pdf"))
 }
@@ -460,19 +460,70 @@ fn is_pdf(path: &str) -> bool {
 /// inside the library — a malformed PDF must not take down the whole turn) and
 /// whitespace normalisation. Layout is necessarily lost, which the first line of
 /// the envelope says.
-fn read_pdf_text(vault: &Vault, path: &str, rel: &str) -> Result<String, String> {
+pub(crate) fn read_pdf_text(vault: &Vault, path: &str, rel: &str) -> Result<String, String> {
     let bytes = vault.read_file_bytes(path).map_err(|e| e.to_string())?;
     if bytes.len() > PDF_MAX_BYTES {
         return Err(format!("PDF too large (>20MB): {rel}"));
     }
-    let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pdf_extract::extract_text_from_mem(&bytes)))
-        .map_err(|_| format!("PDF parse failed: {rel}"))?
-        .map_err(|e| format!("PDF parse failed: {rel} ({e})"))?;
-    let text = collapse_blank_lines(&extracted);
+    // The extraction is cached under .vemry/cache/pdf by the bytes' hash: a PDF read
+    // once (attached, or through read_file) costs nothing the next time, and the
+    // cached text is what search_notes searches for PDFs
+    let key = format!("{:016x}", vemry_core::provenance::fnv1a64(&bytes));
+    let cache_dir = vault.meta_dir().join(PDF_CACHE_SUBDIR);
+    let cached = cache_dir.join(format!("{key}.txt"));
+    let text = match std::fs::read_to_string(&cached) {
+        Ok(t) => t,
+        Err(_) => {
+            let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pdf_extract::extract_text_from_mem(&bytes)))
+                .map_err(|_| format!("PDF parse failed: {rel}"))?
+                .map_err(|e| format!("PDF parse failed: {rel} ({e})"))?;
+            let text = collapse_blank_lines(&extracted);
+            if std::fs::create_dir_all(&cache_dir).is_ok() {
+                let _ = std::fs::write(&cached, &text);
+                let _ = std::fs::write(cache_dir.join(format!("{key}.path")), rel);
+            }
+            text
+        }
+    };
     if text.is_empty() {
         return Ok(text);
     }
     Ok(format!("(the text below was extracted from a PDF; its layout may be lost)\n\n{text}"))
+}
+
+/// Where extracted PDF texts live under the vault's meta directory (`<key>.txt` = the
+/// text, `<key>.path` = the vault-relative path it came from).
+pub const PDF_CACHE_SUBDIR: &str = "cache/pdf";
+
+/// The cached PDF texts: (vault-relative path, text), private ones filtered out and
+/// counted. A PDF appears here once it has been read (attached with @, or through
+/// read_file); until then search does not see it — the inventory is list_files.
+pub fn cached_pdf_texts(vault: &Vault, filtered: &mut usize) -> Vec<(String, String)> {
+    let dir = vault.meta_dir().join(PDF_CACHE_SUBDIR);
+    let Ok(rd) = std::fs::read_dir(&dir) else { return vec![] };
+    let mut out = Vec::new();
+    for e in rd.filter_map(|e| e.ok()) {
+        let p = e.path();
+        if p.extension().is_none_or(|x| x != "path") {
+            continue;
+        }
+        let Ok(rel) = std::fs::read_to_string(&p) else { continue };
+        let rel = rel.trim().to_string();
+        // the file may have moved or been deleted since: a stale cache entry is skipped
+        if !vault.root().join(&rel).is_file() {
+            continue;
+        }
+        if vault.is_private_rel(&rel, false) {
+            *filtered += 1;
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(p.with_extension("txt")) else { continue };
+        if !text.trim().is_empty() {
+            out.push((rel, text));
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Whitespace normalisation of an extraction: trailing whitespace stripped, runs
@@ -1284,6 +1335,20 @@ mod tests {
         assert!(body.starts_with("(the text below was extracted from a PDF"), "{body}");
         assert!(body.contains("Hello PDF attachment"), "{body}");
         assert_eq!(f0, 0);
+        // The extraction is cached under .vemry/cache/pdf (text + the path it came from); the
+        // cache feeds search_notes, and a private PDF's entry is skipped and counted there
+        let cache = vault.meta_dir().join(PDF_CACHE_SUBDIR);
+        let texts = std::fs::read_dir(&cache).unwrap().filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "txt")).count();
+        assert_eq!(texts, 1, "one PDF read, one cached text");
+        let mut filtered = 0;
+        let cached = cached_pdf_texts(&vault, &mut filtered);
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].0, "paper.PDF");
+        assert!(cached[0].1.contains("Hello PDF attachment"));
+        let out = crate::tools::execute_read_tool(&vault, "search_notes", &json!({"query": "hello attachment"})).unwrap();
+        assert!(out.text.contains("paper.PDF:1:") && out.text.contains("(PDF; read_file for the text)"), "{}", out.text);
+        let out = crate::tools::execute_read_tool(&vault, "read_file", &json!({"path": "paper.PDF"})).unwrap();
+        assert!(out.text.contains("Hello PDF attachment"));
         let (private_pdf, f1) = one(&vault, ContextRef::File { path: "secret/paper.pdf".into() });
         let (missing_pdf, f2) = one(&vault, ContextRef::File { path: "secret/nope.pdf".into() });
         assert_eq!(private_pdf.body.unwrap_err(), missing_pdf.body.unwrap_err().replace("nope", "paper"));

@@ -10,6 +10,7 @@
   import { api, AGENT_IMAGE_EXTS, EFFORT_OPTIONS, type EffortValue, isAgentImage, type WebSearchResult } from "$lib/api";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { agent, blockHandle, type ComposerHandle, type DraftRef, type TimelineItem } from "$lib/stores/agent.svelte";
+  import type { ReadRequest } from "$lib/api";
   import HoverCard, { type HoverCardData } from "./HoverCard.svelte";
   import { POSITIONAL_RE, TRANSIENT_CITE_RE, blocksOf, findBlock, materializeCitations, parseRefTarget } from "$lib/citation";
   import AtPicker, { linesLabel } from "./AtPicker.svelte";
@@ -473,6 +474,31 @@
     if (d.kind === "approve") return t("chat.actionsApproved", { n: d.items.length });
     if (d.reason === "cancelled") return t("chat.actionsCancelled");
     return t("chat.actionsRejected");
+  }
+
+  /** ---- The read gate's card (open_for_reading): tick the pages to open, or decline. The
+   *  "from now on" checkbox is the session's standing consent for URLs already in its source
+   *  table (search results, cited pages) — a new URL still asks. */
+  type ReadCard = Extract<TimelineItem, { kind: "read" }>;
+  let readChecks = $state<boolean[]>([]);
+  let readAuto = $state(false);
+  $effect(() => {
+    const req = agent.pendingRead;
+    readChecks = req ? req.urls.map(() => true) : [];
+    readAuto = false;
+  });
+  const readCount = $derived(readChecks.filter(Boolean).length);
+  function submitRead(req: ReadRequest) {
+    const urls = req.urls.filter((_, i) => readChecks[i]);
+    void agent.respondRead({ kind: "allow", urls, auto_sources: readAuto });
+  }
+  function declineRead() {
+    void agent.respondRead({ kind: "deny", reason: t("chat.readDeclined") });
+  }
+  function readBadge(d: NonNullable<ReadCard["decision"]>): string {
+    if (d.kind === "pages") return d.urls.length ? t("chat.readDone", { n: d.urls.length }) : t("chat.readNone");
+    if (d.reason === "cancelled") return t("chat.actionsCancelled");
+    return t("chat.readDeclined");
   }
 
   /** The thousands abbreviation (for the usage gauge). */
@@ -1559,6 +1585,38 @@
             {/if}
           </div>
         {/if}
+      {:else if item.kind === "read"}
+        {@const pendingRd = agent.pendingRead?.id === item.id}
+        <div class="plan-inline read-card" class:rejected={item.decision?.kind === "deny"}>
+          <div class="plan-inline-head">
+            <span class="plan-inline-title">{t("chat.readTitle")}</span>
+            {#if item.decision}
+              <span class="plan-inline-badge" class:bad={item.decision.kind === "deny"}>{readBadge(item.decision)}</span>
+            {:else if pendingRd}
+              <span class="plan-inline-badge wait">{t("chat.readWaiting")}</span>
+            {/if}
+          </div>
+          {#each item.urls as u, ui (u)}
+            <div class="read-row" class:off={pendingRd && !readChecks[ui]} class:failed={item.decision?.kind === "pages" && item.decision.failed.includes(u)}>
+              {#if pendingRd}
+                <label class="act-keep"><input type="checkbox" bind:checked={readChecks[ui]} /></label>
+              {:else}
+                <span class="plan-check">{item.decision?.kind === "pages" && item.decision.urls.includes(u) ? "✓" : item.decision?.kind === "pages" ? "✕" : "·"}</span>
+              {/if}
+              <button class="read-url" title={u} onclick={(e) => openCitation(u, e.metaKey || e.ctrlKey)}>
+                <span class="read-domain">{domainOf(u)}</span><span class="read-path">{u.replace(/^https?:\/\/[^/]+/, "")}</span>
+              </button>
+            </div>
+          {/each}
+          {#if pendingRd}
+            <div class="plan-actions">
+              <label class="read-auto"><input type="checkbox" bind:checked={readAuto} />{t("chat.readAutoSources")}</label>
+              <span class="plan-spacer"></span>
+              <button class="btn subtle" onclick={declineRead}>{t("chat.readDecline")}</button>
+              <button class="btn primary" onclick={() => submitRead(item)}>{readCount ? t("chat.readOpen", { n: readCount }) : t("chat.readOpenNone")}</button>
+            </div>
+          {/if}
+        </div>
       {:else if item.kind === "actions"}
         {@const pendingActs = agent.pendingActions?.id === item.id}
         {@const shownActs = item.decision?.kind === "approve" ? item.decision.items : item.items}
@@ -2753,6 +2811,46 @@
   }
   .act-fields {
     flex-wrap: wrap;
+  }
+  .read-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    border-top: 1px solid var(--border);
+    font-size: var(--fs-xs);
+  }
+  .read-row.off .read-url {
+    opacity: 0.55;
+  }
+  .read-row.failed .read-url {
+    text-decoration: line-through;
+    color: var(--fg-faint);
+  }
+  .read-url {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 4px;
+    text-align: left;
+    overflow: hidden;
+  }
+  .read-domain {
+    flex-shrink: 0;
+    color: var(--fg);
+  }
+  .read-path {
+    color: var(--fg-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .read-auto {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
   }
   .act-field {
     display: flex;

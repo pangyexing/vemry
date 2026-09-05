@@ -8,11 +8,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use tauri::Manager;
 use tokio::sync::oneshot;
 use vemry_agent::types::ChatMessage;
 use vemry_agent::{
-    ActionsDecision, ActionsGate, ActionsRequest, PermissionDecision, PermissionGate, PlanDecision, PlanGate, PlanRequest,
-    WriteRequest,
+    ActionsDecision, ActionsGate, ActionsRequest, FetchedPage, PermissionDecision, PermissionGate, PlanDecision, PlanGate,
+    PlanRequest, ReadDecision, ReadGate, ReadRequest, WriteRequest,
 };
 
 /// One pending table: the gate inserts a oneshot at `park` and awaits it, and the
@@ -39,6 +40,21 @@ impl Cancellable for PlanDecision {
 impl Cancellable for ActionsDecision {
     fn cancelled() -> Self {
         ActionsDecision::Reject { reason: "cancelled".into() }
+    }
+}
+
+/// The user's answer to a read request, before the fetch: which URLs to open, and
+/// whether URLs already in the session's source table may be opened without asking
+/// from now on. The fetch itself happens in the gate after this comes back.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReadAnswer {
+    Allow { urls: Vec<String>, #[serde(default)] auto_sources: bool },
+    Deny { reason: String },
+}
+impl Cancellable for ReadAnswer {
+    fn cancelled() -> Self {
+        ReadAnswer::Deny { reason: "cancelled".into() }
     }
 }
 
@@ -76,6 +92,7 @@ pub struct PendingGates {
     pub writes: Pending<PermissionDecision>,
     pub plans: Pending<PlanDecision>,
     pub actions: Pending<ActionsDecision>,
+    pub reads: Pending<ReadAnswer>,
 }
 
 impl PendingGates {
@@ -83,6 +100,7 @@ impl PendingGates {
         drain(&self.writes);
         drain(&self.plans);
         drain(&self.actions);
+        drain(&self.reads);
     }
 }
 
@@ -138,6 +156,10 @@ pub struct AgentState {
     /// replaced, so "undo this turn's writes" can put them back. In memory only —
     /// cleared with the session, gone after a restart (the provenance bar remains).
     pub journal: Arc<Mutex<Vec<vemry_agent::WriteRecord>>>,
+    /// The session's standing consent for the read gate: URLs already in the
+    /// session's source table (search results, cited pages) may be fetched without
+    /// a card. Set from the card's checkbox; cleared with the session.
+    pub read_auto_sources_arc: Arc<AtomicBool>,
 }
 
 impl AgentState {
@@ -147,6 +169,7 @@ impl AgentState {
     pub fn reset_session_scope(&self) {
         self.invalidate_prompt_snapshot();
         self.session_grant.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.read_auto_sources_arc.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Point the source table at a session: rebuilt from its jsonl (None = a new
@@ -187,6 +210,7 @@ impl Default for AgentState {
             sources: Arc::new(Mutex::new(vec![])),
             follow: Mutex::new(None),
             journal: Arc::new(Mutex::new(vec![])),
+            read_auto_sources_arc: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -245,4 +269,54 @@ impl ActionsGate for ChannelActionsGate {
 
 pub fn resolve_actions(pending: &Pending<ActionsDecision>, request_id: &str, decision: ActionsDecision) -> Result<(), String> {
     resolve(pending, "actions", request_id, decision)
+}
+
+pub fn resolve_read(pending: &Pending<ReadAnswer>, request_id: &str, answer: ReadAnswer) -> Result<(), String> {
+    resolve(pending, "read", request_id, answer)
+}
+
+/// The channel implementation of the read gate: the user's answer comes back through
+/// `agent_read_respond`; then the gate fetches the allowed pages through the reader
+/// window's extraction (`page_read`, the same pipeline a clip uses) and hands them to
+/// the runner. With the session's standing consent, URLs already in the source table
+/// skip the card. Page bodies travel only to the model; the ledger records URLs.
+pub struct ChannelReadGate {
+    pub app: tauri::AppHandle,
+    pub pending: Pending<ReadAnswer>,
+    pub sources: Arc<Mutex<Vec<vemry_agent::Source>>>,
+    pub auto_sources: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl ReadGate for ChannelReadGate {
+    async fn request(&self, req: &ReadRequest) -> ReadDecision {
+        let auto = self.auto_sources.load(std::sync::atomic::Ordering::Relaxed);
+        let known = |u: &str| self.sources.lock().unwrap().iter().any(|s| s.url == u);
+        let allowed: Vec<String> = if auto && req.urls.iter().all(|u| known(u)) {
+            req.urls.clone()
+        } else {
+            match park(&self.pending, &req.id).await {
+                ReadAnswer::Allow { urls, auto_sources } => {
+                    if auto_sources {
+                        self.auto_sources.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    urls
+                }
+                ReadAnswer::Deny { reason } => return ReadDecision::Deny { reason },
+            }
+        };
+        let mut pages = Vec::new();
+        let mut failed = Vec::new();
+        for url in allowed {
+            let state = self.app.state::<crate::AppState>();
+            match crate::browser::reader::page_read(self.app.clone(), state, url.clone()).await {
+                Ok(Some(page)) if !page.markdown.trim().is_empty() => {
+                    let markdown: String = page.markdown.chars().take(vemry_agent::PAGE_CONTEXT_MAX_CHARS).collect();
+                    pages.push(FetchedPage { url: page.url, title: page.title, markdown });
+                }
+                _ => failed.push(url),
+            }
+        }
+        ReadDecision::Pages { pages, failed }
+    }
 }

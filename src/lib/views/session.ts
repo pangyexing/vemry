@@ -42,6 +42,10 @@ export type SessionEntry =
   | { kind: "actions"; ts: string; id: string; items: ActionItem[] }
   /** The actions gate's decision: approve (items = what the user kept, as edited) / reject (reason). */
   | { kind: "actions_decision"; ts: string; id: string; decision: "approve" | "reject"; items?: ActionItem[]; reason?: string }
+  /** The read gate's request (open_for_reading): the URLs proposed, id = the tool call id. */
+  | { kind: "read"; ts: string; id: string; urls: string[] }
+  /** The read gate's outcome: pages (urls = what was read, failed = what could not be) or deny (reason). */
+  | { kind: "read_decision"; ts: string; id: string; decision: "pages" | "deny"; urls?: string[]; failed?: string[]; reason?: string }
   /** "Undo this turn's writes" ran: how many writes were put back and how many skipped (edited since). */
   | { kind: "undo"; ts: string; turn: string; reverted: number; skipped: number }
   /** The session follows a note (path null = stopped); the last line wins. auto: local writes on it pass the gate without a dialog. */
@@ -152,7 +156,7 @@ export function planDecisionLabel(decision: string): string {
 /** Tools that carry their own card projection: the conversation timeline no longer
  *  pushes their raw JSON tool line (the plan card is propose_plan's projection). The
  *  live view and the replay share this one verdict. */
-export const CARD_TOOLS = new Set(["propose_plan", "update_plan", "propose_actions"]);
+export const CARD_TOOLS = new Set(["propose_plan", "update_plan", "propose_actions", "open_for_reading"]);
 
 /** Whether a plan is settled: nothing pending or in progress — a finished plan leaves the sticky card on the next question. */
 export function planReconciled(items: PlanItem[]): boolean {

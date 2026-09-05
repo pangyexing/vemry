@@ -29,7 +29,11 @@ Follow this for any 'look into / search for / tell me about X' request.
    cited as a [[wikilink]] to the local note (and read with read_note), not as a
    URL.
 3. Only when the vault has nothing, or nothing recent enough, search the web
-   (if web search is enabled in the settings).
+   (if web search is enabled in the settings). A search gives titles and
+   snippets; to actually read a page, call open_for_reading with up to 5 URLs —
+   the user approves them on a card and each page comes back as text, which then
+   counts as a verified source. Read one direction's pages, write its conclusion
+   down, then move on; do not queue every result.
 4. In a long conversation, call list_sources before citing again so one source
    does not get two entries; a source marked unverified there was never confirmed
    by a search — say so, or search to confirm it.

@@ -1301,6 +1301,12 @@ async fn run_agent_turn(
         actions_gate: Arc::new(crate::agent_bridge::ChannelActionsGate {
             pending: Arc::clone(&state.agent.pending.actions),
         }),
+        read_gate: Arc::new(crate::agent_bridge::ChannelReadGate {
+            app: app.clone(),
+            pending: Arc::clone(&state.agent.pending.reads),
+            sources: Arc::clone(&state.agent.sources),
+            auto_sources: Arc::clone(&state.agent.read_auto_sources_arc),
+        }),
         vault: Arc::clone(&state.vault),
         sources: Arc::clone(&state.agent.sources),
         journal: Arc::clone(&state.agent.journal),
@@ -1482,6 +1488,18 @@ pub fn agent_undo_turn(app: AppHandle, state: State<'_, AppState>, turn: String)
         note_count: state.vault.lock().unwrap().as_ref().map(|v| v.index().note_count()).unwrap_or(0),
     });
     Ok(report)
+}
+
+/// Handing a read-gate answer back (open_for_reading): which URLs the user allowed
+/// (the gate then fetches them), and whether the session's source-table URLs may be
+/// opened without asking from now on.
+#[tauri::command]
+pub fn agent_read_respond(
+    state: State<'_, AppState>,
+    request_id: String,
+    answer: crate::agent_bridge::ReadAnswer,
+) -> Result<(), String> {
+    crate::agent_bridge::resolve_read(&state.agent.pending.reads, &request_id, answer)
 }
 
 /// Handing an action-list decision back (propose_actions): resolve the matching oneshot, and the loop continues within the same turn.

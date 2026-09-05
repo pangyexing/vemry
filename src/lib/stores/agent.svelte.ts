@@ -16,6 +16,8 @@ import {
   type PermissionDecision,
   type PlanDecision,
   type PlanRequest,
+  type ReadAnswer,
+  type ReadRequest,
   type SessionMeta,
   type WebSearchResult,
   type WriteRequest,
@@ -57,6 +59,7 @@ export interface AgentHandoff {
   pendingPermission: WriteRequest | null;
   pendingPlan: PlanRequest | null;
   pendingActions: ActionsRequest | null;
+  pendingRead: ReadRequest | null;
 }
 
 /** The composer handle a mounted conversation surface registers with the store (at most
@@ -92,6 +95,9 @@ export type TimelineItem =
   /** propose_actions' review card: the proposed items; while undecided (pendingActions
    *  points at it) the card is editable and carries the write / discard buttons. */
   | { kind: "actions"; id: string; items: ActionsRequest["items"]; decision?: ActionsDecision }
+  /** open_for_reading's card: the proposed URLs; while pendingRead points at it the card
+   *  carries checkboxes and the read / decline buttons, afterwards the outcome. */
+  | { kind: "read"; id: string; urls: string[]; decision?: { kind: "pages"; urls: string[]; failed: string[] } | { kind: "deny"; reason: string } }
   /** A system notice line (a context compaction, a fork and the like), shown quietly. */
   | { kind: "notice"; text: string }
   | { kind: "error"; text: string };
@@ -180,6 +186,8 @@ class AgentStore {
   pendingPlan = $state<PlanRequest | null>(null);
   /** The pending actions gate request (propose_actions): the card is editable while it points at it. */
   pendingActions = $state<ActionsRequest | null>(null);
+  /** The pending read gate request (open_for_reading): the card is live while it points at it. */
+  pendingRead = $state<ReadRequest | null>(null);
   /** The context draft (chips) the next message will carry: web pages plus @ references.
    *  The research panel's "add to context", the reading projection and the @ picker all
    *  hand things over here, and the caller consumes and clears it on send. There is at
@@ -295,6 +303,7 @@ class AgentStore {
       pendingPermission: $state.snapshot(this.pendingPermission) as WriteRequest | null,
       pendingPlan: $state.snapshot(this.pendingPlan) as PlanRequest | null,
       pendingActions: $state.snapshot(this.pendingActions) as ActionsRequest | null,
+      pendingRead: $state.snapshot(this.pendingRead) as ReadRequest | null,
     };
   }
 
@@ -310,6 +319,7 @@ class AgentStore {
     this.pendingPermission = typeof h.pendingPermission === "object" ? (h.pendingPermission ?? null) : null;
     this.pendingPlan = typeof h.pendingPlan === "object" ? (h.pendingPlan ?? null) : null;
     this.pendingActions = typeof h.pendingActions === "object" ? (h.pendingActions ?? null) : null;
+    this.pendingRead = typeof h.pendingRead === "object" ? (h.pendingRead ?? null) : null;
   }
 
   /** Rebuild the timeline from Rust's current session (without switching the model
@@ -353,6 +363,7 @@ class AgentStore {
       this.pendingPermission = null;
       this.pendingPlan = null;
       this.pendingActions = null;
+      this.pendingRead = null;
     }
     // created=false: the window was already open and was only focused, so the handoff
     // was not delivered — the draft and the references stay in the main window's store
@@ -386,6 +397,7 @@ class AgentStore {
     this.pendingPermission = null;
     this.pendingPlan = null;
     this.pendingActions = null;
+    this.pendingRead = null;
     await this.loadCurrent();
   }
 
@@ -542,6 +554,7 @@ class AgentStore {
       this.pendingPermission = null;
       this.pendingPlan = null;
       this.pendingActions = null;
+      this.pendingRead = null;
       this.activity++;
       void this.refreshSessions();
     }
@@ -566,6 +579,7 @@ class AgentStore {
     this.pendingPermission = null;
     this.pendingPlan = null;
     this.pendingActions = null;
+    this.pendingRead = null;
     this.sessionId = null;
     this.sessions = [];
     this.usage = null;
@@ -757,6 +771,20 @@ class AgentStore {
           items.push({ kind: "actions", id: e.id, items: e.items });
           break;
         }
+        case "read": {
+          items.push({ kind: "read", id: e.id, urls: e.urls });
+          break;
+        }
+        case "read_decision": {
+          for (let i = items.length - 1; i >= turnStart; i--) {
+            const item = items[i];
+            if (item.kind === "read" && item.id === e.id && item.decision === undefined) {
+              item.decision = e.decision === "pages" ? { kind: "pages", urls: e.urls ?? [], failed: e.failed ?? [] } : { kind: "deny", reason: e.reason ?? "" };
+              break;
+            }
+          }
+          break;
+        }
         case "actions_decision": {
           for (let i = items.length - 1; i >= turnStart; i--) {
             const item = items[i];
@@ -927,6 +955,7 @@ class AgentStore {
         this.pendingPermission = null;
         this.pendingPlan = null; // defensive: it is already null once the user has answered
         this.pendingActions = null;
+        this.pendingRead = null;
         break;
       }
       case "permission_request": {
@@ -941,6 +970,11 @@ class AgentStore {
       case "actions_request": {
         this.timeline.push({ kind: "actions", id: e.request.id, items: e.request.items });
         this.pendingActions = e.request;
+        break;
+      }
+      case "read_request": {
+        this.timeline.push({ kind: "read", id: e.request.id, urls: e.request.urls });
+        this.pendingRead = e.request;
         break;
       }
       case "write_landed": {
@@ -1135,6 +1169,24 @@ class AgentStore {
     if (card && card.kind === "actions") card.decision = decision;
     try {
       await api.agentActionsRespond(req.id, decision);
+      this.activity++;
+    } catch (err) {
+      this.timeline.push({ kind: "error", text: String(err) });
+    }
+  }
+
+  /** The read gate's answer (the same shape as respondActions): the card is settled
+   *  optimistically with what was allowed; the outcome (what loaded) comes on replay. */
+  async respondRead(answer: ReadAnswer) {
+    const req = this.pendingRead;
+    if (!req) return;
+    this.pendingRead = null;
+    const card = [...this.timeline].reverse().find((t) => t.kind === "read" && t.id === req.id);
+    if (card && card.kind === "read") {
+      card.decision = answer.kind === "allow" ? { kind: "pages", urls: answer.urls, failed: [] } : { kind: "deny", reason: answer.reason };
+    }
+    try {
+      await api.agentReadRespond(req.id, answer);
       this.activity++;
     } catch (err) {
       this.timeline.push({ kind: "error", text: String(err) });

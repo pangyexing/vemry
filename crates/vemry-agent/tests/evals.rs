@@ -29,7 +29,26 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-use vemry_agent::permission::{AutoApproveActions, AutoApprovePlan, AutoDeny};
+use vemry_agent::permission::{AutoApproveActions, AutoApprovePlan, AutoDeny, FetchedPage, ReadDecision, ReadGate, ReadRequest};
+
+/// The eval's read gate: the fixture's `pages` map (url → markdown) is what the user
+/// "allowed"; a URL not in it fails, so a fixture states exactly what may be read.
+struct PagesFromFixture(Value);
+
+#[async_trait::async_trait]
+impl ReadGate for PagesFromFixture {
+    async fn request(&self, req: &ReadRequest) -> ReadDecision {
+        let mut pages = vec![];
+        let mut failed = vec![];
+        for u in &req.urls {
+            match self.0.get(u).and_then(|v| v.as_str()) {
+                Some(md) => pages.push(FetchedPage { url: u.clone(), title: format!("Page {}", pages.len() + 1), markdown: md.into() }),
+                None => failed.push(u.clone()),
+            }
+        }
+        ReadDecision::Pages { pages, failed }
+    }
+}
 use vemry_agent::testing::*;
 use vemry_agent::types::{StreamChunk, WebSearchResult};
 use vemry_agent::{AgentEvent, AgentRunner, PageContext, ProviderConfig, RunnerConfig};
@@ -139,6 +158,7 @@ async fn run_fixture(fx: &Value) -> Outcome {
         gate: Arc::new(AutoDeny("evals never write".into())),
         plan_gate: Arc::new(AutoApprovePlan),
         actions_gate: Arc::new(AutoApproveActions),
+        read_gate: Arc::new(PagesFromFixture(fx["pages"].clone())),
         vault: vault.clone(),
         sources: Arc::new(Mutex::new(vec![])),
         journal: Arc::new(Mutex::new(vec![])),

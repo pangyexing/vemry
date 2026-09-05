@@ -201,3 +201,51 @@ impl ActionsGate for AutoApproveActions {
         ActionsDecision::Approve { items: req.items.clone() }
     }
 }
+
+/// One web page the read gate fetched for the model (through the reader window's
+/// extraction pipeline, the same one a clip goes through).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FetchedPage {
+    pub url: String,
+    pub title: String,
+    pub markdown: String,
+}
+
+/// The read gate (open_for_reading): the agent's autonomous network capability
+/// stays at zero — it can only *propose* URLs, and each fetch is the user's click
+/// (or the session's standing consent for URLs already in its source table). The
+/// gate's implementation fetches the pages the user allowed and hands them back;
+/// the runner wraps them in the untrusted web-content envelope.
+#[derive(Clone, Debug, Serialize)]
+pub struct ReadRequest {
+    pub id: String,
+    pub urls: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReadDecision {
+    /// The pages of the URLs the user allowed (an allowed URL that failed to load is
+    /// listed in `failed`, worded for the model).
+    Pages {
+        pages: Vec<FetchedPage>,
+        #[serde(default)]
+        failed: Vec<String>,
+    },
+    Deny { reason: String },
+}
+
+#[async_trait]
+pub trait ReadGate: Send + Sync {
+    async fn request(&self, req: &ReadRequest) -> ReadDecision;
+}
+
+/// Test gate: every URL denied (the default for a runner with no reader).
+pub struct DenyReads;
+
+#[async_trait]
+impl ReadGate for DenyReads {
+    async fn request(&self, _req: &ReadRequest) -> ReadDecision {
+        ReadDecision::Deny { reason: "no reader available".into() }
+    }
+}
