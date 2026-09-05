@@ -391,7 +391,8 @@ private paths; a damaged line is skipped on load, and above 5000 lines the file
 is compacted to the hashes that still exist.
 
 Origins that need no ledger: a `*(YYYY-MM-DD HH:MM)*` capture stamp, a
-selection clip's `> — [title](url) · date` credit line, a whole-page clip's
+selection clip's source line (`> [!quote] [title](url) · date` as the callout's
+head, or the `> — [title](url) · date` credit line older clips end with), a whole-page clip's
 `vemry.origin: clip` frontmatter, and a pre-ledger `vemry.origin: agent` note
 (reported as agent, session unknown, not pending — in a note the ledger knows,
 a block without a record is the user's). New agent-created notes now carry
@@ -1523,8 +1524,10 @@ download entirely: nothing there would consume the rules.
 
 ### Clipping into notes, at three granularities
 
-- **Selected text** → a quote block (`> quotation` plus `— [title](url) · date`),
-  inserted at the cursor in the current note or saved into `clips/`; it can also be
+- **Selected text** → a quote callout (`> [!quote] [title](url) · date` as the head
+  line, the quotation below it; past a few lines it opens folded, so the source is
+  the one line the note shows), inserted at the cursor in the current note or saved
+  into `clips/`; it can also be
   clipped **into a chosen section of a chosen note** (▾ or ⌥ opens the pick-note
   panel to choose a target, or create one; Enter picks straight through for a
   friction-free "end of note", and Tab or typing `#` enters the second stage's

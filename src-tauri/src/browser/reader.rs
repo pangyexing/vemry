@@ -411,7 +411,7 @@ pub fn reading_clip(app: AppHandle, state: State<'_, AppState>, url: String) -> 
     Ok(rel)
 }
 
-/// A projection selection → quote block text (the frontend's insertAtCursor puts it
+/// A projection selection → quote callout text (the frontend's insertAtCursor puts it
 /// into the current note). The selection is right there in the main webview, so none
 /// of the browser window's "keep the selection through a focus loss" gymnastics are
 /// needed. `html` is the fragment the frontend restored from the selection's
@@ -441,7 +441,7 @@ pub fn reading_quote(
         md if !md.is_empty() => md,
         _ => selection,
     };
-    Ok(quote_block(&body, &meta))
+    Ok(quote_block(&body, &meta, true))
 }
 
 #[cfg(test)]

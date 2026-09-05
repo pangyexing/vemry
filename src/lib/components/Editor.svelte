@@ -5,7 +5,7 @@
   import { EditorView } from "@codemirror/view";
   import { type EditorState, Text, Transaction } from "@codemirror/state";
   import { createEditor, resetDoc, languageFor } from "$lib/editor/setup";
-  import { foldOnLoad } from "$lib/editor/fold";
+  import { foldMarkedIn, foldOnLoad } from "$lib/editor/fold";
   import { type EditorBlock, blockAt, blockContentStart, extentTo } from "$lib/editor/blocks";
   import { blockMenuEntries, type BlockMenuHost } from "$lib/editor/blockmenu";
   import { selectedBlocks } from "$lib/editor/blocksel";
@@ -262,6 +262,8 @@
       selection: { anchor: plan.caret },
       scrollIntoView: true,
     });
+    // A `[!quote]-` clip lands folded, as it would open
+    if (block) foldMarkedIn(view, plan.from, plan.from + plan.insert.length);
     focusEditor(view);
     return true;
   }
@@ -280,6 +282,7 @@
       selection: { anchor: plan.caret },
       scrollIntoView: true,
     });
+    foldMarkedIn(view, plan.from, plan.from + plan.insert.length);
     focusEditor(view);
     return plan.landed;
   }

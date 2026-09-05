@@ -410,7 +410,7 @@ pub struct ClipSelectionResult {
     pub saved_path: Option<String>,
 }
 
-/// Clip the selected text: the selection's DOM fragment → Markdown → a quote block
+/// Clip the selected text: the selection's DOM fragment → Markdown → a quote callout
 /// (so images, math and links survive; with nothing convertible in the fragment it
 /// falls back to plain text). `save_to_clips` decides between landing in clips/ and
 /// handing the text back to the frontend to insert into a note — the former triggers
@@ -440,11 +440,12 @@ pub async fn clip_selection(
         md if !md.is_empty() => md,
         _ => sel,
     };
-    let quote = quote_block(&body, &meta);
+    let quote = quote_block(&body, &meta, true);
     if !save_to_clips {
         return Ok(ClipSelectionResult { text: quote, url: meta.url.clone(), saved_path: None });
     }
-    let page = ExtractedPage { markdown: quote.clone(), title: meta.display_title(), byline: None, fallback: false };
+    // A clip note that is nothing but the quote opens expanded (foldable = false)
+    let page = ExtractedPage { markdown: quote_block(&body, &meta, false), title: meta.display_title(), byline: None, fallback: false };
     let rel = land_note(&app, &state, &meta, &compose_clip_note(&page, &meta, &crate::i18n::t(crate::i18n::current(), "clip.sourceLabel")))?;
     maybe_localize(&app, rel.clone(), meta.url.clone());
     Ok(ClipSelectionResult { text: quote, url: meta.url, saved_path: Some(rel) })

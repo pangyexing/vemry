@@ -57,6 +57,16 @@ export function defaultFolds(state: EditorState): StateEffect<{ from: number; to
   return out;
 }
 
+/** Fold the `[!type]-` callouts whose head line ends inside [from, to]: a block that
+ *  has just been inserted (a clipped quote) starts folded in the open note exactly as
+ *  it will on the next open, and nothing else in the document is touched. */
+export function foldMarkedIn(view: EditorView, from: number, to: number): void {
+  ensureParsed(view.state, to);
+  view.dispatch({});
+  const effects = defaultFolds(view.state).filter((e) => e.value.from >= from && e.value.from <= to);
+  if (effects.length) view.dispatch({ effects });
+}
+
 /** Apply the default folds once a document has been created (not on a
  *  restored state, which keeps its own folds). */
 export function foldOnLoad(view: EditorView): void {

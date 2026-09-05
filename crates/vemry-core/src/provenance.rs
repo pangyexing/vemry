@@ -172,11 +172,27 @@ pub fn capture_stamp(raw_slice: &str) -> Option<String> {
     None
 }
 
-/// A selection clip's credit line: `> — [title](url) · YYYY-MM-DD` as the
-/// block's last line → (url, date).
+/// A selection clip's credit → (url, date): `[title](url) · YYYY-MM-DD` on the
+/// head line of a `> [!quote]` callout (the form clips land in), or `> — [title](url)
+/// · YYYY-MM-DD` as the block's last line (the form clips ended with before).
 pub fn clip_credit(raw_slice: &str) -> Option<(String, String)> {
+    let first = raw_slice.lines().next()?.trim();
+    let head = first.strip_prefix('>').map(str::trim_start).and_then(|s| s.strip_prefix("[!"));
+    if let Some((ctype, rest)) = head.and_then(|h| h.split_once(']')) {
+        if matches!(ctype.to_ascii_lowercase().as_str(), "quote" | "cite") {
+            // an optional fold marker, then the title
+            if let Some(credit) = credit_fields(rest.trim_start_matches(['+', '-']).trim_start()) {
+                return Some(credit);
+            }
+        }
+    }
     let last = raw_slice.lines().last()?.trim();
-    let body = last.strip_prefix('>')?.trim_start().strip_prefix("— [")?;
+    credit_fields(last.strip_prefix('>')?.trim_start().strip_prefix("— ")?)
+}
+
+/// `[title](url) · YYYY-MM-DD` → (url, date).
+fn credit_fields(text: &str) -> Option<(String, String)> {
+    let body = text.strip_prefix('[')?;
     let close = body.find("](")?;
     let after = &body[close + 2..];
     let paren = after.find(')')?;
@@ -710,6 +726,14 @@ mod tests {
             Some(("https://x.y/z".into(), "2026-09-02".into()))
         );
         assert_eq!(clip_credit("> — [Title](https://x.y/z)"), None);
+        // The callout form: the credit on the head line, with or without a fold marker
+        assert_eq!(
+            clip_credit("> [!quote]- [Title](https://x.y/z) · 2026-09-05\n> quoted\n> more"),
+            Some(("https://x.y/z".into(), "2026-09-05".into()))
+        );
+        assert_eq!(clip_credit("> [!Cite] [T](https://u) · 2026-09-05"), Some(("https://u".into(), "2026-09-05".into())));
+        assert_eq!(clip_credit("> [!note] [T](https://u) · 2026-09-05"), None, "only a quote callout is a clip");
+        assert_eq!(clip_credit("> [!quote] just a quote\n> — [T](https://u) · 2026-09-05"), Some(("https://u".into(), "2026-09-05".into())));
     }
 
     #[test]

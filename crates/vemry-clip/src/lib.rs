@@ -129,6 +129,58 @@ fn code_handler(el: htmd::Element) -> Option<String> {
     Some(format!("\n\n{fence}{lang}\n{code}\n{fence}\n\n"))
 }
 
+/// Links: `[text](url)`, with the `title` attribute dropped and a citation
+/// marker link dropped altogether.
+/// - htmd keeps the title (`[text](url "title")`); on an encyclopedia page every
+///   link carries one, so a clipped paragraph doubles in size and reads as URL
+///   soup wherever the source shows — a quotation needs the destination only.
+/// - A citation superscript (`<sup><a href="…#cite_note-1">[1]</a></sup>`) is
+///   noise in a quotation, and worse than noise: its text is itself bracketed, so
+///   the link would come out as `[[1]](url)` — a wikilink followed by a bare URL,
+///   which the editor's autolink then extends through the next link on the line.
+///   Dropped when the text is a short bracketed marker and the destination is a
+///   fragment link (a citation points into its own page); `[citation needed]`
+///   pointing at a help page stays a link.
+///
+/// The destination is percent-encoded the way `md_link` does it (htmd would write
+/// `\(` `\)` and wrap a URL holding spaces in `<>`); leading whitespace inside
+/// the anchor is dropped and trailing whitespace moved after the link, as htmd
+/// does.
+fn anchor_handler(h: &dyn htmd::element_handler::Handlers, el: &htmd::Element) -> Option<String> {
+    let href = el
+        .attrs
+        .iter()
+        .find(|a| a.name.local.as_ref() == "href")
+        .map(|a| a.value.chars().filter(|c| !matches!(c, '\n' | '\r' | '\t')).collect::<String>())
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty());
+    let content = h.walk_children(el.node).content;
+    let Some(href) = href else {
+        return Some(content);
+    };
+    let text = content.trim_start();
+    let body = text.trim_end();
+    let trailing = &text[body.len()..];
+    // An empty anchor (a bare target, an icon that did not convert) has nothing to link
+    if body.is_empty() || (href.contains('#') && is_citation_marker(body)) {
+        return Some(trailing.to_string());
+    }
+    Some(format!("[{body}]({}){trailing}", encode_link_url(&href)))
+}
+
+/// `\[1\]` (htmd escapes the brackets of text), `[1]`, `[note 3]`: a bracketed
+/// marker up to CITE_MAX_BYTES of content with nothing nested.
+fn is_citation_marker(text: &str) -> bool {
+    let inner = text
+        .strip_prefix("\\[")
+        .or_else(|| text.strip_prefix('['))
+        .and_then(|s| s.strip_suffix("\\]").or_else(|| s.strip_suffix(']')));
+    match inner {
+        Some(s) => !s.is_empty() && s.len() <= CITE_MAX_BYTES && !s.contains(['[', ']', '\\', '\n']),
+        None => false,
+    }
+}
+
 /// The tag name when the node is an element.
 fn element_tag(node: &markup5ever_rcdom::Node) -> Option<&str> {
     match &node.data {
@@ -297,8 +349,14 @@ fn sentinel_converter(skip_tags: &[&'static str]) -> htmd::HtmlToMarkdown {
         .add_handler(vec!["table"], |h: &dyn htmd::element_handler::Handlers, el: htmd::Element| {
             table_handler(h, &el).map(Into::into)
         })
+        .add_handler(vec!["a"], |h: &dyn htmd::element_handler::Handlers, el: htmd::Element| {
+            anchor_handler(h, &el).map(Into::into)
+        })
         .build()
 }
+
+/// The longest content a citation marker like `[1]`/`[note 3]` can have, in bytes.
+const CITE_MAX_BYTES: usize = 32;
 
 /// htmd's conservative escaping is noise in a clipping context: the numbered
 /// list guard `1\.`, the line-leading list markers `\-`/`\+`/`\>`, citation
@@ -310,8 +368,9 @@ fn sentinel_converter(skip_tags: &[&'static str]) -> htmd::HtmlToMarkdown {
 /// - `\-`/`\+`/`\>` only at the start of a line (where the restored form is the
 ///   natural list or quote);
 /// - `\[x\]` only when the content is short, unnested, does not start with `^`
-///   (footnote syntax) and is not followed by `(` (which would splice a link) —
-///   what that matches is a citation marker like `[1]`/`[note 3]`;
+///   (footnote syntax), is not followed by `(` or `](` and is not preceded by `[`
+///   (each would splice a link — or, as `[[1]]`, a wikilink) — what that matches
+///   is a citation marker like `[1]`/`[note 3]`;
 /// - `\\` (a backslash the source itself carried) is kept as is; `\*`/`\_`/`\#`
 ///   are left alone — removing them would conjure emphasis or headings out of
 ///   nothing, which is worse than the noise.
@@ -320,7 +379,6 @@ fn sentinel_converter(skip_tags: &[&'static str]) -> htmd::HtmlToMarkdown {
 /// sentinel handlers emit passes through verbatim, so every backslash in there is
 /// real content (LaTeX's `\\`, a regex's `\.`).
 fn soften_escapes(md: &str) -> String {
-    const CITE_MAX_BYTES: usize = 32;
     let b = md.as_bytes();
     // Every decision point is an ASCII byte; multi-byte UTF-8 is only ever moved
     // across verbatim, so accumulating byte by byte is safe
@@ -410,7 +468,8 @@ fn soften_escapes(md: &str) -> String {
                 line_start = n == b'>';
                 continue;
             }
-            if n == b'[' {
+            // A `[` just before would make the restored marker a wikilink (`[[1]]`)
+            if n == b'[' && out.last() != Some(&b'[') {
                 if let Some(inner_len) = citation_len(&b[i + 2..], CITE_MAX_BYTES) {
                     out.push(b'[');
                     out.extend_from_slice(&b[i + 2..i + 2 + inner_len]);
@@ -439,14 +498,17 @@ fn soften_escapes(md: &str) -> String {
 /// Whether what follows `\[` is a citation marker that is safe to restore;
 /// returns the content's byte length (up to the matching `\]`).
 /// Rejected: too long, containing brackets/backslashes/newlines, starting with
-/// `^` (a footnote), or a `\]` followed immediately by `(` (which would splice a
-/// Markdown link).
+/// `^` (a footnote), or a `\]` followed immediately by `(` or by `](` — the
+/// marker is a link's text, or a link's whole text, and restoring it would splice
+/// a Markdown link or turn `[\[1\]](url)` into a wikilink followed by a bare URL.
 fn citation_len(rest: &[u8], max: usize) -> Option<usize> {
     let mut j = 0;
     while j < rest.len() && j <= max {
         match rest[j] {
             b'\\' if rest.get(j + 1) == Some(&b']') => {
-                if j == 0 || rest[0] == b'^' || rest.get(j + 2) == Some(&b'(') {
+                let next = rest.get(j + 2);
+                let links = next == Some(&b'(') || (next == Some(&b']') && rest.get(j + 3) == Some(&b'('));
+                if j == 0 || rest[0] == b'^' || links {
                     return None;
                 }
                 return Some(j);
@@ -586,10 +648,30 @@ pub fn clip_rel_path(meta: &ClipMeta) -> String {
     format!("{CLIPS_DIR}{title}.md")
 }
 
-/// A selection → a quote block: a `> ` prefix per line plus a source credit line.
-pub fn quote_block(selection: &str, meta: &ClipMeta) -> String {
-    let mut out = String::new();
+/// The body length past which a quote landing in a note opens folded: about four
+/// lines of prose at the readable width, where a quotation stops being a passage
+/// and becomes a wall the note is *not* about.
+pub const FOLD_MIN_CHARS: usize = 300;
+/// The line count past which it opens folded as well (a table, a list).
+pub const FOLD_MIN_LINES: usize = 8;
+
+/// A selection → a quote callout: `> [!quote] [title](url) · date` as the head
+/// line, the selection as the body with a `> ` prefix per line. The source sits
+/// where every callout renderer puts a title — icon, tint, and the one line that
+/// stays visible while the body is folded — and a standard renderer shows an
+/// ordinary blockquote whose first line reads `[!quote]`.
+/// `foldable`: a long body opens folded (the `-` marker) when the quote lands in a
+/// note that is about something else; a clip note that is nothing but the quote
+/// passes false and opens expanded. The fold state itself is never written back.
+pub fn quote_block(selection: &str, meta: &ClipMeta, foldable: bool) -> String {
     let trimmed = selection.trim_matches('\n');
+    let long = trimmed.chars().count() > FOLD_MIN_CHARS || trimmed.lines().count() > FOLD_MIN_LINES;
+    let marker = if foldable && long { "-" } else { "" };
+    let mut out = format!(
+        "> [!quote]{marker} {} · {}\n",
+        md_link(&meta.display_title(), &meta.url),
+        meta.clipped_at.format("%Y-%m-%d")
+    );
     for line in trimmed.lines() {
         let line = line.trim_end();
         if line.is_empty() {
@@ -600,12 +682,6 @@ pub fn quote_block(selection: &str, meta: &ClipMeta) -> String {
             out.push('\n');
         }
     }
-    out.push_str(">\n");
-    out.push_str(&format!(
-        "> — {} · {}\n",
-        md_link(&meta.display_title(), &meta.url),
-        meta.clipped_at.format("%Y-%m-%d")
-    ));
     out
 }
 
@@ -846,16 +922,20 @@ pub fn mark_images_partial(note: &str) -> String {
 /// spaces in the URL encoded per CommonMark.
 fn md_link(text: &str, url: &str) -> String {
     let text = text.replace('[', "\\[").replace(']', "\\]");
-    let url: String = url
-        .chars()
+    format!("[{text}]({})", encode_link_url(url))
+}
+
+/// A link destination as it goes inside `(…)`: parentheses and spaces
+/// percent-encoded, so no backslash escapes or `<>` wrapping are ever needed.
+fn encode_link_url(url: &str) -> String {
+    url.chars()
         .map(|c| match c {
             '(' => "%28".to_string(),
             ')' => "%29".to_string(),
             ' ' => "%20".to_string(),
             c => c.to_string(),
         })
-        .collect();
-    format!("[{text}]({url})")
+        .collect()
 }
 
 fn domain_of(url: &str) -> Option<String> {
@@ -1066,6 +1146,10 @@ mod tests {
         assert_eq!(fragment_to_markdown("<p>研究表明[1],性能提升[注 3]。</p>"), "研究表明[1],性能提升[注 3]。");
         assert_eq!(fragment_to_markdown("<p>[x](见下)</p>"), "\\[x\\](见下)");
         assert_eq!(fragment_to_markdown("<p>[^1]</p>"), "\\[^1\\]");
+        // A marker that is a link's whole text, or sits right after `[`, stays escaped:
+        // restored, `[[1]](url)` would be a wikilink followed by a bare URL
+        assert_eq!(soften_escapes("研究[\\[1\\]](https://x/y#c)表明"), "研究[\\[1\\]](https://x/y#c)表明");
+        assert_eq!(soften_escapes("[\\[1\\]]"), "[\\[1\\]]");
         // Emphasis and heading escapes are kept: dropping them would change the structure out of nothing
         assert_eq!(fragment_to_markdown("<p>2*3=6 且 *强调*不是</p>"), "2\\*3=6 且 \\*强调\\*不是");
         assert_eq!(fragment_to_markdown("<p># 不是标题</p>"), "\\# 不是标题");
@@ -1183,7 +1267,7 @@ mod tests {
         let md = fragment_to_markdown(
             "<p>对比:</p><table><tr><td>模型</td><td>定位</td></tr><tr><td>甲</td><td>乙</td></tr></table>",
         );
-        let q = quote_block(&md, &meta());
+        let q = quote_block(&md, &meta(), true);
         assert!(q.contains("> | 模型 | 定位 |\n> | --- | --- |\n> | 甲 | 乙 |\n"), "{q}");
         let tags: Vec<String> = parse_note(&q).blocks.iter().flat_map(|b| b.tags.clone()).collect();
         assert!(tags.is_empty(), "{tags:?}");
@@ -1191,14 +1275,39 @@ mod tests {
 
     #[test]
     fn quote_block_handles_multiline_selection() {
-        let q = quote_block("第一行\n\n第三行  ", &meta());
+        let q = quote_block("第一行\n\n第三行  ", &meta(), true);
         assert_eq!(
             q,
-            "> 第一行\n>\n> 第三行\n>\n> — [测试文章](https://example.com/article?id=1#section-2) · 2026-08-11\n"
+            "> [!quote] [测试文章](https://example.com/article?id=1#section-2) · 2026-08-11\n> 第一行\n>\n> 第三行\n"
         );
-        // A quote block produces no phantom tag when parsed either
-        let tags: Vec<String> = parse_note(&q).blocks.iter().flat_map(|b| b.tags.clone()).collect();
+        // One callout block, and no phantom tag from the `#section-2` in the head line
+        let parsed = parse_note(&q);
+        assert_eq!(parsed.blocks.len(), 1, "{:?}", parsed.blocks);
+        let tags: Vec<String> = parsed.blocks.iter().flat_map(|b| b.tags.clone()).collect();
         assert!(tags.is_empty(), "{tags:?}");
+    }
+
+    #[test]
+    fn quote_block_folds_a_long_body_landing_in_a_note() {
+        // Past FOLD_MIN_CHARS of prose the `-` marker opens the callout folded…
+        let long = "字".repeat(FOLD_MIN_CHARS + 1);
+        assert!(quote_block(&long, &meta(), true).starts_with("> [!quote]- [测试文章]"));
+        // …and so do many short lines (a list, a table)
+        let lines = vec!["- 项"; FOLD_MIN_LINES + 1].join("\n");
+        assert!(quote_block(&lines, &meta(), true).starts_with("> [!quote]- "));
+        // A short quote opens expanded, and so does a long one that is its own clip note
+        assert!(quote_block("一句话", &meta(), true).starts_with("> [!quote] [测试文章]"));
+        assert!(quote_block(&long, &meta(), false).starts_with("> [!quote] [测试文章]"));
+    }
+
+    #[test]
+    fn anchors_drop_titles_and_citation_links() {
+        let md = fragment_to_markdown(
+            r#"<p>在<a href="https://z/wiki/A" title="甲地">甲</a>成立<sup class="reference"><a href="https://z/wiki/X#cite_note-1">[1]</a></sup>，见<a href="https://z/w/B_(c)">乙</a>。<a href="/wiki/Citation_needed">[citation needed]</a> <a href="https://z/e"></a>尾</p>"#,
+        );
+        assert_eq!(md, "在[甲](https://z/wiki/A)成立，见[乙](https://z/w/B_%28c%29)。[\\[citation needed\\]](/wiki/Citation_needed) 尾");
+        // A link without a destination is its text
+        assert_eq!(fragment_to_markdown("<p>见<a name=\"x\">此处</a>。</p>"), "见此处。");
     }
 
     #[test]
@@ -1229,7 +1338,7 @@ mod tests {
 
     #[test]
     fn quote_block_wraps_fragment_markdown_with_images() {
-        let q = quote_block("看这张图\n\n![](https://e.com/a.png)", &meta());
+        let q = quote_block("看这张图\n\n![](https://e.com/a.png)", &meta(), true);
         assert!(q.contains("> 看这张图\n"), "{q}");
         assert!(q.contains("> ![](https://e.com/a.png)\n"), "{q}");
         // An image reference inside a quote block is still found by the localisation scan

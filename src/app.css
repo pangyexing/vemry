@@ -892,6 +892,17 @@ button:focus-visible,
   color: var(--co-color);
   font-weight: 600;
 }
+/* A quote callout's head is a source line, not a heading: the line steps back to
+   muted regular text at the small size, and only the icon keeps the group's colour */
+.cm-editor .cm-scroller .cm-lp-co-quote.cm-lp-co-head,
+.md-body .md-co-quote .md-co-head {
+  color: var(--fg-muted);
+  font-weight: 400;
+  font-size: 0.92em;
+}
+.cm-lp-co-quote .cm-lp-co-icon {
+  color: var(--co-color);
+}
 .cm-lp-co-icon {
   display: inline-flex;
   align-items: center;
