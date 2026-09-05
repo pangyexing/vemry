@@ -535,7 +535,7 @@
       tabindex="-1"
     >
       {#if isFind}
-        <!-- The two find spaces as underline tabs, the same header language as the sidebar's 大纲 | 研究 -->
+        <!-- The two find spaces as underline tabs, the same header language as the sidebar's Outline | Research -->
         <div class="spaces" role="tablist" aria-label={t("palette.findSpaces")}>
           <button class="space" class:active={mode === "search"} role="tab" aria-selected={mode === "search"} onclick={() => (mode = "search")}>
             {t("palette.modeNotes")}<kbd class="space-key">{k("Mod+Shift+F")}</kbd>

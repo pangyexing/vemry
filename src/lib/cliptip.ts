@@ -39,6 +39,10 @@ function show(el: HTMLElement, text: string) {
   const b = box();
   b.textContent = text;
   b.hidden = false;
+  // Measured at the origin: left over from the previous hover, a `left` near the right
+  // edge would squeeze the shrink-to-fit box and the measurement with it
+  b.style.left = "0px";
+  b.style.top = "0px";
   const r = el.getBoundingClientRect();
   // Below the element, then pulled inside the viewport; when below does not fit, above it
   const { x, y } = clampToViewport(b, r.left, r.bottom + GAP);

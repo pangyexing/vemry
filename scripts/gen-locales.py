@@ -142,7 +142,7 @@ CMD = {
     ),
     "browser-toggle-dock": (
         ("Detach / dock the browser", "分离 / 贴回浏览器"),
-        ("Move the browser between the side panel and its own window", "浏览器在侧栏面板与独立窗口之间切换"),
+        ("Move the browser between the main window's panel and its own window", "浏览器在主窗口面板与独立窗口之间切换"),
     ),
     "clear-browser-history": (
         ("Clear browsing history", "清除浏览历史"),
@@ -872,8 +872,8 @@ add("browserPanel.", {
     "dock": ("Dock back into the main window", "贴回主窗"),
     "more": ("More", "更多"),
     "clip": ("Clip", "剪藏"),
-    "clipMenuHint": ("Other clip destinations", "其它剪藏落点"),
-    "pickTarget": ("Pick a destination…", "选落点…"),
+    "clipMenuHint": ("Other clip targets", "其它剪藏落点"),
+    "pickTarget": ("Pick a clip target…", "选落点…"),
     "aiDockedHint": ("Add this page to the conversation as context", "把这一页作为上下文加入对话"),
 })
 

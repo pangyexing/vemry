@@ -12,8 +12,8 @@
 //! entire point, so the relay does not raise the main window by default ("open the
 //! note" being the one exception).
 
-use super::window::{apply_layout, main_window, BAR_LABEL};
-use tauri::{AppHandle, Emitter, State};
+use super::window::{apply_layout, relay_to_main, BAR_LABEL};
+use tauri::{AppHandle, State};
 
 /// Grow or shrink the bar: while its destination picker is open it extends
 /// downwards over the page; the label comes from the calling webview and never
@@ -33,9 +33,8 @@ pub fn browserbar_set_expanded(
     Ok(())
 }
 
-/// The bar → main window action relay (the same as agent_window_to_main). `focus`
-/// is true for "open the note" alone — every other action finishes in the detached
-/// window without interrupting the reading.
+/// The bar → main window action relay. `focus` is true for "open the note" alone —
+/// every other action finishes in the detached window without interrupting the reading.
 #[tauri::command]
 pub fn browserbar_to_main(
     app: AppHandle,
@@ -46,11 +45,5 @@ pub fn browserbar_to_main(
     if webview.label() != BAR_LABEL {
         return Err("only the browser bar can relay".into());
     }
-    app.emit_to("main", "browserbar://action", action).map_err(|e| e.to_string())?;
-    if focus {
-        if let Some(main) = main_window(&app) {
-            let _ = main.set_focus();
-        }
-    }
-    Ok(())
+    relay_to_main(&app, "browserbar://action", action, focus)
 }

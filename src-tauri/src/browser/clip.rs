@@ -440,14 +440,13 @@ pub async fn clip_selection(
         md if !md.is_empty() => md,
         _ => sel,
     };
-    let quote = quote_block(&body, &meta, true);
+    // Inserted into a note, a long quote folds; a clip note that is nothing but the
+    // quote opens expanded (the composer's own flag — its text is not used in that case)
+    let quote = quote_block(&body, &meta, !save_to_clips);
     if !save_to_clips {
         return Ok(ClipSelectionResult { text: quote, url: meta.url.clone(), saved_path: None });
     }
-    // A clip note that is nothing but the quote opens expanded: the same block with
-    // the fold marker off its head line
-    let expanded = quote.replacen("> [!quote]- ", "> [!quote] ", 1);
-    let page = ExtractedPage { markdown: expanded, title: meta.display_title(), byline: None, fallback: false };
+    let page = ExtractedPage { markdown: quote.clone(), title: meta.display_title(), byline: None, fallback: false };
     let rel = land_note(&app, &state, &meta, &compose_clip_note(&page, &meta, &crate::i18n::t(crate::i18n::current(), "clip.sourceLabel")))?;
     maybe_localize(&app, rel.clone(), meta.url.clone());
     Ok(ClipSelectionResult { text: quote, url: meta.url, saved_path: Some(rel) })
@@ -662,6 +661,9 @@ pub fn clip_link(state: State<'_, AppState>, label: Option<String>) -> Result<Cl
     let inner = state.browser.0.lock().unwrap();
     let label = inner.target(label.as_deref()).ok_or("no browser window is open")?;
     let entry = inner.tabs.get(&label).ok_or("the browser tab is closed")?;
+    if entry.url == super::window::BLANK {
+        return Err("the tab has no page yet".into());
+    }
     let meta =
         ClipMeta { url: entry.url.clone(), title: entry.title.clone(), clipped_at: chrono::Local::now() };
     Ok(ClipLinkResult { text: vemry_clip::link_entry(&meta), url: meta.url.clone(), title: meta.display_title() })

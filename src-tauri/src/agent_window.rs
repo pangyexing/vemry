@@ -323,13 +323,7 @@ pub fn agent_window_set_selection(app: AppHandle, state: State<'_, AppState>, se
 /// navigation action the user wants to see the result).
 #[tauri::command]
 pub fn agent_window_to_main(app: AppHandle, action: serde_json::Value, focus: Option<bool>) -> Result<(), String> {
-    app.emit_to("main", EV_ACTION, action).map_err(|e| e.to_string())?;
-    if focus.unwrap_or(false) {
-        if let Some(w) = crate::browser::window::main_window(&app) {
-            let _ = w.set_focus();
-        }
-    }
-    Ok(())
+    crate::browser::window::relay_to_main(&app, EV_ACTION, action, focus.unwrap_or(false))
 }
 
 /// A command from the main window to the chat window (a new session, say).

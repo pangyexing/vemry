@@ -1,7 +1,7 @@
 import type { FieldStat, BlockType } from "$lib/api";
 // CodeMirror assembly for the note editor and the plain/code file editor.
 import { t } from "$lib/i18n/i18n.svelte";
-import { EditorState, Prec, type Extension } from "@codemirror/state";
+import { EditorSelection, EditorState, Prec, type Extension } from "@codemirror/state";
 import { EditorView, keymap, drawSelection, highlightSpecialChars, placeholder, type Command } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownLanguage, insertNewlineContinueMarkupCommand, deleteMarkupBackward } from "@codemirror/lang-markdown";
@@ -179,24 +179,32 @@ function filePaste(handler?: (files: File[]) => Promise<string | null>): Extensi
 // against an item) that is one stray blank line spreading down the list with each
 // keystroke. The command has no option for the second behaviour, so its transaction
 // is rewritten: an insertion shaped "\n<blank line>\n<markers>" loses the blank
-// line. A blank line between items is still typed the same way as anywhere else —
-// Enter on an empty item ends the list, Enter again opens the gap.
+// line, wherever it sits among the transaction's changes (in an ordered list the
+// command renumbers the following items in the same transaction; with several
+// cursors there is one continuation per cursor). A blank line between items is
+// still typed the same way as anywhere else — Enter on an empty item ends the list,
+// Enter again opens the gap.
 const continueMarkup = insertNewlineContinueMarkupCommand({ nonTightLists: false });
 const LOOSE_CONTINUATION = /^\n[ \t>]*\n/;
 const continueListTight: Command = (view) =>
   continueMarkup({
     state: view.state,
     dispatch: (tr) => {
-      const changes: { from: number; to: number; text: string }[] = [];
-      tr.changes.iterChanges((from, to, _f, _t, inserted) => changes.push({ from, to, text: inserted.toString() }));
-      const m = changes.length === 1 ? LOOSE_CONTINUATION.exec(changes[0].text) : null;
-      if (!m) {
+      const changes: { from: number; to: number; insert: string }[] = [];
+      const cursorsAt: number[] = [];
+      tr.changes.iterChanges((from, to, _f, _t, inserted) => {
+        const text = inserted.toString();
+        const m = LOOSE_CONTINUATION.exec(text);
+        if (m) cursorsAt.push(changes.length);
+        changes.push({ from, to, insert: m ? "\n" + text.slice(m[0].length) : text });
+      });
+      if (cursorsAt.length === 0) {
         view.dispatch(tr);
         return;
       }
-      const { from, to, text } = changes[0];
-      const insert = "\n" + text.slice(m[0].length);
-      view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, scrollIntoView: true, userEvent: "input" });
+      const set = view.state.changes(changes);
+      const selection = EditorSelection.create(cursorsAt.map((i) => EditorSelection.cursor(set.mapPos(changes[i].to, 1))));
+      view.dispatch({ changes: set, selection, scrollIntoView: true, userEvent: "input" });
     },
   });
 const listKeymap = Prec.high(

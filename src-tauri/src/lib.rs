@@ -63,8 +63,14 @@ pub fn run() {
             agent_window: agent_window::AgentWindowState::default(),
         })
         .setup(|app| {
+            let settings = settings::load(app.handle());
             // The language is settled first; the menu and the error wording both read it
-            i18n::set_current(i18n::resolve(settings::load(app.handle()).language));
+            i18n::set_current(i18n::resolve(settings.language));
+            // The browser's shape is the last session's choice: the registry starts
+            // there, so the first tab already opens in it
+            if !settings.browser_docked {
+                tauri::Manager::state::<AppState>(app).browser.0.lock().unwrap().shape = browser::Shape::Detached;
+            }
             // The native menu bar (macOS only): a menu item's id is a frontend command
             // id, routed back through the event bridge to executeCommand; a failure
             // does not block startup (every entry point exists in-app as well)

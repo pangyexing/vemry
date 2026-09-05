@@ -8,7 +8,6 @@
   import { api } from "$lib/api";
   import { agent } from "$lib/stores/agent.svelte";
   import { vault } from "$lib/stores/vault.svelte";
-  import { browser } from "$lib/stores/browser.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { isAgentWindow } from "$lib/window";
@@ -442,5 +441,4 @@
     white-space: nowrap;
     cursor: help;
   }
-  /* ---- the current page card: the browsing state is the conversation's context ---- */
 </style>

@@ -315,7 +315,7 @@
   "cmd.browser-new-tab.title": "新标签页",
   "cmd.browser-reload.desc": "刷新内置浏览器的当前标签页",
   "cmd.browser-reload.title": "刷新页面",
-  "cmd.browser-toggle-dock.desc": "浏览器在侧栏面板与独立窗口之间切换",
+  "cmd.browser-toggle-dock.desc": "浏览器在主窗口面板与独立窗口之间切换",
   "cmd.browser-toggle-dock.title": "分离 / 贴回浏览器",
   "cmd.check-updates.desc": "向 GitHub Releases 查询新版本(设置页可看进度)",
   "cmd.check-updates.title": "检查更新",

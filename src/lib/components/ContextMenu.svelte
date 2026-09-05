@@ -62,7 +62,7 @@
     queueMicrotask(() => {
       if (!subEl || !sub || sub.index !== i) return;
       const sr = subEl.getBoundingClientRect();
-      const x = r.right + 2 + sr.width > window.innerWidth - 4 ? Math.max(4, r.left - sr.width - 2) : r.right + 2;
+      const x = r.right + 2 + sr.width > usableRight() - 4 ? Math.max(4, r.left - sr.width - 2) : r.right + 2;
       const y = Math.min(r.top - 4, Math.max(4, window.innerHeight - sr.height - 4));
       sub = { index: i, x, y };
     });

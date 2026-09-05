@@ -26,7 +26,7 @@
   import { fetchHeadings, noteKey, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
   import { vault } from "$lib/stores/vault.svelte";
   import { agent } from "$lib/stores/agent.svelte";
-  import { browser, MAIN_MIN_BESIDE_PANEL } from "$lib/stores/browser.svelte";
+  import { browser, MAIN_MIN_BESIDE_PANEL, PANEL_MIN } from "$lib/stores/browser.svelte";
   import { clips } from "$lib/stores/clips.svelte";
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -54,10 +54,19 @@
   }
   const err = (e: unknown) => (inBar ? showFlash(String(e), false) : toast.push(String(e), "error"));
 
-  /** The focus return: the keyboard goes back to the page once an interaction ends. */
-  const refocus = () => {
-    if (cur) void api.browserFocus(cur.label).catch(() => {});
+  /** The focus return: the keyboard goes back to the page once an interaction ends. A blank
+   *  tab has no page to take it (its view is hidden, the address input holds the keyboard);
+   *  `force` is for a navigation just sent, whose Navigated event has not flipped isBlank yet. */
+  const refocus = (force = false) => {
+    if (cur && (force || !isBlank)) void api.browserFocus(cur.label).catch(() => {});
   };
+  /** After a navigation of the active tab: the address row folds back into the button
+   *  (addrEditing may be left over from an edit of the previous tab's address), and the
+   *  keyboard goes to the page as after any navigation. */
+  function afterNavigate() {
+    addrEditing = false;
+    refocus(true);
+  }
   function run(p: Promise<unknown>, back = true) {
     void p.catch(err).finally(() => {
       if (back) refocus();
@@ -85,16 +94,26 @@
       .catch(err);
   }
   const closeAll = () => run(api.browserCloseAll(), false);
-  async function tabMenu(e: MouseEvent, tab: { label: string; url: string }) {
-    e.preventDefault();
-    const menu = await Menu.new({
-      items: [
-        { id: "close", text: t("browserPanel.closeTab"), action: () => closeTab(tab.label) },
-        { item: "Separator" },
-        { id: "system", text: t("reader.openInSystemBrowser"), action: () => run(api.urlOpenSystem(tab.url), false) },
-      ],
-    });
+  /** The items of a native popup menu (the tab menu, the clip menu, the more menu). */
+  type NativeItems = NonNullable<MenuOptions["items"]>;
+  /** The menu shown last: a native menu is a resource that only an explicit close frees,
+   *  and an item's action can still arrive after popup() resolves — so each menu is freed
+   *  when the next one opens, not on its own dismissal. */
+  let lastMenu: Menu | null = null;
+  async function popup(items: NativeItems) {
+    const menu = await Menu.new({ items });
+    const prev = lastMenu;
+    lastMenu = menu;
+    if (prev) void prev.close().catch(() => {});
     await menu.popup();
+  }
+  function tabMenu(e: MouseEvent, tab: { label: string; url: string }) {
+    e.preventDefault();
+    void popup([
+      { id: "close", text: t("browserPanel.closeTab"), action: () => closeTab(tab.label) },
+      { item: "Separator" },
+      { id: "system", text: t("reader.openInSystemBrowser"), action: () => run(api.urlOpenSystem(tab.url), false) },
+    ]);
   }
 
   // ---- the address row ----
@@ -114,7 +133,7 @@
   }
   function closeAddr(back = true) {
     addrEditing = false;
-    if (back && !isBlank) refocus();
+    if (back) refocus();
   }
   function addrKeydown(e: KeyboardEvent) {
     if (isBlank && !inBar) return ntKeydown(e);
@@ -125,7 +144,7 @@
       // A bare Enter navigates the active tab (a blank one included); ⌘Enter opens a new one
       const newTab = e.metaKey || e.ctrlKey || !cur;
       const p = newTab ? api.browserOpen(v, true) : api.browserNavigate(v, cur?.label);
-      p.then(() => closeAddr()).catch(err);
+      p.then(afterNavigate).catch(err);
     } else if (e.key === "Escape") {
       e.preventDefault();
       closeAddr();
@@ -169,9 +188,7 @@
     else void executeCommand(kind);
     refocus();
   }
-  /** The items of a native popup menu (the clip menu, the more menu). */
-  type NativeItems = NonNullable<MenuOptions["items"]>;
-  async function clipMenu() {
+  function clipMenu() {
     const items: NativeItems = [
       { id: "pick", text: t("browserPanel.pickTarget"), action: () => pickTarget() },
       { item: "Separator" },
@@ -180,8 +197,7 @@
     ];
     if (clipTarget.path) items.push({ item: "Separator" }, { id: "unpin", text: t("clipBar.unpinHint"), action: clearTarget });
     if (clippedPath) items.push({ item: "Separator" }, { id: "open", text: t("clipBar.openClippedHint", { path: clippedPath }), action: openClipped });
-    const menu = await Menu.new({ items });
-    await menu.popup();
+    void popup(items);
   }
   function pickTarget() {
     if (inBar) void openPicker();
@@ -197,7 +213,7 @@
     if (inBar) void relay({ kind: "open-note", path: clippedPath }, true);
     else void vault.openNote(clippedPath);
   }
-  async function moreMenu() {
+  function moreMenu() {
     const ad = browser.adblock;
     const adText =
       ad?.state === "ready"
@@ -209,8 +225,7 @@
     if (adText) items.push({ id: "adblock", text: adText, enabled: false }, { item: "Separator" });
     if (url) items.push({ id: "system", text: t("reader.openInSystemBrowser"), action: () => run(api.urlOpenSystem(url), false) });
     items.push({ id: "history", text: t("cmd.clear-browser-history.title"), action: () => run(api.browserHistoryClear(), false) });
-    const menu = await Menu.new({ items });
-    await menu.popup();
+    void popup(items);
   }
 
   // ---- the shape switch ----
@@ -392,17 +407,7 @@
   });
   function ntOpen(target: string) {
     if (!cur) return;
-    // The address row folds back into the button once the tab has a page (addrEditing may be
-    // left over from an edit of the previous tab's address), and the keyboard goes to the page
-    // as after any navigation (closeAddr's own refocus waits on isBlank, which the tab event
-    // has not flipped yet)
-    api
-      .browserNavigate(target, cur.label)
-      .then(() => {
-        addrEditing = false;
-        refocus();
-      })
-      .catch(err);
+    api.browserNavigate(target, cur.label).then(afterNavigate).catch(err);
   }
   function ntKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") {
@@ -505,6 +510,7 @@
   bind:this={rootEl}
   style:width={inBar ? null : `${browser.panelWidth}px`}
   style:max-width={inBar ? null : `calc(100vw - ${MAIN_MIN_BESIDE_PANEL}px)`}
+  style:min-width={inBar ? null : `${PANEL_MIN}px`}
 >
   <div class="chrome" bind:this={chromeEl}>
     <!-- The tab strip. In the bar it is also the detached window's drag region (the traffic lights float over its left end) -->
@@ -667,6 +673,10 @@
     flex: none;
     display: flex;
     flex-direction: column;
+    /* Docked, the inline min-width (the store's PANEL_MIN) wins over the max-width when the
+      window is too narrow for the panel and the main area's minimum together: the column
+      keeps its floor — a column squeezed to nothing would leave Rust's native view (which
+      has the same floor) over the window's edge with no chrome to close it */
     min-width: 0;
     height: 100%;
     background: var(--bg-panel);

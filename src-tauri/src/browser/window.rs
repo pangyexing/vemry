@@ -33,6 +33,20 @@ pub(crate) fn main_window(app: &AppHandle) -> Option<tauri::Window> {
     app.get_webview("main").map(|w| w.window())
 }
 
+/// An action relayed from a secondary window's webview (the chat window, the browser
+/// bar) to the main window's frontend; with `focus` the main window is also brought
+/// to the front (for a navigation action the user wants to see the result).
+pub(crate) fn relay_to_main(app: &AppHandle, event: &str, action: serde_json::Value, focus: bool) -> Result<(), String> {
+    use tauri::Emitter;
+    app.emit_to("main", event, action).map_err(|e| e.to_string())?;
+    if focus {
+        if let Some(w) = main_window(app) {
+            let _ = w.set_focus();
+        }
+    }
+    Ok(())
+}
+
 /// The navigation guard's verdict, plus the bookkeeping for an allowed navigation:
 /// the registry's URL, the Navigated event and the history record. Shared by the
 /// builder hook and the SPA backstop in the title hook — both have to record the
@@ -44,11 +58,15 @@ fn note_navigation(app: &AppHandle, label: &str, url: &Url) -> bool {
     if !matches!(url.scheme(), "http" | "https") || is_app_origin(url) {
         return false;
     }
-    update_entry(app, label, |e| e.url = url.to_string());
+    let was_blank = update_entry(app, label, |e| std::mem::replace(&mut e.url, url.to_string()) == BLANK);
     emit(app, &BrowserEvent::Navigated { label: label.to_string(), url: url.to_string() });
     super::history::record_visit(app, url.as_str());
-    // A blank tab is kept hidden under the panel's new-tab page; the first real navigation brings the view out
-    apply_layout(app);
+    // A blank tab is kept hidden under the panel's new-tab page; the first real
+    // navigation brings the view out. Any later navigation changes no tab's
+    // visibility, so the tabs are left where they are
+    if was_blank == Some(true) {
+        apply_layout(app);
+    }
     true
 }
 
@@ -134,7 +152,7 @@ pub async fn browser_open(
         if let Some(label) = target {
             if let Some(webview) = app.get_webview(&label) {
                 webview.navigate(url.clone()).map_err(|e| e.to_string())?;
-                activate(&app, &label, focus);
+                activate_on_main(&app, &label, focus);
                 // The URL record and the Navigated event are emitted together by
                 // on_navigation when the navigation is allowed; nothing is written
                 // to the registry ahead of time
@@ -179,15 +197,28 @@ pub async fn browser_new_tab(app: AppHandle) -> Result<String, String> {
 /// ⌘L or "open browser", which reopens the last page from the history.
 #[tauri::command]
 pub fn browser_close_all(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let labels: Vec<String> = {
-        let inner = state.browser.0.lock().unwrap();
+    // Every tab leaves the registry in one step: closing them one at a time would
+    // place, announce and focus each successor only to close it next
+    let (labels, detached) = {
+        let mut inner = state.browser.0.lock().unwrap();
         let mut v: Vec<(u32, String)> = inner.tabs.iter().map(|(l, e)| (e.id, l.clone())).collect();
         v.sort();
-        v.into_iter().map(|(_, l)| l).collect()
+        let labels: Vec<String> = v.into_iter().map(|(_, l)| l).collect();
+        for label in &labels {
+            forget_tab(&mut inner, label);
+        }
+        (labels, inner.shape == Shape::Detached)
     };
-    for label in labels {
-        close_tab(&app, &label);
+    if labels.is_empty() {
+        return Ok(());
     }
+    for label in labels {
+        if let Some(wv) = app.get_webview(&label) {
+            let _ = wv.close();
+        }
+        emit(&app, &BrowserEvent::Closed { label });
+    }
+    after_last_tab(&app, detached);
     Ok(())
 }
 
@@ -227,7 +258,7 @@ pub async fn browser_open_last(
 ) -> Result<Option<String>, String> {
     let existing = state.browser.0.lock().unwrap().target(None);
     if let Some(label) = existing {
-        activate(&app, &label, true);
+        activate_on_main(&app, &label, true);
         return Ok(Some(label));
     }
     match super::history::last_url(&app) {
@@ -365,25 +396,38 @@ fn build_tab(app: &AppHandle, label: &str) -> Result<(), String> {
 fn claim_tab(app: &AppHandle, id: u32, label: &str, url: Option<&Url>, focus: bool) -> Result<(), String> {
     let webview = app.get_webview(label).ok_or_else(|| "the tab was destroyed".to_string())?;
     let url_str = url.map(|u| u.to_string()).unwrap_or_else(|| BLANK.to_string());
-    let shape = {
-        let Some(s) = app.try_state::<AppState>() else { return Err("no state".into()) };
+    let Some(s) = app.try_state::<AppState>() else { return Err("no state".into()) };
+    let detached = s.browser.0.lock().unwrap().shape == Shape::Detached;
+    // The detached window comes first: a window that fails to build must not leave a
+    // registered tab that no chrome can reach
+    let win = if detached {
+        match ensure_detached_window(app) {
+            Ok(win) => Some(win),
+            Err(e) => {
+                s.browser.0.lock().unwrap().views.remove(label);
+                let _ = webview.close();
+                return Err(e);
+            }
+        }
+    } else {
+        None
+    };
+    {
         let mut inner = s.browser.0.lock().unwrap();
         inner.tabs.insert(
             label.to_string(),
             BrowserEntry { id, url: url_str.clone(), title: String::new() },
         );
         inner.active = Some(label.to_string());
-        inner.shape
-    };
+    }
     // Registered before navigating: the update_entry/Navigated that on_navigation
     // performs when it allows the navigation has to find the registry entry
     if let Some(url) = url {
         if let Err(e) = webview.navigate(url.clone()) {
             // A tab that cannot even start navigating is rare but must not be left: hidden plus registered = a ghost entry
-            if let Some(s) = app.try_state::<AppState>() {
+            {
                 let mut inner = s.browser.0.lock().unwrap();
-                inner.tabs.remove(label);
-                inner.views.remove(label);
+                forget_tab(&mut inner, label);
                 inner.active = inner.tabs.iter().max_by_key(|(_, e)| e.id).map(|(l, _)| l.clone());
             }
             let _ = webview.close();
@@ -391,23 +435,12 @@ fn claim_tab(app: &AppHandle, id: u32, label: &str, url: Option<&Url>, focus: bo
         }
     }
     emit(app, &BrowserEvent::Opened { label: label.to_string(), url: url_str });
-    if shape == Shape::Detached {
+    if let Some(win) = win {
         // The tab was built as a child of the main window (the shell always is) and moves into the detached window now
-        let win = ensure_detached_window(app)?;
         let _ = webview.reparent(&win);
         raise_bar(app);
-        apply_layout(app);
-        let _ = win.show();
-        if focus {
-            let _ = win.set_focus();
-        }
-    } else {
-        apply_layout(app);
     }
-    emit(app, &BrowserEvent::Activated { label: label.to_string() });
-    if focus {
-        let _ = webview.set_focus();
-    }
+    activate(app, label, focus);
     Ok(())
 }
 
@@ -580,6 +613,11 @@ fn place_tabs(app: &AppHandle, full: bool) {
             inner.active.as_ref().and_then(|l| inner.tabs.get(l)).is_some_and(|e| e.url == BLANK),
         )
     };
+    // Every main-window resize frame comes through here, browser or no browser: with
+    // nothing to place, the window and title-bar queries below are skipped
+    if labels.is_empty() {
+        return;
+    }
     let (bounds, show_active) = match shape {
         Shape::Docked => {
             let Some(main) = main_window(app) else { return };
@@ -684,14 +722,13 @@ pub fn browser_panel_veil(app: AppHandle, state: State<'_, AppState>, veiled: bo
 /// Make a tab the shown one (a registry change, the layout, the event; `focus` also
 /// hands it the keyboard). A no-op for an unknown label.
 fn activate(app: &AppHandle, label: &str, focus: bool) {
-    let (detached, title) = {
+    let (detached, title, blank) = {
         let Some(s) = app.try_state::<AppState>() else { return };
         let mut inner = s.browser.0.lock().unwrap();
-        if !inner.tabs.contains_key(label) {
-            return;
-        }
+        let Some(entry) = inner.tabs.get(label) else { return };
+        let (title, blank) = (entry.title.clone(), entry.url == BLANK);
         inner.active = Some(label.to_string());
-        (inner.shape == Shape::Detached, inner.tabs.get(label).map(|e| e.title.clone()).unwrap_or_default())
+        (inner.shape == Shape::Detached, title, blank)
     };
     apply_layout(app);
     if detached {
@@ -704,11 +741,21 @@ fn activate(app: &AppHandle, label: &str, focus: bool) {
         }
     }
     emit(app, &BrowserEvent::Activated { label: label.to_string() });
-    if focus {
+    // A blank tab's view stays hidden and the keyboard belongs to the chrome's address
+    // input: focusing the hidden view would only take it away from there
+    if focus && !blank {
         if let Some(wv) = app.get_webview(label) {
             let _ = wv.set_focus();
         }
     }
+}
+
+/// activate() from an async command: those run on a runtime thread, and the layout
+/// reads the window's title bar through AppKit, which is main-thread only.
+fn activate_on_main(app: &AppHandle, label: &str, focus: bool) {
+    let app2 = app.clone();
+    let label = label.to_string();
+    let _ = app.run_on_main_thread(move || activate(&app2, &label, focus));
 }
 
 /// Show a tab (a click on the tab strip).
@@ -773,16 +820,21 @@ fn close_tab(app: &AppHandle, label: &str) {
     }
     emit(app, &BrowserEvent::Closed { label: label.to_string() });
     if last {
-        if detached {
-            close_detached_window(app);
-        }
-        // Focus etiquette: the keyboard returns to the main window's own webview once the last tab closes
-        if let Some(main) = app.get_webview("main") {
-            let _ = main.window().set_focus();
-            let _ = main.set_focus();
-        }
+        after_last_tab(app, detached);
     } else if let Some(next) = next {
         activate(app, &next, true);
+    }
+}
+
+/// After the last tab closed: the detached window goes with it, and (focus
+/// etiquette) the keyboard returns to the main window's own webview.
+fn after_last_tab(app: &AppHandle, detached: bool) {
+    if detached {
+        close_detached_window(app);
+    }
+    if let Some(main) = app.get_webview("main") {
+        let _ = main.window().set_focus();
+        let _ = main.set_focus();
     }
 }
 
@@ -795,14 +847,18 @@ fn close_tab(app: &AppHandle, label: &str) {
 /// along), docking moves them back under the main window's panel. Every toggle is
 /// persisted ("remember the last choice"), and the next tab opens in that shape.
 #[tauri::command]
-pub fn browser_set_docked(app: AppHandle, docked: bool) -> Result<(), String> {
-    let app2 = app.clone();
-    app.run_on_main_thread(move || {
-        if let Err(e) = set_shape(&app2, if docked { Shape::Docked } else { Shape::Detached }) {
-            eprintln!("browser shape switch failed: {e}");
-        }
-    })
-    .map_err(|e| e.to_string())?;
+pub async fn browser_set_docked(app: AppHandle, docked: bool) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    {
+        let app2 = app.clone();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(set_shape(&app2, if docked { Shape::Docked } else { Shape::Detached }));
+        })
+        .map_err(|e| e.to_string())?;
+    }
+    // A switch that failed (the detached window could not be built, say) is not
+    // remembered: the setting must say where the tabs really are
+    rx.await.map_err(|_| "the shape switch was interrupted".to_string())??;
     let _ = crate::settings::update(&app, |s| {
         let changed = s.browser_docked != docked;
         s.browser_docked = docked;
@@ -1056,18 +1112,26 @@ fn initial_browser_rect(vx: f64, vy: f64, vw: f64, vh: f64) -> (f64, f64, f64, f
 pub fn focused_tab(app: &AppHandle) -> Option<String> {
     use objc2::rc::Retained;
     use objc2_app_kit::{NSView, NSWindow};
-    let (shape, views) = {
+    let (shape, views, veiled) = {
         let s = app.try_state::<AppState>()?;
         let inner = s.browser.0.lock().unwrap();
-        (inner.shape, inner.views.clone())
+        (inner.shape, inner.views.clone(), inner.panel.veiled)
     };
     if views.is_empty() {
         return None;
     }
     let win = match shape {
+        // Under an overlay the docked view is hidden, and the keyboard is the overlay's
+        // whatever responder the window still remembers
+        Shape::Docked if veiled => return None,
         Shape::Docked => main_window(app)?,
         Shape::Detached => app.get_window(DETACHED_LABEL)?,
     };
+    // A window keeps its first responder while it is not the key window: a tab in the
+    // detached window must not answer for ⌘W pressed in the main one
+    if !win.is_focused().unwrap_or(false) {
+        return None;
+    }
     let ptr = win.ns_window().ok()?;
     let ns: &NSWindow = unsafe { &*ptr.cast() };
     let responder = ns.firstResponder()?;

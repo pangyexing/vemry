@@ -83,6 +83,10 @@ fn toggle_in(list: &mut Vec<Bookmark>, url: &str, title: &str, now_ms: i64) -> b
 /// Bookmark or unbookmark (the single entry point of the ☆ button); returns the new state (true = bookmarked).
 #[tauri::command]
 pub fn bookmark_toggle(app: AppHandle, url: String, title: String) -> Result<bool, String> {
+    // A blank tab (the palette's entry point reads the active tab without looking) has no page to keep
+    if url == super::window::BLANK {
+        return Err("the tab has no page yet".into());
+    }
     let starred = mutate_and_broadcast(&app, |l| {
         Some(toggle_in(l, &url, &title, chrono::Utc::now().timestamp_millis()))
     })?;

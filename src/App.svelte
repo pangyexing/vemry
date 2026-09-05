@@ -188,13 +188,19 @@
     sash.addEventListener("pointercancel", up);
   }
   // Every full-window overlay veils the docked browser tab (a native view would cover the
-  // overlay, and stay bright under its backdrop); the panel paints a placeholder meanwhile
+  // overlay, and stay bright under its backdrop); the panel paints a placeholder meanwhile.
+  // Every sash drag counts: a pointer released over the native view is lost to it, so a
+  // drag beside the panel would never end
   const overlayOpen = $derived(
     paletteMode !== null || settingsOpen || !!agent.pendingPermission || !!scripts.pendingGrant
-      || !!scripts.pendingPrompt || browser.lightboxOpen || vault.resizing === "browser",
+      || !!scripts.pendingPrompt || browser.lightboxOpen || vault.resizing !== null,
   );
   $effect(() => {
     browser.veiled = overlayOpen;
+    // Only while a tab is docked: the round trip is a lock and a window-geometry query
+    // in Rust, paid otherwise on every palette or dialog for nothing. A tab docked
+    // while an overlay is up still gets the veil (browser.docked is a dependency here)
+    if (!browser.docked) return;
     void api.browserPanelVeil(overlayOpen).catch(() => {});
   });
 
