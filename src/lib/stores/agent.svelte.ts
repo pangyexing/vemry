@@ -8,7 +8,9 @@ import {
   type ContextRef,
   type EditorSelection,
   type PageContext,
+  type PlanItem,
   type RefTag,
+  type SourceRecord,
   type PermissionDecision,
   type PlanDecision,
   type PlanRequest,
@@ -20,7 +22,7 @@ import { POSITIONAL_RE } from "$lib/citation";
 import { domainOf, extractCitations } from "$lib/markdown";
 import { clips } from "$lib/stores/clips.svelte";
 import { toast } from "$lib/stores/toast.svelte";
-import { CARD_TOOLS, parseSession } from "$lib/views/session";
+import { CARD_TOOLS, parseSession, planReconciled } from "$lib/views/session";
 
 /** A source entry: a WebSearchResult plus the frontend's verification marker.
  *  unverified = there was no web search at all this turn and the link appears only in
@@ -77,7 +79,9 @@ export type TimelineItem =
   | { kind: "user"; text: string; turn?: string; page?: { title: string; url: string }; refs?: RefTag[] }
   | { kind: "assistant"; text: string }
   | { kind: "tool"; id: string; name: string; args: string; ok?: boolean; output?: string }
-  | { kind: "sources"; results: SourceEntry[]; queries: string[]; searching: boolean }
+  /** settled: Rust settled this turn's sources (a `sources` line / event) — the card is
+   *  authoritative from then on and the frontend's own link harvest stays out of it. */
+  | { kind: "sources"; results: SourceEntry[]; queries: string[]; searching: boolean; settled?: boolean }
   /** propose_plan's plan card: id = the tool call id; while the decision is undecided
    *  (and pendingPlan points at it) the card carries the decision buttons, and once
    *  decided it renders the decision badge. */
@@ -138,6 +142,10 @@ function compactNotice(level: number): string {
 class AgentStore {
   timeline = $state<TimelineItem[]>([]);
   running = $state(false);
+  /** The session's plan (the latest update_plan list, or the one confirmed at the plan
+   *  gate); the sticky card is its only projection. A plan whose every step is done or
+   *  skipped leaves with the next question; an unfinished one stays as a reminder. */
+  plan = $state<PlanItem[] | null>(null);
   thinking = $state("");
   /** The most recent usage event (the gauge of turns, context size and cache hit rate). */
   usage = $state<TurnUsage | null>(null);
@@ -497,6 +505,7 @@ class AgentStore {
       this.flushTimer = null;
     }
     this.timeline = [];
+    this.plan = null;
     this.thinking = "";
     this.pendingPermission = null;
     this.pendingPlan = null;
@@ -536,6 +545,7 @@ class AgentStore {
     if (this.running) return;
     await api.agentSessionNew();
     this.timeline = [];
+    this.plan = null;
     this.thinking = "";
     this.sessionId = null;
     this.resetSessionScoped();
@@ -569,6 +579,7 @@ class AgentStore {
     await api.agentSessionDelete(id);
     if (id === this.sessionId) {
       this.timeline = [];
+      this.plan = null;
       this.sessionId = null;
     }
     await this.refreshSessions();
@@ -583,6 +594,7 @@ class AgentStore {
    *  the timeline. */
   private rebuildTimeline(jsonl: string): TimelineItem[] {
     const items: TimelineItem[] = [];
+    let plan: PlanItem[] | null = null;
     let turnStart = 0;
     const finishTurn = () => {
       this.harvestTurn(items, turnStart);
@@ -593,6 +605,7 @@ class AgentStore {
       switch (e.kind) {
         case "user": {
           finishTurn();
+          if (plan && planReconciled(plan)) plan = null; // the same rule as the live turn_started
           items.push({
             kind: "user",
             text: e.content,
@@ -665,6 +678,14 @@ class AgentStore {
           items.push({ kind: "plan", id: e.id, items: e.items });
           break;
         }
+        case "plan_update": {
+          plan = e.items;
+          break;
+        }
+        case "sources": {
+          this.settleSourcesInto(items, turnStart, e.items);
+          break;
+        }
         case "plan_decision": {
           // Search backwards for the plan card with the same id to fill in the decision (the same as filling in a tool_result)
           for (let i = items.length - 1; i >= turnStart; i--) {
@@ -696,9 +717,36 @@ class AgentStore {
       }
     }
     finishTurn();
+    this.plan = plan;
     const urls = items.flatMap((t) => (t.kind === "sources" ? t.results.map((r) => r.url) : []));
     if (urls.length) void clips.lookup(urls);
     return items;
+  }
+
+  /** Rust's settlement of a turn's sources (the `sources` line on replay, the
+   *  sources_updated event live): the turn's card takes these entries with their
+   *  verification and becomes authoritative — the frontend's own harvest of the
+   *  answer's links no longer touches it. An entry already on the card (a structured
+   *  search result) keeps its snippet and gains the verdict. */
+  private settleSourcesInto(items: TimelineItem[], from: number, records: SourceRecord[]) {
+    let card = findSourcesIn(items, from);
+    if (!card) {
+      card = { kind: "sources", results: [], queries: [], searching: false };
+      items.push(card);
+    }
+    for (const r of records) {
+      const prev = card.results.find((x) => x.url === r.url);
+      if (prev) {
+        prev.unverified = r.verified ? undefined : true;
+        if (!prev.title && r.title) prev.title = r.title;
+        continue;
+      }
+      const entry: SourceEntry = { title: r.title || domainOf(r.url), url: r.url, snippet: "", publish_date: null };
+      if (!r.verified) entry.unverified = true;
+      card.results.push(entry);
+    }
+    card.searching = false;
+    card.settled = true;
   }
 
   /** Land the accumulated thinking/text_delta into $state (an empty buffer is a no-op). */
@@ -736,6 +784,17 @@ class AgentStore {
         const idx = lastUserIndex(this.timeline);
         const item = this.timeline[idx];
         if (item?.kind === "user") item.turn = e.turn;
+        // A finished plan belongs to the task that is over; an unfinished one stays
+        if (this.plan && planReconciled(this.plan)) this.plan = null;
+        break;
+      }
+      case "plan_updated": {
+        this.plan = e.items;
+        break;
+      }
+      case "sources_updated": {
+        this.settleSourcesInto(this.timeline, this.liveTurnStart, e.items);
+        void clips.lookup(e.items.map((r) => r.url));
         break;
       }
       case "thinking": {
@@ -893,6 +952,13 @@ class AgentStore {
    *  this turn's source card (undefined when there is no card to raise). */
   private harvestTurn(items: TimelineItem[], from: number) {
     let sources = findSourcesIn(items, from);
+    // Rust settled this turn (the normal path since the source table moved into the
+    // session): the card is authoritative, and the fallback harvest below is only for
+    // a turn that ended without a settlement (an error, an older session's replay)
+    if (sources?.settled) {
+      sources.searching = false;
+      return sources;
+    }
     const searched = !!sources; // until now a card could only have been created by a search event
     const pageUrls = new Set<string>();
     const texts: string[] = [];

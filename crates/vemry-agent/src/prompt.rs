@@ -41,23 +41,26 @@ text the user pasted into the message, nor a selection unless its envelope names
 never put links on their own line or as separate list items.";
 
 /// The two states of the plan rule (frozen into the system prompt snapshot per
-/// session): the recite state is a pure prompt convention (what happens when plan
-/// confirmation is off in the settings); the gated state goes through the
-/// propose_plan tool and a blocking gate, and still recites and ticks off after
-/// approval — the sticky plan card's progress projection is shared by both.
-const PLAN_RULE_RECITE: &str = "\
-- For multi-step tasks (roughly 3+ tool calls expected), begin your FIRST reply with a plan: \
-a line reading '## Plan' followed by 3-7 short '- [ ]' items in the user's language. In each \
-later reply, restate that list first with finished items as '- [x]' before continuing. Skip \
-the plan entirely for simple questions; reconcile every item before finishing.";
+/// session). In both, the list itself is state the model keeps through the
+/// update_plan tool and the UI projects — the model never recites it in prose
+/// (that used to put the same list in three places per turn and needed a regex to
+/// strip it). The gated state additionally asks for confirmation first through
+/// propose_plan, and after approval tracks progress with update_plan as well.
+const PLAN_RULE_TRACK: &str = "\
+- For multi-step tasks (roughly 3+ tool calls expected), call update_plan FIRST with 3-7 short \
+steps in the user's language, all pending. Keep it current as you go: mark a step doing when you \
+start it and done when it is finished; a step you drop becomes skipped with the reason in its \
+text. Send the whole list each time. Never restate the plan in your prose — the UI shows it. \
+Skip planning entirely for simple questions; reconcile every item before finishing.";
 
 const PLAN_RULE_GATE: &str = "\
 - For multi-step tasks (roughly 3+ tool calls expected), FIRST call propose_plan — alone, \
 before any other tool — with 3-7 short steps in the user's language, and wait for the user's \
 decision. If rejected, revise per the reason and call propose_plan again before doing anything \
-else. After approval, begin each later reply with a line reading '## Plan' followed by the \
-confirmed list as '- [ ]' items with finished ones as '- [x]'. Skip planning entirely for \
-simple questions; reconcile every item before finishing.";
+else. After approval, track progress with update_plan (the whole list each time: doing when \
+you start a step, done when finished, skipped with the reason in its text). Never restate the \
+plan in your prose — the UI shows it. Skip planning entirely for simple questions; reconcile \
+every item before finishing.";
 
 const BASE_RULES_TAIL: &str = "\
 - VEMRY.md is your persistent memory across sessions. When the user corrects your \
@@ -80,7 +83,7 @@ pub const MEMORY_INJECT_MAX_CHARS: usize = 8_000;
 pub fn build_system_prompt(vault: &Vault, plan_tool: bool) -> String {
     let mut prompt = String::from(BASE_RULES);
     prompt.push('\n');
-    prompt.push_str(if plan_tool { PLAN_RULE_GATE } else { PLAN_RULE_RECITE });
+    prompt.push_str(if plan_tool { PLAN_RULE_GATE } else { PLAN_RULE_TRACK });
     prompt.push('\n');
     prompt.push_str(BASE_RULES_TAIL);
 
@@ -425,17 +428,20 @@ mod tests {
         (dir, vault)
     }
 
-    /// The two states of the plan rule: false = the recite convention (the
-    /// default), true = the propose_plan gate.
+    /// The two states of the plan rule: false = tracking through update_plan (the
+    /// default), true = the propose_plan gate first. Neither asks the model to
+    /// recite the list in prose.
     #[test]
     fn plan_rule_follows_plan_tool_flag() {
         let (_d, vault) = fixture();
         let recite = build_system_prompt(&vault, false);
-        assert!(recite.contains("begin your FIRST reply with a plan"));
+        assert!(recite.contains("call update_plan FIRST"));
         assert!(!recite.contains("propose_plan"));
         let gated = build_system_prompt(&vault, true);
         assert!(gated.contains("FIRST call propose_plan"));
-        assert!(!gated.contains("begin your FIRST reply with a plan"));
+        assert!(gated.contains("track progress with update_plan"));
+        assert!(!gated.contains("call update_plan FIRST"));
+        assert!(recite.contains("Never restate the plan") && gated.contains("Never restate the plan"));
         // The trailing rule (the VEMRY.md memory) is present in both states
         assert!(recite.contains("persistent memory") && gated.contains("persistent memory"));
     }

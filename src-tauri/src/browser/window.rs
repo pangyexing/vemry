@@ -73,23 +73,9 @@ fn note_navigation(app: &AppHandle, label: &str, url: &Url) -> bool {
 /// The blank page a new tab starts on (the shell's own page): never recorded, never shown.
 pub const BLANK: &str = "about:blank";
 
-/// Turn user input into a URL: a bare domain gets https://, and only http(s) is
-/// accepted (no file:, javascript:, tauri:).
-pub fn normalize_url(input: &str) -> Result<Url, String> {
-    let s = input.trim();
-    if s.is_empty() {
-        return Err("empty address".into());
-    }
-    let candidate = if s.contains("://") { s.to_string() } else { format!("https://{s}") };
-    let url = Url::parse(&candidate).map_err(|e| format!("invalid address: {e}"))?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(format!("unsupported scheme: {}", url.scheme()));
-    }
-    if url.host_str().is_none() {
-        return Err("the address has no host".into());
-    }
-    Ok(url)
-}
+/// Turn user input into a URL (the one rule lives in vemry-core's weburl: the clip
+/// reverse lookup and the agent's clips_lookup tool compare by the same spelling).
+pub use vemry_core::normalize_url;
 
 /// The app's own origin (the dev server, the bundled scheme): never shown as a page.
 pub(crate) fn is_app_origin(url: &Url) -> bool {

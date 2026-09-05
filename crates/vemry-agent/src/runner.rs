@@ -11,7 +11,7 @@
 //! driving the frontend gauge and proactive compaction.
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -25,7 +25,11 @@ use crate::context::{inflate_images, scrub_private_refs, strip_images};
 use crate::prompt::{build_system_prompt, compose_user_content, PageContext, TurnContext};
 use crate::provider::ProviderConfig;
 use crate::session::SessionLog;
-use crate::tools::{execute_read_tool, execute_write, is_write_tool, prepare_write, propose_plan_def, tool_defs, ToolError};
+use crate::sources::{self, Source};
+use crate::tools::{
+    execute_read_tool, execute_write, is_session_tool, is_write_tool, parse_plan_items, prepare_write, propose_plan_def,
+    tool_defs, PlanItem, PlanStatus, ToolError,
+};
 use crate::types::{
     ChatMessage, ChatRequest, ToolCall, ToolCallAccumulator, ToolDef, Usage, WebSearchResult,
     WebSearchStatus,
@@ -63,6 +67,13 @@ pub enum AgentEvent {
     /// propose_plan is suspended awaiting the user's decision (the plan gate, of
     /// the same family as the permission gate).
     PlanRequest { request: PlanRequest },
+    /// The model sent its step list (update_plan, or the list confirmed at the plan
+    /// gate): the sticky plan card is a projection of the latest one.
+    PlanUpdated { items: Vec<PlanItem> },
+    /// The web sources this turn cited, settled against the session's table at the
+    /// end of the turn (each with its verification); the audit jsonl has the same
+    /// line, so a replay shows the same card.
+    SourcesUpdated { turn: Option<String>, items: Vec<Source> },
     /// A server-side web search is running (the Responses API's web_search).
     WebSearching,
     /// The queries the server actually ran (visibility into the process; DeepSeek
@@ -160,6 +171,10 @@ pub struct AgentRunner {
     pub gate: Arc<dyn PermissionGate>,
     pub plan_gate: Arc<dyn PlanGate>,
     pub vault: Arc<Mutex<Option<Vault>>>,
+    /// The session's source table (see sources.rs): the glue layer owns it with
+    /// the session and hands the runner a clone of the handle; the runner settles
+    /// each turn's citations into it and `list_sources` reads it.
+    pub sources: Arc<Mutex<Vec<Source>>>,
 }
 
 /// The two-field effort mapping on the Chat Completions line: the official Chat
@@ -279,12 +294,23 @@ impl AgentRunner {
             scrub_private_refs(vault, history);
             (system, open_note, resolved, filtered)
         };
+        let user_message_was_none = user_message.is_none();
         if let Some(user_message) = user_message {
             // The turn id: the same one in all three places — the audit user line,
             // the model history envelope and the TurnStarted event — and forking
             // locates by it (counting user ordinals falls out of step once
             // compaction synthesises a message or an edit is re-sent)
-            let turn_id = chrono::Utc::now().format("%Y%m%d-%H%M%S%.3f").to_string();
+            // Two turns within one millisecond (a queued message sent the instant the
+            // previous turn ends) would share an id, and everything that locates by it —
+            // forking, a regenerate dropping its sources — would hit the wrong turn: the
+            // id is made unique against the history with a `-n` suffix, like a session id
+            let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S%.3f").to_string();
+            let mut turn_id = stamp.clone();
+            let mut n = 0;
+            while history.iter().any(|m| m.turn.as_deref() == Some(turn_id.as_str())) {
+                n += 1;
+                turn_id = format!("{stamp}-{n}");
+            }
             let mut line = json!({ "content": &user_message, "turn": &turn_id });
             if let Some(p) = &page {
                 line["page"] = json!({ "url": &p.url, "title": &p.title });
@@ -335,6 +361,20 @@ impl AgentRunner {
                 .collect();
             history.push(envelope);
         }
+        // This turn's span in the history (the envelope onwards) and its id: what the
+        // end-of-turn source settlement works over. A regenerate drops the sources the
+        // abandoned attempt produced first — they are re-derived from the new answer.
+        let turn_start = compact::last_user_index(history).unwrap_or(0);
+        let turn_id = history.get(turn_start).and_then(|m| m.turn.clone());
+        if user_message_was_none {
+            if let Some(t) = &turn_id {
+                sources::drop_turn(&mut self.sources.lock().unwrap(), t);
+            }
+        }
+        // URLs the user handed over this turn are verified on their own: the attached
+        // page (read back off the envelope, so a regenerate sees it too)
+        let exempt: HashSet<String> =
+            history.get(turn_start).and_then(|m| m.text()).map(page_context_urls).unwrap_or_default();
 
         let mut session_allow_writes = config.write_policy == WritePolicy::Allow
             || config.session_allow.as_ref().is_some_and(|f| f.load(Ordering::Relaxed));
@@ -346,6 +386,10 @@ impl AgentRunner {
         // the glue layer: config is None unless the endpoint is DeepSeek)
         let (reasoning_effort, thinking) = effort_fields(config.reasoning_effort.as_deref());
 
+        // Whether a web search ran in this turn, and the structured results it returned
+        // (both feed the end-of-turn source settlement; the closure below sets them)
+        let searched = AtomicBool::new(false);
+        let web_results: Mutex<Vec<WebSearchResult>> = Mutex::new(Vec::new());
         let mut iteration = 0usize;
         let mut transient_retries = 0u32;
         let mut overflow_l1_done = false;
@@ -431,19 +475,25 @@ impl AgentRunner {
                 let extra_ref = &mut extra_items;
                 let usage_ref = &mut usage_val;
                 let produced_ref = &mut produced;
+                let searched_ref = &searched;
+                let web_results_ref = &web_results;
                 let mut on_chunk = move |chunk: crate::types::StreamChunk| -> bool {
                     if cancel.load(Ordering::Relaxed) {
                         return false;
                     }
                     if chunk.web_search_status == Some(WebSearchStatus::Searching) {
+                        searched_ref.store(true, Ordering::Relaxed);
                         on_event(AgentEvent::WebSearching);
                     }
                     if let Some(queries) = &chunk.web_search_queries {
+                        searched_ref.store(true, Ordering::Relaxed);
                         log.append("web_search", json!({ "queries": queries }));
                         on_event(AgentEvent::WebSearchQueries { queries: queries.clone() });
                     }
                     if let Some(results) = &chunk.web_search {
                         if !results.is_empty() {
+                            searched_ref.store(true, Ordering::Relaxed);
+                            web_results_ref.lock().unwrap().extend(results.iter().cloned());
                             // The session log lives in the vault: only title/link is
                             // recorded, never the full snippet
                             let links: Vec<Value> = results
@@ -551,6 +601,15 @@ impl AgentRunner {
             history.push(assistant);
 
             if tool_calls.is_empty() {
+                self.settle_sources(
+                    &history[turn_start..],
+                    turn_id.as_deref(),
+                    searched.load(Ordering::Relaxed),
+                    &web_results.lock().unwrap(),
+                    &exempt,
+                    on_event,
+                    log,
+                );
                 on_event(AgentEvent::TurnFinished {
                     truncated: finish_reason.as_deref() == Some("length"),
                 });
@@ -735,8 +794,12 @@ impl AgentRunner {
         };
         log.append("tool_call", json!({ "tool": name, "args": &args }));
 
-        if name == "propose_plan" {
-            return self.execute_plan(call, &args, plan_rejected, on_event, log).await;
+        if is_session_tool(name) {
+            return match name {
+                "propose_plan" => self.execute_plan(call, &args, plan_rejected, on_event, log).await,
+                "update_plan" => self.execute_plan_update(&args, on_event, log),
+                _ => Ok(sources::format_sources(&self.sources.lock().unwrap())),
+            };
         }
 
         if !is_write_tool(name) {
@@ -877,13 +940,15 @@ impl AgentRunner {
         match decision {
             PlanDecision::Approve => {
                 log.append("plan_decision", json!({ "id": &request.id, "decision": "approve" }));
-                Ok("The plan is confirmed; begin. From now on, restate this list at the start of every reply (finished items as '- [x]') before continuing.".into())
+                self.publish_plan(pending_items(&request.items), on_event, log);
+                Ok("The plan is confirmed; begin. Track progress with update_plan (the whole list each time: doing / done / skipped) and do not restate it in prose.".into())
             }
             PlanDecision::ApproveEdited { items } => {
                 log.append("plan_decision", json!({ "id": &request.id, "decision": "approve_edited", "items": &items }));
                 let list = items.iter().map(|i| format!("- [ ] {i}")).collect::<Vec<_>>().join("\n");
+                self.publish_plan(pending_items(&items), on_event, log);
                 Ok(format!(
-                    "The user edited the plan; follow the list below (restate it at the start of every reply from now on, with finished items as '- [x]'):\n{list}"
+                    "The user edited the plan; follow the list below. Track progress with update_plan (the whole list each time: doing / done / skipped) and do not restate it in prose:\n{list}"
                 ))
             }
             PlanDecision::Reject { reason } => {
@@ -895,6 +960,98 @@ impl AgentRunner {
             }
         }
     }
+}
+
+impl AgentRunner {
+    /// update_plan: validate → record the `plan_update` line → emit the event → a
+    /// short receipt for the model. Session state only: no vault, no gate.
+    fn execute_plan_update(
+        &self,
+        args: &Value,
+        on_event: &(dyn Fn(AgentEvent) + Send + Sync),
+        log: &SessionLog,
+    ) -> std::result::Result<String, String> {
+        let items = parse_plan_items(args)?;
+        let done = items.iter().filter(|i| matches!(i.status, PlanStatus::Done | PlanStatus::Skipped)).count();
+        let total = items.len();
+        self.publish_plan(items, on_event, log);
+        Ok(format!("plan recorded ({done}/{total} settled)"))
+    }
+
+    /// The one place a plan list reaches the ledger and the UI (update_plan and the
+    /// plan gate's approval both come through here).
+    fn publish_plan(&self, items: Vec<PlanItem>, on_event: &(dyn Fn(AgentEvent) + Send + Sync), log: &SessionLog) {
+        log.append("plan_update", json!({ "items": &items }));
+        on_event(AgentEvent::PlanUpdated { items });
+    }
+
+    /// End of turn: the citations in this turn's assistant text (plus any structured
+    /// search results) are settled into the session's source table, and the turn's
+    /// list — each entry with its verification — goes to the ledger and the UI. A
+    /// turn that cites nothing records nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn settle_sources(
+        &self,
+        turn: &[ChatMessage],
+        turn_id: Option<&str>,
+        searched: bool,
+        web_results: &[WebSearchResult],
+        exempt: &HashSet<String>,
+        on_event: &(dyn Fn(AgentEvent) + Send + Sync),
+        log: &SessionLog,
+    ) {
+        let mut cites: Vec<sources::Citation> = Vec::new();
+        let mut push = |c: sources::Citation| match cites.iter_mut().find(|x| x.url == c.url) {
+            Some(prev) => {
+                if prev.title.is_empty() && !c.title.is_empty() {
+                    prev.title = c.title;
+                }
+            }
+            None => cites.push(c),
+        };
+        for r in web_results.iter().filter(|r| !r.url.is_empty()) {
+            push(sources::Citation { title: r.title.clone(), url: r.url.clone() });
+        }
+        for text in turn.iter().filter(|m| m.role == "assistant").filter_map(|m| m.text()) {
+            for c in sources::extract_citations(text) {
+                push(c);
+            }
+        }
+        if cites.is_empty() {
+            return;
+        }
+        let items: Vec<Source> = {
+            let mut table = self.sources.lock().unwrap();
+            sources::merge_turn(&mut table, turn_id, &cites, searched, exempt);
+            cites.iter().filter_map(|c| table.iter().find(|s| s.url == c.url).cloned()).collect()
+        };
+        log.append("sources", json!({ "turn": turn_id, "items": &items }));
+        on_event(AgentEvent::SourcesUpdated { turn: turn_id.map(String::from), items });
+    }
+}
+
+/// The confirmed plan as the first update: every step pending.
+fn pending_items(items: &[String]) -> Vec<PlanItem> {
+    items.iter().map(|t| PlanItem { text: t.clone(), status: PlanStatus::Pending }).collect()
+}
+
+/// The URL of the web page attached to a turn, read back off its envelope
+/// (`<web-page-context source="…"`): assembled by compose_user_message with
+/// fence_attr applied, which never touches a URL's characters.
+fn page_context_urls(envelope: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let marker = "<web-page-context source=\"";
+    let mut pos = 0;
+    while let Some(at) = envelope[pos..].find(marker) {
+        let start = pos + at + marker.len();
+        if let Some(end) = envelope[start..].find('"') {
+            out.insert(envelope[start..start + end].to_string());
+            pos = start + end;
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 fn decision_label(d: &PermissionDecision) -> &'static str {
@@ -1058,7 +1215,13 @@ mod tests {
     }
 
     fn runner(f: &Fixture, transport: Arc<dyn ChatTransport>, gate: Arc<dyn PermissionGate>) -> AgentRunner {
-        AgentRunner { transport, gate, plan_gate: Arc::new(crate::permission::AutoApprovePlan), vault: f.vault.clone() }
+        AgentRunner {
+            transport,
+            gate,
+            plan_gate: Arc::new(crate::permission::AutoApprovePlan),
+            vault: f.vault.clone(),
+            sources: Arc::new(Mutex::new(vec![])),
+        }
     }
 
     async fn run_turn(
@@ -1635,6 +1798,7 @@ mod tests {
             gate: Arc::new(AutoAllow),
             plan_gate: Arc::new(AutoRejectPlan("先别动笔记".into())),
             vault: f.vault.clone(),
+            sources: Arc::new(Mutex::new(vec![])),
         };
         let mut history = vec![];
         let (_log, events) = run_plan_turn(&r, &f, &mut history).await;
@@ -1670,6 +1834,7 @@ mod tests {
             gate: Arc::new(AutoAllow),
             plan_gate: Arc::new(AutoEditPlan),
             vault: f.vault.clone(),
+            sources: Arc::new(Mutex::new(vec![])),
         };
         let mut history = vec![];
         let (log, _events) = run_plan_turn(&r, &f, &mut history).await;
@@ -1711,6 +1876,141 @@ mod tests {
         assert!(!events.iter().any(|e| matches!(e, AgentEvent::PlanRequest { .. })));
         let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
         assert!(!jsonl.contains(r#""kind":"plan""#), "an invalid list records no plan line");
+    }
+
+    /// update_plan is session state: the list reaches the ledger (`plan_update`) and
+    /// the UI (PlanUpdated), the receipt counts the settled steps, and nothing
+    /// touches the vault or a gate.
+    #[tokio::test]
+    async fn update_plan_records_line_and_event() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks(
+                "c1",
+                "update_plan",
+                r#"{"items": [{"text": "read", "status": "done"}, {"text": "write", "status": "doing"}, {"text": "old", "status": "skipped"}]}"#,
+            ),
+            vec![text_chunk("继续"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoDeny("no writes expected".into())));
+        let mut history = vec![];
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &RunnerConfig::default(),
+            &mut history,
+            Some("整理".into()),
+            None,
+            vec![],
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        let events = Arc::try_unwrap(events).unwrap().into_inner().unwrap();
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::PlanUpdated { items } if items.len() == 3 && items[1].status == PlanStatus::Doing)));
+        assert!(history[2].text().unwrap().contains("2/3 settled"), "{:?}", history[2].text());
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert!(jsonl.lines().any(|l| l.contains(r#""kind":"plan_update""#) && l.contains(r#""status":"doing""#)), "{jsonl}");
+        assert!(!jsonl.contains(r#""kind":"write_prepared""#));
+    }
+
+    /// The plan gate's approval is the first update: the confirmed list goes out as
+    /// pending steps, so the sticky card is a projection of `plan_update` lines alone.
+    #[tokio::test]
+    async fn plan_approval_publishes_first_update() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "propose_plan", r#"{"items": ["read-notes", "summarize", "write-out"]}"#),
+            vec![text_chunk("开始"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (log, events) = run_plan_turn(&r, &f, &mut history).await;
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::PlanUpdated { items } if items.len() == 3 && items.iter().all(|i| i.status == PlanStatus::Pending))));
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert!(jsonl.lines().any(|l| l.contains(r#""kind":"plan_update""#) && l.contains("read-notes")), "{jsonl}");
+        assert!(history[2].text().unwrap().contains("update_plan"), "the receipt points at the tracking tool");
+    }
+
+    /// Source settlement at the end of a turn: a bare URL with no search is recorded
+    /// unverified; a URL from the attached page is verified; a search verifies
+    /// everything in its turn; a regenerate drops the abandoned turn's sources; and
+    /// list_sources reads the table back.
+    #[tokio::test]
+    async fn sources_settle_verify_and_follow_retry() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            vec![text_chunk("见 https://a.io/x 一文。"), finish_chunk("stop")],
+            vec![text_chunk("网页说 [b](https://b.io/p) 与 https://c.io/z"), finish_chunk("stop")],
+            vec![text_chunk("重答无引用"), finish_chunk("stop")],
+            vec![
+                StreamChunk { web_search_queries: Some(vec!["q".into()]), ..Default::default() },
+                text_chunk("搜到 [d](https://d.io/1)"),
+                finish_chunk("stop"),
+            ],
+            tool_call_chunks("c9", "list_sources", "{}"),
+            vec![text_chunk("完"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let emit = move |e: AgentEvent| ev.lock().unwrap().push(e);
+        let provider = ProviderConfig::zhipu("test-key".into());
+        let cfg = RunnerConfig::default();
+        let cancel = AtomicBool::new(false);
+        // Turn 1: unverified
+        r.run(&provider, &cfg, &mut history, Some("问".into()), None, vec![], None, &emit, &cancel, &log).await.unwrap();
+        {
+            let t = r.sources.lock().unwrap();
+            assert_eq!(t.len(), 1);
+            assert_eq!(t[0].url, "https://a.io/x");
+            assert!(!t[0].verified);
+        }
+        // Turn 2: the attached page's URL is exempt (verified), the other stays unverified
+        let page = PageContext { url: "https://b.io/p".into(), title: "B".into(), markdown: "body".into() };
+        r.run(&provider, &cfg, &mut history, Some("再问".into()), Some(page), vec![], None, &emit, &cancel, &log).await.unwrap();
+        {
+            let t = r.sources.lock().unwrap();
+            assert_eq!(t.len(), 3);
+            assert!(t.iter().find(|s| s.url == "https://b.io/p").unwrap().verified);
+            assert!(!t.iter().find(|s| s.url == "https://c.io/z").unwrap().verified);
+        }
+        // Regenerate turn 2 with an answer that cites nothing: its sources go away (the
+        // glue layer appends the retry marker the replay applies the same rule from)
+        let idx = compact::last_user_index(&history).unwrap();
+        history.truncate(idx + 1);
+        log.append("retry", json!({}));
+        r.run(&provider, &cfg, &mut history, None, None, vec![], None, &emit, &cancel, &log).await.unwrap();
+        {
+            let t = r.sources.lock().unwrap();
+            let urls: Vec<&str> = t.iter().map(|s| s.url.as_str()).collect();
+            assert_eq!(urls, vec!["https://a.io/x"]);
+        }
+        // Turn 3: a search ran, so the citation is verified
+        r.run(&provider, &cfg, &mut history, Some("搜".into()), None, vec![], None, &emit, &cancel, &log).await.unwrap();
+        assert!(r.sources.lock().unwrap().iter().find(|s| s.url == "https://d.io/1").unwrap().verified);
+        // Turn 4: list_sources reads the table
+        r.run(&provider, &cfg, &mut history, Some("列".into()), None, vec![], None, &emit, &cancel, &log).await.unwrap();
+        let listing = history.iter().find(|m| m.tool_call_id.as_deref() == Some("c9")).unwrap().text().unwrap().to_string();
+        assert!(listing.contains("1. https://a.io/x  [unverified"), "{listing}");
+        assert!(listing.contains("2. d — https://d.io/1") && !listing[listing.find("d.io").unwrap()..].contains("[unverified"), "{listing}");
+        drop(emit);
+        let events = Arc::try_unwrap(events).unwrap().into_inner().unwrap();
+        let settled: Vec<&AgentEvent> = events.iter().filter(|e| matches!(e, AgentEvent::SourcesUpdated { .. })).collect();
+        assert_eq!(settled.len(), 3, "turns 1, 2 and 3 cite something; the regenerate and the listing turn do not");
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert!(jsonl.lines().any(|l| l.contains(r#""kind":"sources""#) && l.contains("a.io")));
+        // The replay reads the same table as the live path (the retry marker drops turn 2)
+        let replayed = crate::sources::read_sources(&jsonl);
+        let urls: Vec<&str> = replayed.iter().map(|s| s.url.as_str()).collect();
+        assert_eq!(urls, vec!["https://a.io/x", "https://d.io/1"]);
     }
 
     #[tokio::test]

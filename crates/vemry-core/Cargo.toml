@@ -10,6 +10,8 @@ serde_yaml.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
+# Web URL normalisation (weburl.rs): shared by the clip reverse lookup and the browser
+url = "2"
 notify = "6.1"
 notify-debouncer-full = "0.3"
 ignore = "0.4"

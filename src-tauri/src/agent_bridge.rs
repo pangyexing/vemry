@@ -115,6 +115,11 @@ pub struct AgentState {
     /// It used to be a local of run(), where the button said "session" but the grant
     /// really only lived for one turn.
     pub session_grant: Arc<AtomicBool>,
+    /// The session's web source table (vemry_agent::sources): the runner settles each
+    /// turn's citations into it, `list_sources` reads it, and it is rebuilt from the
+    /// session's jsonl wherever the session identity changes — it moves with
+    /// `current_session` exactly as `history` does.
+    pub sources: Arc<Mutex<Vec<vemry_agent::Source>>>,
 }
 
 impl AgentState {
@@ -124,6 +129,13 @@ impl AgentState {
     pub fn reset_session_scope(&self) {
         self.invalidate_prompt_snapshot();
         self.session_grant.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Point the source table at a session: rebuilt from its jsonl (None = a new
+    /// session, empty). Every place that sets `current_session` calls it.
+    pub fn load_sources(&self, meta_dir: &std::path::Path, id: Option<&str>) {
+        *self.sources.lock().unwrap() =
+            id.map(|id| vemry_agent::session::read_session_sources(meta_dir, id)).unwrap_or_default();
     }
 
     /// A change to the privacy zones invalidates the prompt snapshot alone: the
@@ -152,6 +164,7 @@ impl Default for AgentState {
             session_meta: Mutex::new(Default::default()),
             session_setup: Mutex::new(None),
             session_grant: Arc::new(AtomicBool::new(false)),
+            sources: Arc::new(Mutex::new(vec![])),
         }
     }
 }

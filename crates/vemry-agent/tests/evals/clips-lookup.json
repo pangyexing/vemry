@@ -1,0 +1,23 @@
+{
+  "name": "clips-lookup",
+  "vault": {
+    "clips/HNSW intro.md": "---\nsource: https://example.org/hnsw-intro\ndomain: example.org\n---\n# HNSW intro\n\nA graph index. ^g1\n"
+  },
+  "turns": [
+    {
+      "user": "HNSW 是什么，我剪藏过相关的吗",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "clips_lookup", "args": { "urls": ["https://example.org/hnsw-intro", "https://example.org/other"] } } } ],
+        [ { "tool": { "id": "c2", "name": "read_note", "args": { "path": "clips/HNSW intro.md" } } } ],
+        [ { "text": "是一种图索引 [[clips/HNSW intro#^g1]]，你剪藏过它。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "no_writes": true,
+    "sources": [],
+    "tool_output_contains": [ { "id": "c1", "text": "https://example.org/hnsw-intro → [[clips/HNSW intro]]" }, { "id": "c1", "text": "(1 not clipped)" } ]
+  }
+}

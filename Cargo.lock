@@ -5380,6 +5380,7 @@ dependencies = [
  "thiserror 1.0.69",
  "trash",
  "unicode-normalization",
+ "url",
  "walkdir",
 ]
 

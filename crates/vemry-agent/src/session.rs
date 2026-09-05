@@ -112,6 +112,13 @@ pub fn read_session(meta_dir: &Path, id: &str) -> Option<String> {
     fs::read_to_string(session_path(meta_dir, id)).ok()
 }
 
+/// The session's source table, rebuilt from its audit jsonl (`sources` lines, with
+/// retry / edit_resend markers applied — see `sources::read_sources`). Missing or
+/// unreadable → empty.
+pub fn read_session_sources(meta_dir: &Path, id: &str) -> Vec<crate::sources::Source> {
+    read_session(meta_dir, id).map(|text| crate::sources::read_sources(&text)).unwrap_or_default()
+}
+
 fn history_path(meta_dir: &Path, id: &str) -> PathBuf {
     meta_dir.join("sessions").join(format!("{id}.history.json"))
 }

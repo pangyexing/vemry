@@ -1,0 +1,19 @@
+{
+  "name": "unverified-url",
+  "vault": { "Hello.md": "# Hello\n\nworld\n" },
+  "turns": [
+    {
+      "user": "推荐一篇关于 HNSW 的文章",
+      "script": [
+        [ { "text": "可以看 https://example.org/hnsw-intro 这篇，还有 [论文](https://arxiv.org/abs/1603.09320)。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "no_writes": true,
+    "sources": [
+      { "url": "https://example.org/hnsw-intro", "verified": false },
+      { "url": "https://arxiv.org/abs/1603.09320", "verified": false }
+    ]
+  }
+}

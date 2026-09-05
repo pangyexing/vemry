@@ -1,0 +1,27 @@
+{
+  "name": "searched-url",
+  "vault": { "Hello.md": "# Hello\n" },
+  "turns": [
+    {
+      "user": "最近 pgvector 的性能怎样",
+      "script": [
+        [ { "search": ["pgvector benchmark 2026"] }, { "text": "据 [基准报告](https://example.com/pgvector-bench) 与 https://example.com/notes ，p95 在 12 ms 左右。" } ]
+      ]
+    },
+    {
+      "user": "这个网页说了什么",
+      "page_url": "https://blog.example.net/post",
+      "script": [
+        [ { "text": "网页 [原文](https://blog.example.net/post) 讨论了限流；另见 https://other.example.io/x 。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "sources": [
+      { "url": "https://example.com/pgvector-bench", "verified": true },
+      { "url": "https://example.com/notes", "verified": true },
+      { "url": "https://blog.example.net/post", "verified": true },
+      { "url": "https://other.example.io/x", "verified": false }
+    ]
+  }
+}

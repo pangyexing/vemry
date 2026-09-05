@@ -1167,6 +1167,7 @@ async fn run_agent_turn(
             history.clear();
             *state.agent.current_session.lock().unwrap() = None;
             state.agent.reset_session_scope();
+            state.agent.sources.lock().unwrap().clear();
             *owner = Some(root);
         }
     }
@@ -1241,6 +1242,7 @@ async fn run_agent_turn(
             pending: Arc::clone(&state.agent.pending.plans),
         }),
         vault: Arc::clone(&state.vault),
+        sources: Arc::clone(&state.agent.sources),
     };
     // The thinking level: an in-session override (passed by the frontend, and by a
     // retry too — a regenerate keeps the override) wins, otherwise the setting's
@@ -1307,6 +1309,10 @@ pub fn agent_history_truncate(state: State<'_, AppState>) -> Result<(), String> 
     let Some(idx) = vemry_agent::compact::last_user_index(&history) else {
         return Err(crate::i18n::t(crate::i18n::current(), "ipc.sessionEmpty"));
     };
+    // The abandoned turn's sources go with it (the replay applies the same rule from the marker line)
+    if let Some(turn) = history[idx].turn.clone() {
+        vemry_agent::sources::drop_turn(&mut state.agent.sources.lock().unwrap(), &turn);
+    }
     history.truncate(idx);
     let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
     if let Some(id) = state.agent.current_session.lock().unwrap().as_deref() {
@@ -1356,6 +1362,7 @@ pub fn agent_session_fork(
     *history = forked;
     *state.agent.current_session.lock().unwrap() = Some(log.id.clone());
     state.agent.reset_session_scope();
+    state.agent.load_sources(&meta_dir, Some(&log.id));
     Ok(ForkResult { id: log.id, summarized_context })
 }
 
@@ -1407,6 +1414,7 @@ pub fn agent_session_new(state: State<'_, AppState>) -> Result<(), String> {
     history.clear();
     *state.agent.current_session.lock().unwrap() = None;
     state.agent.reset_session_scope();
+    state.agent.sources.lock().unwrap().clear();
     Ok(())
 }
 
@@ -1431,6 +1439,7 @@ pub fn agent_session_select(state: State<'_, AppState>, id: String) -> Result<St
         state.agent.history.try_lock().map_err(|_| crate::i18n::t(crate::i18n::current(), "ipc.runningNoSwitch"))?;
     *history = read_history(&meta_dir, &id).unwrap_or_default();
     *state.agent.history_vault.lock().unwrap() = Some(root);
+    state.agent.load_sources(&meta_dir, Some(&id));
     *state.agent.current_session.lock().unwrap() = Some(id);
     state.agent.reset_session_scope();
     Ok(jsonl)
@@ -1456,6 +1465,7 @@ pub fn agent_session_delete(state: State<'_, AppState>, id: String) -> Result<()
         history.clear();
         *state.agent.current_session.lock().unwrap() = None;
         state.agent.reset_session_scope();
+        state.agent.sources.lock().unwrap().clear();
     }
     with_vault(&state, |v| delete_session(&v.meta_dir(), &id))
 }

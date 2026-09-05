@@ -3,7 +3,7 @@
 
 import { t } from "$lib/i18n/i18n.svelte";
 import { isImeKeydown } from "$lib/ime";
-import type { RefTag } from "$lib/api";
+import type { PlanItem, RefTag, SourceRecord } from "$lib/api";
 
 /** Every line carries `ts` (RFC3339) + `kind`; `raw` is the bad-line fallback. */
 export type SessionEntry =
@@ -38,6 +38,10 @@ export type SessionEntry =
       items?: string[];
       reason?: string;
     }
+  /** The model's step list (update_plan, or the list confirmed at the plan gate); the latest one is the sticky plan card. */
+  | { kind: "plan_update"; ts: string; items: PlanItem[] }
+  /** The web sources one turn cited, settled with their verification (the turn's source card on replay). */
+  | { kind: "sources"; ts: string; turn?: string | null; items: SourceRecord[] }
   /** Regenerate: the lines after it belong to a replay of the same turn, and the assistant/tool tail before it was abandoned. */
   | { kind: "retry"; ts: string }
   /** Edit and resend: the previous user message's whole turn was abandoned (the audit lines stay, and the display drops them). */
@@ -140,7 +144,12 @@ export function planDecisionLabel(decision: string): string {
 /** Tools that carry their own card projection: the conversation timeline no longer
  *  pushes their raw JSON tool line (the plan card is propose_plan's projection). The
  *  live view and the replay share this one verdict. */
-export const CARD_TOOLS = new Set(["propose_plan"]);
+export const CARD_TOOLS = new Set(["propose_plan", "update_plan"]);
+
+/** Whether a plan is settled: nothing pending or in progress — a finished plan leaves the sticky card on the next question. */
+export function planReconciled(items: PlanItem[]): boolean {
+  return items.every((p) => p.status === "done" || p.status === "skipped");
+}
 
 export function decisionLabel(decision: string): string {
   const key = `decision.${decision}`;

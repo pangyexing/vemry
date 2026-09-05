@@ -364,6 +364,38 @@
               </div>
             {/if}
           </div>
+        {:else if e.kind === "plan_update"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="write">
+              <div class="write-head">
+                <span class="tool">{t("sessionsView.planUpdate", { done: e.items.filter((p) => p.status === "done" || p.status === "skipped").length, total: e.items.length })}</span>
+              </div>
+              {#each e.items as p, j (j)}
+                <div class="ws-link" class:faint={p.status === "skipped"}>
+                  <span class="ws-n">{p.status === "done" ? "☑" : p.status === "doing" ? "◉" : p.status === "skipped" ? "⊘" : "☐"}</span>
+                  <span class="ws-title">{p.text}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {:else if e.kind === "sources"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="websearch">
+              <div class="ledger">
+                <span class="mark">✓</span>
+                <span class="tool">{t("sessionsView.sourcesSettled", { n: e.items.length })}</span>
+              </div>
+              {#each e.items as src, j (j)}
+                <div class="ws-link" title={src.url}>
+                  <span class="ws-n">{j + 1}</span>
+                  <span class="ws-title">{src.title || src.url}</span>
+                  {#if !src.verified}<span class="ws-url">{t("chat.unverified")}</span>{:else if src.title}<span class="ws-url">{src.url}</span>{/if}
+                </div>
+              {/each}
+            </div>
+          </div>
         {:else if e.kind === "retry" || e.kind === "edit_resend" || e.kind === "compact" || e.kind === "fork"}
           <div class="row">
             <span class="ts">{hhmmss(e.ts)}</span>

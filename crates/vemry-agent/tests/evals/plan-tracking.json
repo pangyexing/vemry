@@ -1,0 +1,29 @@
+{
+  "name": "plan-tracking",
+  "vault": { "inbox/Ideas.md": "# Ideas\n\n- [ ] write the spec\n- [ ] ask Wang\n" },
+  "turns": [
+    {
+      "user": "整理一下 inbox",
+      "script": [
+        [ { "tool": { "id": "p1", "name": "update_plan", "args": { "items": [
+            { "text": "读 inbox 里的笔记", "status": "doing" },
+            { "text": "找出任务", "status": "pending" },
+            { "text": "汇报", "status": "pending" } ] } } } ],
+        [ { "tool": { "id": "c1", "name": "read_note", "args": { "path": "inbox/Ideas.md" } } } ],
+        [ { "tool": { "id": "p2", "name": "update_plan", "args": { "items": [
+            { "text": "读 inbox 里的笔记", "status": "done" },
+            { "text": "找出任务", "status": "done" },
+            { "text": "汇报（无需单独汇报，下面直接说）", "status": "skipped" } ] } } } ],
+        [ { "text": "inbox 里有两条待办：写规格、问王 [[inbox/Ideas#b1]]。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "no_writes": true,
+    "plan": ["done", "done", "skipped"],
+    "no_plan_in_prose": true,
+    "tool_output_contains": [ { "id": "p2", "text": "3/3 settled" } ]
+  }
+}

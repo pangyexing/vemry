@@ -56,9 +56,11 @@ Three constraints follow:
 | `types.rs` | OpenAI Chat Completions wire types plus the streaming tool_call assembler. `ToolDef` is an untagged enum (`Function` plus `Raw`, which passes a server-side tool through verbatim); `ChatMessage.extra_items` carries Responses output items across turns |
 | `client.rs` | The `ChatTransport` trait (mockable) plus the reqwest SSE implementation — **the LLM channel boundary**. Since v0.4 the system has two further controlled network exits (see "The built-in knowledge browser"). v0.7: a process-wide shared connection pool, connect timeout, a 120 s stream-idle timeout and cancellation polling for a stalled stream; both transports share one read loop, `read_sse` |
 | `responses.rs` | v0.4: the DeepSeek Responses API transport — a second implementation of the same `ChatTransport` trait. On the request side it maps messages→input items, system→instructions and flattens tools; on the response side it synthesises `StreamChunk` from semantic SSE events, so the runner and the mock need no changes. The server-side `web_search` tool is injected through here, and `web_search_call` items are replayed verbatim. Enabled only when web search is on **and** the endpoint is api.deepseek.com |
-| `tools.rs` | Nine domain tools. The read-level ones (list/read/search/links/query_blocks/read_skill) execute directly; the write-level ones (write_note/edit_note/move_note) are first "prepared" into a `WriteRequest` — carrying the rendered diff and the exact content that would land on disk (a move is a path pair, `path → to_path`, with no diff) — and execute only after the gate. `move_note` goes through `Vault::rename_path`, the same implementation the file tree's move uses: rename and rescan, without rewriting links |
+| `tools.rs` | The domain tools, in three classes. Read-level (list_notes / read_note / read_block / search_notes / get_links / clips_lookup / query_blocks / read_skill) execute directly behind the privacy gate; write-level (write_note / edit_note / move_note) are first "prepared" into a `WriteRequest` — carrying the rendered diff and the exact content that would land on disk (a move is a path pair, `path → to_path`, with no diff) — and execute only after the gate; session-level (`is_session_tool`: update_plan / list_sources / propose_plan) act on the session's own state, touch no note and pass no gate. `move_note` goes through `Vault::rename_path`, the same implementation the file tree's move uses: rename and rescan, without rewriting links. `PlanItem`/`PlanStatus` and `parse_plan_items` are update_plan's grammar |
+| `sources.rs` | The session's web source table: `extract_citations` (Markdown links and bare ASCII URLs, in document order, deduplicated — the same rule the frontend numbers its superscripts by), `merge_turn` (the verification verdict: a search ran this turn, or the user handed the page over; otherwise the URL came out of the model's prose alone and shows as "unverified"), `drop_turn` (a regenerate or an edit-and-resend takes its turn's sources back) and `read_sources` (the table rebuilt from the audit's `sources` lines with the retry / edit_resend markers applied — the replay and the live path agree by construction). The runner settles every turn's citations into it at the end of the turn; `list_sources` reads it back to the model; compaction can no longer lose it |
+| `testing.rs` | `ScriptedTransport` and chunk constructors for the offline evaluation suite (`tests/evals.rs`): every `tests/evals/*.json` fixture builds a small vault, replays scripted model output through the real runner and checks the product standards that need no provider — citations resolve, sources carry the right verdict, the plan is state rather than prose, tools succeed, nothing reaches the write gate |
 | `permission.rs` | The `PermissionGate` trait. The write gate is enforced in the Rust layer that owns the ability to write files — the frontend can render the decision and nothing else |
-| `runner.rs` | The agent loop: stream → dispatch on `finish_reason` → execute tools → feed results back → repeat (25 iterations max). The `ChatTransport` mock makes every branch testable. v0.7 added three layers of resilience: transient errors (429/5xx/dropped stream) back off and retry as long as nothing was produced; a context overflow first compacts, then summarises, then retries, so a session is no longer written off; usage is reported per iteration to drive the frontend gauge and proactive compaction; a wrap-up hint is injected with five iterations left; `finish_reason=length` reports truncated; `reasoning_content` is kept in history and sent back (the DeepSeek thinking contract); tool results have a 32k backstop; `user_message=None` means regenerate — no user message is appended and the tail of history is replayed |
+| `runner.rs` | The agent loop: stream → dispatch on `finish_reason` → execute tools → feed results back → repeat (25 iterations max). Session-level tools are executed here (update_plan publishes a `plan_update` line and a `PlanUpdated` event; the plan gate's approval publishes the confirmed list the same way, so the sticky plan card is a projection of `plan_update` alone), and the end of every turn settles the turn's citations into the source table (`SourcesUpdated` + a `sources` line). A turn id is made unique against the history (a `-n` suffix when two turns land in one millisecond). The `ChatTransport` mock makes every branch testable. v0.7 added three layers of resilience: transient errors (429/5xx/dropped stream) back off and retry as long as nothing was produced; a context overflow first compacts, then summarises, then retries, so a session is no longer written off; usage is reported per iteration to drive the frontend gauge and proactive compaction; a wrap-up hint is injected with five iterations left; `finish_reason=length` reports truncated; `reasoning_content` is kept in history and sent back (the DeepSeek thinking contract); tool results have a 32k backstop; `user_message=None` means regenerate — no user message is appended and the tail of history is replayed |
 | `compact.rs` | v0.7 two-level context compaction, pure logic. Level one replaces older successful tool results with recoverable handles (the note is on disk; calling again fetches it back — ERROR lines are never cleared). Level two has the LLM summarise everything before the current turn, with a hard truncation as the fallback if summarising fails. `is_context_overflow` is the trigger for reactive self-healing |
 | `session.rs` | The `.vemry/sessions/*.jsonl` audit log: every user message, model output, tool call, diff and permission decision. It is the data source for the v0.2 session-replay view. v0.8 added a title override row (manual rename; the last one wins, and a fork inherits it). v0.7 added retry/edit_resend/compact/fork marker rows (the audit is immutable; the presentation layer folds on the markers) and `fork_session` — a research-tree fork that copies the audit prefix. The fork point is located by turn id: the runner stamps one `turn` id into the audit's user row, the model-history envelope and the `TurnStarted` event at the top of each turn, because timeline, audit and sidecar each counting user ordinals independently falls out of step after a compaction synthesises a message or an edit-and-resend leaves a stale row. Older sessions with no ids fall back to ordinal counting |
 | `prompt.rs` | The system prompt is fixed rules + VEMRY.md (8k cap; over that it truncates and points at indexing it) + a Skills summary (name — description) + a vault overview. v0.7: **frozen as a session-level snapshot** — the glue layer takes it once per session and reuses it, because rebuilding between turns guarantees a provider prefix-cache miss, and DeepSeek's hit/miss price difference is roughly 30×. Volatile information (the date, the current note) rides the turn-context tail in `compose_user_message` instead |
@@ -1922,15 +1924,42 @@ source order — path, then position — so a requery never shuffles cards that 
 equal. The order is persisted per vault together with the grouping and the collapsed
 columns.
 
-### The plan confirmation gate (v0.9)
+### The plan as state (update_plan), and the plan confirmation gate (v0.9)
 
-The `propose_plan` tool plus a blocking gate: a multi-step task presents a plan card
-first and waits for "run it / edit / reject", then continues in the same turn once
-approved. Like `web_search` it is a **session-frozen addition to the tool table** —
-a change to the switch takes effect from the next session, because the tool table
-freezes along with the system prompt when a session begins. The plan card is
-`propose_plan`'s only projection: the recited list in the bubble's body is stripped
-by `stripPlan`, or the same checklist would appear in three places in a single turn.
+The plan is **session state the model keeps through a tool**, never text it recites:
+`update_plan` takes the whole step list each time (pending / doing / done / skipped),
+the runner appends a `plan_update` line to the audit jsonl and emits `PlanUpdated`,
+and the sticky plan card in the panel is a projection of the latest list — live from
+the event, on replay from the lines. The system prompt forbids restating the list in
+prose, so the regex that used to strip a recited "## Plan" out of every bubble is
+gone with the token cost of the recitation. A plan whose every step is done or
+skipped leaves the card with the next question; an unfinished one stays as a
+reminder (the rule lives in `planReconciled`, applied by the live `turn_started`
+and the replay's user line alike).
+
+The `propose_plan` tool plus a blocking gate is the confirmation in front of that: a
+multi-step task presents a plan card first and waits for "run it / edit / reject",
+then continues in the same turn once approved — and the approval publishes the
+confirmed list as the first `plan_update` (every step pending), so the two paths
+share one projection. Like `web_search` it is a **session-frozen addition to the
+tool table** — a change to the switch takes effect from the next session, because
+the tool table freezes along with the system prompt when a session begins.
+
+### The source table (sources.rs)
+
+Every web citation the model produces in a session lives in one table on the Rust
+side, owned by `AgentState` with the session (rebuilt from the jsonl wherever
+`current_session` changes: select, fork, delete, a vault switch). At the end of a
+turn the runner extracts the citations from the turn's assistant text (plus any
+structured search results), settles them into the table with a verdict — verified
+when a search ran that turn or the user handed the page over, otherwise
+**unverified** — appends a `sources` line and emits `SourcesUpdated`. The frontend
+card for the turn takes that list as authoritative (`settled`); its own link
+harvest remains only as the fallback for a turn that ended without a settlement.
+A regenerate or an edit-and-resend drops the abandoned turn's sources
+(`drop_turn`), and the replay applies the same rule from the marker lines. The
+model can read the table back with `list_sources`, and `clips_lookup` tells it which
+of those URLs already have a clipped note to cite as a wikilink instead.
 
 ### The standalone AI chat window
 

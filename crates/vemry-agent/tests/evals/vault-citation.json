@@ -1,0 +1,17 @@
+{
+  "name": "vault-citation",
+  "vault": {
+    "projects/Alpha.md": "# Alpha\n\nAlpha ships in May after the security review. ^m1\n\nThe team is three people.\n"
+  },
+  "turns": [
+    {
+      "user": "Alpha 什么时候发布？",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "search_notes", "args": { "query": "Alpha" } } } ],
+        [ { "tool": { "id": "c2", "name": "read_note", "args": { "path": "projects/Alpha.md" } } } ],
+        [ { "text": "五月发布，在安全评审之后 [[projects/Alpha#^m1]]。" } ]
+      ]
+    }
+  ],
+  "expect": { "citations_resolve": true, "max_tool_calls": 2, "tools_ok": true, "no_writes": true, "sources": [] }
+}

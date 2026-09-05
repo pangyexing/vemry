@@ -716,6 +716,8 @@ add("sessionsView.", {
     "markEditResend": ("✎ Edited and resent — the previous user message and its turn were discarded",
                        "✎ 编辑重发:上一条用户消息整轮被放弃"),
     "markCompact": ("▣ Context compacted ({level})", "▣ 上下文压缩({level})"),
+    "planUpdate": ("Plan updated · {done}/{total}", "计划更新 · {done}/{total}"),
+    "sourcesSettled": ("Sources this turn · {n}", "本轮来源 · {n}"),
     "compactSummary": ("older conversation summarized", "旧对话摘要化"),
     "compactHandles": ("older tool results turned into handles", "旧工具结果句柄化"),
     "markFork": ("⑂ Forked from session {from} (before turn {turn})", "⑂ 分叉自会话 {from}(第 {turn} 轮之前)"),
@@ -735,6 +737,10 @@ add("tool.", {
     "edit_note": ("Edit", "编辑"),
     "move_note": ("Move", "移动"),
     "propose_plan": ("Propose a plan", "提出计划"),
+    "update_plan": ("Update the plan", "更新计划"),
+    "read_block": ("Read block", "读取块"),
+    "clips_lookup": ("Look up clips", "查剪藏"),
+    "list_sources": ("List sources", "列出来源"),
     "mixed": ("Tool calls", "工具调用"),
 })
 
@@ -1033,6 +1039,8 @@ add("chat.", {
     "pinFirst": ("Pin a note first with “▾ pick target”", "先用「▾ 选目标」钉住一篇笔记"),
     "pinWord": ("pin", "钉住"),
     "planProgress": ("Plan · {done}/{total}", "计划 · {done}/{total}"),
+    "planStatusDoing": ("in progress", "进行中"),
+    "planStatusSkipped": ("skipped", "已跳过"),
     "welcomeTitle": ("Research panel", "研究面板"),
     "welcomeBody": ("Ask, and the AI searches your notes (and the web) and answers with citations. "
                     "Click a citation to read the article; clip what is worth keeping back into the "

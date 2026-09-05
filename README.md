@@ -160,7 +160,7 @@ complete dialect and each fallback: [docs/SYNTAX.md](docs/SYNTAX.md).
 ## Status
 
 Working today on `main`: the editor and its live preview, seven projections, the
-block index and query API, the agent with nine domain tools behind a write gate,
+block index and query API, the agent with its domain tools behind a write gate,
 privacy zones, the scripting sandbox, the built-in browser with clipping and a
 reading projection, and an interface that speaks English and Chinese.
 

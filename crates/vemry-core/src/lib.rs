@@ -22,6 +22,7 @@ pub mod search;
 pub mod types;
 pub mod vault;
 pub mod watcher;
+pub mod weburl;
 
 pub use attach_migrate::MigrationReport;
 pub use block::{Block, BlockKind, Field, TaskState, WikiLink};
@@ -44,6 +45,7 @@ pub use types::{
     list_block_types, parse_block_type, type_skeleton, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE,
     TYPES_SUBDIR,
 };
+pub use weburl::{normalize_url, CLIPS_DIR};
 pub use vault::{is_meta_id, sanitize_filename, BacklinkEntry, InsertLanded, RefHit, RefResolution, RefTarget, Vault};
 
 #[derive(thiserror::Error, Debug)]

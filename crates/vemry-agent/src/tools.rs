@@ -9,6 +9,7 @@ use vemry_core::{BlockQuery, NoteId, Vault};
 
 use crate::permission::{WriteKind, WriteRequest};
 use crate::types::{FunctionSpec, ToolDef};
+use serde::{Deserialize, Serialize};
 
 const READ_NOTE_MAX_CHARS: usize = 30_000;
 /// limit is whatever the model asks for, so it needs a hard ceiling — one call
@@ -19,6 +20,62 @@ const QUERY_BLOCKS_MAX_LIMIT: usize = 200;
 /// get_links used to be entirely unbounded (outgoing links plus every backlink):
 /// on a popular note a single call was hundreds of lines.
 const LINKS_MAX_EACH: usize = 100;
+/// clips_lookup takes a batch of URLs; one call must stay a lookup, not a scan.
+const CLIPS_LOOKUP_MAX: usize = 50;
+/// A plan has between one and this many steps (propose_plan's own 2-9 rule is
+/// stricter, since a one-step plan needs no confirmation).
+pub const PLAN_MAX_ITEMS: usize = 12;
+
+/// The state of one plan step, as the model reports it through update_plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanStatus {
+    Pending,
+    Doing,
+    Done,
+    Skipped,
+}
+
+/// One step of the session's plan: the sticky plan card is a projection of the
+/// latest list the model sent (the audit jsonl's `plan_update` line), never of
+/// the prose — recitation in the answer body is gone.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PlanItem {
+    pub text: String,
+    pub status: PlanStatus,
+}
+
+/// Parse and validate update_plan's arguments: 1..=PLAN_MAX_ITEMS non-empty items,
+/// each with a known status (a missing status reads as pending). The error is
+/// worded for the model to correct itself.
+pub fn parse_plan_items(args: &Value) -> Result<Vec<PlanItem>, String> {
+    let raw = args.get("items").and_then(|v| v.as_array()).ok_or("update_plan needs an `items` array")?;
+    let mut out = Vec::with_capacity(raw.len());
+    for it in raw {
+        let text = it.get("text").and_then(|v| v.as_str()).map(str::trim).unwrap_or("");
+        if text.is_empty() {
+            return Err("every plan item needs a non-empty `text`".into());
+        }
+        let status = match it.get("status").and_then(|v| v.as_str()).unwrap_or("pending") {
+            "pending" => PlanStatus::Pending,
+            "doing" => PlanStatus::Doing,
+            "done" => PlanStatus::Done,
+            "skipped" => PlanStatus::Skipped,
+            other => return Err(format!("unknown plan status '{other}' (use pending, doing, done or skipped)")),
+        };
+        out.push(PlanItem { text: text.to_string(), status });
+    }
+    if out.is_empty() || out.len() > PLAN_MAX_ITEMS {
+        return Err(format!("a plan has 1-{PLAN_MAX_ITEMS} items"));
+    }
+    Ok(out)
+}
+
+/// Tools that act on the session's own state rather than the vault: no privacy
+/// gate, no permission gate, executed by the runner itself.
+pub fn is_session_tool(name: &str) -> bool {
+    matches!(name, "update_plan" | "list_sources" | "propose_plan")
+}
 
 pub fn is_write_tool(name: &str) -> bool {
     matches!(name, "write_note" | "edit_note" | "move_note")
@@ -50,6 +107,18 @@ pub fn tool_defs() -> Vec<ToolDef> {
             }),
         ),
         f(
+            "read_block",
+            "Read one block of a note by its handle: `^id` (stable) or `bN` (positional, from query_blocks this conversation). A heading hands over its section, a list item its subtree. Cheaper than read_note when a citation or a query hit is all you need.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Vault-relative note path"},
+                    "block": {"type": "string", "description": "The block handle exactly as returned: '^abc12' or 'b7'"}
+                },
+                "required": ["path", "block"]
+            }),
+        ),
+        f(
             "search_notes",
             "Full-text search across the vault (multi-term AND, works for CJK). Returns path, line and snippet — use it to locate notes before reading.",
             json!({
@@ -68,6 +137,15 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
                 "required": ["path"]
+            }),
+        ),
+        f(
+            "clips_lookup",
+            "Which of these web URLs have already been clipped into the vault (clips/). Returns url → note path for the clipped ones. Call it before citing a web source: a clipped one is cited as a [[wikilink]] to the local note, and its content can be read with read_note.",
+            json!({
+                "type": "object",
+                "properties": {"urls": {"type": "array", "items": {"type": "string"}, "description": "Up to 50 URLs"}},
+                "required": ["urls"]
             }),
         ),
         f(
@@ -96,6 +174,32 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "properties": {"name": {"type": "string", "description": "Skill name exactly as listed"}},
                 "required": ["name"]
             }),
+        ),
+        f(
+            "update_plan",
+            "Record or update your step list for a multi-step task. Send the whole list each time with each item's status: pending, doing, done or skipped (put the reason for a skip in its text). The UI shows this list; never restate it in prose.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string", "description": "One short step in the user's language"},
+                                "status": {"type": "string", "enum": ["pending", "doing", "done", "skipped"]}
+                            },
+                            "required": ["text", "status"]
+                        }
+                    }
+                },
+                "required": ["items"]
+            }),
+        ),
+        f(
+            "list_sources",
+            "The web sources cited so far in this session, numbered, with whether each was verified by a search. Use it before citing again in a long conversation so one source does not get two entries.",
+            json!({"type": "object", "properties": {}}),
         ),
         f(
             "write_note",
@@ -357,6 +461,53 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
                 .collect();
             let text = serde_json::to_string_pretty(&out).map_err(|e| ToolError::Other(e.to_string()))?;
             Ok(ReadOutcome { text, filtered })
+        }
+        "read_block" => {
+            let id = existing_note_id(vault, arg_str(args, "path")?)?;
+            let handle = arg_str(args, "block")?;
+            let clean = handle.trim().trim_start_matches('^');
+            // The parser's own acceptance rule: an id it would never mint can never be in a note
+            if !vemry_core::blockid::is_valid_block_id(clean) {
+                return Err(ToolError::Other(format!("block not found: {id}#{clean}")));
+            }
+            match vault.block_for_agent(&id, clean) {
+                Ok(Some((hit, handle))) => {
+                    let note = id.as_str().strip_suffix(".md").unwrap_or(id.as_str());
+                    let content = if hit.content.trim().is_empty() { "(empty block)".to_string() } else { hit.content };
+                    Ok(ReadOutcome { text: format!("[[{note}#{handle}]]\n{content}"), filtered: 0 })
+                }
+                // a private block does not exist, worded like any missing block
+                Ok(None) => Err(ToolError::Other(format!("block not found: {id}#{clean}"))),
+                Err(e) => Err(ToolError::Other(e.to_string())),
+            }
+        }
+        "clips_lookup" => {
+            let urls: Vec<String> = args
+                .get("urls")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| ToolError::Other("clips_lookup needs a `urls` array".into()))?
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .take(CLIPS_LOOKUP_MAX)
+                .collect();
+            if urls.is_empty() {
+                return Err(ToolError::Other("clips_lookup needs at least one URL".into()));
+            }
+            // A private clip reads as never clipped (the vault method skips it); nothing to count as filtered
+            let found = vault.clips_for_urls(&urls);
+            if found.is_empty() {
+                return Ok(ReadOutcome { text: "(none of these URLs has been clipped)".into(), filtered: 0 });
+            }
+            let mut lines: Vec<String> = urls
+                .iter()
+                .filter_map(|u| found.get(u).map(|p| format!("{u} → [[{}]]", p.strip_suffix(".md").unwrap_or(p))))
+                .collect();
+            let missing = urls.len() - lines.len();
+            if missing > 0 {
+                lines.push(format!("({missing} not clipped)"));
+            }
+            Ok(ReadOutcome { text: lines.join("\n"), filtered: 0 })
         }
         "read_skill" => {
             let name = arg_str(args, "name")?;
@@ -769,6 +920,59 @@ mod tests {
 
     fn read(vault: &Vault, name: &str, args: Value) -> Result<ReadOutcome, ToolError> {
         execute_read_tool(vault, name, &args)
+    }
+
+    /// read_block: a handle hands over the block's slice with a citation header; a
+    /// private note is worded like a missing one; an id no note holds is a miss.
+    #[test]
+    fn read_block_returns_slice_and_hides_private() {
+        let (_d, vault) = fixture();
+        let out = read(&vault, "read_block", json!({"path": "Hello.md", "block": "b1"})).unwrap();
+        assert!(out.text.starts_with("[[Hello#b1]]\n"), "{}", out.text);
+        assert!(out.text.contains("参考"));
+        let e = read(&vault, "read_block", json!({"path": "secret/Plan.md", "block": "b0"})).unwrap_err();
+        assert!(matches!(e, ToolError::Privacy(ref m) if m == "note not found: secret/Plan.md"), "{e}");
+        let e = read(&vault, "read_block", json!({"path": "Hello.md", "block": "b99"})).unwrap_err();
+        assert!(matches!(e, ToolError::Other(ref m) if m.starts_with("block not found")), "{e}");
+        let e = read(&vault, "read_block", json!({"path": "Hello.md", "block": "not a valid id!"})).unwrap_err();
+        assert!(matches!(e, ToolError::Other(_)));
+    }
+
+    /// clips_lookup: matched by the normalised `source:` under clips/, a private clip
+    /// reads as never clipped, and the miss count is reported.
+    #[test]
+    fn clips_lookup_matches_normalised_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("clips")).unwrap();
+        std::fs::write(root.join("clips/Foo.md"), "---\nsource: https://Example.com/a\n---\n# Foo\n").unwrap();
+        std::fs::write(root.join("clips/Hidden.md"), "---\nsource: https://example.com/hidden\nprivate: true\n---\nTOPSECRET\n").unwrap();
+        let vault = Vault::open(root).unwrap();
+        let out = read(
+            &vault,
+            "clips_lookup",
+            json!({"urls": ["https://example.com/a", "https://example.com/hidden", "https://none.io/x"]}),
+        )
+        .unwrap();
+        assert!(out.text.contains("https://example.com/a → [[clips/Foo]]"), "{}", out.text);
+        assert!(!out.text.contains("Hidden"), "a private clip must not be reported: {}", out.text);
+        assert!(out.text.contains("(2 not clipped)"), "{}", out.text);
+        let out = read(&vault, "clips_lookup", json!({"urls": ["https://none.io/x"]})).unwrap();
+        assert_eq!(out.text, "(none of these URLs has been clipped)");
+        assert!(read(&vault, "clips_lookup", json!({"urls": []})).is_err());
+    }
+
+    /// update_plan's argument grammar: statuses, the item cap, and the wording the model corrects itself by.
+    #[test]
+    fn plan_items_parse_and_validate() {
+        let items = parse_plan_items(&json!({"items": [{"text": "a", "status": "done"}, {"text": " b "}]})).unwrap();
+        assert_eq!(items[0].status, PlanStatus::Done);
+        assert_eq!(items[1], PlanItem { text: "b".into(), status: PlanStatus::Pending });
+        assert!(parse_plan_items(&json!({"items": []})).unwrap_err().contains("1-12"));
+        assert!(parse_plan_items(&json!({"items": [{"text": "", "status": "done"}]})).unwrap_err().contains("non-empty"));
+        assert!(parse_plan_items(&json!({"items": [{"text": "x", "status": "later"}]})).unwrap_err().contains("later"));
+        let many: Vec<Value> = (0..13).map(|i| json!({"text": format!("s{i}"), "status": "pending"})).collect();
+        assert!(parse_plan_items(&json!({"items": many})).is_err());
     }
 
     #[test]

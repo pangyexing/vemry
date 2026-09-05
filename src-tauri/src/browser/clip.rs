@@ -726,52 +726,12 @@ pub fn clip_url(
     land_note(&app, &state, &meta, &compose_clip_note(&page, &meta, &crate::i18n::t(crate::i18n::current(), "clip.sourceLabel")))
 }
 
-/// The reverse lookup: which URLs have already been clipped (matched against the
-/// frontmatter `source:` under clips/).
-/// Returns url → the note's relative path (keyed by the caller's URL as given); one
-/// that has not been clipped simply does not appear.
-/// Both sides go through normalize_url before comparing: what clip_url wrote to disk
-/// is the normalised URL (trailing slash added, host lowercased and so on), and the
-/// URL as written in a citation need not match it character for character — an exact
-/// string comparison would make the badge disappear after a restart.
-/// It reads the in-memory index (NoteSummary.source) rather than the disk — this is a
-/// hot path that both source-card rendering and browser-window navigation hit, and the
-/// index is maintained automatically by the vault engine on every write path.
+/// The reverse lookup of where a citation landed (url → the clips/ note's path; see
+/// `Vault::clips_for_urls` for the matching rule the agent's tool shares).
 #[tauri::command]
 pub fn clips_lookup(
     state: State<'_, AppState>,
     urls: Vec<String>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    use std::collections::HashMap;
-    // Normalised form → the caller's URL as given
-    let wanted: HashMap<String, &str> = urls
-        .iter()
-        .filter_map(|s| {
-            super::window::normalize_url(s).ok().map(|u| (u.to_string(), s.as_str()))
-        })
-        .collect();
-    if wanted.is_empty() {
-        return Ok(HashMap::new());
-    }
-    crate::commands::with_vault(&state, |v| {
-        let mut out = HashMap::new();
-        for (id, src) in v.index().sources() {
-            if !id.as_str().starts_with(vemry_clip::CLIPS_DIR) {
-                continue;
-            }
-            let Ok(norm) = super::window::normalize_url(src) else { continue };
-            if let Some(orig) = wanted.get(norm.as_str()) {
-                // A private clip looks exactly like "never clipped": the badge says it
-                // can be clipped again, and one-click open finds no path either. Only
-                // a match is checked — checking every clip in the vault would be
-                // pointless work on a hot path (each check walks the rules and
-                // allocates a canonical id)
-                if v.is_private(id) {
-                    continue;
-                }
-                out.insert((*orig).to_string(), id.to_string());
-            }
-        }
-        Ok(out)
-    })
+    crate::commands::with_vault(&state, |v| Ok(v.clips_for_urls(&urls)))
 }

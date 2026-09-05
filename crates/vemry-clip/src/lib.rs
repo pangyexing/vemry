@@ -1293,7 +1293,7 @@ mod tests {
         let long = "字".repeat(FOLD_MIN_CHARS + 1);
         assert!(quote_block(&long, &meta(), true).starts_with("> [!quote]- [测试文章]"));
         // …and so do many short lines (a list, a table)
-        let lines = vec!["- 项"; FOLD_MIN_LINES + 1].join("\n");
+        let lines = ["- 项"; FOLD_MIN_LINES + 1].join("\n");
         assert!(quote_block(&lines, &meta(), true).starts_with("> [!quote]- "));
         // A short quote opens expanded, and so does a long one that is its own clip note
         assert!(quote_block("一句话", &meta(), true).starts_with("> [!quote] [测试文章]"));

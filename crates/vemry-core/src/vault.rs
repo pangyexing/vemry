@@ -1127,6 +1127,37 @@ impl Vault {
         Ok(Some((RefHit { note: id.clone(), note_title: self.note_title(id), target, content, span }, handle)))
     }
 
+    /// The reverse lookup of where a citation landed: which of `urls` have been
+    /// clipped (matched against the frontmatter `source:` of notes under clips/).
+    /// Returns url → the note's relative path, keyed by the caller's spelling; one
+    /// that has not been clipped simply does not appear. Both sides go through
+    /// `normalize_url` before comparing — what a clip wrote to disk is the
+    /// normalised URL, and a citation need not match it character for character.
+    /// A private clip looks exactly like "never clipped" (it is checked only on a
+    /// match: checking every clip would be pointless work on a hot path). Reads
+    /// the in-memory index, never the disk — source-card rendering, browser
+    /// navigation and the agent's `clips_lookup` tool all hit this.
+    pub fn clips_for_urls(&self, urls: &[String]) -> HashMap<String, String> {
+        let wanted = crate::weburl::normalized_index(urls);
+        let mut out = HashMap::new();
+        if wanted.is_empty() {
+            return out;
+        }
+        for (id, src) in self.index.sources() {
+            if !id.as_str().starts_with(crate::weburl::CLIPS_DIR) {
+                continue;
+            }
+            let Ok(norm) = crate::weburl::normalize_url(src) else { continue };
+            if let Some(orig) = wanted.get(norm.as_str()) {
+                if self.is_private(id) {
+                    continue;
+                }
+                out.insert((*orig).to_string(), id.to_string());
+            }
+        }
+        out
+    }
+
     /// Backlinks with a context snippet from the linking block.
     pub fn backlinks(&self, id: &NoteId) -> Vec<BacklinkEntry> {
         self.index

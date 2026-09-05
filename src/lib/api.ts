@@ -310,6 +310,23 @@ export interface WebSearchResult {
   publish_date: string | null;
 }
 
+/** One step of the session's plan (mirroring vemry_agent::tools::PlanItem): the sticky
+ *  plan card is a projection of the latest list the model sent through update_plan. */
+export type PlanStatus = "pending" | "doing" | "done" | "skipped";
+export interface PlanItem {
+  text: string;
+  status: PlanStatus;
+}
+
+/** One entry of the session's source table (mirroring vemry_agent::sources::Source):
+ *  verified = a search ran in its turn, or the user handed the page over. */
+export interface SourceRecord {
+  url: string;
+  title: string;
+  verified: boolean;
+  turn?: string | null;
+}
+
 export type AgentEvent =
   /** A new user turn begins: turn is the turn id (the same one on the audit user line
    *  and the model history's envelope), the timeline tags its user item with it, and
@@ -324,6 +341,10 @@ export type AgentEvent =
   | { type: "permission_request"; request: WriteRequest }
   /** propose_plan is suspended awaiting the user's decision (the plan gate, of the same family as the permission gate). */
   | { type: "plan_request"; request: PlanRequest }
+  /** The model's step list (update_plan, or the list confirmed at the plan gate): replaces the sticky plan card. */
+  | { type: "plan_updated"; items: PlanItem[] }
+  /** The web sources this turn cited, settled by Rust at the end of the turn with their verification (authoritative for the turn's source card). */
+  | { type: "sources_updated"; turn: string | null; items: SourceRecord[] }
   | { type: "web_searching" }
   | { type: "web_search_queries"; queries: string[] }
   | { type: "web_search_results"; results: WebSearchResult[] }

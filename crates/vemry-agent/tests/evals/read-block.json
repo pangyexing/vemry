@@ -1,0 +1,20 @@
+{
+  "name": "read-block",
+  "vault": { "Hello.md": "# Hello\n\n参考 [[Other]] 与一些说明。\n\n## Section\n\nDetail line. ^d1\n", "Other.md": "# Other\n" },
+  "turns": [
+    {
+      "user": "Hello 的第二段说什么",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "read_block", "args": { "path": "Hello.md", "block": "b1" } } },
+          { "tool": { "id": "c2", "name": "read_block", "args": { "path": "Hello.md", "block": "^d1" } } } ],
+        [ { "text": "它引用了 Other 并附说明 [[Hello#b1]]；细节见 [[Hello#^d1]]。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "max_tool_calls": 2,
+    "tool_output_contains": [ { "id": "c1", "text": "[[Hello#b1]]" }, { "id": "c2", "text": "Detail line" } ]
+  }
+}

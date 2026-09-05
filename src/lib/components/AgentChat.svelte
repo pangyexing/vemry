@@ -332,109 +332,20 @@
     return ` · ${vals.map((v) => (v.length > 18 ? `${v.slice(0, 18)}…` : v)).join(" / ")}${more}`;
   }
 
-  /** The plan card: the task list the most recent assistant message recites.
-   *  It is recomputed every 40ms while streaming, locating the heading by regex first — the vast
-   *  majority of messages have no plan, and splitting the whole message into an array of lines
-   *  does not belong on a hot path. The check grammar is shared with the rendering layer through
-   *  TASK_PREFIX_RE.
-   *  Under BASE_RULES the model recites the list every turn, and the plan card at the top is its
-   *  only projection: that section is stripped out of the bubble's body (stripPlan), or one turn
-   *  would show the same list three times ("the plan card + the first answer's 0/N + the
-   *  follow-up's 2/N"). */
-  // Anchored at the end of a line rather than at the start: the model often sticks the heading to
-  // the end of a paragraph ("…the details. ## Plan"), where a start-of-line anchor would miss it
-  // and the plan card would fall back to this turn's earlier 0/N version, out of step with the
-  // ticks in the body
-  // `#{2,}`: when the model writes ###/#### the whole heading is swallowed with it, or stripping
-  // would leave a few bare #s at the top of the body
-  const PLAN_HEAD_RE = /#{2,}[ \t]*(?:计划|plan)[ \t\r]*$/im;
-  /** A list line not yet fully received while streaming ("- [", "- [x"…): it counts as part of
-   *  the plan section, so half a line does not flash in the body and vanish. It is only judged
-   *  on the last line when there is no trailing newline. */
-  const PLAN_PARTIAL_RE = /^\s*[-*](\s+(\[( |x|X)?(\]\s*)?)?)?$/;
   type PlanItem = { done: boolean; text: string };
-  /** One line of `- [ ] text` → `{done, text}`; null when it is not a list item. Parsing the plan
-   *  (locatePlan) and filling the plan card's edit box share this one grammar — two regexes in
-   *  two places would have the same text disagree between two parsers. */
+  /** One line of `- [ ] text` → `{done, text}`; null when it is not a list item. The plan
+   *  card's edit box tolerates a checkbox prefix the user typed out of habit. The check
+   *  grammar is shared with the rendering layer through TASK_PREFIX_RE. */
   function stripBullet(line: string): PlanItem | null {
     const li = /^\s*[-*]\s+(.*)$/.exec(line);
     const task = li && TASK_PREFIX_RE.exec(li[1]);
     if (!li || !task) return null;
     return { done: task[1].toLowerCase() === "x", text: li[1].slice(task[0].length) };
   }
-
-  /** Locate the plan section: `start` is where the heading begins and `end` is just past the list's last line (its newline included). */
-  function locatePlan(text: string): { start: number; end: number; items: PlanItem[] } | null {
-    const head = PLAN_HEAD_RE.exec(text);
-    if (!head) return null;
-    const bodyAt = head.index + head[0].length + 1;
-    const lines = text.slice(bodyAt).split("\n");
-    const items: PlanItem[] = [];
-    let end = Math.min(bodyAt, text.length);
-    let cursor = bodyAt;
-    for (let n = 0; n < lines.length; n++) {
-      const line = lines[n];
-      const next = cursor + line.length + 1;
-      const item = stripBullet(line);
-      if (item) {
-        items.push(item);
-        end = Math.min(next, text.length);
-      } else if (n === lines.length - 1 && PLAN_PARTIAL_RE.test(line)) {
-        end = text.length; // a half line while streaming
-      } else if (items.length || line.trim()) {
-        break;
-      } else {
-        end = Math.min(next, text.length); // the blank line after the heading
-      }
-      cursor = next;
-    }
-    return items.length ? { start: head.index, end, items } : null;
-  }
-  /** The bubble's body = the text with the recited plan section removed (the plan card is its
-   *  only projection). With the heading stuck to the end of a paragraph only the heading itself
-   *  is cut and the sentence before it stays; while streaming, a heading not yet fully received
-   *  ("## Pl") is hidden too, so an empty heading does not flash. */
-  function stripPlan(text: string): string {
-    const loc = locatePlan(text);
-    if (!loc) {
-      // The heading has arrived but the list has not started ("## Plan\n"), or the heading itself is incomplete
-      return text.replace(/\n?#{2,}[ \t]*(计划?|p(?:l(?:a(?:n)?)?)?)?[ \t\r]*\n?\s*$/i, "");
-    }
-    const before = text.slice(0, loc.start).replace(/[ \t]+$/, "");
-    const after = text.slice(loc.end).replace(/^\n+/, "");
-    if (!before.trim()) return after;
-    if (!after.trim()) return before.replace(/\n+$/, "");
-    return `${before.replace(/\n+$/, "")}\n\n${after}`;
-  }
-  const plan = $derived.by(() => {
-    // Only this turn is considered (after the last user message): the model recites the plan
-    // every turn, so while the task continues the card stays; once the topic changes, an old plan
-    // no longer hangs there
-    let from = 0;
-    for (let i = agent.timeline.length - 1; i >= 0; i--) {
-      if (agent.timeline[i].kind === "user") {
-        from = i;
-        break;
-      }
-    }
-    for (let i = agent.timeline.length - 1; i >= from; i--) {
-      const it = agent.timeline[i];
-      if (it.kind !== "assistant") continue;
-      const items = locatePlan(it.text)?.items ?? null;
-      if (items) return items;
-    }
-    // The structured version underneath, taken over by the recitation: in the gap after a
-    // confirmation and before the model has recited it, the sticky card uses the confirmed list
-    // (an edited one takes precedence); a pending or rejected plan does not enter the sticky card
-    // — its inline card is the focus of the viewport
-    for (let i = agent.timeline.length - 1; i >= from; i--) {
-      const it = agent.timeline[i];
-      if (it.kind !== "plan" || !it.decision || it.decision.kind === "reject") continue;
-      const items = it.decision.kind === "approve_edited" ? it.decision.items : it.items;
-      return items.map((text) => ({ done: false, text }));
-    }
-    return null;
-  });
+  /** The sticky plan card's glyph per step state (the store holds the list; the model
+   *  keeps it current through update_plan, and nothing is parsed out of the prose). */
+  const PLAN_GLYPH: Record<string, string> = { pending: "☐", doing: "◉", done: "☑", skipped: "⊘" };
+  const planSettled = $derived(agent.plan ? agent.plan.filter((p) => p.status === "done" || p.status === "skipped").length : 0);
 
   /** ---- The decision state of the plan gate's (propose_plan) inline card: at most one plan is
    *  pending at a time, so this is one piece of component-level state; a new request resets it on
@@ -1376,18 +1287,24 @@
       >→{clipTarget.name ?? t("chat.pinWord")}</button>
     </div>
   {/if}
-  {#if plan}
+  {#if agent.plan}
     <div class="plan-card">
       <button class="plan-head" onclick={() => (planOpen = !planOpen)}>
         <span class="plan-caret" class:open={planOpen} aria-hidden="true">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </span>
-        {t("chat.planProgress", { done: plan.filter((p) => p.done).length, total: plan.length })}
+        {t("chat.planProgress", { done: planSettled, total: agent.plan.length })}
       </button>
       {#if planOpen}
-        {#each plan as p, pi (pi)}
-          <div class="plan-item" class:done={p.done}>
-            <span class="plan-check">{p.done ? "☑" : "☐"}</span>{p.text}
+        {#each agent.plan as p, pi (pi)}
+          <div
+            class="plan-item"
+            class:done={p.status === "done"}
+            class:doing={p.status === "doing"}
+            class:skipped={p.status === "skipped"}
+            title={p.status === "doing" ? t("chat.planStatusDoing") : p.status === "skipped" ? t("chat.planStatusSkipped") : undefined}
+          >
+            <span class="plan-check">{PLAN_GLYPH[p.status] ?? "☐"}</span>{p.text}
           </div>
         {/each}
       {/if}
@@ -1495,7 +1412,7 @@
           {/if}
         </div>
       {:else if item.kind === "assistant"}
-        {@const body = stripPlan(item.text)}
+        {@const body = item.text}
         {#if body || isTurnFinal(i)}
           <div class="msg assistant">
             {#each assistantBlocks(i, body) as b, bi (bi)}{@html b}{/each}
@@ -2535,6 +2452,22 @@
   }
   .plan-item.done .plan-check {
     color: var(--accent);
+  }
+  .plan-item.doing .plan-check {
+    color: var(--accent);
+    animation: plan-pulse 1.4s ease-in-out infinite;
+  }
+  .plan-item.skipped {
+    color: var(--fg-faint);
+    text-decoration: line-through dotted;
+    text-decoration-color: var(--fg-faint);
+  }
+  @keyframes plan-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .plan-item.doing .plan-check { animation: none; }
   }
   /* ---- The plan gate's inline card (propose_plan): the decision point in the timeline. The
      sticky card is the progress projection, and this card carries "confirm / edit / reject" —

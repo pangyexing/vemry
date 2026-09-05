@@ -16,6 +16,9 @@ pub mod responses;
 pub mod runner;
 pub mod session;
 pub mod skills;
+pub mod sources;
+#[doc(hidden)]
+pub mod testing;
 pub mod tools;
 pub mod types;
 
@@ -26,6 +29,8 @@ pub use permission::{PermissionDecision, PermissionGate, PlanDecision, PlanGate,
 pub use prompt::{PageContext, TurnContext, PAGE_CONTEXT_MAX_CHARS};
 pub use provider::ProviderConfig;
 pub use runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};
+pub use sources::Source;
+pub use tools::{PlanItem, PlanStatus};
 
 #[derive(thiserror::Error, Debug)]
 pub enum AgentError {
