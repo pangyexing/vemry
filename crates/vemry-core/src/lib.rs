@@ -11,6 +11,7 @@ pub mod block;
 pub mod blockid;
 pub mod blocktimes;
 pub mod event;
+pub mod format;
 pub mod index;
 pub mod insert;
 pub mod locate;
@@ -32,6 +33,7 @@ pub use audit::AuditReport;
 pub use block::{Block, BlockKind, Field, TaskState, WikiLink};
 pub use blockid::{plan_block_id, BlockIdInsert, BlockIdPlan, BlockSelector, PlanTarget};
 pub use event::VaultEvent;
+pub use format::{format_markdown, FormatOptions};
 pub use index::{BlockIndex, GraphData, GraphEdge, GraphNode, NoteSummary, ResolvedLink, FieldStat};
 pub use note::{Frontmatter, Note, NoteId, VemryMeta};
 pub use privacy::{

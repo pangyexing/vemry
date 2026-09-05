@@ -273,6 +273,21 @@
   }
   vault.insertAtCursor = insertAtCursor;
 
+  /** The "format note" command: the whole document through the Markdown formatter, replaced
+   *  as one transaction (undo restores it); the cursor keeps its offset, clamped. Returns
+   *  whether anything changed. */
+  async function formatDoc(): Promise<boolean> {
+    const v = view;
+    if (!v) return false;
+    const before = v.state.doc.toString();
+    const after = await api.formatMarkdown(before);
+    if (after === before) return false;
+    const head = Math.min(v.state.selection.main.head, after.length);
+    v.dispatch({ changes: { from: 0, to: before.length, insert: after }, selection: { anchor: head }, scrollIntoView: true });
+    return true;
+  }
+  vault.formatDoc = formatDoc;
+
   /** Insert at the end of a section (used when the target is the note that is open and a
    *  destination section was given; the section wins over the cursor).
    *  The positioning and separator rules live in insert.ts, on the same table of cases as
@@ -1004,6 +1019,19 @@
         const rels = await vault.pasteIntoNote(files);
         return rels.length ? rels.map(mdRef).join("\n") : null;
       },
+      // A rich-text paste becomes Markdown (the clip layer's converter, formatted) when the
+      // clip formatter is on; a plain-text alternative is the paste-plain-text command
+      onPasteHtml: async (html: string, plain: string) => {
+        if (!prefs.formatClips) return null;
+        try {
+          const md = await api.htmlToMarkdown(html);
+          if (!md.trim() || md.trim() === plain.trim()) return null;
+          toast.push(t("chat.pastedAsMarkdown"));
+          return md;
+        } catch {
+          return null;
+        }
+      },
       onOpenLink: openMdLink,
       linkSingleClick: () => prefs.clickOpensLinks,
       loadAsset,
@@ -1153,6 +1181,7 @@
     if (vault.flushEditor === flushAutosave) vault.flushEditor = null;
     vault.snapshotEditor = null;
     if (vault.insertAtCursor === insertAtCursor) vault.insertAtCursor = null;
+    if (vault.formatDoc === formatDoc) vault.formatDoc = null;
     if (vault.insertAtSection === insertAtSection) vault.insertAtSection = null;
     if (vault.revealPos === revealPos) vault.revealPos = null;
     vault.blockCommand = null;

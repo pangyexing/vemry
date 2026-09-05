@@ -76,6 +76,23 @@ pub struct Settings {
     /// going away no longer loses the pictures.
     #[serde(default = "default_true")]
     pub clip_localize_images: bool,
+    /// Run the Markdown formatter (vemry_core::format) over what the agent writes —
+    /// a new note's content, an appended section — before it lands, so the diff the
+    /// gate shows is what lands. The user's own lines are never touched by an
+    /// agent write.
+    #[serde(default = "default_true")]
+    pub format_agent_writes: bool,
+    /// The same formatter over a clip note before it lands, and over a rich-text
+    /// paste turned into Markdown in the editor.
+    #[serde(default = "default_true")]
+    pub format_clips: bool,
+    /// Formatter opt-ins that change the prose's bytes (block hashes and change times
+    /// move with them): a space between CJK and Latin runs; full-width punctuation
+    /// after CJK characters. Off unless the user wants them.
+    #[serde(default)]
+    pub format_cjk_spacing: bool,
+    #[serde(default)]
+    pub format_punctuation: bool,
     /// Check for updates automatically at startup (one silent check; a new version
     /// is only announced, never downloaded).
     /// Off by default — offline first: with it off, an update check happens only
@@ -116,6 +133,14 @@ pub struct Settings {
     /// several windows, only the last one closed is recorded).
     #[serde(default)]
     pub browser_window: Option<crate::agent_window::WindowGeom>,
+}
+
+impl Settings {
+    /// The formatter's opt-ins as configured (the on/off switches are read where the
+    /// formatter is called: agent writes, clips, the editor command).
+    pub fn format_options(&self) -> vemry_core::FormatOptions {
+        vemry_core::FormatOptions { cjk_spacing: self.format_cjk_spacing, punctuation: self.format_punctuation, heading_levels: false }
+    }
 }
 
 /// The interface language setting. The wire values match the frontend's
@@ -190,6 +215,10 @@ impl Default for Settings {
             provenance_marks: true,
             reading_images_enabled: true,
             clip_localize_images: true,
+            format_agent_writes: true,
+            format_clips: true,
+            format_cjk_spacing: false,
+            format_punctuation: false,
             updater_auto_check: false,
             note_font_size: default_note_font_size(),
             readable_line_width: true,

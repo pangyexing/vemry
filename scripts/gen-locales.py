@@ -120,6 +120,15 @@ CMD = {
         ("journal/YYYY-MM-DD.md — created when missing; where the daily start and close land",
          "journal/YYYY-MM-DD.md,缺则新建;今日启动与收尾的落点"),
     ),
+    "format-note": (
+        ("Format note", "格式化笔记"),
+        ("Run the Markdown formatter over the whole note: blank lines, list markers, tables, frontmatter order (undo with {key})",
+         "整篇过一遍格式化器:空行、列表标记、表格、frontmatter 键序({key} 可撤销)"),
+    ),
+    "paste-plain-text": (
+        ("Paste as plain text", "粘贴为纯文本"),
+        ("Insert the clipboard's text as it is, without the rich-text conversion", "剪贴板文字原样插入,不转 Markdown"),
+    ),
     "agent-attach-files": (
         ("Attach files to AI context", "附加文件到 AI 上下文"),
         ("Import images, PDFs or text files into the vault as context for your next "
@@ -1009,6 +1018,10 @@ add("chat.", {
     "answerSignature": ("AI research session", "AI 研究会话"),
     "copiedSelection": ("Selected excerpt copied", "已复制选中片段"),
     "copiedAnswer": ("Answer copied as Markdown", "已复制回答 Markdown"),
+    "formatted": ("Formatted ({key} undoes)", "已格式化({key} 撤销)"),
+    "formattedNoChange": ("Already formatted", "已经是规范格式"),
+    "pastedAsMarkdown": ("Pasted as Markdown", "已转成 Markdown 粘贴"),
+    "pastePlainInstead": ("Paste as plain text instead", "改用纯文本"),
     "researchNoteName": ("Research {date}", "研究 {date}"),
     "savedAs": ("Saved as {path}", "已存为 {path}"),
     "forked": ("Forked into a new session (the original stays in the list)", "已分叉出新会话(原会话保留在列表里)"),
@@ -1314,6 +1327,17 @@ add("settings.", {
                           "view in the browser window.",
                           "图片经本机代理拉取:不带 cookie、Rust 侧校验目标地址、磁盘缓存。只影响投影;"
                           "落盘的剪藏笔记永远不发网络请求。关闭后图片显示为占位标签,点击在浏览窗查看。"),
+    "formatSection": ("Formatting on save", "落盘格式"),
+    "formatAgentWrites": ("Format what the AI writes", "AI 写入时格式化"),
+    "formatAgentWritesHint": ("New notes and appended sections the AI writes go through the Markdown formatter before the diff is shown; your own lines are never touched",
+                              "AI 新建的笔记与追加的段落落盘前先过格式化器,diff 里看到的就是落盘的;你自己的行不动"),
+    "formatClips": ("Format clips and rich-text pastes", "剪藏与粘贴时格式化"),
+    "formatClipsHint": ("A clipped page and a rich-text paste turned into Markdown are formatted the same way",
+                        "剪藏落盘的笔记与富文本粘贴转出的 Markdown 同样过一遍"),
+    "formatCjkSpacing": ("Space between CJK and Latin text", "中英文之间加空格"),
+    "formatPunctuation": ("Full-width punctuation after CJK text", "中文后标点转全角"),
+    "formatOptInHint": ("These change the words' bytes, so the AI's block marks and change times move with them",
+                        "这两项会改正文字节,AI 块标记与块修改时间会随之变化"),
     "clipLocalizeImages": ("Save images into the vault when clipping", "剪藏时把图片存进知识库"),
     "clipLocalizeImagesHint": ("After a full-page clip, article images are downloaded through that same "
                                "local proxy into clips/assets/ (deduplicated by content hash; 10 MB per "

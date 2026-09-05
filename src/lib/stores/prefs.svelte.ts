@@ -22,6 +22,8 @@ class PrefsStore {
   readableLineWidth = $state(true);
   /** Whether AI blocks awaiting review show their amber bar in the editor. */
   provenanceMarks = $state(true);
+  /** Rich-text pastes into the editor are converted to Markdown (the same switch as clip formatting). */
+  formatClips = $state(true);
   /** The global default thinking level (none/low/high/max); the fallback value of the composer's quick-switch button. */
   reasoningEffort = $state("high");
   /** Whether the level really takes effect (the endpoint is DeepSeek) — derived on the Rust side, and the check is not reimplemented in the frontend. */
@@ -43,6 +45,7 @@ class PrefsStore {
       this.applyNoteFontSize(s.note_font_size);
       this.applyReadableLineWidth(s.readable_line_width);
       this.provenanceMarks = s.provenance_marks;
+      this.formatClips = s.format_clips;
       this.reasoningEffort = s.reasoning_effort;
       this.reasoningEffortActive = s.reasoning_effort_active;
       this.providerDeepseek = s.provider_deepseek;

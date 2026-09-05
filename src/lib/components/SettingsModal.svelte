@@ -45,6 +45,10 @@
   let clickOpensLinks = $state(true);
   let readingImagesEnabled = $state(true);
   let clipLocalizeImages = $state(true);
+  let formatAgentWrites = $state(true);
+  let formatClips = $state(true);
+  let formatCjkSpacing = $state(false);
+  let formatPunctuation = $state(false);
   let updaterAutoCheck = $state(false);
   let noteFontSize = $state(16);
   let readableLineWidth = $state(true);
@@ -101,6 +105,10 @@
       clickOpensLinks = s.click_opens_links;
       readingImagesEnabled = s.reading_images_enabled;
       clipLocalizeImages = s.clip_localize_images;
+      formatAgentWrites = s.format_agent_writes;
+      formatClips = s.format_clips;
+      formatCjkSpacing = s.format_cjk_spacing;
+      formatPunctuation = s.format_punctuation;
       updaterAutoCheck = s.updater_auto_check;
       noteFontSize = s.note_font_size;
       readableLineWidth = s.readable_line_width;
@@ -246,6 +254,10 @@
       click_opens_links: clickOpensLinks,
       reading_images_enabled: readingImagesEnabled,
       clip_localize_images: clipLocalizeImages,
+      format_agent_writes: formatAgentWrites,
+      format_clips: formatClips,
+      format_cjk_spacing: formatCjkSpacing,
+      format_punctuation: formatPunctuation,
       updater_auto_check: updaterAutoCheck,
       note_font_size: noteFontSize,
       readable_line_width: readableLineWidth,
@@ -559,6 +571,32 @@
                 <small>
                   {t("settings.clipLocalizeImagesHint")}
                 </small>
+              </div>
+              <h4>{t("settings.formatSection")}</h4>
+              <div class="field">
+                <label class="inline-toggle">
+                  <input type="checkbox" bind:checked={formatAgentWrites} onchange={() => (dirty = true)} />
+                  <span>{t("settings.formatAgentWrites")}</span>
+                </label>
+                <small>{t("settings.formatAgentWritesHint")}</small>
+              </div>
+              <div class="field">
+                <label class="inline-toggle">
+                  <input type="checkbox" bind:checked={formatClips} onchange={() => (dirty = true)} />
+                  <span>{t("settings.formatClips")}</span>
+                </label>
+                <small>{t("settings.formatClipsHint")}</small>
+              </div>
+              <div class="field">
+                <label class="inline-toggle">
+                  <input type="checkbox" bind:checked={formatCjkSpacing} onchange={() => (dirty = true)} />
+                  <span>{t("settings.formatCjkSpacing")}</span>
+                </label>
+                <label class="inline-toggle">
+                  <input type="checkbox" bind:checked={formatPunctuation} onchange={() => (dirty = true)} />
+                  <span>{t("settings.formatPunctuation")}</span>
+                </label>
+                <small>{t("settings.formatOptInHint")}</small>
               </div>
               <label>
                 <span>{t("settings.ruleUrls")}</span>

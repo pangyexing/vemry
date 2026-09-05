@@ -93,6 +93,9 @@ export interface EditorOptions {
   host: WikilinkHost | null;
   /** code-file language support (ignored in note mode) */
   language?: Extension | null;
+  /** note mode: a rich-text paste (the clipboard carries text/html) → Markdown to insert;
+   *  null keeps the native plain-text paste. Runs only when the clipboard is not file-like. */
+  onPasteHtml?: (html: string, plain: string) => Promise<string | null>;
   /** note mode: turn a paste of files/images into markdown to insert at the
    *  cursor; resolve null when the clipboard held nothing file-like */
   onPasteMarkdown?: (files: File[]) => Promise<string | null>;
@@ -150,12 +153,28 @@ export function isFileLikePaste(dt: DataTransfer | null): boolean {
   );
 }
 
-function filePaste(handler?: (files: File[]) => Promise<string | null>): Extension {
-  if (!handler) return [];
+function filePaste(handler?: (files: File[]) => Promise<string | null>, htmlHandler?: (html: string, plain: string) => Promise<string | null>): Extension {
+  if (!handler && !htmlHandler) return [];
   return EditorView.domEventHandlers({
     paste: (event, view) => {
       const dt = event.clipboardData;
-      if (!dt || !isFileLikePaste(dt)) return false;
+      if (!dt) return false;
+      if (!isFileLikePaste(dt)) {
+        // Rich text: the HTML fragment is only readable during dispatch, so it is taken here
+        // and converted asynchronously; the plain text is the fallback when nothing converts
+        const html = dt.getData("text/html");
+        const plain = dt.getData("text/plain");
+        if (!htmlHandler || !html || !plain.trim()) return false;
+        event.preventDefault();
+        void htmlHandler(html, plain).then((md) => {
+          const insert = md ?? plain;
+          if (!insert) return;
+          const { from, to } = view.state.selection.main;
+          view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length } });
+        });
+        return true;
+      }
+      if (!handler) return false;
       const text = dt.getData("text/plain"); // only readable during dispatch
       event.preventDefault();
       void handler(Array.from(dt.files)).then((md) => {
@@ -285,7 +304,7 @@ function buildState(opts: EditorOptions): EditorState {
           },
         },
       ]),
-      filePaste(opts.onPasteMarkdown),
+      filePaste(opts.onPasteMarkdown, opts.onPasteHtml),
     );
     if (opts.onOpenLink) mode.push(mdlinkExtension(opts.onOpenLink, singleClick));
     if (opts.queryHost) mode.push(queryBlockExtension(opts.queryHost));

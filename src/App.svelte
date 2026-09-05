@@ -479,6 +479,29 @@
     },
   });
   registerCommand({
+    // The whole note through the Markdown formatter, at the user's explicit request (never on
+    // autosave); one undo step puts it back
+    id: "format-note", group: "note", descriptionParams: { key: k("Mod+Z") },
+    run: async () => {
+      if (!vault.formatDoc || !vault.canInsertIntoVisibleNote) return;
+      try {
+        const changed = await vault.formatDoc();
+        toast.push(t(changed ? "chat.formatted" : "chat.formattedNoChange", { key: k("Mod+Z") }));
+      } catch (e) {
+        toast.push(String(e), "error");
+      }
+    },
+  });
+  registerCommand({
+    // Plain-text paste: the clipboard's text as is, past the rich-text conversion
+    id: "paste-plain-text", group: "note", hotkey: k("Shift+Mod+V"),
+    run: async () => {
+      if (!vault.canInsertIntoVisibleNote) return;
+      const text = await api.clipboardReadText().catch(() => null);
+      if (text) vault.insertAtCursor?.(text);
+    },
+  });
+  registerCommand({
     // Today's journal note (journal/YYYY-MM-DD.md): where the daily start and close land; created on first use
     id: "open-journal-today", group: "note",
     run: async () => {

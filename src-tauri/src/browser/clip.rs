@@ -391,6 +391,17 @@ pub(crate) fn land_note(
     meta: &ClipMeta,
     content: &str,
 ) -> Result<String, String> {
+    // A clip note is machine-composed end to end, so the formatter runs over the whole
+    // of it (the quote callout's body, a citation, stays verbatim by the formatter's
+    // own rule)
+    let settings: crate::settings::Settings = crate::settings::load(app);
+    let formatted;
+    let content = if settings.format_clips {
+        formatted = vemry_core::format_markdown(content, &settings.format_options());
+        formatted.as_str()
+    } else {
+        content
+    };
     let (rel, event) = with_vault_mut(state, |v| {
         let rel = v.dedup_rel(&clip_rel_path(meta));
         let id = v.note_id(&rel).map_err(|e| e.to_string())?;

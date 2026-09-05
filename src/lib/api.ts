@@ -259,6 +259,10 @@ export interface SettingsView {
   provenance_marks: boolean;
   reading_images_enabled: boolean;
   clip_localize_images: boolean;
+  format_agent_writes: boolean;
+  format_clips: boolean;
+  format_cjk_spacing: boolean;
+  format_punctuation: boolean;
   updater_auto_check: boolean;
   note_font_size: number;
   readable_line_width: boolean;
@@ -285,6 +289,10 @@ export interface SettingsUpdate {
   provenance_marks?: boolean;
   reading_images_enabled?: boolean;
   clip_localize_images?: boolean;
+  format_agent_writes?: boolean;
+  format_clips?: boolean;
+  format_cjk_spacing?: boolean;
+  format_punctuation?: boolean;
   updater_auto_check?: boolean;
   note_font_size?: number;
   readable_line_width?: boolean;
@@ -773,6 +781,10 @@ export const api = {
    *  path returned without being copied. Returns vault-relative paths. */
   filesImport: (paths: string[], dest: string) => invoke<string[]>("files_import", { paths, dest }),
   /** Plain text on the clipboard (the fallback leg of the editor's right-click paste); off macOS it returns null. */
+  /** The Markdown formatter over a whole text (the editor's "format note"). */
+  formatMarkdown: (text: string) => invoke<string>("format_markdown", { text }),
+  /** A rich-text paste's HTML → Markdown (empty when nothing converts; the caller falls back to the plain text). */
+  htmlToMarkdown: (html: string) => invoke<string>("html_to_markdown", { html }),
   clipboardReadText: () => invoke<string | null>("clipboard_read_text"),
   clipboardCopyImage: (path: string) => invoke<void>("clipboard_copy_image", { path }),
   fileWrite: (path: string, content: string) => invoke<void>("file_write", { path, content }),

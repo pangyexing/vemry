@@ -1980,6 +1980,34 @@ their own gate or the working note's grant. Discarding tells the model to write
 nothing. The proposal itself touches no note: the dry run is free, and the only
 things that land are the rows the user kept.
 
+### The Markdown formatter (format.rs)
+
+Format is code's business, not the model's. `vemry_core::format_markdown` is a
+deterministic, idempotent pass that normalises how a note is written without
+changing what it says: one blank line between blocks and none between the items
+of a list (the editor's seam rule), trailing whitespace off (a hard break's two
+spaces kept), one newline at the end, `-` for every bullet and ordered lists
+renumbered, `# ` with one space, `[X]` → `[x]`, `[!Note]` → `[!note]`, one space
+before a trailing ` ^id`, table columns padded, a bare URL with a `#` wrapped in
+`<…>` (a fragment reads as a tag otherwise), frontmatter keys in the order title /
+tags / aliases / created with the rest as written. It leaves fenced code, `$$`
+math, `> [!private]` and `> [!quote]` blocks verbatim, never touches a frontmatter
+value, and never changes a character of prose unless an opt-in asks (CJK spacing,
+full-width punctuation — they move the block hashes behind provenance and change
+times, so they are off by default; `#word` at a line start is a tag and is never
+turned into a heading).
+
+Three entry points, all explicit: the **format-note command** runs it over the
+whole open note as one undoable transaction; the **agent's whole writes** — a new
+note's content, an appended section — go through it in `prepare_write` before the
+gate shows the diff (`RunnerConfig.format`; an edit fragment, a task line or a
+field is left as written, so an agent write never reformats the user's own lines);
+a **clip note** and a **rich-text paste** (the clipboard's HTML through the clip
+layer's converter, `html_to_markdown`, with `paste-plain-text` as the way around
+it) are formatted when the clip formatter is on. It does not run on autosave: a
+user's own text changes only when they ask. Settings: `format_agent_writes`,
+`format_clips` (both on), `format_cjk_spacing`, `format_punctuation` (both off).
+
 ### Moving with links, and undoing a turn
 
 A tidy-up is the write path most likely to lose something, so two rules hold it:

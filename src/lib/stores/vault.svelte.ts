@@ -283,6 +283,8 @@ class VaultStore {
    *  boundaries and never overwriting the selection.
    *  Returns false = there is no note editor to insert into. */
   insertAtCursor: ((text: string, block?: boolean) => boolean) | null = null;
+  /** The "format the whole document" hook Editor registers (the format-note command); resolves to whether anything changed. */
+  formatDoc: (() => Promise<boolean>) | null = null;
   /** The "insert at the end of a section" hook Editor registers (used when the target is
    *  the note that is open and a destination section was given; as above it has to go
    *  through the buffer). It returns where it actually landed ("tail" = the section was

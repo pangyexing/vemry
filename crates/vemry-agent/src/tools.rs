@@ -995,13 +995,29 @@ fn date_arg(args: &Value, key: &str) -> Result<Option<Option<String>>, ToolError
 /// Prepare a write tool into a WriteRequest for the permission gate. Nothing
 /// touches disk here. Privacy-zone paths are rejected before any diff is
 /// generated and never reach the permission dialog.
+/// Prepare a write tool into a WriteRequest for the permission gate. `format`
+/// runs the Markdown formatter over the content the model wrote whole — a new
+/// note, an appended section — so what the gate shows is what lands; fragments
+/// (an edit, a task line, a field) are left as written.
 pub fn prepare_write(
     vault: &Vault,
     request_id: String,
     name: &str,
     args: &Value,
     session: Option<&str>,
+    format: Option<&vemry_core::FormatOptions>,
 ) -> Result<WriteRequest, ToolError> {
+    let formatted_arg = |key: &str| -> Result<Option<String>, ToolError> {
+        let raw = arg_str(args, key)?;
+        Ok(format.map(|o| vemry_core::format_markdown(raw, o)))
+    };
+    let mut args = args.clone();
+    if matches!(name, "write_note" | "append_note") {
+        if let Some(f) = formatted_arg("content")? {
+            args["content"] = Value::String(f);
+        }
+    }
+    let args = &args;
     match name {
         "write_note" => {
             let path = arg_str(args, "path")?;
@@ -1677,20 +1693,20 @@ mod tests {
         std::fs::write(vault.root().join("Log.md"), "# Log\n\n## Today\n\n- did a\n\n## Later\n\ntext\n").unwrap();
         let mut vault = Vault::open(vault.root()).unwrap();
         let _ = &mut vault;
-        let req = prepare_write(&vault, "r1".into(), "append_note", &json!({"path": "Log.md", "content": "- did b", "anchor": "Today"}), None).unwrap();
+        let req = prepare_write(&vault, "r1".into(), "append_note", &json!({"path": "Log.md", "content": "- did b", "anchor": "Today"}), None, None).unwrap();
         assert_eq!(req.kind, WriteKind::Append);
         assert!(req.new_content.contains("- did a\n- did b\n\n## Later"), "{}", req.new_content);
         assert!(req.diff.contains("+- did b") && !req.diff.contains("-- did a"), "{}", req.diff);
-        let req = prepare_write(&vault, "r2".into(), "append_note", &json!({"path": "Log.md", "content": "## Notes\n\nend text"}), None).unwrap();
+        let req = prepare_write(&vault, "r2".into(), "append_note", &json!({"path": "Log.md", "content": "## Notes\n\nend text"}), None, None).unwrap();
         assert!(req.new_content.ends_with("text\n\n## Notes\n\nend text\n"), "{}", req.new_content);
-        let e = prepare_write(&vault, "r3".into(), "append_note", &json!({"path": "Log.md", "content": "x", "anchor": "Nowhere"}), None).unwrap_err();
+        let e = prepare_write(&vault, "r3".into(), "append_note", &json!({"path": "Log.md", "content": "x", "anchor": "Nowhere"}), None, None).unwrap_err();
         assert!(e.to_string().contains("heading not found: Nowhere"));
-        let req = prepare_write(&vault, "r4".into(), "append_note", &json!({"path": "new/Fresh.md", "content": "hello"}), Some("s1")).unwrap();
+        let req = prepare_write(&vault, "r4".into(), "append_note", &json!({"path": "new/Fresh.md", "content": "hello"}), Some("s1"), None).unwrap();
         assert_eq!(req.kind, WriteKind::Create);
         assert!(req.new_content.starts_with("---\nvemry:\n  origin: agent\n  agent_session: s1\n---\nhello\n"), "{}", req.new_content);
-        let e = prepare_write(&vault, "r5".into(), "append_note", &json!({"path": "secret/Plan.md", "content": "x"}), None).unwrap_err();
+        let e = prepare_write(&vault, "r5".into(), "append_note", &json!({"path": "secret/Plan.md", "content": "x"}), None, None).unwrap_err();
         assert!(matches!(e, ToolError::Privacy(_)));
-        assert!(prepare_write(&vault, "r6".into(), "append_note", &json!({"path": "Log.md", "content": "  "}), None).is_err());
+        assert!(prepare_write(&vault, "r6".into(), "append_note", &json!({"path": "Log.md", "content": "  "}), None, None).is_err());
     }
 
     /// set_frontmatter: a scalar, a list, a removal; reserved and malformed keys are refused; a private note is a miss.
@@ -1699,16 +1715,16 @@ mod tests {
         let (_d, vault) = fixture();
         std::fs::write(vault.root().join("R.md"), "---\nquestion: q\nstatus: draft\n---\n# R\n").unwrap();
         let vault = Vault::open(vault.root()).unwrap();
-        let req = prepare_write(&vault, "f1".into(), "set_frontmatter", &json!({"path": "R.md", "key": "status", "value": "reviewing"}), None).unwrap();
+        let req = prepare_write(&vault, "f1".into(), "set_frontmatter", &json!({"path": "R.md", "key": "status", "value": "reviewing"}), None, None).unwrap();
         assert!(req.new_content.starts_with("---\nquestion: q\nstatus: reviewing\n---\n"), "{}", req.new_content);
         assert_eq!(req.kind, WriteKind::Edit);
-        let req = prepare_write(&vault, "f2".into(), "set_frontmatter", &json!({"path": "R.md", "key": "sources", "value": ["https://a.io", "https://b.io"]}), None).unwrap();
+        let req = prepare_write(&vault, "f2".into(), "set_frontmatter", &json!({"path": "R.md", "key": "sources", "value": ["https://a.io", "https://b.io"]}), None, None).unwrap();
         assert!(req.new_content.contains("sources:\n  - https://a.io\n  - https://b.io\n---"), "{}", req.new_content);
-        let req = prepare_write(&vault, "f3".into(), "set_frontmatter", &json!({"path": "R.md", "key": "question", "value": null}), None).unwrap();
+        let req = prepare_write(&vault, "f3".into(), "set_frontmatter", &json!({"path": "R.md", "key": "question", "value": null}), None, None).unwrap();
         assert_eq!(req.new_content, "---\nstatus: draft\n---\n# R\n");
-        assert!(prepare_write(&vault, "f4".into(), "set_frontmatter", &json!({"path": "R.md", "key": "private", "value": "true"}), None).unwrap_err().to_string().contains("not allowed"));
-        assert!(prepare_write(&vault, "f5".into(), "set_frontmatter", &json!({"path": "R.md", "key": "status", "value": "draft"}), None).unwrap_err().to_string().contains("unchanged"));
-        assert!(matches!(prepare_write(&vault, "f6".into(), "set_frontmatter", &json!({"path": "secret/Plan.md", "key": "x", "value": "y"}), None).unwrap_err(), ToolError::Privacy(_)));
+        assert!(prepare_write(&vault, "f4".into(), "set_frontmatter", &json!({"path": "R.md", "key": "private", "value": "true"}), None, None).unwrap_err().to_string().contains("not allowed"));
+        assert!(prepare_write(&vault, "f5".into(), "set_frontmatter", &json!({"path": "R.md", "key": "status", "value": "draft"}), None, None).unwrap_err().to_string().contains("unchanged"));
+        assert!(matches!(prepare_write(&vault, "f6".into(), "set_frontmatter", &json!({"path": "secret/Plan.md", "key": "x", "value": "y"}), None, None).unwrap_err(), ToolError::Privacy(_)));
     }
 
     /// update_task: state and dates in one rewrite of the task's own line, a non-task refused, the diff local.
@@ -1717,16 +1733,16 @@ mod tests {
         let (_d, vault) = fixture();
         std::fs::write(vault.root().join("Todo.md"), "# Todo\n\n- [ ] write spec 📅 2026-09-01 ^t1\n  - sub note\n- plain item\n").unwrap();
         let vault = Vault::open(vault.root()).unwrap();
-        let req = prepare_write(&vault, "u1".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "state": "done", "due": "2026-09-10", "scheduled": "2026-09-08"}), None).unwrap();
+        let req = prepare_write(&vault, "u1".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "state": "done", "due": "2026-09-10", "scheduled": "2026-09-08"}), None, None).unwrap();
         assert!(req.new_content.contains("- [x] write spec 📅 2026-09-10 ⏳ 2026-09-08 ^t1\n  - sub note\n- plain item\n"), "{}", req.new_content);
         assert_eq!(req.kind, WriteKind::Edit);
-        let req = prepare_write(&vault, "u2".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "due": null}), None).unwrap();
+        let req = prepare_write(&vault, "u2".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "due": null}), None, None).unwrap();
         assert!(req.new_content.contains("- [ ] write spec ^t1\n"), "{}", req.new_content);
-        let e = prepare_write(&vault, "u3".into(), "update_task", &json!({"path": "Todo.md", "block": "b2", "state": "done"}), None).unwrap_err();
+        let e = prepare_write(&vault, "u3".into(), "update_task", &json!({"path": "Todo.md", "block": "b2", "state": "done"}), None, None).unwrap_err();
         assert!(e.to_string().contains("is not a task"), "{e}");
-        assert!(prepare_write(&vault, "u4".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1"}), None).is_err());
-        assert!(prepare_write(&vault, "u5".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "due": "next week"}), None).is_err());
-        assert!(matches!(prepare_write(&vault, "u6".into(), "update_task", &json!({"path": "secret/Plan.md", "block": "b0", "state": "done"}), None).unwrap_err(), ToolError::Privacy(_)));
+        assert!(prepare_write(&vault, "u4".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1"}), None, None).is_err());
+        assert!(prepare_write(&vault, "u5".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "due": "next week"}), None, None).is_err());
+        assert!(matches!(prepare_write(&vault, "u6".into(), "update_task", &json!({"path": "secret/Plan.md", "block": "b0", "state": "done"}), None, None).unwrap_err(), ToolError::Privacy(_)));
     }
 
     /// set_block_field: set / replace / remove on the block's first line, a task's dates routed to the date grammar, bad keys refused.
@@ -1735,18 +1751,18 @@ mod tests {
         let (_d, vault) = fixture();
         std::fs::write(vault.root().join("P.md"), "# P\n\n- [ ] ship it [owner:: 王] ^p1\n\n> [!decision] go with A ^d1\n").unwrap();
         let vault = Vault::open(vault.root()).unwrap();
-        let req = prepare_write(&vault, "s1".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": "李"}), None).unwrap();
+        let req = prepare_write(&vault, "s1".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": "李"}), None, None).unwrap();
         assert!(req.new_content.contains("- [ ] ship it [owner:: 李] ^p1"), "{}", req.new_content);
-        let req = prepare_write(&vault, "s2".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "project", "value": "网关"}), None).unwrap();
+        let req = prepare_write(&vault, "s2".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "project", "value": "网关"}), None, None).unwrap();
         assert!(req.new_content.contains("- [ ] ship it [owner:: 王] [project:: 网关] ^p1"), "{}", req.new_content);
-        let req = prepare_write(&vault, "s3".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": null}), None).unwrap();
+        let req = prepare_write(&vault, "s3".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": null}), None, None).unwrap();
         assert!(req.new_content.contains("- [ ] ship it ^p1"), "{}", req.new_content);
-        let req = prepare_write(&vault, "s4".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "due", "value": "2026-09-10"}), None).unwrap();
+        let req = prepare_write(&vault, "s4".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "due", "value": "2026-09-10"}), None, None).unwrap();
         assert!(req.new_content.contains("- [ ] ship it [owner:: 王] 📅 2026-09-10 ^p1"), "{}", req.new_content);
-        let req = prepare_write(&vault, "s5".into(), "set_block_field", &json!({"path": "P.md", "block": "^d1", "key": "date", "value": "2026-09-04"}), None).unwrap();
+        let req = prepare_write(&vault, "s5".into(), "set_block_field", &json!({"path": "P.md", "block": "^d1", "key": "date", "value": "2026-09-04"}), None, None).unwrap();
         assert!(req.new_content.contains("> [!decision] go with A [date:: 2026-09-04] ^d1"), "{}", req.new_content);
-        assert!(prepare_write(&vault, "s6".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "bad key", "value": "x"}), None).unwrap_err().to_string().contains("not a field key"));
-        assert!(prepare_write(&vault, "s7".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": "a]b"}), None).is_err());
+        assert!(prepare_write(&vault, "s6".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "bad key", "value": "x"}), None, None).unwrap_err().to_string().contains("not a field key"));
+        assert!(prepare_write(&vault, "s7".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": "a]b"}), None, None).is_err());
     }
 
     /// recent_changes: blocks stamped since the day (the fixture is written now, so today catches it and tomorrow does not); filters by kind and note; private notes counted only.
@@ -1781,7 +1797,7 @@ mod tests {
         std::fs::write(vault.root().join("attachments/Hello/shot.png"), b"png").unwrap();
         std::fs::write(vault.root().join("Pic.md"), "![[shot.png]] and ![](attachments/Hello/shot.png)\n").unwrap();
         let mut vault = Vault::open(vault.root()).unwrap();
-        let req = prepare_write(&vault, "m1".into(), "move_note", &json!({"from": "Hello.md", "to": "archive/Hi.md"}), None).unwrap();
+        let req = prepare_write(&vault, "m1".into(), "move_note", &json!({"from": "Hello.md", "to": "archive/Hi.md"}), None, None).unwrap();
         assert_eq!(req.kind, WriteKind::Move);
         assert_eq!(req.rewrites.len(), 1, "the private referrer is left out: {:?}", req.rewrites);
         assert_eq!(req.rewrites[0].path, "Ref.md");
@@ -1792,18 +1808,18 @@ mod tests {
         assert_eq!(std::fs::read_to_string(vault.root().join("Ref.md")).unwrap(), "see [[Hi]] and [[Hi#^x]]\n");
         assert!(std::fs::read_to_string(vault.root().join("secret/Also.md")).unwrap().contains("[[Hello]]"), "a private note is never rewritten");
         // rewrite_links=false: a plain move
-        let req = prepare_write(&vault, "m2".into(), "move_note", &json!({"from": "archive/Hi.md", "to": "Hi2.md", "rewrite_links": false}), None).unwrap();
+        let req = prepare_write(&vault, "m2".into(), "move_note", &json!({"from": "archive/Hi.md", "to": "Hi2.md", "rewrite_links": false}), None, None).unwrap();
         assert!(req.rewrites.is_empty() && req.diff.is_empty());
         // move_file rewrites the embeds
-        let req = prepare_write(&vault, "f1".into(), "move_file", &json!({"from": "attachments/Hello/shot.png", "to": "assets/shot-1.png"}), None).unwrap();
+        let req = prepare_write(&vault, "f1".into(), "move_file", &json!({"from": "attachments/Hello/shot.png", "to": "assets/shot-1.png"}), None, None).unwrap();
         assert_eq!(req.kind, WriteKind::Move);
         assert_eq!(req.rewrites[0].links, 2, "{:?}", req.rewrites);
         let msg = execute_write(&mut vault, &req, None, None, true).unwrap();
         assert!(msg.starts_with("moved attachments/Hello/shot.png -> assets/shot-1.png"), "{msg}");
         assert!(vault.root().join("assets/shot-1.png").exists());
         assert_eq!(std::fs::read_to_string(vault.root().join("Pic.md")).unwrap(), "![[shot-1.png]] and ![](assets/shot-1.png)\n");
-        assert!(prepare_write(&vault, "f2".into(), "move_file", &json!({"from": "Pic.md", "to": "x.md"}), None).is_err());
-        assert!(matches!(prepare_write(&vault, "f3".into(), "move_file", &json!({"from": "secret/x.png", "to": "y.png"}), None).unwrap_err(), ToolError::Privacy(_)));
+        assert!(prepare_write(&vault, "f2".into(), "move_file", &json!({"from": "Pic.md", "to": "x.md"}), None, None).is_err());
+        assert!(matches!(prepare_write(&vault, "f3".into(), "move_file", &json!({"from": "secret/x.png", "to": "y.png"}), None, None).unwrap_err(), ToolError::Privacy(_)));
         // list_files and audit_links
         let out = read(&vault, "list_files", json!({"kind": "image"})).unwrap();
         assert!(out.text.contains("assets/shot-1.png\timage\t3 B"), "{}", out.text);
@@ -1995,14 +2011,14 @@ mod tests {
     fn write_note_refused_when_private_blocks_but_create_and_edit_work() {
         let (_d, mut vault) = fixture_with_private_block();
         let err =
-            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Mixed.md", "content": "x"}), None).unwrap_err();
+            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Mixed.md", "content": "x"}), None, None).unwrap_err();
         assert!(matches!(err, ToolError::Privacy(_)));
         assert_eq!(err.to_string(), "write_note is not available for Mixed.md; use edit_note for changes to this note");
-        assert!(prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Plain.md", "content": "x"}), None).is_ok());
-        assert!(prepare_write(&vault, "r".into(), "write_note", &json!({"path": "New.md", "content": "x"}), None).is_ok());
+        assert!(prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Plain.md", "content": "x"}), None, None).is_ok());
+        assert!(prepare_write(&vault, "r".into(), "write_note", &json!({"path": "New.md", "content": "x"}), None, None).is_ok());
         // execute re-checks: a private block that appeared during the gate blocks the overwrite
         let req =
-            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Plain.md", "content": "new"}), None).unwrap();
+            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Plain.md", "content": "new"}), None, None).unwrap();
         vault.write_note(&NoteId::new("Plain.md"), "plain\n\n> [!private] late\n").unwrap();
         let err = execute_write(&mut vault, &req, None, None, false).unwrap_err();
         assert!(err.starts_with("write_note is not available for Plain.md"), "{err}");
@@ -2018,6 +2034,7 @@ mod tests {
                 "r".into(),
                 "edit_note",
                 &json!({"path": "Mixed.md", "old_str": old, "new_str": new}),
+                None,
                 None,
             )
         };
@@ -2059,7 +2076,7 @@ mod tests {
         std::fs::write(vault.root().join("Tight.md"), "a\n> [!private] s\n").unwrap();
         let vault = Vault::open(vault.root()).unwrap();
         let edit = |path: &str, old: &str, new: &str| {
-            prepare_write(&vault, "r".into(), "edit_note", &json!({"path": path, "old_str": old, "new_str": new}), None)
+            prepare_write(&vault, "r".into(), "edit_note", &json!({"path": path, "old_str": old, "new_str": new}), None, None)
         };
         let err = edit("Plain.md", "plain", "plain").unwrap_err();
         assert_eq!(err.to_string(), "this edit leaves the note unchanged");
@@ -2078,6 +2095,7 @@ mod tests {
             "r".into(),
             "edit_note",
             &json!({"path": "Plain.md", "old_str": "plain", "new_str": "plain edited"}),
+            None,
             None,
         )
         .unwrap();
@@ -2125,6 +2143,7 @@ mod tests {
             "edit_note",
             &json!({"path": "Tail.md", "old_str": "TEST3", "new_str": "TEST3\n\nTEST4"}),
             Some("s1"),
+            None,
         )
         .unwrap();
         execute_write(&mut vault, &req, None, Some("s1"), false).unwrap();
@@ -2143,6 +2162,7 @@ mod tests {
             "edit_note",
             &json!({"path": "Plain.md", "old_str": "plain", "new_str": "plain\n\nadded by the model"}),
             Some("s1"),
+            None,
         )
         .unwrap();
         execute_write(&mut vault, &req, None, Some("s1"), false).unwrap();
@@ -2156,7 +2176,7 @@ mod tests {
         }
         assert_eq!(out, "plain\n");
         // the user's own rewrite of the proposal is what the hunks record
-        let req = prepare_write(&vault, "r".into(), "edit_note", &json!({"path": "Plain.md", "old_str": "model", "new_str": "MODEL"}), Some("s1")).unwrap();
+        let req = prepare_write(&vault, "r".into(), "edit_note", &json!({"path": "Plain.md", "old_str": "model", "new_str": "MODEL"}), Some("s1"), None).unwrap();
         execute_write(&mut vault, &req, Some("plain\n\nadded by the user\n"), Some("s1"), false).unwrap();
         let text = std::fs::read_to_string(vault.root().join("Plain.md")).unwrap();
         let plan = vault.revert_plan(&text, Some("b1")).unwrap();
@@ -2173,6 +2193,7 @@ mod tests {
             "edit_note",
             &json!({"path": "Plain.md", "old_str": "plain", "new_str": "plain\nmore"}),
             Some("s1"),
+            None,
         )
         .unwrap();
         execute_write(&mut vault, &req, None, Some("s1"), false).unwrap();
@@ -2187,7 +2208,7 @@ mod tests {
     #[test]
     fn a_reviewed_write_is_recorded_as_accepted() {
         let (_d, mut vault) = fixture();
-        let req = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Rev.md", "content": "reviewed text"}), Some("s1")).unwrap();
+        let req = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Rev.md", "content": "reviewed text"}), Some("s1"), None).unwrap();
         execute_write(&mut vault, &req, None, Some("s1"), true).unwrap();
         let id = vault.note_id("Rev.md").unwrap();
         let rows = vault.provenance(&id).unwrap();
@@ -2204,6 +2225,7 @@ mod tests {
             "write_note",
             &json!({"path": "New.md", "content": "fresh\n"}),
             Some("20260902-100000.000"),
+            None,
         )
         .unwrap();
         assert!(req.new_content.starts_with("---\nvemry:\n  origin: agent\n  agent_session: 20260902-100000.000\n---\n"));
@@ -2221,6 +2243,7 @@ mod tests {
             "edit_note",
             &json!({"path": "Plain.md", "old_str": "plain", "new_str": "plain edited"}),
             Some("s2"),
+            None,
         )
         .unwrap();
         execute_write(&mut vault, &req, Some("plain edited by hand\n"), Some("s2"), false).unwrap();
@@ -2246,7 +2269,7 @@ mod tests {
     fn prepare_write_rejects_privacy_paths() {
         let (_d, vault) = fixture();
         // creating a NEW note inside a private folder is refused pre-diff
-        let err = prepare_write(&vault, "r1".into(), "write_note", &json!({"path": "secret/New.md", "content": "x"}), None)
+        let err = prepare_write(&vault, "r1".into(), "write_note", &json!({"path": "secret/New.md", "content": "x"}), None, None)
             .unwrap_err();
         assert!(matches!(err, ToolError::Privacy(_)));
         assert_eq!(err.to_string(), "invalid path: secret/New.md");
@@ -2257,12 +2280,13 @@ mod tests {
             "edit_note",
             &json!({"path": "Diary.md", "old_str": "a", "new_str": "b"}),
             None,
+            None,
         )
         .unwrap_err();
         assert!(matches!(err, ToolError::Privacy(_)));
         assert_eq!(err.to_string(), "note not found: Diary.md");
         // public writes still prepare normally
-        assert!(prepare_write(&vault, "r3".into(), "write_note", &json!({"path": "Pub.md", "content": "x"}), None).is_ok());
+        assert!(prepare_write(&vault, "r3".into(), "write_note", &json!({"path": "Pub.md", "content": "x"}), None, None).is_ok());
     }
 
     #[test]
@@ -2278,10 +2302,11 @@ mod tests {
             "edit_note",
             &json!({"path": "diary.md", "old_str": "TOPSECRET", "new_str": "x"}),
             None,
+            None,
         )
         .unwrap_err();
         assert!(matches!(edit, ToolError::Privacy(_)), "edit_note case-variant must be blocked");
-        let write = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "diary.md", "content": "x"}), None)
+        let write = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "diary.md", "content": "x"}), None, None)
             .unwrap_err();
         assert!(matches!(write, ToolError::Privacy(_)), "write_note case-variant must be blocked");
     }
@@ -2294,7 +2319,7 @@ mod tests {
         // the diff baseline — not a phantom "create" whose approval would
         // silently overwrite the note and leave a duplicate index entry.
         let req =
-            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "hello.md", "content": "new body"}), None)
+            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "hello.md", "content": "new body"}), None, None)
                 .unwrap();
         assert_eq!(req.path, "Hello.md");
         assert_eq!(req.kind, WriteKind::Overwrite, "must prepare as overwrite");
@@ -2305,6 +2330,7 @@ mod tests {
             "r".into(),
             "edit_note",
             &json!({"path": "hello.md", "old_str": "# Hello", "new_str": "# Hi"}),
+            None,
             None,
         )
         .unwrap();
@@ -2317,7 +2343,7 @@ mod tests {
         // watcher lag: on disk but not yet indexed — refuse the blind
         // overwrite (the "create" diff would show an empty baseline)
         std::fs::write(vault.root().join("Fresh.md"), "not yet indexed\n").unwrap();
-        let err = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Fresh.md", "content": "x"}), None)
+        let err = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Fresh.md", "content": "x"}), None, None)
             .unwrap_err();
         assert_eq!(err.to_string(), "invalid path: Fresh.md");
         // a pre-existing symlink is never indexed; fs::write would follow it
@@ -2325,7 +2351,7 @@ mod tests {
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(vault.root().join("Diary.md"), vault.root().join("link.md")).unwrap();
-            let err = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "link.md", "content": "x"}), None)
+            let err = prepare_write(&vault, "r".into(), "write_note", &json!({"path": "link.md", "content": "x"}), None, None)
                 .unwrap_err();
             assert_eq!(err.to_string(), "invalid path: link.md");
         }
@@ -2336,7 +2362,7 @@ mod tests {
         let (_d, mut vault) = fixture();
         // Prepare a legit overwrite of a public note (as the gate would see it).
         let req =
-            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Hello.md", "content": "OVERWRITTEN"}), None)
+            prepare_write(&vault, "r".into(), "write_note", &json!({"path": "Hello.md", "content": "OVERWRITTEN"}), None, None)
                 .unwrap();
         // The note turns private during the permission-gate await.
         vault.add_privacy_rule("Hello.md").unwrap();
@@ -2353,19 +2379,19 @@ mod tests {
         let (_d, vault) = fixture();
         // A private from: worded the same as missing (echoing the caller's spelling)
         let err =
-            prepare_write(&vault, "r".into(), "move_note", &json!({"from": "secret/Plan.md", "to": "Pub.md"}), None)
+            prepare_write(&vault, "r".into(), "move_note", &json!({"from": "secret/Plan.md", "to": "Pub.md"}), None, None)
                 .unwrap_err();
         assert!(matches!(err, ToolError::Privacy(_)));
         assert_eq!(err.to_string(), "note not found: secret/Plan.md");
         // A to that lands in a privacy zone: worded the same as a write_note create
         let err =
-            prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "secret/Hello.md"}), None)
+            prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "secret/Hello.md"}), None, None)
                 .unwrap_err();
         assert!(matches!(err, ToolError::Privacy(_)));
         assert_eq!(err.to_string(), "invalid path: secret/Hello.md");
         // A to that collides with a private note of the same name: privacy before
         // existence — it must never say already exists
-        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "Diary.md"}), None)
+        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "Diary.md"}), None, None)
             .unwrap_err();
         assert!(matches!(err, ToolError::Privacy(_)));
         assert_eq!(err.to_string(), "invalid path: Diary.md", "a collision must not confirm that a private note exists");
@@ -2377,33 +2403,33 @@ mod tests {
         // A public note of the same name: reported as already existing, truthfully
         std::fs::write(vault.root().join("Other.md"), "# other\n").unwrap();
         let vault = Vault::open(vault.root()).unwrap();
-        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "Other.md"}), None)
+        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "Other.md"}), None, None)
             .unwrap_err();
         assert_eq!(err.to_string(), "already exists: Other.md");
         // A case variant collides too (the index folds case)
-        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "other.md"}), None)
+        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "other.md"}), None, None)
             .unwrap_err();
         assert!(err.to_string().starts_with("already exists:"));
         // A missing source: worded the same as a private one
-        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Nope.md", "to": "New.md"}), None)
+        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Nope.md", "to": "New.md"}), None, None)
             .unwrap_err();
         assert_eq!(err.to_string(), "note not found: Nope.md");
         // An illegal Windows file name is refused during prepare (it never reaches
         // the permission gate, so the model can correct itself)
-        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "he:llo.md"}), None)
+        let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "he:llo.md"}), None, None)
             .unwrap_err();
         assert!(err.to_string().contains("Windows"), "{err}");
         // On disk but not indexed (a symlink) is refused
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(vault.root().join("Diary.md"), vault.root().join("link.md")).unwrap();
-            let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "link.md"}), None)
+            let err = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "link.md"}), None, None)
                 .unwrap_err();
             assert_eq!(err.to_string(), "invalid path: link.md");
         }
         // happy path: the path pair is prepared and the diff is empty
         let req =
-            prepare_write(&vault, "r".into(), "move_note", &json!({"from": "hello.md", "to": "moved/Hi.md"}), None)
+            prepare_write(&vault, "r".into(), "move_note", &json!({"from": "hello.md", "to": "moved/Hi.md"}), None, None)
                 .unwrap();
         assert_eq!(req.path, "Hello.md", "the source folds onto the indexed casing");
         assert_eq!(req.to_path.as_deref(), Some("moved/Hi.md"));
@@ -2414,7 +2440,7 @@ mod tests {
     #[test]
     fn execute_move_rechecks_and_renames() {
         let (_d, mut vault) = fixture();
-        let req = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "moved/Hi.md"}), None)
+        let req = prepare_write(&vault, "r".into(), "move_note", &json!({"from": "Hello.md", "to": "moved/Hi.md"}), None, None)
             .unwrap();
         // The source turns private while the gate is awaited: refused, and the disk is untouched
         vault.add_privacy_rule("Hello.md").unwrap();

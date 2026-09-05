@@ -167,6 +167,11 @@ pub struct RunnerConfig {
     /// blocks the editor shows for review afterwards. Privacy-filtered per turn.
     pub follow_note: Option<String>,
     pub follow_auto: bool,
+    /// Run the Markdown formatter over what the model writes whole — a new note's
+    /// content, an appended section — before the gate shows it (None = off). The
+    /// user's existing lines are never touched by an agent write (an edit_note
+    /// fragment, a task line, a field are left as written).
+    pub format: Option<vemry_core::FormatOptions>,
 }
 
 impl Default for RunnerConfig {
@@ -182,6 +187,7 @@ impl Default for RunnerConfig {
             plan_confirm: false,
             follow_note: None,
             follow_auto: true,
+            format: None,
         }
     }
 }
@@ -672,7 +678,7 @@ impl AgentRunner {
                 }
                 let follow = follow_note.as_deref().filter(|_| config.follow_auto);
                 let result = self
-                    .execute_tool(call, &mut session_allow_writes, &config.session_allow, follow, turn_id.as_deref(), &mut plan_rejected, on_event, log)
+                    .execute_tool(call, &mut session_allow_writes, &config.session_allow, follow, turn_id.as_deref(), config.format.as_ref(), &mut plan_rejected, on_event, log)
                     .await;
                 let (ok, output) = match result {
                     Ok(o) => (true, o),
@@ -802,6 +808,7 @@ impl AgentRunner {
         session_flag: &Option<Arc<AtomicBool>>,
         follow: Option<&str>,
         turn: Option<&str>,
+        config_format: Option<&vemry_core::FormatOptions>,
         plan_rejected: &mut bool,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
@@ -859,7 +866,7 @@ impl AgentRunner {
         let write_req = {
             let guard = self.vault.lock().unwrap();
             let vault = guard.as_ref().ok_or("no vault open")?;
-            match prepare_write(vault, call.id.clone(), name, &args, Some(&log.id)) {
+            match prepare_write(vault, call.id.clone(), name, &args, Some(&log.id), config_format) {
                 Ok(req) => req,
                 Err(ToolError::Privacy(msg)) => {
                     // No diff, no permission dialog, no write_prepared line:
@@ -2226,6 +2233,32 @@ mod tests {
         let mut history = vec![];
         run_plan_turn(&r, &f, &mut history).await;
         assert!(history[2].text().unwrap().contains("rejected the action list: not now"));
+    }
+
+    /// With the formatter on, what the model writes whole (a new note, an append) lands
+    /// formatted and the gate's diff shows the formatted text; an edit fragment is left
+    /// as written.
+    #[tokio::test]
+    async fn formatter_runs_over_whole_writes_only() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_batch(&[
+                ("w1", "write_note", r##"{"path": "New.md", "content": "#  Title\n\n\n* a\n\n* b   \n"}"##),
+                ("w2", "edit_note", r#"{"path": "Hello.md", "old_str": "world content", "new_str": "world content   \n\n\n* x"}"#),
+            ]),
+            vec![text_chunk("好"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        let config = RunnerConfig { format: Some(vemry_core::FormatOptions::default()), ..Default::default() };
+        r.run(&ProviderConfig::zhipu("k".into()), &config, &mut history, Some("写".into()), None, vec![], None, &|_| {}, &AtomicBool::new(false), &log).await.unwrap();
+        let new_note = std::fs::read_to_string(f._dir.path().join("New.md")).unwrap();
+        assert!(new_note.ends_with("# Title\n\n- a\n- b\n"), "{new_note}");
+        let hello = std::fs::read_to_string(f._dir.path().join("Hello.md")).unwrap();
+        assert!(hello.contains("world content   \n\n\n* x"), "an edit fragment is not reformatted: {hello}");
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert!(jsonl.contains("+- a") && !jsonl.contains("+* a"), "the gate saw the formatted text: {jsonl}");
     }
 
     #[tokio::test]

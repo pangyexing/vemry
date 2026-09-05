@@ -617,6 +617,33 @@ pub fn files_import(state: State<'_, AppState>, paths: Vec<String>, dest: String
 /// editor's right-click "paste" (after files and screenshots).
 /// Off macOS it returns None and the frontend falls back to
 /// navigator.clipboard.readText().
+/// The Markdown formatter as a command: the editor's "format note" runs the note's
+/// text through it (the whole note, at the user's explicit request — never on
+/// autosave) and replaces the document with the result.
+#[tauri::command]
+pub fn format_markdown(app: AppHandle, text: String) -> String {
+    let settings: Settings = settings::load(&app);
+    vemry_core::format_markdown(&text, &settings.format_options())
+}
+
+/// A rich-text paste into the editor: the clipboard's HTML fragment → Markdown (the
+/// clip layer's converter, the same one a clipped selection goes through) →
+/// formatted when the clip formatter is on. Empty when nothing converts (the caller
+/// falls back to the plain text).
+#[tauri::command]
+pub fn html_to_markdown(app: AppHandle, html: String) -> String {
+    let md = vemry_clip::fragment_to_markdown(&html);
+    if md.trim().is_empty() {
+        return String::new();
+    }
+    let settings: Settings = settings::load(&app);
+    if settings.format_clips {
+        vemry_core::format_markdown(&md, &settings.format_options())
+    } else {
+        md
+    }
+}
+
 #[tauri::command]
 pub fn clipboard_read_text() -> Option<String> {
     crate::pasteboard::string_text()
@@ -826,6 +853,10 @@ pub struct SettingsView {
     pub provenance_marks: bool,
     pub reading_images_enabled: bool,
     pub clip_localize_images: bool,
+    pub format_agent_writes: bool,
+    pub format_clips: bool,
+    pub format_cjk_spacing: bool,
+    pub format_punctuation: bool,
     pub updater_auto_check: bool,
     pub note_font_size: u8,
     pub readable_line_width: bool,
@@ -856,6 +887,10 @@ pub struct SettingsUpdate {
     pub provenance_marks: Option<bool>,
     pub reading_images_enabled: Option<bool>,
     pub clip_localize_images: Option<bool>,
+    pub format_agent_writes: Option<bool>,
+    pub format_clips: Option<bool>,
+    pub format_cjk_spacing: Option<bool>,
+    pub format_punctuation: Option<bool>,
     pub updater_auto_check: Option<bool>,
     pub note_font_size: Option<u8>,
     pub readable_line_width: Option<bool>,
@@ -894,6 +929,10 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         provenance_marks: s.provenance_marks,
         reading_images_enabled: s.reading_images_enabled,
         clip_localize_images: s.clip_localize_images,
+        format_agent_writes: s.format_agent_writes,
+        format_clips: s.format_clips,
+        format_cjk_spacing: s.format_cjk_spacing,
+        format_punctuation: s.format_punctuation,
         updater_auto_check: s.updater_auto_check,
         note_font_size: s.note_font_size,
         readable_line_width: s.readable_line_width,
@@ -947,6 +986,18 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     }
     if let Some(v) = update.reading_images_enabled {
         s.reading_images_enabled = v;
+    }
+    if let Some(v) = update.format_agent_writes {
+        s.format_agent_writes = v;
+    }
+    if let Some(v) = update.format_clips {
+        s.format_clips = v;
+    }
+    if let Some(v) = update.format_cjk_spacing {
+        s.format_cjk_spacing = v;
+    }
+    if let Some(v) = update.format_punctuation {
+        s.format_punctuation = v;
     }
     if let Some(v) = update.clip_localize_images {
         s.clip_localize_images = v;
@@ -1269,6 +1320,7 @@ async fn run_agent_turn(
     let config = RunnerConfig {
         max_iterations: 25,
         write_policy,
+        format: settings.format_agent_writes.then(|| settings.format_options()),
         web_search: use_web_search,
         system_prompt: Some(system_snapshot),
         session_allow: Some(Arc::clone(&state.agent.session_grant)),
