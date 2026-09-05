@@ -12,8 +12,8 @@
 //! entire point, so the relay does not raise the main window by default ("open the
 //! note" being the one exception).
 
-use super::window::{apply_layout, BAR_LABEL};
-use tauri::{AppHandle, Emitter, Manager, State};
+use super::window::{apply_layout, main_window, BAR_LABEL};
+use tauri::{AppHandle, Emitter, State};
 
 /// Grow or shrink the bar: while its destination picker is open it extends
 /// downwards over the page; the label comes from the calling webview and never
@@ -48,8 +48,8 @@ pub fn browserbar_to_main(
     }
     app.emit_to("main", "browserbar://action", action).map_err(|e| e.to_string())?;
     if focus {
-        if let Some(main) = app.get_webview("main") {
-            let _ = main.window().set_focus();
+        if let Some(main) = main_window(&app) {
+            let _ = main.set_focus();
         }
     }
     Ok(())

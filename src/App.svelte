@@ -11,7 +11,7 @@
   import { agent } from "$lib/stores/agent.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { types } from "$lib/stores/types.svelte";
-  import { browser, MAIN_MIN_BESIDE_PANEL, PANEL_MIN as BROWSER_PANEL_MIN } from "$lib/stores/browser.svelte";
+  import { browser, MAIN_MIN_BESIDE_PANEL, PANEL_DEFAULT as BROWSER_PANEL_DEFAULT, PANEL_MIN as BROWSER_PANEL_MIN } from "$lib/stores/browser.svelte";
   import { reading } from "$lib/stores/reading.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
@@ -26,6 +26,7 @@
   import OutlinePanel from "$lib/components/OutlinePanel.svelte";
   import AgentPanel from "$lib/components/AgentPanel.svelte";
   import BrowserPanel from "$lib/components/BrowserPanel.svelte";
+  import GlobeIcon from "$lib/components/GlobeIcon.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import PermissionDialog from "$lib/components/PermissionDialog.svelte";
   import ContextMenu from "$lib/components/ContextMenu.svelte";
@@ -102,8 +103,8 @@
 
   // ---- The sidebars: dragging a sash, double-clicking to reset, swapping sides (swapSides) ----
   // The sum of the three columns' minimum widths plus the activity bar (140+300+280+44=764) goes
-  // with tauri.conf.json's minWidth=764 and Rust's MIN_MAIN_VISIBLE=804, and a change means
-  // looking at all three
+  // with tauri.conf.json's minWidth=764 and the browser store's MAIN_MIN_BESIDE_PANEL=804, and
+  // a change means looking at all three
   // (the coupling the old CSS grid comment described, now collected here)
   const TREE_MIN = 140;
   const CENTER_MIN = 300;
@@ -129,60 +130,52 @@
     if (vault.swapSides) cols.reverse();
     return cols.join(" ");
   });
-  function startResize(e: PointerEvent, which: "tree" | "panel") {
-    if (e.button !== 0) return;
-    e.preventDefault(); // suppress the selection and focus side effects of the compatibility mousedown
-    const sash = e.currentTarget as HTMLElement;
-    const startX = e.clientX;
-    const startW = sash.parentElement!.getBoundingClientRect().width;
-    // The drag direction depends on which side that column is docked on right now: on the left, dragging right widens it
-    const onLeft = which === "tree" ? !vault.swapSides : vault.swapSides;
+  /** A draggable column: its width now, its floor and ceiling, whether it sits on the left
+   *  (dragging right widens it) and where the width goes. */
+  type ResizeColumn = { startW: number; min: number; max: number; onLeft: boolean; write: (w: number) => void };
+  function resizeColumn(which: "tree" | "panel" | "browser", sash: HTMLElement): ResizeColumn {
+    if (which === "browser") {
+      // The panel is always at the right edge; its ceiling leaves the rest of the layout usable
+      return {
+        startW: browser.panelWidth,
+        min: BROWSER_PANEL_MIN,
+        max: window.innerWidth - MAIN_MIN_BESIDE_PANEL,
+        onLeft: false,
+        write: (w) => (browser.panelWidth = w),
+      };
+    }
     const min = which === "tree" ? TREE_MIN : PANEL_MIN;
     // The upper bound leaves the minimum widths for the content area, the opposite sidebar and
     // the activity bar; the room the docked browser panel takes is deducted from the available
     // width too
     const otherMin = which === "tree" ? (vault.rightOpen ? PANEL_MIN : 0) : (vault.leftOpen ? TREE_MIN : 0);
-    const max = Math.max(min, window.innerWidth - browser.panelInset - ABAR_W - CENTER_MIN - otherMin);
+    return {
+      startW: sash.parentElement!.getBoundingClientRect().width,
+      min,
+      max: window.innerWidth - browser.panelInset - ABAR_W - CENTER_MIN - otherMin,
+      // Which side that column is docked on right now
+      onLeft: which === "tree" ? !vault.swapSides : vault.swapSides,
+      write: which === "tree" ? (w) => (vault.leftWidth = w) : (w) => (vault.rightWidth = w),
+    };
+  }
+  /** One sash routine for the three draggable columns. The browser panel's sash is its left
+   *  edge, on the notes side of the boundary (the native tab covers the column below its
+   *  chrome, and a sash inside it would get no pointer events): the width is live while
+   *  dragging, and the native tab is veiled for the drag — the pointer would be lost to the
+   *  native view the moment it crossed into the panel, and a per-frame relayout of the page
+   *  is not wanted anyway; the final width reaches Rust once the drag ends (BrowserPanel
+   *  reports it when resizing goes back to null). */
+  function startResize(e: PointerEvent, which: "tree" | "panel" | "browser") {
+    if (e.button !== 0) return;
+    e.preventDefault(); // suppress the selection and focus side effects of the compatibility mousedown
+    const sash = e.currentTarget as HTMLElement;
+    const startX = e.clientX;
+    const col = resizeColumn(which, sash);
+    const max = Math.max(col.min, col.max);
     vault.resizing = which;
     sash.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
-      const w = Math.round(Math.min(max, Math.max(min, startW + (onLeft ? 1 : -1) * (ev.clientX - startX))));
-      if (which === "tree") vault.leftWidth = w;
-      else vault.rightWidth = w;
-    };
-    const up = () => {
-      vault.resizing = null;
-      sash.removeEventListener("pointermove", move);
-      sash.removeEventListener("pointerup", up);
-      sash.removeEventListener("pointercancel", up);
-    };
-    sash.addEventListener("pointermove", move);
-    sash.addEventListener("pointerup", up);
-    sash.addEventListener("pointercancel", up);
-  }
-
-  /** The research panel header's browser entry: tabs elsewhere (the detached window) come
-   *  forward, otherwise a blank tab opens with the new-tab page in the panel column. */
-  function openBrowserHere() {
-    const p = browser.tabs.length > 0 ? api.browserOpenLast() : api.browserNewTab();
-    void p.catch((e) => toast.push(String(e), "error"));
-  }
-  /** The browser panel's sash (its left edge, on the notes side of the boundary): the width is
-   *  live while dragging, and the native tab is veiled for the drag — the pointer would be lost
-   *  to the native view the moment it crossed into the panel, and a per-frame relayout of the
-   *  page is not wanted anyway; the final width reaches Rust once the drag ends (BrowserPanel
-   *  reports it when resizing goes back to null). */
-  function startBrowserResize(e: PointerEvent) {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const sash = e.currentTarget as HTMLElement;
-    const startX = e.clientX;
-    const startW = browser.panelWidth;
-    const max = Math.max(BROWSER_PANEL_MIN, window.innerWidth - MAIN_MIN_BESIDE_PANEL);
-    vault.resizing = "browser";
-    sash.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      browser.panelWidth = Math.round(Math.min(max, Math.max(BROWSER_PANEL_MIN, startW + (startX - ev.clientX))));
+      col.write(Math.round(Math.min(max, Math.max(col.min, col.startW + (col.onLeft ? 1 : -1) * (ev.clientX - startX)))));
     };
     const up = () => {
       vault.resizing = null;
@@ -1182,14 +1175,16 @@
             <button class:active={vault.rightTab === "outline"} onclick={() => (vault.rightTab = "outline")}>{t("app.tabOutline")}</button>
             <button class:active={vault.rightTab === "agent"} onclick={() => (vault.rightTab = "agent")}>{t("app.tabResearch")}</button>
             <span class="tools">
-              {#if !(browser.panelOpen && browser.shape === "docked")}
+              {#if !browser.docked}
                 <!-- The browser's entry, in the corner the panel appears in: shown only while the
                   panel is not on screen (with tabs elsewhere it brings them forward, otherwise a
                   blank tab with the new-tab page) -->
-                <button title={t("app.openBrowserHint", { key: k("Mod+L") })} aria-label={t("cmd.open-browser.title")} onclick={openBrowserHere}>
-                  <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M3 10 a7 7 0 1 0 14 0 a7 7 0 1 0 -14 0 M3 10 H17 M10 3 c-3.6 3.2 -3.6 10.8 0 14 M10 3 c3.6 3.2 3.6 10.8 0 14" />
-                  </svg>
+                <button
+                  title={t("app.openBrowserHint", { key: k("Mod+L") })}
+                  aria-label={t("cmd.open-browser.title")}
+                  onclick={() => void executeCommand(browser.tabs.length > 0 ? "open-browser" : "browser-new-tab")}
+                >
+                  <GlobeIcon size={18} />
                 </button>
               {/if}
               <button title={t("app.collapseSidebarKey", { key: k("Mod+.") })} aria-label={t("app.collapseSidebar")} onclick={() => (vault.rightOpen = false)}>
@@ -1220,7 +1215,7 @@
     </div>
     </div>
     <StatusBar />
-    {#if browser.panelOpen && browser.shape === "docked"}
+    {#if browser.docked}
       <!-- The panel's sash sits on the notes side of the boundary: the native tab covers the
         panel column below its chrome, and a sash inside it would get no pointer events -->
       <div
@@ -1230,12 +1225,12 @@
         aria-orientation="vertical"
         aria-label={t("browserPanel.tabs")}
         title={t("app.dragToResize")}
-        onpointerdown={startBrowserResize}
-        ondblclick={() => (browser.panelWidth = 440)}
+        onpointerdown={(e) => startResize(e, "browser")}
+        ondblclick={() => (browser.panelWidth = BROWSER_PANEL_DEFAULT)}
       ></div>
     {/if}
     </div>
-    {#if browser.panelOpen && browser.shape === "docked"}
+    {#if browser.docked}
       <BrowserPanel />
     {/if}
   </div>

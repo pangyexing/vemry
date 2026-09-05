@@ -177,11 +177,9 @@ pub fn capture_stamp(raw_slice: &str) -> Option<String> {
 /// · YYYY-MM-DD` as the block's last line (the form clips ended with before).
 pub fn clip_credit(raw_slice: &str) -> Option<(String, String)> {
     let first = raw_slice.lines().next()?.trim();
-    let head = first.strip_prefix('>').map(str::trim_start).and_then(|s| s.strip_prefix("[!"));
-    if let Some((ctype, rest)) = head.and_then(|h| h.split_once(']')) {
-        if matches!(ctype.to_ascii_lowercase().as_str(), "quote" | "cite") {
-            // an optional fold marker, then the title
-            if let Some(credit) = credit_fields(rest.trim_start_matches(['+', '-']).trim_start()) {
+    if let Some((ctype, rest)) = crate::parser::parse_callout_open(first) {
+        if matches!(ctype.as_str(), "quote" | "cite") {
+            if let Some(credit) = credit_fields(rest) {
                 return Some(credit);
             }
         }

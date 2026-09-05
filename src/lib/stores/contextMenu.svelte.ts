@@ -26,24 +26,30 @@ export type MenuEntry = MenuItem | { separator: true } | { title: string };
 class ContextMenuStore {
   pos = $state<{ x: number; y: number } | null>(null);
   entries = $state<MenuEntry[]>([]);
+  /** What the menu was opened for (a task's key, say): the host keeps that row lit while
+   *  the menu is open, and this goes back to null as the menu closes — by an item, a click
+   *  outside or Esc alike — so the host needs no state or effect of its own for it. */
+  owner = $state<string | null>(null);
 
   /** Open it at the right-click. preventDefault is collected here, and the caller only
    *  computes entries (a host that needs stopPropagation adds it itself — that is a
    *  matter for nested hosts, not for the menu). */
-  open(e: MouseEvent, entries: MenuEntry[]) {
+  open(e: MouseEvent, entries: MenuEntry[], owner?: string) {
     e.preventDefault();
-    this.openAt(e.clientX, e.clientY, entries);
+    this.openAt(e.clientX, e.clientY, entries, owner);
   }
 
   /** Open it at a point of the caller's choosing — a dropdown hanging under the button
    *  that raised it, rather than under the pointer. */
-  openAt(x: number, y: number, entries: MenuEntry[]) {
+  openAt(x: number, y: number, entries: MenuEntry[], owner?: string) {
     this.entries = entries;
+    this.owner = owner ?? null;
     this.pos = { x, y };
   }
 
   close() {
     this.pos = null;
+    this.owner = null;
     // Clear entries along the way: an action closure captures the host's scope (an
     // EditorView, a session object and so on), and as a singleton that never goes away
     // it would keep the previous menu's whole captured environment until the next

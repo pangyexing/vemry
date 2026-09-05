@@ -40,6 +40,8 @@
   import { isImeKeydown } from "$lib/ime";
   import { isFileLikePaste } from "$lib/editor/setup";
   import { isMac, k } from "$lib/shortcut";
+  import { isUrlLike } from "$lib/urls";
+  import GlobeIcon from "$lib/components/GlobeIcon.svelte";
   // Chat bodies now render $…$ formulas too (markdown.ts's renderInline), so the styling cannot
   // depend on ReadingView having been opened at some point
   import "katex/dist/katex.min.css";
@@ -745,11 +747,6 @@
 
   const run = (p: Promise<unknown>) => void p.catch((e) => toast.push(String(e), "error"));
 
-  /** Whether the input looks like a URL: it has a scheme, or a domain (with an alphabetic .tld) plus an optional path. */
-  function isUrlLike(it: string): boolean {
-    if (!it || /\s/.test(it)) return false;
-    return /^https?:\/\/\S+$/i.test(it) || /^[\w-]+(\.[\w-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(it);
-  }
   const urlLike = $derived(isUrlLike(agent.draft.trim()));
   /** A leading `#` means recording one convention into VEMRY.md.
    *  The same dual mode as a URL's: ⌥↵ still sends it verbatim as a question. */
@@ -1776,9 +1773,7 @@
       >
         {#if mode === "url"}
           <!-- A URL-shaped draft: ↵ opens the page in the browser, and the button says so -->
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 10 a7 7 0 1 0 14 0 a7 7 0 1 0 -14 0 M3 10 H17 M10 3 c-3.6 3.2 -3.6 10.8 0 14 M10 3 c3.6 3.2 3.6 10.8 0 14" />
-          </svg>
+          <GlobeIcon size={16} strokeWidth={1.8} />
         {:else}
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M10 15.5v-11M5 9.5l5-5 5 5" />

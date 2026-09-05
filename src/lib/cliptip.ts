@@ -13,18 +13,22 @@ const GAP = 4;
 let tip: HTMLDivElement | null = null;
 let shownFor: HTMLElement | null = null;
 
+function hide() {
+  if (tip) tip.hidden = true;
+  shownFor = null;
+}
+
 function box(): HTMLDivElement {
   if (!tip) {
     tip = document.createElement("div");
     tip.className = "clip-tip";
     document.body.appendChild(tip);
+    // Any scroll or wheel takes the box with it (it is fixed): one pair of listeners for
+    // the one box, registered with it rather than per element — a board renders hundreds
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("wheel", hide, { passive: true });
   }
   return tip;
-}
-
-function hide() {
-  if (tip) tip.hidden = true;
-  shownFor = null;
 }
 
 /** Whether the element's own text overflows it: a single-line ellipsis grows scrollWidth,
@@ -64,10 +68,8 @@ export function cliptip(node: HTMLElement, text: string) {
   };
   node.addEventListener("pointerenter", enter);
   node.addEventListener("pointerleave", cancel);
-  // A press on the line (opening the task, a drag, a right-click) takes the box with it; so does any scroll or wheel, the box being fixed
+  // A press on the line (opening the task, a drag, a right-click) takes the box with it
   node.addEventListener("pointerdown", cancel);
-  window.addEventListener("scroll", cancel, true);
-  window.addEventListener("wheel", cancel, { passive: true });
   return {
     update(next: string) {
       full = next;
@@ -78,8 +80,6 @@ export function cliptip(node: HTMLElement, text: string) {
       node.removeEventListener("pointerenter", enter);
       node.removeEventListener("pointerleave", cancel);
       node.removeEventListener("pointerdown", cancel);
-      window.removeEventListener("scroll", cancel, true);
-      window.removeEventListener("wheel", cancel);
     },
   };
 }

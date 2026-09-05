@@ -36,7 +36,7 @@
     type GroupMode,
   } from "$lib/views/kanban";
   import { t } from "$lib/i18n/i18n.svelte";
-  import { k as kbd } from "$lib/shortcut";
+  import { commitTaskWrite } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
   import { toast } from "$lib/stores/toast.svelte";
@@ -80,32 +80,10 @@
   const shown = $derived(fuzzyKeep(allCards, query, taskFilterKey));
   const total = $derived(shown.length);
 
-  /** The guard every write shares (the same as Agenda's): the note being edited is saved
-   *  first, so unsaved changes are not overwritten. The meaning still holds with several tabs
-   *  — only the active tab can be dirty. */
-  function dirtyGuard(hit: BlockHit, act: string): boolean {
-    if (hit.note === vault.currentPath && vault.dirty) {
-      vault.error = t("task.dirtyGuard", { key: kbd("Mod+S"), action: act });
-      return false;
-    }
-    return true;
-  }
-
-  /** The shared write funnel: dirtyGuard, a requery on a stale span (false) and error
-   *  reporting. Every write path (a drag's updateTask, a chip's rescheduleTask) has to come
-   *  through here. true only when the write went to disk: a drop's provisional card waits
-   *  for that write's reload, and every other outcome has no reload coming. */
-  async function commit(hit: BlockHit, act: string, write: () => Promise<boolean>): Promise<boolean> {
-    if (!dirtyGuard(hit, act)) return false;
-    try {
-      // A stale span (the note changed after the query): nothing is written, and after a requery the user retries on the new data
-      if (await write()) return true;
-      await load();
-    } catch (err) {
-      vault.error = String(err);
-    }
-    return false;
-  }
+  /** The shared write funnel (taskwrite.ts, Agenda's too): the dirty guard, a requery on a
+   *  stale span and error reporting. Every write path (a drag's updateTask, a chip's
+   *  rescheduleTask) has to come through here; true only when the write went to disk. */
+  const commit = (hit: BlockHit, act: string, write: () => Promise<boolean>) => commitTaskWrite(hit, act, write, load);
 
   const applyEdit = (hit: BlockHit, edit: TaskEdit, act: string) => commit(hit, act, () => updateTask(hit, edit));
 
@@ -147,13 +125,9 @@
   /** The card a menu is about keeps its hover colour while the menu is open (Agenda's rows
    *  do the same): the context menu, and the date menu it opens, float at the right-click
    *  with the pointer gone from the card, and a date menu with no card lit does not say
-   *  which task it is setting. The context menu is the application's singleton, so the card
-   *  it was opened for is remembered here and forgotten when the menu closes. */
-  let menuCardKey = $state<string | null>(null);
-  $effect(() => {
-    if (!contextMenu.pos) menuCardKey = null;
-  });
-  const heldKey = $derived(menu ? taskKey(menu.card) : menuCardKey);
+   *  which task it is setting. The context menu remembers what it was opened for (owner)
+   *  until it closes. */
+  const heldKey = $derived(menu ? taskKey(menu.card) : contextMenu.owner);
   /** A card dropped into "scheduled" shows there at once, at the top of the column, rather
    *  than only after its date is picked: date null while the menu is open (Esc or a click
    *  outside puts the card back where it was), then the picked date until a query made after
@@ -273,15 +247,15 @@
   function cardMenu(e: MouseEvent, card: Card) {
     e.stopPropagation();
     const at = { x: e.clientX, y: e.clientY };
-    menuCardKey = taskKey(card);
     contextMenu.open(
       e,
       taskMenuEntries(card, {
         open: () => void openCard(card),
         editDate: (field, current) => (menu = { mode: "chip", ...at, card, field, current }),
-        setState: (state) => void applyEdit(card.hit, { state }, t(state === "doing" || card.state === "doing" ? "task.act.state" : "task.act.toggle")),
+        setState: (state, act) => void applyEdit(card.hit, { state }, act),
         remove: () => void commit(card.hit, t("task.act.remove"), () => deleteTask(card.hit)),
       }),
+      taskKey(card),
     );
   }
 

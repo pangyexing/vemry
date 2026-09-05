@@ -4,7 +4,7 @@
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
   import { byDate, byModified, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
-  import { k as kbd } from "$lib/shortcut";
+  import { commitTaskWrite } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
   import Chevron from "../Chevron.svelte";
@@ -110,26 +110,8 @@
    *  list has. The task text keeps its own cap; the space goes to the source column. */
   const dateTrack = $derived(shown.some(isLate) ? "13em" : shown.some((r) => r.due || r.scheduled) ? "7.5em" : "2.6em");
 
-  /** The guard every write in Agenda shares: the note being edited is saved first, so unsaved changes are not overwritten */
-  function dirtyGuard(hit: BlockHit, act: string): boolean {
-    if (hit.note === vault.currentPath && vault.dirty) {
-      vault.error = t("task.dirtyGuard", { key: kbd("Mod+S"), action: act });
-      return false;
-    }
-    return true;
-  }
-
-  /** The write funnel every path shares (the kanban has the same one): dirtyGuard, a
-   *  requery on a stale span and error reporting. */
-  async function commit(hit: BlockHit, act: string, write: () => Promise<boolean>) {
-    if (!dirtyGuard(hit, act)) return;
-    try {
-      // A stale span (the note changed after the query): nothing is written, and after a requery the user retries on the new data
-      if (!(await write())) await load();
-    } catch (err) {
-      vault.error = String(err);
-    }
-  }
+  /** The write funnel every path shares (taskwrite.ts, the kanban's too): the dirty guard, a requery on a stale span and error reporting. */
+  const commit = (hit: BlockHit, act: string, write: () => Promise<boolean>) => commitTaskWrite(hit, act, write, load);
 
   function onToggle(e: Event, hit: BlockHit) {
     e.stopPropagation();
@@ -148,14 +130,8 @@
    *  menu hangs off the chip and the row is plain to see; the context menu, and the date
    *  menu it opens, float at the right-click with the pointer gone from the row — and a
    *  "start date: today / tomorrow" with no row lit says nothing about which task it is
-   *  setting. The context menu is the application's singleton, so the row it was opened for
-   *  is remembered here and forgotten when the menu closes (by an item, a click outside or
-   *  Esc alike). */
-  let menuRowKey = $state<string | null>(null);
-  $effect(() => {
-    if (!contextMenu.pos) menuRowKey = null;
-  });
-  const heldKey = $derived(dateMenu?.key ?? menuRowKey);
+   *  setting. The context menu remembers what it was opened for (owner) until it closes. */
+  const heldKey = $derived(dateMenu?.key ?? contextMenu.owner);
 
   function applyDate(date: string | null) {
     const m = dateMenu;
@@ -169,15 +145,15 @@
     e.stopPropagation();
     const at = { x: e.clientX, y: e.clientY };
     const key = taskKey(r);
-    menuRowKey = key;
     contextMenu.open(
       e,
       taskMenuEntries(r, {
         open: () => void openTask(r.hit),
         editDate: (field, current) => (dateMenu = { ...at, key, hit: r.hit, field, current }),
-        setState: (state) => void commit(r.hit, t(state === "doing" || r.state === "doing" ? "task.act.state" : "task.act.toggle"), () => updateTask(r.hit, { state })),
+        setState: (state, act) => void commit(r.hit, act, () => updateTask(r.hit, { state })),
         remove: () => void commit(r.hit, t("task.act.remove"), () => deleteTask(r.hit)),
       }),
+      key,
     );
   }
 

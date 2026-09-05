@@ -17,9 +17,9 @@
   // is the one exception, where the user explicitly wants the main window.
   import { t } from "$lib/i18n/i18n.svelte";
   import { onMount, tick } from "svelte";
-  import { Menu } from "@tauri-apps/api/menu";
+  import { Menu, type MenuOptions } from "@tauri-apps/api/menu";
   import { api, onBrowserbarCommand, onBrowserbarResult, type BrowserbarAction, type HistoryEntryView } from "$lib/api";
-  import { isUrlLike, prettyUrl } from "$lib/urls";
+  import { isUrlLike, prettyUrl, webCandidates, type WebCandidate } from "$lib/urls";
   import { executeCommand, fuzzyFilter } from "$lib/commands/registry";
   import { domainOf } from "$lib/markdown";
   import { isMac, k } from "$lib/shortcut";
@@ -169,8 +169,10 @@
     else void executeCommand(kind);
     refocus();
   }
+  /** The items of a native popup menu (the clip menu, the more menu). */
+  type NativeItems = NonNullable<MenuOptions["items"]>;
   async function clipMenu() {
-    const items: Parameters<typeof Menu.new>[0] extends { items?: infer I } | undefined ? NonNullable<I> : never = [
+    const items: NativeItems = [
       { id: "pick", text: t("browserPanel.pickTarget"), action: () => pickTarget() },
       { item: "Separator" },
       { id: "page", text: t("clipBar.clipPage"), action: () => clip("clip-page") },
@@ -203,7 +205,7 @@
         : ad?.state === "failed"
           ? t("agentPanel.adblockFailed", { error: ad.error })
           : null;
-    const items: Parameters<typeof Menu.new>[0] extends { items?: infer I } | undefined ? NonNullable<I> : never = [];
+    const items: NativeItems = [];
     if (adText) items.push({ id: "adblock", text: adText, enabled: false }, { item: "Separator" });
     if (url) items.push({ id: "system", text: t("reader.openInSystemBrowser"), action: () => run(api.urlOpenSystem(url), false) });
     items.push({ id: "history", text: t("cmd.clear-browser-history.title"), action: () => run(api.browserHistoryClear(), false) });
@@ -368,14 +370,15 @@
     // The input mounts with the blank tab (addrOpen), so it exists only after the render
     void tick().then(() => addrEl?.focus());
   });
-  type NtRow = { url: string; title: string; starred: boolean; head?: string };
+  type NtRow = WebCandidate & { head?: string };
+  // The same pool and the same fuzzy filter as the palette's web space, so a query ranks the same in both
+  const ntCandidates = $derived(webCandidates(browser.bookmarks, ntHistory));
   const ntRows = $derived.by((): NtRow[] => {
-    const seen = new Set<string>();
-    const dedup = (rows: NtRow[]) => rows.filter((c) => (seen.has(c.url) ? false : (seen.add(c.url), true)));
-    const q = addrValue.trim().toLowerCase();
-    const hit = (c: NtRow) => !q || `${c.title} ${prettyUrl(c.url)}`.toLowerCase().includes(q);
-    const marks = dedup(browser.bookmarks.map((b) => ({ url: b.url, title: b.title, starred: true }))).filter(hit).slice(0, q ? 24 : 8);
-    const recents = dedup(ntHistory.map((h) => ({ url: h.url, title: h.title, starred: false }))).filter(hit).slice(0, q ? 24 : 12);
+    const q = addrValue.trim();
+    const pick = (starred: boolean, cap: number): NtRow[] =>
+      fuzzyFilter(ntCandidates.filter((c) => c.starred === starred), q, (c) => c.key).slice(0, q ? 24 : cap);
+    const marks = pick(true, 8);
+    const recents = pick(false, 12);
     if (!q) {
       if (marks[0]) marks[0] = { ...marks[0], head: t("palette.bookmarks") };
       if (recents[0]) recents[0] = { ...recents[0], head: t("palette.recent") };
@@ -428,11 +431,19 @@
   // (the tab is veiled meanwhile) and the final width goes once the drag ends. ----
   let rootEl = $state<HTMLDivElement | null>(null);
   let chromeEl = $state<HTMLDivElement | null>(null);
+  /** The last anchors sent: the observer fires on every height change of the window too
+   *  (the column is full-height), and those change nothing Rust needs to hear about. */
+  let reported = "";
   function report(visible: boolean) {
     if (inBar) return;
-    const w = rootEl?.getBoundingClientRect().width ?? browser.panelWidth;
-    const h = chromeEl?.getBoundingClientRect().height ?? 72;
-    void api.browserPanelLayout(visible, Math.round(w), Math.round(h)).catch(() => {});
+    // Before the elements exist a report would be a guess; the observer sends one once they do
+    if (visible && !(rootEl && chromeEl)) return;
+    const w = Math.round(rootEl?.getBoundingClientRect().width ?? browser.panelWidth);
+    const h = Math.round(chromeEl?.getBoundingClientRect().height ?? 0);
+    const key = `${visible} ${w} ${h}`;
+    if (key === reported) return;
+    reported = key;
+    void api.browserPanelLayout(visible, w, h).catch(() => {});
   }
   $effect(() => {
     if (!inBar && vault.resizing === null) report(true);

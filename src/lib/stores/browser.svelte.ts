@@ -1,8 +1,8 @@
 // The built-in browser's state (Svelte 5 runes). The source of truth for the tabs,
 // the active tab and the shape is Rust's BrowserState, and this is the mirror
 // assembled from browser://event pushes plus the browser_state backstop snapshot.
-// The panel's width belongs to the main window's frontend alone and is kept in
-// localStorage, the same as the sidebar widths. Whether the panel is on screen is not
+// The panel's width belongs to the main window's frontend alone and is persisted with
+// the sidebar widths (vault.browserWidth). Whether the panel is on screen is not
 // state at all: it is there exactly while it has tabs — closing the last tab closes
 // it, and opening a page brings it back (a hidden-but-alive set of tabs would need a
 // switch of its own, which twice turned out to be a button nobody could place).
@@ -15,22 +15,14 @@ import {
   type BrowserTabView,
 } from "$lib/api";
 import { isMainWindow } from "$lib/window";
-
-const UI_KEY = "vemry-browser-ui";
-type UiState = { width?: number };
-function loadUi(): UiState {
-  try {
-    return JSON.parse(localStorage.getItem(UI_KEY) ?? "{}") as UiState;
-  } catch {
-    return {};
-  }
-}
+import { vault } from "$lib/stores/vault.svelte";
 
 /** The docked panel column's width floor (logical px): narrower and most sites render their mobile layout in a strip. */
 export const PANEL_MIN = 360;
+/** The panel column's width until the user drags its sash. */
+export const PANEL_DEFAULT = 440;
 /** How much of the main window the panel may take at most: the rest keeps the file tree, the content area and the research panel usable (matches Rust's former MIN_MAIN_VISIBLE). */
 export const MAIN_MIN_BESIDE_PANEL = 804;
-const ui = loadUi();
 
 class BrowserStore {
   tabs = $state<BrowserTabView[]>([]);
@@ -41,7 +33,13 @@ class BrowserStore {
   /** The bookmarks mirror (the source of truth is bookmarks.json, and a change replaces it wholesale through bookmarks_changed). */
   bookmarks = $state<BookmarkView[]>([]);
 
-  panelWidth = $state<number>(Math.max(PANEL_MIN, ui.width ?? 440));
+  /** The docked panel column's width (logical px): the persisted value on its floor, or the default. */
+  get panelWidth(): number {
+    return Math.max(PANEL_MIN, vault.browserWidth ?? PANEL_DEFAULT);
+  }
+  set panelWidth(w: number) {
+    vault.browserWidth = w;
+  }
   /** A full-window overlay is open (the palette, a dialog, the lightbox, a sash drag): the
    *  native tab is hidden by Rust meanwhile, and the panel paints a placeholder. Written by
    *  App from its overlay states. */
@@ -54,6 +52,11 @@ class BrowserStore {
     return this.tabs.length > 0;
   }
 
+  /** The panel column is on screen in the main window: the one predicate every layout decision keys on. */
+  get docked(): boolean {
+    return this.panelOpen && this.shape === "docked";
+  }
+
   /** The tab shown: the chrome shows and acts on it; null when there are no tabs. */
   get current(): BrowserTabView | null {
     return this.tabs.find((w) => w.label === this.active) ?? this.tabs[0] ?? null;
@@ -63,12 +66,7 @@ class BrowserStore {
    *  the popups, the toasts and the sash budget keep out of it, since a native view
    *  covers any DOM underneath. */
   get panelInset(): number {
-    return isMainWindow && this.panelOpen && this.shape === "docked" ? this.panelWidth : 0;
-  }
-
-  /** Whether the main window is wide enough to dock the panel beside a usable layout. */
-  get canDock(): boolean {
-    return window.innerWidth >= MAIN_MIN_BESIDE_PANEL + PANEL_MIN;
+    return isMainWindow && this.docked ? this.panelWidth : 0;
   }
 
   /** Patch fields onto the tab matching label (an immutable update; a no-op when the label does not match). */
@@ -120,17 +118,3 @@ class BrowserStore {
 }
 
 export const browser = new BrowserStore();
-
-// The panel's width is written through to localStorage by the main window (the bar mirrors the store and never writes)
-if (isMainWindow) {
-  $effect.root(() => {
-    $effect(() => {
-      const snapshot = JSON.stringify({ width: browser.panelWidth });
-      try {
-        localStorage.setItem(UI_KEY, snapshot);
-      } catch {
-        /* storage unavailable */
-      }
-    });
-  });
-}

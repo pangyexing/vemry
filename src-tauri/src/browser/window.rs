@@ -9,7 +9,7 @@
 //! the main thread (inside run_on_main_thread) and from a command thread; the
 //! bounds, hide and show messages are fire-and-forget from anywhere.
 
-use super::{emit, BrowserEntry, BrowserEvent, PanelLayout, Shape};
+use super::{emit, BrowserEntry, BrowserEvent, BrowserInner, PanelLayout, Shape};
 use crate::AppState;
 use serde::Serialize;
 use tauri::webview::{NewWindowResponse, WebviewBuilder};
@@ -143,15 +143,19 @@ pub async fn browser_open(
         }
     }
 
-    // Building and claiming happen on the main thread as a whole: on macOS the
-    // WKWebViewConfiguration (!Send) has to have the adblock rules attached before
-    // the webview is built, so the first frame already blocks
+    open_on_main(&app, Some(url), focus).await
+}
+
+/// Open a tab through the warm-up shell on the main thread and wait for its label.
+/// Building and claiming happen on the main thread as a whole: on macOS the
+/// WKWebViewConfiguration (!Send) has to have the adblock rules attached before
+/// the webview is built, so the first frame already blocks.
+async fn open_on_main(app: &AppHandle, url: Option<Url>, focus: bool) -> Result<String, String> {
     let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
     {
         let app2 = app.clone();
-        let url2 = url.clone();
         app.run_on_main_thread(move || {
-            let _ = tx.send(open_in_shell(&app2, Some(&url2), focus));
+            let _ = tx.send(open_in_shell(&app2, url.as_ref(), focus));
         })
         .map_err(|e| e.to_string())?;
     }
@@ -159,7 +163,7 @@ pub async fn browser_open(
     // Queue the next warm-up shell, on success and failure alike — the failure path
     // consumed the shell too, and without refilling, one transient failure would
     // leave every tab this session opening on the cold path
-    ensure_pool_soon(&app, 1500);
+    ensure_pool_soon(app, 1500);
     result
 }
 
@@ -168,17 +172,7 @@ pub async fn browser_open(
 /// the first navigation — from that page, ⌘L or a link — fills it. Returns the label.
 #[tauri::command]
 pub async fn browser_new_tab(app: AppHandle) -> Result<String, String> {
-    let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
-    {
-        let app2 = app.clone();
-        app.run_on_main_thread(move || {
-            let _ = tx.send(open_in_shell(&app2, None, false));
-        })
-        .map_err(|e| e.to_string())?;
-    }
-    let result = rx.await.map_err(|_| "tab creation was interrupted".to_string())?;
-    ensure_pool_soon(&app, 1500);
-    result
+    open_on_main(&app, None, false).await
 }
 
 /// Close every tab — the panel's × (and the detached window with it). Reopening is
@@ -312,10 +306,7 @@ fn build_tab(app: &AppHandle, label: &str) -> Result<(), String> {
                 })
                 .unwrap_or((false, None));
             if detached && active.as_deref() == Some(label.as_str()) {
-                if let Some(win) = title_app.get_window(DETACHED_LABEL) {
-                    let fallback = crate::i18n::t(crate::i18n::current(), "window.browserTitle");
-                    let _ = win.set_title(if title.trim().is_empty() { &fallback } else { title.as_str() });
-                }
+                sync_detached_title(&title_app, &title);
             }
             emit(&title_app, &BrowserEvent::TitleChanged { label, title });
         });
@@ -560,10 +551,23 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> tauri::Rect {
 /// shown only while the panel is on screen and no overlay is open. Detached: under
 /// the chrome bar, the full width of the detached window (the bar itself is placed
 /// here too, grown over the page while its picker is open).
-/// Called after every state change and on each window resize (the anchors make the
-/// resize a pure recomputation — no round trip to the frontend, so a live resize
-/// does not lag).
+/// Called after every state change; a window resize goes through `relayout` (the
+/// anchors make the resize a pure recomputation — no round trip to the frontend, so a
+/// live resize does not lag).
 pub fn apply_layout(app: &AppHandle) {
+    place_tabs(app, true);
+}
+
+/// The main window or the detached window resized (lib.rs's hooks): re-place the
+/// active tab (and the chrome bar) from the anchors. A resize changes no tab's
+/// visibility, so the other tabs are left alone — this runs once per resize frame.
+pub fn relayout(app: &AppHandle) {
+    place_tabs(app, false);
+}
+
+/// `full`: also settle every tab's visibility (the active one shown or hidden by the
+/// overlay and blank rules, the rest hidden); otherwise only the active tab's bounds.
+fn place_tabs(app: &AppHandle, full: bool) {
     let Some(s) = app.try_state::<AppState>() else { return };
     let (shape, active, panel, labels, bar_expanded, active_blank) = {
         let inner = s.browser.0.lock().unwrap();
@@ -571,7 +575,7 @@ pub fn apply_layout(app: &AppHandle) {
             inner.shape,
             inner.active.clone(),
             inner.panel,
-            inner.tabs.keys().cloned().collect::<Vec<_>>(),
+            if full { inner.tabs.keys().cloned().collect::<Vec<_>>() } else { inner.active.iter().cloned().collect() },
             inner.bar_expanded,
             inner.active.as_ref().and_then(|l| inner.tabs.get(l)).is_some_and(|e| e.url == BLANK),
         )
@@ -605,6 +609,9 @@ pub fn apply_layout(app: &AppHandle) {
         let Some(wv) = app.get_webview(&label) else { continue };
         if active.as_deref() == Some(label.as_str()) {
             let _ = wv.set_bounds(bounds);
+            if !full {
+                continue;
+            }
             if show_active {
                 let _ = wv.show();
             } else {
@@ -633,11 +640,6 @@ fn title_bar_height(win: &tauri::Window) -> f64 {
 #[cfg(not(target_os = "macos"))]
 fn title_bar_height(_win: &tauri::Window) -> f64 {
     0.0
-}
-
-/// The main window or the detached window resized (lib.rs's hooks): re-place the tabs.
-pub fn relayout(app: &AppHandle) {
-    apply_layout(app);
 }
 
 /// The frontend reports the docked panel column: on screen or collapsed, its width
@@ -682,23 +684,19 @@ pub fn browser_panel_veil(app: AppHandle, state: State<'_, AppState>, veiled: bo
 /// Make a tab the shown one (a registry change, the layout, the event; `focus` also
 /// hands it the keyboard). A no-op for an unknown label.
 fn activate(app: &AppHandle, label: &str, focus: bool) {
-    let known = {
+    let (detached, title) = {
         let Some(s) = app.try_state::<AppState>() else { return };
         let mut inner = s.browser.0.lock().unwrap();
         if !inner.tabs.contains_key(label) {
             return;
         }
-        let changed = inner.active.as_deref() != Some(label);
         inner.active = Some(label.to_string());
-        let detached = inner.shape == Shape::Detached;
-        (changed, detached, inner.tabs.get(label).map(|e| e.title.clone()).unwrap_or_default())
+        (inner.shape == Shape::Detached, inner.tabs.get(label).map(|e| e.title.clone()).unwrap_or_default())
     };
-    let (_changed, detached, title) = known;
     apply_layout(app);
     if detached {
+        sync_detached_title(app, &title);
         if let Some(win) = app.get_window(DETACHED_LABEL) {
-            let fallback = crate::i18n::t(crate::i18n::current(), "window.browserTitle");
-            let _ = win.set_title(if title.trim().is_empty() { &fallback } else { title.as_str() });
             let _ = win.show();
             if focus {
                 let _ = win.set_focus();
@@ -740,13 +738,24 @@ pub fn close_active_tab(app: &AppHandle) {
     }
 }
 
+/// Take a tab out of the registry: its entry, its native view pointer, and the
+/// active slot when it held it (the caller decides the succession). Returns the
+/// entry and whether it was the active tab; None for an unknown label.
+fn forget_tab(inner: &mut BrowserInner, label: &str) -> Option<(BrowserEntry, bool)> {
+    let closed = inner.tabs.remove(label)?;
+    inner.views.remove(label);
+    let was_active = inner.active.as_deref() == Some(label);
+    if was_active {
+        inner.active = None;
+    }
+    Some((closed, was_active))
+}
+
 fn close_tab(app: &AppHandle, label: &str) {
     let Some(s) = app.try_state::<AppState>() else { return };
     let (next, last, detached) = {
         let mut inner = s.browser.0.lock().unwrap();
-        let Some(closed) = inner.tabs.remove(label) else { return };
-        inner.views.remove(label);
-        let was_active = inner.active.as_deref() == Some(label);
+        let Some((closed, was_active)) = forget_tab(&mut inner, label) else { return };
         let next = if was_active {
             let right = inner.tabs.iter().filter(|(_, e)| e.id > closed.id).min_by_key(|(_, e)| e.id);
             let left = inner.tabs.iter().filter(|(_, e)| e.id < closed.id).max_by_key(|(_, e)| e.id);
@@ -765,10 +774,7 @@ fn close_tab(app: &AppHandle, label: &str) {
     emit(app, &BrowserEvent::Closed { label: label.to_string() });
     if last {
         if detached {
-            if let Some(win) = app.get_window(DETACHED_LABEL) {
-                record_detached_geom(app, &win);
-                let _ = win.close();
-            }
+            close_detached_window(app);
         }
         // Focus etiquette: the keyboard returns to the main window's own webview once the last tab closes
         if let Some(main) = app.get_webview("main") {
@@ -826,10 +832,7 @@ fn set_shape(app: &AppHandle, shape: Shape) -> Result<(), String> {
             s.browser.0.lock().unwrap().shape = Shape::Docked;
             // Once the tabs are the main window's again, the detached window's close
             // hook finds none of its own and just lets it go
-            if let Some(win) = app.get_window(DETACHED_LABEL) {
-                record_detached_geom(app, &win);
-                let _ = win.close();
-            }
+            close_detached_window(app);
             apply_layout(app);
             let _ = main.set_focus();
         }
@@ -847,9 +850,7 @@ fn set_shape(app: &AppHandle, shape: Shape) -> Result<(), String> {
                     inner.shape = Shape::Detached;
                     inner.active.as_ref().and_then(|l| inner.tabs.get(l)).map(|e| e.title.clone()).unwrap_or_default()
                 };
-                if !title.trim().is_empty() {
-                    let _ = win.set_title(&title);
-                }
+                sync_detached_title(app, &title);
                 apply_layout(app);
                 let _ = win.show();
                 let _ = win.set_focus();
@@ -868,6 +869,22 @@ fn set_shape(app: &AppHandle, shape: Shape) -> Result<(), String> {
 fn raise_bar(app: &AppHandle) {
     if let (Some(bar), Some(win)) = (app.get_webview(BAR_LABEL), app.get_window(DETACHED_LABEL)) {
         let _ = bar.reparent(&win);
+    }
+}
+
+/// The detached window's title follows its active tab (so it can be told apart in
+/// ⌘Tab and the window menu), with the catalog's name for an untitled page.
+fn sync_detached_title(app: &AppHandle, title: &str) {
+    let Some(win) = app.get_window(DETACHED_LABEL) else { return };
+    let fallback = crate::i18n::t(crate::i18n::current(), "window.browserTitle");
+    let _ = win.set_title(if title.trim().is_empty() { &fallback } else { title });
+}
+
+/// Close the detached window, remembering its geometry first (written to disk on Destroyed).
+fn close_detached_window(app: &AppHandle) {
+    if let Some(win) = app.get_window(DETACHED_LABEL) {
+        record_detached_geom(app, &win);
+        let _ = win.close();
     }
 }
 
@@ -912,7 +929,7 @@ fn ensure_detached_window(app: &AppHandle) -> Result<tauri::Window, String> {
     let handle = app.clone();
     win.on_window_event(move |event| match event {
         WindowEvent::Resized(_) => {
-            apply_layout(&handle);
+            relayout(&handle);
             if let Some(w) = handle.get_window(DETACHED_LABEL) {
                 record_detached_geom(&handle, &w);
             }
@@ -935,12 +952,7 @@ fn ensure_detached_window(app: &AppHandle) -> Result<tauri::Window, String> {
                 .collect();
             for label in mine {
                 if let Some(s) = handle.try_state::<AppState>() {
-                    let mut inner = s.browser.0.lock().unwrap();
-                    inner.tabs.remove(&label);
-                    inner.views.remove(&label);
-                    if inner.active.as_deref() == Some(label.as_str()) {
-                        inner.active = None;
-                    }
+                    forget_tab(&mut s.browser.0.lock().unwrap(), &label);
                 }
                 emit(&handle, &BrowserEvent::Closed { label });
             }
@@ -959,8 +971,8 @@ fn ensure_detached_window(app: &AppHandle) -> Result<tauri::Window, String> {
                     });
                 }
             }
-            if let Some(main) = handle.get_webview("main") {
-                let _ = main.window().set_focus();
+            if let Some(main) = main_window(&handle) {
+                let _ = main.set_focus();
             }
         }
         _ => {}

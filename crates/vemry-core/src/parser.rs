@@ -454,8 +454,9 @@ fn starts_new_block(line: &str) -> bool {
         || parse_list_marker(line).is_some()
 }
 
-/// `> [!claim] optional title` — returns (lowercased type, rest of line).
-fn parse_callout_open(trimmed: &str) -> Option<(String, &str)> {
+/// `> [!claim] optional title` — returns (lowercased type, rest of line after the
+/// optional fold marker, trimmed). Shared with provenance's clip-credit reader.
+pub(crate) fn parse_callout_open(trimmed: &str) -> Option<(String, &str)> {
     let after_quote = trimmed.strip_prefix('>')?.trim_start();
     let after_bang = after_quote.strip_prefix("[!")?;
     let close = after_bang.find(']')?;

@@ -60,7 +60,7 @@ pub struct PanelLayout {
 
 impl Default for PanelLayout {
     fn default() -> Self {
-        PanelLayout { visible: false, width: 420.0, chrome_h: 72.0, veiled: false }
+        PanelLayout { visible: false, width: 420.0, chrome_h: window::BAR_H, veiled: false }
     }
 }
 

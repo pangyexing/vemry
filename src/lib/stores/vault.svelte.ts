@@ -58,12 +58,13 @@ const UI_KEY = "vemry-ui";
 // identity moved from links to the outline, with the links collapsed at the bottom)
 // leftW/rightW: the sidebar widths (px) the user set by dragging the sash; absent =
 // each one's default flexible width
+// browserW: the docked browser panel's width (px), absent = its default
 // swap: the two sidebars change sides
 // blOpen/outOpen: whether the outline panel's bottom "backlinks / outgoing links"
 // sections are expanded; collapsed by default and not persisted
 type UiState = {
   leftOpen?: boolean; rightOpen?: boolean; rightTab?: string;
-  leftW?: number; rightW?: number; swap?: boolean;
+  leftW?: number; rightW?: number; browserW?: number; swap?: boolean;
   blOpen?: boolean; outOpen?: boolean;
 };
 function loadUi(): UiState {
@@ -79,7 +80,7 @@ const ui = loadUi();
  *  column's minimum; bad data falls back to null (the default width).
  *  The upper bound is not handled here — the grid's content-area min catches it, and one
  *  more drag returns it to the legal range. */
-function loadWidth(v: unknown, min: number): number | null {
+function loadWidth(v: unknown, min = 0): number | null {
   return typeof v === "number" && Number.isFinite(v) ? Math.round(Math.max(min, v)) : null;
 }
 
@@ -384,6 +385,10 @@ class VaultStore {
    *  open/close shortcuts and the state's meaning do not change). */
   leftWidth = $state<number | null>(loadWidth(ui.leftW, 140));
   rightWidth = $state<number | null>(loadWidth(ui.rightW, 280));
+  /** The docked browser panel's width (px), null = its default. Persisted here with the
+   *  sidebar widths (one UI-state key, one write-through paused while a sash is dragged);
+   *  the floor and the default are the browser store's, which owns the panel's geometry. */
+  browserWidth = $state<number | null>(loadWidth(ui.browserW));
   /** The sash being dragged (App renders the handle's highlight and the cursor overlay
    *  from it). While dragging, persisting the UI state is paused — a synchronous
    *  localStorage write at pointermove frequency stalls the live layout, and when it goes
@@ -1743,6 +1748,7 @@ $effect.root(() => {
       leftOpen: vault.leftOpen, rightOpen: vault.rightOpen, rightTab: vault.rightTab,
       // stringify drops undefined — "the default width / the default side" is not persisted
       leftW: vault.leftWidth ?? undefined, rightW: vault.rightWidth ?? undefined,
+      browserW: vault.browserWidth ?? undefined,
       swap: vault.swapSides || undefined,
       blOpen: vault.backlinksOpen || undefined, outOpen: vault.outgoingOpen || undefined,
     });

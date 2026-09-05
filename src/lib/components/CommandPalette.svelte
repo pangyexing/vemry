@@ -14,7 +14,7 @@
 
   export type PaletteMode = "commands" | "notes" | "pick-note" | "search" | "capture" | "vaults" | "url" | "types";
 
-  import { prettyUrl } from "$lib/urls";
+  import { prettyUrl, webCandidates } from "$lib/urls";
 
   interface Item {
     id: string;
@@ -89,7 +89,7 @@
    *  carries the text over, so a query aimed at the wrong space is one click or one shortcut
    *  from the right one. */
   const FIND_MODES: PaletteMode[] = ["search", "url"];
-  const isFind = $derived(mode === "search" || mode === "url");
+  const isFind = $derived(mode !== null && FIND_MODES.includes(mode));
   let prevMode: PaletteMode | null = null;
   $effect(() => {
     if (mode) {
@@ -124,22 +124,9 @@
     return () => clearTimeout(t);
   });
 
-  /** url mode's candidate pool: bookmarks first plus the history, deduplicated by url (first
-   *  seen wins = bookmarks take precedence), with the filter key built and lowercased ahead of
-   *  time. It depends on the two mirrors alone and not on query — putting it inside items
-   *  would decodeURI and rebuild up to 500 strings on every keystroke. */
-  const urlCandidates = $derived.by(() => {
-    const seen = new Set<string>();
-    return [
-      ...browser.bookmarks.map((b) => ({ url: b.url, title: b.title, starred: true })),
-      ...urlHistory.map((h) => ({ url: h.url, title: h.title, starred: false })),
-    ]
-      .filter((c) => (seen.has(c.url) ? false : (seen.add(c.url), true)))
-      .map((c) => {
-        const pretty = prettyUrl(c.url); // decoded once per entry (the reason this derived exists)
-        return { ...c, pretty, key: `${c.title} ${pretty}`.toLowerCase() };
-      });
-  });
+  /** url mode's candidate pool (the same list the new-tab page draws on): it depends on the
+   *  two mirrors alone and not on query, so a keystroke only filters it. */
+  const urlCandidates = $derived(webCandidates(browser.bookmarks, urlHistory));
 
   // The second stage's heading list is another projection of query(); it opens no new read path
   $effect(() => {

@@ -870,16 +870,11 @@ add("browserPanel.", {
     "closeTab": ("Close tab", "关闭标签页"),
     "detach": ("Detach into its own window", "分离成独立窗口"),
     "dock": ("Dock back into the main window", "贴回主窗"),
-    "tooNarrow": ("The main window is too narrow to dock the browser", "主窗太窄,贴不下浏览面板"),
     "more": ("More", "更多"),
     "clip": ("Clip", "剪藏"),
     "clipMenuHint": ("Other clip destinations", "其它剪藏落点"),
     "pickTarget": ("Pick a destination…", "选落点…"),
     "aiDockedHint": ("Add this page to the conversation as context", "把这一页作为上下文加入对话"),
-    "veiled": ("The page is hidden while a dialog is open", "对话框打开时页面暂时隐藏"),
-    "zoomIn": ("Zoom in", "放大"),
-    "zoomOut": ("Zoom out", "缩小"),
-    "zoomReset": ("Actual size", "实际大小"),
 })
 
 # ---------------------------------------------------------------- clip bar strings (reused by the browser panel chrome)
@@ -905,17 +900,11 @@ add("clipBar.", {
     "selectionToTargetHint": ("Clip the selection into {path}", "选中文字剪入 {path}"),
     "selectionDefaultHint": ("Turn the selection into a quote block in the main window's current note; ▾ pins a target",
                              "选中文字变引用块,插入主窗当前笔记;▾ 钉住目标笔记"),
-    "pickTargetHint": ("Clip the selection into a chosen note or section (picking pins it; one click after that)",
-                       "选区剪入指定笔记/小节(选定即剪并钉住,之后单击直达)"),
     "unpinHint": ("Unpin and go back to the default target", "解除钉住,恢复默认落点"),
     "clipPage": ("Page→clips", "整页→clips"),
-    "clipPageHint": ("Extract the article, convert to Markdown, save in clips/", "整页抽正文转 markdown,存 clips/"),
     "clipLink": ("Link→note", "链接→笔记"),
-    "clipLinkHint": ("Insert this page as a reference in the main window's current note",
-                     "当前页链接作为参考条目插入主窗当前笔记"),
     "openClippedHint": ("Open the local clip note {path} (back in the main window)",
                         "打开本地剪藏笔记 {path}(回主窗)"),
-
 })
 
 # ---------------------------------------------------------------- research panel
@@ -953,7 +942,6 @@ add("agentPanel.", {
     "adblockOn": ("Ad blocking active · {n} rules", "去广告已生效 · {n} 条规则"),
     "adblockFailed": ("Ad blocking failed: {error}", "去广告失败: {error}"),
     "reload": ("Reload", "刷新"),
-
 })
 
 # ---------------------------------------------------------------- agent chat

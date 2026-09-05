@@ -1359,7 +1359,7 @@ the detached shape it is reparented first).
 **Geometry — who computes the bounds.** Docked: the frontend reports the panel's
 anchors (`browser_panel_layout`: mounted or not, the column's width, the
 chrome's height) only when they change; on a window resize Rust re-places the tab
-from the anchors with no round trip (`apply_layout`, the main window's Resized
+from the anchors with no round trip (`relayout`, the main window's Resized
 hook), so a live resize does not lag. The width is the user's (a sash on the notes
 side of the boundary; 360 ≤ width ≤ innerWidth − 804, the same floor as the
 layout's three minimum columns plus the activity bar). Detached: the bar is (0, 0,

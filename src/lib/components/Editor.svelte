@@ -26,7 +26,7 @@
   import { prefs } from "$lib/stores/prefs.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { api, SELECTION_MAX_CHARS, trimLoneSurrogate, type BlockQuery, type BlockSelector } from "$lib/api";
-  import { planInsert, planCursorInsert } from "$lib/insert";
+  import { planInsert, planCursorInsert, type InsertPlan } from "$lib/insert";
   import { extractOutline } from "$lib/outline";
   import { countWords } from "$lib/stats";
   import { k } from "$lib/shortcut";
@@ -257,15 +257,19 @@
     const plan = block
       ? planCursorInsert(view.state.doc, sel.to, text)
       : { from: sel.from, to: sel.to, insert: text, caret: sel.from + text.length };
-    view.dispatch({
+    landPlan(view, plan, block);
+    return true;
+  }
+  /** Land an insert plan: the change and the caret, a `[!quote]-` clip folded as it would
+   *  open (a block payload alone can carry one), and the focus. */
+  function landPlan(v: EditorView, plan: Pick<InsertPlan, "from" | "to" | "insert" | "caret">, block: boolean) {
+    v.dispatch({
       changes: { from: plan.from, to: plan.to, insert: plan.insert },
       selection: { anchor: plan.caret },
       scrollIntoView: true,
     });
-    // A `[!quote]-` clip lands folded, as it would open
-    if (block) foldMarkedIn(view, plan.from, plan.from + plan.insert.length);
-    focusEditor(view);
-    return true;
+    if (block) foldMarkedIn(v, plan.from, plan.from + plan.insert.length);
+    focusEditor(v);
   }
   vault.insertAtCursor = insertAtCursor;
 
@@ -277,13 +281,7 @@
   function insertAtSection(heading: string, text: string): "section" | "tail" | false {
     if (!view || !docPath?.endsWith(".md") || docPath !== vault.currentPath) return false;
     const plan = planInsert(view.state.doc.toString(), heading, text);
-    view.dispatch({
-      changes: { from: plan.from, to: plan.to, insert: plan.insert },
-      selection: { anchor: plan.caret },
-      scrollIntoView: true,
-    });
-    foldMarkedIn(view, plan.from, plan.from + plan.insert.length);
-    focusEditor(view);
+    landPlan(view, plan, true);
     return plan.landed;
   }
   vault.insertAtSection = insertAtSection;

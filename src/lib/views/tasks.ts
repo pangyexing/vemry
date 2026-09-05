@@ -477,7 +477,8 @@ export interface TaskMenuActions {
   open: () => void;
   /** Raise the date menu for one field; current is the date it has, absent when the date is being set for the first time. */
   editDate: (field: DateField, current?: string) => void;
-  setState: (state: TaskRow["state"]) => void;
+  /** Set the task's state; `act` is the wording of the action for the dirty guard's message. */
+  setState: (state: TaskRow["state"], act: string) => void;
   remove: () => void;
 }
 
@@ -494,14 +495,16 @@ export function taskMenuEntries(task: Pick<TaskRow, "state" | "due" | "scheduled
     else if (task.state !== "done") entries.push({ label: `${t("task.setDate", { field: dateFieldLabel(field) })}…`, action: () => act.editDate(field) });
   }
   entries.push({ separator: true });
+  // "changing the state" when "in progress" is involved on either side, "ticking" otherwise
+  const setState = (to: TaskRow["state"]) => act.setState(to, t(to === "doing" || task.state === "doing" ? "task.act.state" : "task.act.toggle"));
   if (task.state !== "done")
     entries.push({
       label: t(task.state === "doing" ? "task.menu.markBackTodo" : "task.menu.markDoing"),
-      action: () => act.setState(task.state === "doing" ? "todo" : "doing"),
+      action: () => setState(task.state === "doing" ? "todo" : "doing"),
     });
   entries.push({
     label: t(task.state === "done" ? "task.menu.reopen" : "task.menu.markDone"),
-    action: () => act.setState(task.state === "done" ? "todo" : "done"),
+    action: () => setState(task.state === "done" ? "todo" : "done"),
   });
   entries.push({ separator: true }, { label: t("task.menu.remove"), danger: true, confirm: t("task.menu.removeConfirm"), action: act.remove });
   return entries;

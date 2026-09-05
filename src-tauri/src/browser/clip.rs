@@ -444,8 +444,10 @@ pub async fn clip_selection(
     if !save_to_clips {
         return Ok(ClipSelectionResult { text: quote, url: meta.url.clone(), saved_path: None });
     }
-    // A clip note that is nothing but the quote opens expanded (foldable = false)
-    let page = ExtractedPage { markdown: quote_block(&body, &meta, false), title: meta.display_title(), byline: None, fallback: false };
+    // A clip note that is nothing but the quote opens expanded: the same block with
+    // the fold marker off its head line
+    let expanded = quote.replacen("> [!quote]- ", "> [!quote] ", 1);
+    let page = ExtractedPage { markdown: expanded, title: meta.display_title(), byline: None, fallback: false };
     let rel = land_note(&app, &state, &meta, &compose_clip_note(&page, &meta, &crate::i18n::t(crate::i18n::current(), "clip.sourceLabel")))?;
     maybe_localize(&app, rel.clone(), meta.url.clone());
     Ok(ClipSelectionResult { text: quote, url: meta.url, saved_path: Some(rel) })
