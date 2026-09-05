@@ -73,9 +73,9 @@
   const reload = () => run(api.browserReload(cur?.label));
   const activate = (label: string) => run(api.browserActivate(label));
   const closeTab = (label: string) => run(api.browserCloseTab(label), false);
-  /** + and ⌘T: a blank tab in place. Docked, its slot shows the new-tab page (an address input,
-   *  bookmarks, recents) and takes the keyboard; in the bar the address input opens for it. No
-   *  popup anywhere — the user's eye stays on the panel. */
+  /** + and ⌘T: a blank tab in place. Docked, the address row's input opens on its own and takes
+   *  the keyboard, and the slot shows the new-tab page (bookmarks, recents) under it; in the bar
+   *  the address input opens for it. No popup anywhere — the user's eye stays on the panel. */
   function newTab() {
     void api
       .browserNewTab()
@@ -101,6 +101,10 @@
   let addrEditing = $state(false);
   let addrValue = $state("");
   let addrEl = $state<HTMLInputElement | null>(null);
+  /** Docked, a blank tab has nothing to show in the address but the input itself: it stays
+   *  open (a blur does not fold it back into the button) and is the new-tab page's one input —
+   *  a second one drawn in the slot would only duplicate it. */
+  const addrOpen = $derived(addrEditing || (isBlank && !inBar));
   async function openAddr(forNewTab = false) {
     addrValue = forNewTab ? "" : url;
     addrEditing = true;
@@ -113,6 +117,7 @@
     if (back && !isBlank) refocus();
   }
   function addrKeydown(e: KeyboardEvent) {
+    if (isBlank && !inBar) return ntKeydown(e);
     if (e.key === "Enter") {
       e.preventDefault();
       const v = addrValue.trim();
@@ -346,28 +351,28 @@
     if (url) void clips.lookup([url]);
   });
 
-  // ---- docked: the new-tab page in a blank tab's slot — an address input that takes the
-  // keyboard at once, then bookmarks and recents (the same two lists as the palette's web
-  // space, rendered in place so opening a tab never sends the eye to a popup) ----
-  let ntQuery = $state("");
+  // ---- docked: the new-tab page in a blank tab's slot — bookmarks and recents (the same two
+  // lists as the palette's web space, rendered in place so opening a tab never sends the eye
+  // to a popup), filtered by what is typed in the address row, which takes the keyboard at
+  // once and is the page's only input ----
   let ntSel = $state(0);
-  let ntEl = $state<HTMLInputElement | null>(null);
   let ntHistory = $state<HistoryEntryView[]>([]);
   $effect(() => {
     if (inBar || !isBlank) return;
-    ntQuery = "";
+    addrValue = "";
     ntSel = 0;
     api
       .browserHistoryList()
       .then((l) => (ntHistory = l))
       .catch(() => (ntHistory = []));
-    queueMicrotask(() => ntEl?.focus());
+    // The input mounts with the blank tab (addrOpen), so it exists only after the render
+    void tick().then(() => addrEl?.focus());
   });
   type NtRow = { url: string; title: string; starred: boolean; head?: string };
   const ntRows = $derived.by((): NtRow[] => {
     const seen = new Set<string>();
     const dedup = (rows: NtRow[]) => rows.filter((c) => (seen.has(c.url) ? false : (seen.add(c.url), true)));
-    const q = ntQuery.trim().toLowerCase();
+    const q = addrValue.trim().toLowerCase();
     const hit = (c: NtRow) => !q || `${c.title} ${prettyUrl(c.url)}`.toLowerCase().includes(q);
     const marks = dedup(browser.bookmarks.map((b) => ({ url: b.url, title: b.title, starred: true }))).filter(hit).slice(0, q ? 24 : 8);
     const recents = dedup(ntHistory.map((h) => ({ url: h.url, title: h.title, starred: false }))).filter(hit).slice(0, q ? 24 : 12);
@@ -384,14 +389,27 @@
   });
   function ntOpen(target: string) {
     if (!cur) return;
-    run(api.browserNavigate(target, cur.label));
+    // The address row folds back into the button once the tab has a page (addrEditing may be
+    // left over from an edit of the previous tab's address), and the keyboard goes to the page
+    // as after any navigation (closeAddr's own refocus waits on isBlank, which the tab event
+    // has not flipped yet)
+    api
+      .browserNavigate(target, cur.label)
+      .then(() => {
+        addrEditing = false;
+        refocus();
+      })
+      .catch(err);
   }
   function ntKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") {
       e.preventDefault();
-      const v = ntQuery.trim();
+      const v = addrValue.trim();
+      // An address opens as typed; anything else opens the selected row, and with no row to
+      // select it is handed to navigate as the address row always did
       if (isUrlLike(v)) ntOpen(v);
       else if (ntRows[ntSel]) ntOpen(ntRows[ntSel].url);
+      else if (v) ntOpen(v);
     } else if (e.key === "Escape") {
       e.preventDefault();
       if (cur) closeTab(cur.label); // a blank tab abandoned is a tab closed
@@ -528,13 +546,14 @@
       <button class="ico" title="{t('agentPanel.reload')} {k('Mod+R')}" aria-label={t("agentPanel.reload")} onclick={reload} disabled={!cur}>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 7 A4.5 4.5 0 1 1 10.2 3.8 M10.5 1.8 V4.3 H8" /></svg>
       </button>
-      {#if addrEditing}
+      {#if addrOpen}
         <input
           class="addr-input"
           bind:this={addrEl}
           bind:value={addrValue}
           placeholder={t("clipBar.urlPlaceholder")}
           spellcheck="false"
+          oninput={() => (ntSel = 0)}
           onkeydown={addrKeydown}
           onblur={() => closeAddr(false)}
         />
@@ -610,15 +629,6 @@
     <div class="page-slot" class:newtab={isBlank}>
       {#if isBlank}
         <div class="nt">
-          <input
-            class="nt-input"
-            bind:this={ntEl}
-            bind:value={ntQuery}
-            placeholder={t("clipBar.urlPlaceholder")}
-            spellcheck="false"
-            oninput={() => (ntSel = 0)}
-            onkeydown={ntKeydown}
-          />
           <div class="nt-list">
             {#each ntRows as row, i (row.url)}
               {#if row.head}<div class="nt-head">{row.head}</div>{/if}
@@ -627,7 +637,7 @@
                 <span class="nt-url">{prettyUrl(row.url)}</span>
               </button>
             {:else}
-              <div class="nt-empty">{t(ntQuery.trim() ? "browserPanel.noMatch" : "browserPanel.newTabEmpty")}</div>
+              <div class="nt-empty">{t(addrValue.trim() ? "browserPanel.noMatch" : "browserPanel.newTabEmpty")}</div>
             {/each}
           </div>
         </div>
@@ -894,27 +904,13 @@
     align-items: stretch;
     justify-content: stretch;
   }
-  /* The new-tab page: the address first, the lists under it, the same row language as the palette's */
+  /* The new-tab page: the lists under the address row (which is its input), the same row language as the palette's */
   .nt {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    padding: 14px 12px 8px;
-    gap: 10px;
-  }
-  .nt-input {
-    flex: none;
-    font-size: var(--fs-md);
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-panel);
-    color: var(--fg);
-    outline: none;
-  }
-  .nt-input:focus {
-    border-color: var(--accent);
+    padding: 6px 12px 8px;
   }
   .nt-list {
     flex: 1;
