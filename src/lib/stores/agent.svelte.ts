@@ -146,6 +146,14 @@ class AgentStore {
    *  gate); the sticky card is its only projection. A plan whose every step is done or
    *  skipped leaves with the next question; an unfinished one stays as a reminder. */
   plan = $state<PlanItem[] | null>(null);
+  /** The note the session follows (the user's "keep your findings in this note"):
+   *  with auto, local writes on it pass the gate without a dialog and show as unreviewed
+   *  blocks in the editor. Rust keeps the same state and the jsonl's `follow` lines
+   *  rebuild it; this mirror drives the chip. */
+  follow = $state<{ path: string; auto: boolean } | null>(null);
+  /** The session's source table (every web citation with its verdict), the union of
+   *  what Rust settled turn by turn — the sources workbench lists it. */
+  sourceTable = $state<SourceRecord[]>([]);
   thinking = $state("");
   /** The most recent usage event (the gauge of turns, context size and cache hit rate). */
   usage = $state<TurnUsage | null>(null);
@@ -363,6 +371,19 @@ class AgentStore {
     await this.loadCurrent();
   }
 
+  /** Follow a note (null stops). Rust records it (and its `follow` line); the chip follows this mirror. */
+  async setFollow(path: string | null, auto: boolean = this.follow?.auto ?? true) {
+    await api.agentFollowSet(path, auto);
+    this.follow = path ? { path, auto } : null;
+    this.activity++;
+  }
+
+  /** A turn is being abandoned (a regenerate, an edit-and-resend): its sources leave the table, as Rust drops them. */
+  private dropTurnSources(turn: string | undefined) {
+    if (!turn) return;
+    this.sourceTable = this.sourceTable.filter((s) => s.turn !== turn);
+  }
+
   async send(message: string, currentNote: string | null, draft: DraftRef[] = []) {
     if (this.running || !message.trim()) return;
     const page = draft.find((d): d is Extract<DraftRef, { kind: "page" }> => d.kind === "page")?.page ?? null;
@@ -394,6 +415,8 @@ class AgentStore {
     // character regenerated the old answer is put back verbatim — one failure must not
     // eat an answer already on screen.
     const removed = this.timeline.splice(idx + 1);
+    const abandoned = this.timeline[idx];
+    if (abandoned?.kind === "user") this.dropTurnSources(abandoned.turn);
     this.liveTurnStart = idx;
     this.activity++;
     const epoch = this.epoch;
@@ -428,6 +451,7 @@ class AgentStore {
     );
     const restored = { text: item.text, refs: refs?.length ? refs : undefined };
     await api.agentHistoryTruncate();
+    this.dropTurnSources(item.turn);
     this.timeline.splice(idx);
     this.activity++;
     return restored;
@@ -506,6 +530,8 @@ class AgentStore {
     }
     this.timeline = [];
     this.plan = null;
+    this.follow = null;
+    this.sourceTable = [];
     this.thinking = "";
     this.pendingPermission = null;
     this.pendingPlan = null;
@@ -546,6 +572,8 @@ class AgentStore {
     await api.agentSessionNew();
     this.timeline = [];
     this.plan = null;
+    this.follow = null;
+    this.sourceTable = [];
     this.thinking = "";
     this.sessionId = null;
     this.resetSessionScoped();
@@ -580,6 +608,8 @@ class AgentStore {
     if (id === this.sessionId) {
       this.timeline = [];
       this.plan = null;
+      this.follow = null;
+      this.sourceTable = [];
       this.sessionId = null;
     }
     await this.refreshSessions();
@@ -595,6 +625,8 @@ class AgentStore {
   private rebuildTimeline(jsonl: string): TimelineItem[] {
     const items: TimelineItem[] = [];
     let plan: PlanItem[] | null = null;
+    let follow: { path: string; auto: boolean } | null = null;
+    this.sourceTable = [];
     let turnStart = 0;
     const finishTurn = () => {
       this.harvestTurn(items, turnStart);
@@ -663,6 +695,8 @@ class AgentStore {
         case "retry": {
           // Regenerate: the abandoned assistant/tool tail is no longer shown (the audit lines remain)
           const idx = lastUserIndex(items);
+          const abandoned = items[idx];
+          if (abandoned?.kind === "user") this.dropTurnSources(abandoned.turn);
           if (idx >= 0) items.splice(idx + 1);
           turnStart = Math.min(turnStart, items.length);
           break;
@@ -670,6 +704,8 @@ class AgentStore {
         case "edit_resend": {
           // Edit and resend: the whole turn (the user message included) is taken out of the display, and the new question follows
           const idx = lastUserIndex(items);
+          const abandoned = items[idx];
+          if (abandoned?.kind === "user") this.dropTurnSources(abandoned.turn);
           if (idx >= 0) items.splice(idx);
           turnStart = Math.min(turnStart, items.length);
           break;
@@ -680,6 +716,10 @@ class AgentStore {
         }
         case "plan_update": {
           plan = e.items;
+          break;
+        }
+        case "follow": {
+          follow = e.path ? { path: e.path, auto: e.auto ?? true } : null;
           break;
         }
         case "sources": {
@@ -718,6 +758,7 @@ class AgentStore {
     }
     finishTurn();
     this.plan = plan;
+    this.follow = follow;
     const urls = items.flatMap((t) => (t.kind === "sources" ? t.results.map((r) => r.url) : []));
     if (urls.length) void clips.lookup(urls);
     return items;
@@ -735,6 +776,13 @@ class AgentStore {
       items.push(card);
     }
     for (const r of records) {
+      const known = this.sourceTable.find((x) => x.url === r.url);
+      if (known) {
+        if (r.verified) known.verified = true;
+        if (!known.title && r.title) known.title = r.title;
+      } else {
+        this.sourceTable.push({ ...r });
+      }
       const prev = card.results.find((x) => x.url === r.url);
       if (prev) {
         prev.unverified = r.verified ? undefined : true;

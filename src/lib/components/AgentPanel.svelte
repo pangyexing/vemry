@@ -14,8 +14,11 @@
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { displayTitle, editableTitle, renameKeydown } from "$lib/views/session";
   import AgentChat from "./AgentChat.svelte";
+  import SourcesPanel from "./SourcesPanel.svelte";
 
   let sessionsOpen = $state(false);
+  /** The sources workbench popover (the session's whole source table), mutually exclusive with the session list. */
+  let sourcesOpen = $state(false);
   /** A two-step delete: the first ✕ turns into "confirm delete", and only a second click really deletes (no system dialog is raised). */
   let confirmDelete = $state<string | null>(null);
   /** The per-turn fragments from before the upgrade (whose context cannot be resumed) are collapsed into a drawer by default, so they do not flood the resumable sessions. */
@@ -47,6 +50,10 @@
     sessionsOpen = false;
     confirmDelete = null;
     renamingId = null;
+  }
+  function toggleSources() {
+    sourcesOpen = !sourcesOpen;
+    if (sourcesOpen) closeSessions();
   }
 
   // The timeline's presentation state is reset after a session change in AgentChat (driven by the store's viewEpoch)
@@ -117,7 +124,7 @@
         class="sess-cur"
         disabled={agent.running}
         title={t(agent.running ? "agentPanel.cannotSwitchWhileRunning" : "agentPanel.switchSession")}
-        onclick={() => (sessionsOpen ? closeSessions() : (sessionsOpen = true))}
+        onclick={() => (sessionsOpen ? closeSessions() : ((sessionsOpen = true), (sourcesOpen = false)))}
       >
         <span class="sess-title">{currentTitle}</span>
         <span class="sess-caret" class:open={sessionsOpen} aria-hidden="true">
@@ -126,6 +133,11 @@
       </button>
       {#if prefs.model}
         <span class="sess-model" title={t("agentPanel.currentModel", { model: prefs.model })}>{prefs.model}</span>
+      {/if}
+      {#if agent.sourceTable.length}
+        <button class="sess-sources" class:open={sourcesOpen} title={t("agentPanel.sourcesHint")} onclick={toggleSources}>
+          {t("agentPanel.sources", { n: agent.sourceTable.length })}
+        </button>
       {/if}
       {#if prefs.webSearchEnabled && !prefs.webSearchActive}
         <span
@@ -140,6 +152,12 @@
         onclick={newSession}
       >{t("agentPanel.newSessionButton")}</button>
     </div>
+    {#if sourcesOpen}
+      <button class="sess-backdrop" aria-label={t("agentPanel.closeSources")} onclick={() => (sourcesOpen = false)}></button>
+      <div class="sess-pop">
+        <SourcesPanel onClose={() => (sourcesOpen = false)} />
+      </div>
+    {/if}
     {#if sessionsOpen}
       <button class="sess-backdrop" aria-label={t("agentPanel.closeSessionList")} onclick={closeSessions}></button>
       <div class="sess-pop">
@@ -279,6 +297,19 @@
   }
   .sess-cur:hover:not(:disabled) .sess-caret {
     color: var(--fg);
+  }
+  .sess-sources {
+    flex-shrink: 0;
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+  }
+  .sess-sources:hover,
+  .sess-sources.open {
+    color: var(--fg);
+    background: var(--bg-hover);
   }
   .sess-new {
     flex-shrink: 0;

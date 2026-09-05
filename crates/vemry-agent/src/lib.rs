@@ -29,8 +29,9 @@ pub use permission::{PermissionDecision, PermissionGate, PlanDecision, PlanGate,
 pub use prompt::{PageContext, TurnContext, PAGE_CONTEXT_MAX_CHARS};
 pub use provider::ProviderConfig;
 pub use runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};
+pub use session::Follow;
 pub use sources::Source;
-pub use tools::{PlanItem, PlanStatus};
+pub use tools::{is_local_write, PlanItem, PlanStatus};
 
 #[derive(thiserror::Error, Debug)]
 pub enum AgentError {

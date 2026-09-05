@@ -168,6 +168,7 @@ pub fn run() {
             commands::agent_permission_respond,
             commands::agent_plan_respond,
             commands::agent_cancel,
+            commands::agent_follow_set,
             commands::agent_is_running,
             commands::agent_session_new,
             commands::agent_session_list,

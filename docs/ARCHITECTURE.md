@@ -56,7 +56,7 @@ Three constraints follow:
 | `types.rs` | OpenAI Chat Completions wire types plus the streaming tool_call assembler. `ToolDef` is an untagged enum (`Function` plus `Raw`, which passes a server-side tool through verbatim); `ChatMessage.extra_items` carries Responses output items across turns |
 | `client.rs` | The `ChatTransport` trait (mockable) plus the reqwest SSE implementation — **the LLM channel boundary**. Since v0.4 the system has two further controlled network exits (see "The built-in knowledge browser"). v0.7: a process-wide shared connection pool, connect timeout, a 120 s stream-idle timeout and cancellation polling for a stalled stream; both transports share one read loop, `read_sse` |
 | `responses.rs` | v0.4: the DeepSeek Responses API transport — a second implementation of the same `ChatTransport` trait. On the request side it maps messages→input items, system→instructions and flattens tools; on the response side it synthesises `StreamChunk` from semantic SSE events, so the runner and the mock need no changes. The server-side `web_search` tool is injected through here, and `web_search_call` items are replayed verbatim. Enabled only when web search is on **and** the endpoint is api.deepseek.com |
-| `tools.rs` | The domain tools, in three classes. Read-level (list_notes / read_note / read_block / search_notes / get_links / clips_lookup / query_blocks / read_skill) execute directly behind the privacy gate; write-level (write_note / edit_note / move_note) are first "prepared" into a `WriteRequest` — carrying the rendered diff and the exact content that would land on disk (a move is a path pair, `path → to_path`, with no diff) — and execute only after the gate; session-level (`is_session_tool`: update_plan / list_sources / propose_plan) act on the session's own state, touch no note and pass no gate. `move_note` goes through `Vault::rename_path`, the same implementation the file tree's move uses: rename and rescan, without rewriting links. `PlanItem`/`PlanStatus` and `parse_plan_items` are update_plan's grammar |
+| `tools.rs` | The domain tools, in three classes. Read-level (list_notes / read_note / read_block / search_notes / get_links / clips_lookup / query_blocks / read_skill) execute directly behind the privacy gate; write-level (write_note / edit_note / append_note / set_frontmatter / move_note) are first "prepared" into a `WriteRequest` — carrying the rendered diff and the exact content that would land on disk (a move is a path pair, `path → to_path`, with no diff) — and execute only after the gate; session-level (`is_session_tool`: update_plan / list_sources / propose_plan) act on the session's own state, touch no note and pass no gate. `move_note` goes through `Vault::rename_path`, the same implementation the file tree's move uses: rename and rescan, without rewriting links. `PlanItem`/`PlanStatus` and `parse_plan_items` are update_plan's grammar. `append_note` lands by the vault's own rule (`insert.rs`: the end of a heading's section, or the content end — the same landing as a clip or a quick capture; a missing heading is an error, never a silent fallback; a missing note is a Create) and its diff is only the addition; `set_frontmatter` goes through `vemry_core::set_frontmatter_key` (one top-level key: a scalar, a list, or removal; `private` and `vemry` are refused). `is_local_write` names the three that a followed note takes without a dialog |
 | `sources.rs` | The session's web source table: `extract_citations` (Markdown links and bare ASCII URLs, in document order, deduplicated — the same rule the frontend numbers its superscripts by), `merge_turn` (the verification verdict: a search ran this turn, or the user handed the page over; otherwise the URL came out of the model's prose alone and shows as "unverified"), `drop_turn` (a regenerate or an edit-and-resend takes its turn's sources back) and `read_sources` (the table rebuilt from the audit's `sources` lines with the retry / edit_resend markers applied — the replay and the live path agree by construction). The runner settles every turn's citations into it at the end of the turn; `list_sources` reads it back to the model; compaction can no longer lose it |
 | `testing.rs` | `ScriptedTransport` and chunk constructors for the offline evaluation suite (`tests/evals.rs`): every `tests/evals/*.json` fixture builds a small vault, replays scripted model output through the real runner and checks the product standards that need no provider — citations resolve, sources carry the right verdict, the plan is state rather than prose, tools succeed, nothing reaches the write gate |
 | `permission.rs` | The `PermissionGate` trait. The write gate is enforced in the Rust layer that owns the ability to write files — the frontend can render the decision and nothing else |
@@ -1945,6 +1945,25 @@ share one projection. Like `web_search` it is a **session-frozen addition to the
 tool table** — a change to the switch takes effect from the next session, because
 the tool table freezes along with the system prompt when a session begins.
 
+### Following a note (the working note)
+
+A session can **follow** a note: the user's "keep your findings in this one"
+(`agent_follow_set`, from the file tree's context menu, the palette, or automatically
+when an answer is saved as a research note). Rust owns the state with the session
+(`AgentState.follow`, a `follow` line in the jsonl — the last one wins on replay, and
+a fresh ledger gets the line when it is created); the runner names the note in the
+turn tail (`Working note: …`, privacy-filtered and scrubbed like the current note)
+and, with `auto` on, its **local writes pass the gate without a dialog**: append_note,
+set_frontmatter and edit_note on that one path (`is_local_write`), never a whole-note
+overwrite, a restructure or a move, and never another note. The follow is the user's
+explicit grant for one note, so the writes land as *unreviewed* blocks (the same
+standing-grant rule as "allow for the session") and the editor's provenance bar is
+the review afterwards — accept or revert per block. The permission line records
+`via: follow`. The chip in the composer opens the note, toggles auto off (every write
+asks again) and stops the follow. A note saved from the panel carries
+`vemry.agent_session` in its frontmatter (now on `NoteSummary.agent_session`), and
+opening it later offers to resume that session.
+
 ### The source table (sources.rs)
 
 Every web citation the model produces in a session lives in one table on the Rust
@@ -1959,7 +1978,12 @@ harvest remains only as the fallback for a turn that ended without a settlement.
 A regenerate or an edit-and-resend drops the abandoned turn's sources
 (`drop_turn`), and the replay applies the same rule from the marker lines. The
 model can read the table back with `list_sources`, and `clips_lookup` tells it which
-of those URLs already have a clipped note to cite as a wikilink instead.
+of those URLs already have a clipped note to cite as a wikilink instead. The frontend
+mirrors the table (`agent.sourceTable`, the union of the turn settlements) for the
+sources workbench in the panel's session bar: every source of the session, numbered,
+with its verdict — verified, unverified, or clipped — and the three actions a source
+takes (open, clip / open the clip, copy the link), shared with the per-turn cards
+through `lib/sources.ts`.
 
 ### The standalone AI chat window
 

@@ -78,7 +78,14 @@ pub fn is_session_tool(name: &str) -> bool {
 }
 
 pub fn is_write_tool(name: &str) -> bool {
-    matches!(name, "write_note" | "edit_note" | "move_note")
+    matches!(name, "write_note" | "edit_note" | "move_note" | "append_note" | "set_frontmatter")
+}
+
+/// The local writes a followed note takes without a dialog (see
+/// RunnerConfig::follow_note): an append, a frontmatter key, an exact-fragment
+/// edit. A whole-note overwrite and a move are never local.
+pub fn is_local_write(name: &str) -> bool {
+    matches!(name, "append_note" | "set_frontmatter" | "edit_note")
 }
 
 pub fn tool_defs() -> Vec<ToolDef> {
@@ -211,6 +218,32 @@ pub fn tool_defs() -> Vec<ToolDef> {
                     "content": {"type": "string", "description": "Full Markdown content"}
                 },
                 "required": ["path", "content"]
+            }),
+        ),
+        f(
+            "append_note",
+            "Append Markdown to a note: under an existing heading (anchor = the heading text) or at the end (anchor omitted or \"end\"). Creates the note when it does not exist. The diff shows only what is added — prefer it over write_note for adding a section, a finding or tasks to a long note. Requires user approval unless the note is the working note.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Vault-relative path, e.g. 'research/Topic.md'"},
+                    "content": {"type": "string", "description": "Markdown to append (blocks, lists, tasks)"},
+                    "anchor": {"type": "string", "description": "Heading text to append under (its section's end), or \"end\""}
+                },
+                "required": ["path", "content"]
+            }),
+        ),
+        f(
+            "set_frontmatter",
+            "Set, replace or remove one top-level frontmatter key of an existing note: a string value, a list of strings, or null to remove. Keys are plain identifiers; `private` and `vemry` cannot be set. Requires user approval unless the note is the working note.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "key": {"type": "string", "description": "e.g. status, question, sources, project"},
+                    "value": {"description": "A string, an array of strings, or null to remove the key"}
+                },
+                "required": ["path", "key"]
             }),
         ),
         f(
@@ -662,6 +695,73 @@ pub fn prepare_write(
                 new_content,
             })
         }
+        "append_note" => {
+            let path = arg_str(args, "path")?;
+            let content = arg_str(args, "content")?;
+            if content.trim().is_empty() {
+                return Err(ToolError::Other("nothing to append: content is empty".into()));
+            }
+            let anchor = args.get("anchor").and_then(|v| v.as_str()).map(str::trim).filter(|a| !a.is_empty() && !a.eq_ignore_ascii_case("end"));
+            let requested = vault.note_id(path).map_err(|e| ToolError::Other(e.to_string()))?;
+            let id = vault.index().canonical_id(&requested).unwrap_or(requested);
+            // The same create-side gate as write_note: privacy first, then a path on disk
+            // the index does not hold, then portability
+            if vault.is_private(&id) {
+                return Err(ToolError::Privacy(format!("invalid path: {path}")));
+            }
+            let is_new = !vault.index().contains(&id);
+            if is_new {
+                if std::fs::symlink_metadata(vault.abs_path(&id)).is_ok() {
+                    return Err(ToolError::Other(format!("invalid path: {path}")));
+                }
+                vault.check_portable_rel(id.as_str()).map_err(|e| ToolError::Other(e.to_string()))?;
+                let new_content = with_agent_provenance(&format!("{}\n", content.trim_matches(['\n', '\r'])), session);
+                let diff = unified_diff("", &new_content, id.as_str());
+                return Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Create, new_content });
+            }
+            let old = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
+            let blocks = vemry_core::parser::parse_note(&old).blocks;
+            // Landing is the vault's own rule (insert.rs, shared with clipping and quick
+            // capture): the end of the heading's section, or the note's content end
+            let offset = match anchor {
+                Some(heading) => vemry_core::insert::section_insert_offset(&blocks, &old, heading).ok_or_else(|| {
+                    ToolError::Other(format!("heading not found: {heading} — append under an existing heading, or omit anchor to append at the end"))
+                })?,
+                None => vemry_core::insert::content_end_offset(&old),
+            };
+            let new_content = vemry_core::insert::insert_at(&old, offset, content);
+            if !vemry_core::private_blocks_preserved(&old, &new_content) {
+                return Err(ToolError::Other("this append cannot be applied as written — keep fences balanced in content".into()));
+            }
+            if new_content == old {
+                return Err(ToolError::Other("this append leaves the note unchanged".into()));
+            }
+            let diff = unified_diff(&old, &new_content, id.as_str());
+            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Append, new_content })
+        }
+        "set_frontmatter" => {
+            let path = arg_str(args, "path")?;
+            let key = arg_str(args, "key")?.trim();
+            let id = existing_note_id(vault, path)?;
+            let value = match args.get("value") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) => Some(vemry_core::FrontmatterValue::Scalar(s.clone())),
+                Some(Value::Array(items)) => {
+                    let list: Option<Vec<String>> = items.iter().map(|v| v.as_str().map(str::to_string)).collect();
+                    Some(vemry_core::FrontmatterValue::List(list.ok_or_else(|| ToolError::Other("value: a list may hold strings only".into()))?))
+                }
+                Some(other) => Some(vemry_core::FrontmatterValue::Scalar(other.to_string())),
+            };
+            let old = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
+            let new_content = vemry_core::set_frontmatter_key(&old, key, value.as_ref()).ok_or_else(|| {
+                ToolError::Other(format!("frontmatter key not allowed: {key} (plain identifiers only; private and vemry are reserved)"))
+            })?;
+            if new_content == old {
+                return Err(ToolError::Other("this change leaves the frontmatter unchanged".into()));
+            }
+            let diff = unified_diff(&old, &new_content, id.as_str());
+            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content })
+        }
         "move_note" => {
             let from = arg_str(args, "from")?;
             let to = arg_str(args, "to")?;
@@ -749,7 +849,9 @@ pub fn execute_write(
         None => !vemry_core::private_blocks_preserved(&old, &req.new_content),
         Some(edited) => !vemry_core::privacy::late_private_blocks_kept(&old, &req.new_content, edited),
     };
-    if req.tool == "edit_note" && stale {
+    // Every write prepared against the note as it was (an edit, an append, a
+    // frontmatter change) is refused when a private block appeared meanwhile
+    if req.tool != "write_note" && stale {
         return Err(format!("{} changed while the edit was awaiting review — read it again and retry", req.path));
     }
     let content = content_override.unwrap_or(&req.new_content);
@@ -960,6 +1062,49 @@ mod tests {
         let out = read(&vault, "clips_lookup", json!({"urls": ["https://none.io/x"]})).unwrap();
         assert_eq!(out.text, "(none of these URLs has been clipped)");
         assert!(read(&vault, "clips_lookup", json!({"urls": []})).is_err());
+    }
+
+    /// append_note: under a heading (the section's end), at the end, into a new note
+    /// (a Create with provenance frontmatter); a missing heading is an error rather
+    /// than a silent fallback, and the request carries only the addition as its diff.
+    #[test]
+    fn append_note_lands_by_the_vault_rule() {
+        let (_d, vault) = fixture();
+        std::fs::write(vault.root().join("Log.md"), "# Log\n\n## Today\n\n- did a\n\n## Later\n\ntext\n").unwrap();
+        let mut vault = Vault::open(vault.root()).unwrap();
+        let _ = &mut vault;
+        let req = prepare_write(&vault, "r1".into(), "append_note", &json!({"path": "Log.md", "content": "- did b", "anchor": "Today"}), None).unwrap();
+        assert_eq!(req.kind, WriteKind::Append);
+        assert!(req.new_content.contains("- did a\n- did b\n\n## Later"), "{}", req.new_content);
+        assert!(req.diff.contains("+- did b") && !req.diff.contains("-- did a"), "{}", req.diff);
+        let req = prepare_write(&vault, "r2".into(), "append_note", &json!({"path": "Log.md", "content": "## Notes\n\nend text"}), None).unwrap();
+        assert!(req.new_content.ends_with("text\n\n## Notes\n\nend text\n"), "{}", req.new_content);
+        let e = prepare_write(&vault, "r3".into(), "append_note", &json!({"path": "Log.md", "content": "x", "anchor": "Nowhere"}), None).unwrap_err();
+        assert!(e.to_string().contains("heading not found: Nowhere"));
+        let req = prepare_write(&vault, "r4".into(), "append_note", &json!({"path": "new/Fresh.md", "content": "hello"}), Some("s1")).unwrap();
+        assert_eq!(req.kind, WriteKind::Create);
+        assert!(req.new_content.starts_with("---\nvemry:\n  origin: agent\n  agent_session: s1\n---\nhello\n"), "{}", req.new_content);
+        let e = prepare_write(&vault, "r5".into(), "append_note", &json!({"path": "secret/Plan.md", "content": "x"}), None).unwrap_err();
+        assert!(matches!(e, ToolError::Privacy(_)));
+        assert!(prepare_write(&vault, "r6".into(), "append_note", &json!({"path": "Log.md", "content": "  "}), None).is_err());
+    }
+
+    /// set_frontmatter: a scalar, a list, a removal; reserved and malformed keys are refused; a private note is a miss.
+    #[test]
+    fn set_frontmatter_edits_one_key() {
+        let (_d, vault) = fixture();
+        std::fs::write(vault.root().join("R.md"), "---\nquestion: q\nstatus: draft\n---\n# R\n").unwrap();
+        let vault = Vault::open(vault.root()).unwrap();
+        let req = prepare_write(&vault, "f1".into(), "set_frontmatter", &json!({"path": "R.md", "key": "status", "value": "reviewing"}), None).unwrap();
+        assert!(req.new_content.starts_with("---\nquestion: q\nstatus: reviewing\n---\n"), "{}", req.new_content);
+        assert_eq!(req.kind, WriteKind::Edit);
+        let req = prepare_write(&vault, "f2".into(), "set_frontmatter", &json!({"path": "R.md", "key": "sources", "value": ["https://a.io", "https://b.io"]}), None).unwrap();
+        assert!(req.new_content.contains("sources:\n  - https://a.io\n  - https://b.io\n---"), "{}", req.new_content);
+        let req = prepare_write(&vault, "f3".into(), "set_frontmatter", &json!({"path": "R.md", "key": "question", "value": null}), None).unwrap();
+        assert_eq!(req.new_content, "---\nstatus: draft\n---\n# R\n");
+        assert!(prepare_write(&vault, "f4".into(), "set_frontmatter", &json!({"path": "R.md", "key": "private", "value": "true"}), None).unwrap_err().to_string().contains("not allowed"));
+        assert!(prepare_write(&vault, "f5".into(), "set_frontmatter", &json!({"path": "R.md", "key": "status", "value": "draft"}), None).unwrap_err().to_string().contains("unchanged"));
+        assert!(matches!(prepare_write(&vault, "f6".into(), "set_frontmatter", &json!({"path": "secret/Plan.md", "key": "x", "value": "y"}), None).unwrap_err(), ToolError::Privacy(_)));
     }
 
     /// update_plan's argument grammar: statuses, the item cap, and the wording the model corrects itself by.

@@ -119,6 +119,37 @@ pub fn read_session_sources(meta_dir: &Path, id: &str) -> Vec<crate::sources::So
     read_session(meta_dir, id).map(|text| crate::sources::read_sources(&text)).unwrap_or_default()
 }
 
+/// The note a session follows (the user's "keep your findings in this note"): the
+/// last `follow` line of the jsonl wins, a `path: null` line ends the follow.
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+pub struct Follow {
+    pub path: String,
+    /// Local writes on the note (append / frontmatter / edit) apply without a dialog.
+    #[serde(default = "default_true")]
+    pub auto: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// The session's follow state, rebuilt from its jsonl (the last `follow` line).
+pub fn read_session_follow(meta_dir: &Path, id: &str) -> Option<Follow> {
+    let text = read_session(meta_dir, id)?;
+    let mut follow: Option<Follow> = None;
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        if v["kind"] != "follow" {
+            continue;
+        }
+        follow = match v["path"].as_str() {
+            Some(path) if !path.is_empty() => Some(Follow { path: path.to_string(), auto: v["auto"].as_bool().unwrap_or(true) }),
+            _ => None,
+        };
+    }
+    follow
+}
+
 fn history_path(meta_dir: &Path, id: &str) -> PathBuf {
     meta_dir.join("sessions").join(format!("{id}.history.json"))
 }

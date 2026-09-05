@@ -16,6 +16,8 @@ export interface NoteSummary {
   private: boolean;
   /** frontmatter `source:` — external origin URL of a clipped note */
   source: string | null;
+  /** frontmatter `vemry.agent_session` — the chat session a note saved from the research panel came from (so it can be resumed) */
+  agent_session?: string | null;
 }
 
 export interface GraphNode {
@@ -299,7 +301,7 @@ export interface WriteRequest {
   /** The kind of write; the wording lives in the catalog
    *  (`permission.summary.<kind>`) — the Rust side does not know the user's language,
    *  so it sends the kind and never the wording. */
-  kind: "create" | "overwrite" | "edit" | "move";
+  kind: "create" | "overwrite" | "edit" | "move" | "append";
   new_content: string;
 }
 
@@ -858,6 +860,8 @@ export const api = {
   agentPlanRespond: (requestId: string, decision: PlanDecision) =>
     invoke<void>("agent_plan_respond", { requestId, decision }),
   agentCancel: () => invoke<void>("agent_cancel"),
+  /** Follow a note (null stops): the session keeps its findings there and, with auto, local writes on it pass the gate without a dialog. */
+  agentFollowSet: (path: string | null, auto: boolean) => invoke<void>("agent_follow_set", { path, auto }),
   /** Cancelling only sets a flag: the turn is really over when agentIsRunning goes to false (see reattach). */
   agentIsRunning: () => invoke<boolean>("agent_is_running"),
   agentSessionNew: () => invoke<void>("agent_session_new"),

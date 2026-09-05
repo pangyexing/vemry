@@ -855,31 +855,43 @@ fn scrub_selection_block(vault: &Vault, block: &str, attr: &str) -> Option<Strin
     hit.then(|| crate::prompt::ref_unavailable_line(attr, "selection no longer available"))
 }
 
-/// The "Currently open note: P" item of the turn tail: when P is private now, the
-/// whole item is removed — the same shape as the output for a note that was
-/// already private at resolution time (where the item never appears). The tail is
-/// always at the end of the message and closes with `)`.
+/// The path items of the turn tail (`Currently open note: P`, `Working note: F`):
+/// when the note is private now, the whole item is removed — the same shape as
+/// the output for a note that was already private at resolution time (where the
+/// item never appears). The tail is always at the end of the message and closes
+/// with `)`; items are separated by TAIL_SEP.
 fn scrub_note_tail(vault: &Vault, text: &mut String) {
-    use crate::prompt::{CUR_NOTE_LABEL, TAIL_OPEN, TAIL_SEP};
+    use crate::prompt::{CUR_NOTE_LABEL, FOLLOW_LABEL, TAIL_OPEN};
     if !text.ends_with(')') {
         return;
     }
     // The tail is always the last `\n\n(` (nothing follows it): search from there
     // rather than scanning back over the whole envelope body — a body can run to
     // hundreds of kilobytes, and this runs for every message every turn
-    let Some(tail) = text.rfind(TAIL_OPEN) else { return };
-    let Some(pos) = text[tail..].find(CUR_NOTE_LABEL).map(|i| tail + i) else { return };
-    let p_start = pos + CUR_NOTE_LABEL.len();
-    let Some(p) = text.get(p_start..text.len() - 1) else { return };
-    let p = p.trim();
+    for label in [CUR_NOTE_LABEL, FOLLOW_LABEL] {
+        let Some(tail) = text.rfind(TAIL_OPEN) else { return };
+        scrub_tail_item(vault, text, tail, label);
+    }
+}
+
+/// Remove one labelled path item from the tail starting at `tail` when its note
+/// is private now: `(A · L: P · B)` → `(A · B)`, `(L: P · B)` → `(B)`, `(A · L: P)`
+/// → `(A)`, and a tail holding nothing else disappears entirely.
+fn scrub_tail_item(vault: &Vault, text: &mut String, tail: usize, label: &str) {
+    use crate::prompt::{TAIL_OPEN, TAIL_SEP};
+    let Some(pos) = text[tail..].find(label).map(|i| tail + i) else { return };
+    let p_start = pos + label.len();
+    let close = text.len() - 1;
+    let end = text[p_start..close].find(TAIL_SEP).map(|i| p_start + i).unwrap_or(close);
+    let p = text[p_start..end].trim();
     if p.is_empty() || !vault.is_private_rel(p, false) {
         return;
     }
     if text[..pos].ends_with(TAIL_SEP) {
-        // `(Today: X · Currently open note: P)` → `(Today: X)`
-        text.replace_range(pos - TAIL_SEP.len()..text.len() - 1, "");
+        text.replace_range(pos - TAIL_SEP.len()..end, "");
+    } else if end < close && text[end..].starts_with(TAIL_SEP) {
+        text.replace_range(pos..end + TAIL_SEP.len(), "");
     } else if text[..pos].ends_with(TAIL_OPEN) {
-        // The tail holds nothing else: remove it entirely
         text.replace_range(pos - TAIL_OPEN.len().., "");
     }
 }
@@ -1486,6 +1498,7 @@ mod tests {
         let ctx = crate::prompt::TurnContext {
             date: "2026-08-26 周三".into(),
             current_note: Some("zone/Doc.md".into()),
+            follow_note: None,
         };
         let mut msgs = vec![envelope_msg(&vault, &refs, &ctx)];
         assert!(msgs[0].text().unwrap().contains("SENTINEL-BODY"));
@@ -1493,7 +1506,7 @@ mod tests {
         vault.add_privacy_rule("zone/").unwrap();
         // What it looks like when it was private from the start: every reference
         // "unavailable", and the current-note item absent
-        let ctx_private = crate::prompt::TurnContext { date: "2026-08-26 周三".into(), current_note: None };
+        let ctx_private = crate::prompt::TurnContext { date: "2026-08-26 周三".into(), current_note: None, follow_note: None };
         let expect = envelope_msg(&vault, &refs, &ctx_private).text().unwrap().to_string();
 
         scrub_private_refs(&vault, &mut msgs);

@@ -42,6 +42,7 @@
   import { isMac, k } from "$lib/shortcut";
   import { isUrlLike } from "$lib/urls";
   import GlobeIcon from "$lib/components/GlobeIcon.svelte";
+  import { clipSource as clipSourceUrl, openCitation, openClipped } from "$lib/sources";
   // Chat bodies now render $…$ formulas too (markdown.ts's renderInline), so the styling cannot
   // depend on ReadingView having been opened at some point
   import "katex/dist/katex.min.css";
@@ -62,6 +63,15 @@
   const noteForSend = $derived(
     curNote && curNote !== agent.dismissedNote && !vault.privatePaths.has(curNote) ? curNote : null,
   );
+  /** The note open now came out of another AI session (its frontmatter records the id) and
+   *  that session can still be resumed: the bar above the composer offers to switch to it. */
+  const resumeSession = $derived.by(() => {
+    const p = curNote;
+    if (!p) return null;
+    const sid = vault.notes.find((n) => n.id === p)?.agent_session;
+    if (!sid || sid === agent.sessionId) return null;
+    return agent.sessions.some((s) => s.id === sid && s.resumable) ? sid : null;
+  });
   /** Where a paste or a "+" attachment lands: the current note's attachments/<note name> (the
    *  same convention as the editor's paste), computed in the detached window from the hostNote
    *  that was pushed. */
@@ -561,6 +571,7 @@
     const fm = ["---", "vemry:", "  origin: agent"];
     if (agent.sessionId) fm.push(`  agent_session: ${agent.sessionId}`);
     if (question) fm.push(`question: ${JSON.stringify(question.split("\n")[0])}`);
+    fm.push("status: draft");
     if (sources.length) {
       fm.push("sources:");
       for (const u of sources) fm.push(`  - ${JSON.stringify(u)}`);
@@ -572,6 +583,8 @@
       void api.provenanceRecord(path, text, "agent", agent.sessionId ?? undefined).catch(() => undefined);
       await vault.refreshNotes();
       await hostDispatch({ kind: "open-note", path });
+      // The saved note becomes the working note: the rest of the research lands in it without a dialog per paragraph
+      await agent.setFollow(path);
       toast.push(t("chat.savedAs", { path }));
     } catch (e) {
       toast.push(String(e), "error");
@@ -663,18 +676,6 @@
    *  The same dual mode as a URL's: ⌥↵ still sends it verbatim as a question. */
   const memoText = $derived(agent.draft.trim().startsWith("#") ? agent.draft.trim().replace(/^#\s*/, "") : "");
   const memoLike = $derived(memoText.length > 0);
-
-  /** One way of opening a citation: already clipped → the local note (⌘click forces the web page);
-   *  everything else goes through the url_open funnel (respecting the setting and not stealing the
-   *  focus — reading is something the user deliberately switched to). */
-  function openCitation(url: string, invert: boolean) {
-    const local = clips.pathFor(url);
-    if (local && !invert) {
-      void hostDispatch({ kind: "open-note", path: local });
-      return;
-    }
-    run(api.urlOpen(url, invert, false));
-  }
 
   /** Every rendered link goes through click delegation (generated HTML cannot carry component events). */
   function onTimelineClick(e: MouseEvent) {
@@ -792,20 +793,7 @@
     return r.text;
   }
 
-  async function clipSource(r: WebSearchResult) {
-    try {
-      const path = await api.clipUrl(r.url, r.title);
-      clips.markClipped(r.url, path);
-      toast.push(t("chat.clipped", { path }));
-    } catch (e) {
-      toast.push(String(e), "error");
-    }
-  }
-
-  function openClipped(url: string) {
-    const p = clips.pathFor(url);
-    if (p) void hostDispatch({ kind: "open-note", path: p });
-  }
+  const clipSource = (r: WebSearchResult) => clipSourceUrl(r.url, r.title);
 
   function openPage(url: string) {
     agent.draft = "";
@@ -996,9 +984,42 @@
     removeLabel: string;
     removeTitle?: string;
     remove: () => void;
+    /** A right-click menu (the working-note chip: auto-apply on or off, open, stop). */
+    menu?: (e: MouseEvent) => void;
+    /** A click on the label (the working-note chip opens the note). */
+    open?: () => void;
+  }
+  /** The working-note chip's menu: whether its local writes apply without a dialog, open it, stop following. */
+  function followMenu(e: MouseEvent) {
+    const f = agent.follow;
+    if (!f) return;
+    contextMenu.open(e, [
+      { title: t("chat.followMenuTitle") },
+      { label: `${f.auto ? "✓ " : ""}${t("chat.followAutoOn")}`, action: () => run(agent.setFollow(f.path, true)) },
+      { label: `${f.auto ? "" : "✓ "}${t("chat.followAutoOff")}`, action: () => run(agent.setFollow(f.path, false)) },
+      { separator: true },
+      { label: t("chat.followOpen"), action: () => void hostDispatch({ kind: "open-note", path: f.path }) },
+      { label: t("chat.unfollow"), action: () => run(agent.setFollow(null).then(() => toast.push(t("chat.unfollowed")))) },
+    ]);
   }
   const chips = $derived.by(() => {
     const out: Chip[] = [];
+    const f = agent.follow;
+    if (f) {
+      out.push({
+        key: "follow",
+        kind: "note",
+        cur: false,
+        title: t(f.auto ? "chat.followTitle" : "chat.followTitleAsk", { note: f.path }),
+        label: baseOf(f.path),
+        lines: null,
+        tag: t("chat.followTag"),
+        removeLabel: t("chat.unfollow"),
+        remove: () => run(agent.setFollow(null).then(() => toast.push(t("chat.unfollowed")))),
+        menu: followMenu,
+        open: () => void hostDispatch({ kind: "open-note", path: f.path }),
+      });
+    }
     const note = noteForSend;
     if (note) {
       out.push({
@@ -1602,6 +1623,12 @@
         {usageText}
       </div>
     {/if}
+    {#if resumeSession && !agent.running}
+      <div class="resume-bar">
+        <span>{t("chat.resumeResearch")}</span>
+        <button onclick={() => run(agent.selectSession(resumeSession))}>{t("chat.resumeButton")}</button>
+      </div>
+    {/if}
     <div class="box">
     <!-- The context chips (the current note / the selection / @ references) sit at the top of the
          input; with no chip at all the row takes no space. What can be seen can be dismissed with
@@ -1609,9 +1636,14 @@
     {#if chips.length}
     <div class="ctx-row">
       {#each chips as c (c.key)}
-        <span class="ctx-chip" class:cur={c.cur} title={c.title}>
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span class="ctx-chip" class:cur={c.cur} class:follow={c.key === "follow"} title={c.title} oncontextmenu={c.menu}>
           <span class="ctx-chip-icon"><RefIcon kind={c.kind} size={12} /></span>
-          <span class="ctx-chip-label">{c.label}</span>
+          {#if c.open}
+            <button class="ctx-chip-label ctx-chip-open" onclick={c.open}>{c.label}</button>
+          {:else}
+            <span class="ctx-chip-label">{c.label}</span>
+          {/if}
           {#if c.lines}<span class="ctx-chip-lines">{c.lines}</span>{/if}
           {#if c.tag}<span class="ctx-chip-tag">{c.tag}</span>{/if}
           <button aria-label={c.removeLabel} title={c.removeTitle} onclick={c.remove}>✕</button>
@@ -2221,6 +2253,38 @@
     gap: 4px;
     padding: 8px 10px 0;
     min-width: 0;
+  }
+  .resume-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 12px 6px;
+    padding: 5px 10px;
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+  }
+  .resume-bar button {
+    flex-shrink: 0;
+    color: var(--accent);
+    font-size: var(--fs-xs);
+  }
+  .resume-bar button:hover {
+    text-decoration: underline;
+  }
+  .ctx-chip.follow {
+    border-color: var(--accent);
+  }
+  .ctx-chip-open {
+    font: inherit;
+    color: inherit;
+    padding: 0;
+    cursor: pointer;
+  }
+  .ctx-chip-open:hover {
+    text-decoration: underline;
   }
   .ctx-chip {
     display: inline-flex;

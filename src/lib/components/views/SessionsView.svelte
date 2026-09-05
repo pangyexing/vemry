@@ -299,7 +299,7 @@
             <span class="ts">{hhmmss(e.ts)}</span>
             <div class="write">
               <div class="permission">
-                <span class="badge" class:deny={e.decision === "deny"}>{decisionLabel(e.decision)}</span>
+                <span class="badge" class:deny={e.decision === "deny"}>{decisionLabel(e.decision)}{e.via === "follow" ? t("sessionsView.viaFollow") : ""}</span>
                 <span class="path-text">{e.path}</span>
               </div>
               {#if e.applied_diff}
@@ -363,6 +363,11 @@
                 {/each}
               </div>
             {/if}
+          </div>
+        {:else if e.kind === "follow"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="privacy">{e.path ? t("sessionsView.follow", { path: e.path }) : t("sessionsView.followEnd")}</div>
           </div>
         {:else if e.kind === "plan_update"}
           <div class="row">

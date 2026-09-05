@@ -1168,6 +1168,7 @@ async fn run_agent_turn(
             *state.agent.current_session.lock().unwrap() = None;
             state.agent.reset_session_scope();
             state.agent.sources.lock().unwrap().clear();
+            *state.agent.follow.lock().unwrap() = None;
             *owner = Some(root);
         }
     }
@@ -1186,6 +1187,10 @@ async fn run_agent_turn(
             None => {
                 let log = SessionLog::create(&meta_dir).map_err(|e| e.to_string())?;
                 *current = Some(log.id.clone());
+                // A follow set before the first send lands in the fresh ledger too
+                if let Some(f) = state.agent.follow.lock().unwrap().as_ref() {
+                    log.append("follow", json!({ "path": &f.path, "auto": f.auto }));
+                }
                 log
             }
         }
@@ -1252,6 +1257,10 @@ async fn run_agent_turn(
     let effort = effort
         .filter(|e| settings::is_reasoning_effort(e))
         .unwrap_or_else(|| settings.reasoning_effort.clone());
+    let (follow_note, follow_auto) = match state.agent.follow.lock().unwrap().as_ref() {
+        Some(f) => (Some(f.path.clone()), f.auto),
+        None => (None, true),
+    };
     let config = RunnerConfig {
         max_iterations: 25,
         write_policy,
@@ -1260,6 +1269,8 @@ async fn run_agent_turn(
         session_allow: Some(Arc::clone(&state.agent.session_grant)),
         reasoning_effort: settings.reasoning_active().then_some(effort),
         plan_confirm,
+        follow_note,
+        follow_auto,
         ..Default::default()
     };
 
@@ -1388,6 +1399,33 @@ pub fn agent_plan_respond(
     crate::agent_bridge::resolve_plan(&state.agent.pending.plans, &request_id, decision)
 }
 
+/// Follow a note (or stop, with path=None): the session keeps its findings there and
+/// local writes on it (append / frontmatter / edit) pass the gate without a dialog —
+/// the follow is the user's grant for that one note; `auto=false` keeps the follow
+/// (the model is told which note to work in) but asks for every write again. Appended
+/// to the current session's jsonl as a `follow` line (the last one wins on replay); a
+/// session that has not sent yet gets the line when its ledger is created. Allowed
+/// while the agent runs: the next write reads the state at gate time.
+#[tauri::command]
+pub fn agent_follow_set(state: State<'_, AppState>, path: Option<String>, auto: bool) -> Result<(), String> {
+    let path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+    if let Some(p) = &path {
+        // A private note is not followed: the runner would filter it out of the context anyway, and the chip must not pretend
+        let private = with_vault(&state, |v| Ok(v.is_private_rel(p, false)))?;
+        if private {
+            return Err(crate::i18n::t(crate::i18n::current(), "ipc.followPrivate"));
+        }
+    }
+    *state.agent.follow.lock().unwrap() = path.clone().map(|p| vemry_agent::Follow { path: p, auto });
+    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
+    if let Some(id) = state.agent.current_session.lock().unwrap().as_deref() {
+        if let Ok(log) = SessionLog::open(&meta_dir, id) {
+            log.append("follow", json!({ "path": path, "auto": auto }));
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn agent_cancel(state: State<'_, AppState>) {
     state.agent.cancel.store(true, Ordering::SeqCst);
@@ -1415,6 +1453,7 @@ pub fn agent_session_new(state: State<'_, AppState>) -> Result<(), String> {
     *state.agent.current_session.lock().unwrap() = None;
     state.agent.reset_session_scope();
     state.agent.sources.lock().unwrap().clear();
+            *state.agent.follow.lock().unwrap() = None;
     Ok(())
 }
 
@@ -1466,6 +1505,7 @@ pub fn agent_session_delete(state: State<'_, AppState>, id: String) -> Result<()
         *state.agent.current_session.lock().unwrap() = None;
         state.agent.reset_session_scope();
         state.agent.sources.lock().unwrap().clear();
+            *state.agent.follow.lock().unwrap() = None;
     }
     with_vault(&state, |v| delete_session(&v.meta_dir(), &id))
 }
@@ -1526,35 +1566,57 @@ pub fn init_memory_file(app: AppHandle, state: State<'_, AppState>) -> Result<St
 const RESEARCH_SKILL_TEMPLATE: &str = "\
 ---
 name: research
-description: The research method — when to search the web, how to verify and cite a source, and how a conclusion settles into the vault
+description: The research method — plan first, the vault before the web, verify and cite every source, and let the conclusion settle into a note
 ---
 
 # Research method
 
-Follow this for any 'look into / search for / tell me about X' request:
+Follow this for any 'look into / search for / tell me about X' request.
+
+## Shape of the work
+
+1. A question with one clear answer needs no plan: answer it, cite it, stop.
+2. Anything wider is a plan first: call update_plan with 3-7 steps (all pending),
+   then keep it current as you go — doing when you start a step, done when it is
+   finished, skipped (with the reason in its text) when you drop it. Never
+   restate the plan in prose; the UI shows it.
+3. When the turn context names a working note, that note is where the findings
+   go: append_note adds a section or a finding, set_frontmatter records
+   `status:` and `sources:`. Those writes on the working note apply without a
+   dialog. Without a working note, propose to save the result as a note and let
+   the user decide.
 
 ## Order: the vault first, then the web
 
 1. Search the vault first with search_notes / query_blocks — do not go looking
    for what the user already knows; the clips/ directory holds clipped pages,
    which count as existing knowledge too.
-2. Only when the vault has nothing, or nothing recent enough, search the web
+2. Before citing a web URL, call clips_lookup: a page that has been clipped is
+   cited as a [[wikilink]] to the local note (and read with read_note), not as a
+   URL.
+3. Only when the vault has nothing, or nothing recent enough, search the web
    (if web search is enabled in the settings).
+4. In a long conversation, call list_sources before citing again so one source
+   does not get two entries; a source marked unverified there was never confirmed
+   by a search — say so, or search to confirm it.
 
 ## Citation discipline
 
-- Every factual claim gets a source: `[title](url)` right after the claim.
+- Every factual claim gets a source right after it: `[title](url)` for the web,
+  `[[note#^id]]` for the vault (read_block is enough when a citation is all you need).
 - Distinguish a quotation (verbatim) from a paraphrase (summarised); mark an
   inference with no source as unverified.
 - When sources disagree, say so rather than silently picking one.
+- Read one direction to its conclusion and write that conclusion down before
+  starting the next; do not carry whole pages from step to step.
 
 ## Writing it down
 
 - A one-off question only needs an answer.
-- A systematic investigation becomes a note once the user agrees: the
-  frontmatter records `question:` and `sources:`, the body is organised as
-  conclusion → each claim with its source → open questions, and [[links]]
-  connect it to related notes.
+- A systematic investigation becomes a note: the frontmatter records
+  `question:`, `status:` (draft → reviewing → settled) and `sources:`; the body
+  is organised as conclusion → each claim with its source → open questions, and
+  [[links]] connect it to related notes.
 - Suggest that a page worth keeping be opened in the built-in browser and
   clipped into clips/.
 ";

@@ -24,6 +24,10 @@ pub struct NoteSummary {
     /// Frontmatter `source:` as written — the external origin URL of a
     /// clipped note. Indexed so a clip reverse lookup never re-reads disk.
     pub source: Option<String>,
+    /// Frontmatter `vemry.agent_session` — the chat session a note saved from the
+    /// research panel came out of, so opening the note can offer to resume it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -167,6 +171,7 @@ impl BlockIndex {
                 .get("source")
                 .and_then(|v| v.as_str())
                 .map(String::from),
+            agent_session: note.frontmatter.vemry.as_ref().and_then(|m| m.agent_session.clone()),
         };
 
         self.by_name.entry(note.id.stem().to_lowercase()).or_default().insert(note.id.clone());

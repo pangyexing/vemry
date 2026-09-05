@@ -10,6 +10,7 @@
   import type { NoteSummary } from "$lib/api";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import { toast } from "$lib/stores/toast.svelte";
+  import { agent } from "$lib/stores/agent.svelte";
   import { copyText } from "$lib/copytext";
   import Chevron from "./Chevron.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
@@ -182,6 +183,13 @@
       );
       if (r.kind === "file") {
         entries.push({ label: t("fileTree.openWithSystemApp"), action: () => void api.fileOpenSystem(r.path).catch((err) => (vault.error = String(err))) });
+      }
+      if (r.kind === "note") {
+        // The AI keeps this session's findings in the note; its local writes then need no dialog
+        entries.push({
+          label: t("fileTree.followAi"),
+          action: () => void agent.setFollow(r.path).then(() => toast.push(t("chat.followed", { name: baseOf(r.path) }))).catch((err) => toast.push(String(err), "error")),
+        });
       }
       entries.push(deleteEntry(r.path));
     }

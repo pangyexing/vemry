@@ -7,13 +7,17 @@
 //!
 //! Fixture shape (see the files for examples):
 //! ```json
-//! { "name": "…", "vault": { "path.md": "content" }, "plan_confirm": false,
+//! { "name": "…", "vault": { "path.md": "content" }, "plan_confirm": false, "follow": "note.md",
 //!   "turns": [ { "user": "…", "page_url": "…", "script": [ [chunk…], [chunk…] ] } ],
 //!   "expect": { "citations_resolve": true, "max_tool_calls": 2, "tools_ok": true,
 //!               "no_writes": true, "sources": [{"url": "…", "verified": false}],
 //!               "plan": ["done", "doing"], "no_plan_in_prose": true,
 //!               "tool_output_contains": [{"id": "c1", "text": "…"}],
-//!               "answer_contains": ["…"] } }
+//!               "answer_contains": ["…"], "note_contains": [{"path": "…", "text": "…"}] } }
+//! ```
+//! Writes go through an auto-denying gate, so a fixture that expects a write to land
+//! must set `follow` (the followed note takes its local writes without a dialog).
+//! ```
 //! ```
 //! A chunk is one of `{"text": "…"}`, `{"finish": "stop"}`,
 //! `{"tool": {"id", "name", "args"}}`, `{"search": ["query"]}`,
@@ -141,7 +145,11 @@ async fn run_fixture(fx: &Value) -> Outcome {
     let events = Arc::new(Mutex::new(Vec::new()));
     let ev = events.clone();
     let emit = move |e: AgentEvent| ev.lock().unwrap().push(e);
-    let config = RunnerConfig { plan_confirm: fx["plan_confirm"].as_bool().unwrap_or(false), ..Default::default() };
+    let config = RunnerConfig {
+        plan_confirm: fx["plan_confirm"].as_bool().unwrap_or(false),
+        follow_note: fx["follow"].as_str().map(String::from),
+        ..Default::default()
+    };
     let provider = ProviderConfig::zhipu("eval-key".into());
     let mut history = vec![];
     for turn in fx["turns"].as_array().unwrap() {
@@ -178,6 +186,14 @@ async fn run_fixture(fx: &Value) -> Outcome {
     let vault_guard = vault.lock().unwrap();
     let v = vault_guard.as_ref().unwrap();
     check(fx, v, &events, &answers, &sources, &jsonl);
+    if let Some(checks) = fx["expect"]["note_contains"].as_array() {
+        for c in checks {
+            let path = c["path"].as_str().unwrap();
+            let text = c["text"].as_str().unwrap();
+            let on_disk = std::fs::read_to_string(vault_dir.path().join(path)).unwrap_or_default();
+            assert!(on_disk.contains(text), "[{}] note {path} lacks {text:?}:\n{on_disk}", fx["name"]);
+        }
+    }
     drop(vault_guard);
     drop(vault_dir);
     Outcome { events, answers, sources, jsonl }

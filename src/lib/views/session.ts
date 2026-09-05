@@ -24,7 +24,7 @@ export type SessionEntry =
   /** to: move_note's destination (since v0.9; the lines of every other tool have no such key). */
   | { kind: "write_prepared"; ts: string; tool: string; path: string; diff: string; to?: string }
   /** applied_diff (since v0.9): for "edit, then apply", the diff between the proposed content and what the user actually applied. */
-  | { kind: "permission"; ts: string; path: string; decision: string; applied_diff?: string }
+  | { kind: "permission"; ts: string; path: string; decision: string; applied_diff?: string; via?: string }
   | { kind: "privacy"; ts: string; tool: string; filtered: number }
   | { kind: "web_search"; ts: string; queries?: string[]; count?: number; links?: { title: string; url: string }[] }
   /** The plan propose_plan raised (id = the tool call id, which the decision line pairs by). */
@@ -38,6 +38,8 @@ export type SessionEntry =
       items?: string[];
       reason?: string;
     }
+  /** The session follows a note (path null = stopped); the last line wins. auto: local writes on it pass the gate without a dialog. */
+  | { kind: "follow"; ts: string; path: string | null; auto?: boolean }
   /** The model's step list (update_plan, or the list confirmed at the plan gate); the latest one is the sticky plan card. */
   | { kind: "plan_update"; ts: string; items: PlanItem[] }
   /** The web sources one turn cited, settled with their verification (the turn's source card on replay). */

@@ -478,6 +478,16 @@
     },
   });
   registerCommand({
+    // The session keeps its findings in the open note (the follow chip appears in the composer);
+    // with no note open there is nothing to follow
+    id: "agent-follow-current", group: "research",
+    run: () => {
+      const path = vault.currentPath;
+      if (!vault.root || !path) return;
+      void agent.setFollow(path).then(() => toast.push(t("chat.followed", { name: path.split("/").pop() ?? path }))).catch((e) => toast.push(String(e), "error"));
+    },
+  });
+  registerCommand({
     // The command entry point of the composer's "+" button (principle 5: everything is a
     // command): the native file dialog → import into the current note's attachment bucket →
     // chips. When no conversation surface is mounted (the panel is collapsed and no window is

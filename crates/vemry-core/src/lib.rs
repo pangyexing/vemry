@@ -39,7 +39,7 @@ pub use provenance::{
     ProvenanceLedger, Replacement, RevertPlan,
 };
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
-pub use parser::set_frontmatter_disabled;
+pub use parser::{is_writable_frontmatter_key, set_frontmatter_disabled, set_frontmatter_key, FrontmatterValue};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
 pub use types::{
     list_block_types, parse_block_type, type_skeleton, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE,

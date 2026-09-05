@@ -719,9 +719,135 @@ pub fn set_frontmatter_disabled(raw: &str, disabled: bool) -> String {
     lines.concat()
 }
 
+/// A frontmatter value the agent may set: one scalar, or a list of scalars.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FrontmatterValue {
+    Scalar(String),
+    List(Vec<String>),
+}
+
+/// A top-level frontmatter key the agent may write: letters, digits, `_` and `-`
+/// (YAML's plain keys); `private` and `vemry` are the app's own and refused —
+/// a write must not change a note's privacy or its provenance record.
+pub fn is_writable_frontmatter_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && !matches!(key, "private" | "vemry")
+}
+
+/// A scalar as a YAML value: bare when it reads back as itself (a URL with its
+/// colon included — `https://x` is a plain scalar, since the colon is not
+/// followed by a space), double-quoted (with `"` and `\\` escaped) when it holds
+/// something YAML would read as structure, a comment or a type — the round trip
+/// through `extract_frontmatter` must give the string back unchanged.
+fn yaml_scalar(v: &str) -> String {
+    let lower = v.to_ascii_lowercase();
+    let plain = !v.is_empty()
+        && !v.starts_with(['-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`', ' '])
+        && !v.ends_with([':', ' '])
+        && !v.contains(": ")
+        && !v.contains(" #")
+        && !v.contains(['\n', '\r', '\t', '\\'])
+        && !matches!(lower.as_str(), "true" | "false" | "null" | "~" | "yes" | "no" | "on" | "off")
+        && v.parse::<f64>().is_err();
+    if plain {
+        v.to_string()
+    } else {
+        format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
+/// Set, replace or remove (`None`) one top-level frontmatter key, every other line
+/// kept as it is (the same boundary rule as `set_frontmatter_disabled`: opener
+/// `---`, closer `---` or `...`). A note with no frontmatter gets one when a value
+/// is set; the continuation lines of a list or block value (indented, or `- ` items)
+/// are replaced together with their key. Returns `None` when the key is not one the
+/// agent may write.
+pub fn set_frontmatter_key(raw: &str, key: &str, value: Option<&FrontmatterValue>) -> Option<String> {
+    if !is_writable_frontmatter_key(key) {
+        return None;
+    }
+    let eol = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let rendered: Option<String> = value.map(|v| match v {
+        FrontmatterValue::Scalar(s) => format!("{key}: {}{eol}", yaml_scalar(s)),
+        FrontmatterValue::List(items) if items.is_empty() => format!("{key}: []{eol}"),
+        FrontmatterValue::List(items) => {
+            let mut out = format!("{key}:{eol}");
+            for it in items {
+                out.push_str(&format!("  - {}{eol}", yaml_scalar(it)));
+            }
+            out
+        }
+    });
+    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
+    let opens = |l: &str| l.trim_end() == "---";
+    let closes = |l: &str| matches!(l.trim_end(), "---" | "...");
+    let close = match lines.first() {
+        Some(first) if opens(first) => lines.iter().skip(1).position(|l| closes(l)).map(|i| i + 1),
+        _ => None,
+    };
+    let Some(close) = close else {
+        return Some(match rendered {
+            Some(r) => format!("---{eol}{r}---{eol}{raw}"),
+            None => raw.to_string(),
+        });
+    };
+    let prefix = format!("{key}:");
+    let start = lines[1..close]
+        .iter()
+        .position(|l| l.starts_with(&prefix) && l[prefix.len()..].starts_with([' ', '\n', '\r']) || l.trim_end() == prefix.trim_end())
+        .map(|i| i + 1);
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 4);
+    match start {
+        Some(i) => {
+            // the key's continuation lines: indented, or list items, up to the next top-level key or the closer
+            let mut end = i + 1;
+            while end < close && (lines[end].starts_with([' ', '\t']) || lines[end].starts_with("- ")) {
+                end += 1;
+            }
+            out.extend(lines[..i].iter().map(|l| l.to_string()));
+            if let Some(r) = rendered {
+                out.push(r);
+            }
+            out.extend(lines[end..].iter().map(|l| l.to_string()));
+        }
+        None => {
+            out.extend(lines[..close].iter().map(|l| l.to_string()));
+            if let Some(r) = rendered {
+                out.push(r);
+            }
+            out.extend(lines[close..].iter().map(|l| l.to_string()));
+        }
+    }
+    Some(out.concat())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_frontmatter_key_sets_replaces_removes_and_refuses() {
+        let raw = "---\ntitle: T\nsources:\n  - https://a\n  - https://b\nstatus: draft\n---\nbody\n";
+        let set = set_frontmatter_key(raw, "status", Some(&FrontmatterValue::Scalar("reviewing".into()))).unwrap();
+        assert!(set.contains("status: reviewing\n") && !set.contains("draft"));
+        let (fm, _) = extract_frontmatter(&set);
+        assert_eq!(fm.extra.get("status").and_then(|v| v.as_str()), Some("reviewing"));
+        let list = set_frontmatter_key(raw, "sources", Some(&FrontmatterValue::List(vec!["https://c".into()]))).unwrap();
+        assert!(list.contains("sources:\n  - https://c\nstatus: draft\n") && !list.contains("https://a"), "{list}");
+        let removed = set_frontmatter_key(raw, "sources", None).unwrap();
+        assert_eq!(removed, "---\ntitle: T\nstatus: draft\n---\nbody\n");
+        let added = set_frontmatter_key("no frontmatter\n", "question", Some(&FrontmatterValue::Scalar("why: because #1".into()))).unwrap();
+        assert!(added.starts_with("---\nquestion: \"why: because #1\"\n---\nno frontmatter\n"), "{added}");
+        let (fm, _) = extract_frontmatter(&added);
+        assert_eq!(fm.extra.get("question").and_then(|v| v.as_str()), Some("why: because #1"));
+        assert!(set_frontmatter_key(raw, "private", Some(&FrontmatterValue::Scalar("true".into()))).is_none());
+        assert!(set_frontmatter_key(raw, "vemry", None).is_none());
+        assert!(set_frontmatter_key(raw, "bad key", None).is_none());
+        // a value YAML would read as a number or a bool is quoted so it reads back as text
+        let n = set_frontmatter_key(raw, "code", Some(&FrontmatterValue::Scalar("007".into()))).unwrap();
+        assert!(n.contains("code: \"007\"\n"));
+    }
 
     #[test]
     fn list_items_are_blocks() {

@@ -1,0 +1,28 @@
+{
+  "name": "working-note",
+  "vault": {
+    "research/Gateway.md": "---\nquestion: which rate limiter\nstatus: draft\n---\n# Gateway\n\n## Findings\n\n- token bucket is the common choice ^f1\n\n## Open questions\n\n- burst handling\n",
+    "clips/Envoy limits.md": "---\nsource: https://example.com/envoy-limits\n---\n# Envoy limits\n\nEnvoy applies limits per route. ^e1\n"
+  },
+  "follow": "research/Gateway.md",
+  "turns": [
+    {
+      "user": "把 Envoy 那篇的结论补进研究笔记",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "clips_lookup", "args": { "urls": ["https://example.com/envoy-limits"] } } } ],
+        [ { "tool": { "id": "c2", "name": "read_block", "args": { "path": "clips/Envoy limits.md", "block": "^e1" } } } ],
+        [ { "tool": { "id": "c3", "name": "append_note", "args": { "path": "research/Gateway.md", "anchor": "Findings", "content": "- Envoy applies limits per route [[clips/Envoy limits#^e1]]" } } },
+          { "tool": { "id": "c4", "name": "set_frontmatter", "args": { "path": "research/Gateway.md", "key": "status", "value": "reviewing" } } } ],
+        [ { "text": "已补进「Findings」一节 [[clips/Envoy limits#^e1]]，状态改为 reviewing。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "sources": [],
+    "tool_output_contains": [ { "id": "c3", "text": "wrote research/Gateway.md" }, { "id": "c4", "text": "wrote research/Gateway.md" } ],
+    "note_contains": [ { "path": "research/Gateway.md", "text": "- token bucket is the common choice ^f1\n- Envoy applies limits per route [[clips/Envoy limits#^e1]]\n\n## Open questions" },
+                       { "path": "research/Gateway.md", "text": "status: reviewing" } ]
+  }
+}

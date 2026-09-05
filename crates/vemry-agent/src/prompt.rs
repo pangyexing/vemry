@@ -63,6 +63,10 @@ plan in your prose — the UI shows it. Skip planning entirely for simple questi
 every item before finishing.";
 
 const BASE_RULES_TAIL: &str = "\
+- When the turn context names a working note, the user has asked you to keep your findings in \
+that note: build it up with append_note and set_frontmatter (and edit_note for fixes) — those \
+writes on the working note apply without a dialog and are reviewed in the editor afterwards. \
+Other notes still need approval.
 - VEMRY.md is your persistent memory across sessions. When the user corrects your \
 behavior or states a durable preference or convention, offer to record it as a short \
 bullet in VEMRY.md (create the file if missing).";
@@ -199,6 +203,11 @@ pub struct TurnContext {
     /// The currently open note (the caller has already applied the privacy
     /// filter and passes None for a private note).
     pub current_note: Option<String>,
+    /// The note the session follows (the user's "keep your findings in this
+    /// note"; local writes on it need no approval) — privacy-filtered like
+    /// current_note. It comes before the current note in the tail: the scrub
+    /// removes a tail item by its label, and the two never overlap.
+    pub follow_note: Option<String>,
 }
 
 /// Neutralising a fence attribute: external content is going into attribute
@@ -227,6 +236,7 @@ pub(crate) const NOTE_INTRO: &str = "The following is the content of a note the 
 /// assembly and the string surgery in `scrub_private_refs` share one copy —
 /// change it here and the scrubbing follows.
 pub(crate) const CUR_NOTE_LABEL: &str = "Currently open note: ";
+pub(crate) const FOLLOW_LABEL: &str = "Working note: ";
 pub(crate) const TAIL_SEP: &str = " · ";
 pub(crate) const TAIL_OPEN: &str = "\n\n(";
 
@@ -371,6 +381,9 @@ pub fn compose_user_message(
     let mut parts: Vec<String> = vec![];
     if !ctx.date.is_empty() {
         parts.push(format!("Today: {}", ctx.date));
+    }
+    if let Some(note) = &ctx.follow_note {
+        parts.push(format!("{FOLLOW_LABEL}{note}"));
     }
     if let Some(note) = &ctx.current_note {
         parts.push(format!("{CUR_NOTE_LABEL}{note}"));
@@ -549,13 +562,13 @@ mod tests {
 
     #[test]
     fn compose_appends_turn_context_tail() {
-        let ctx = TurnContext { date: "2026-08-19 周三".into(), current_note: Some("projects/Alpha.md".into()) };
+        let ctx = TurnContext { date: "2026-08-19 周三".into(), current_note: Some("projects/Alpha.md".into()), follow_note: None };
         let out = compose_user_message("今天该做什么".into(), None, &[], &ctx);
         assert!(out.starts_with("今天该做什么\n\n("));
         assert!(out.contains("Today: 2026-08-19 周三"));
         assert!(out.contains("Currently open note: projects/Alpha.md"));
         // No current note: the date alone
-        let ctx = TurnContext { date: "2026-08-19 周三".into(), current_note: None };
+        let ctx = TurnContext { date: "2026-08-19 周三".into(), current_note: None, follow_note: None };
         let out = compose_user_message("hi".into(), None, &[], &ctx);
         assert!(!out.contains("Currently open note"));
         assert!(out.contains("Today: 2026-08-19 周三"));
@@ -668,7 +681,7 @@ mod tests {
 
     #[test]
     fn compose_wraps_refs_after_page_before_tail() {
-        let ctx = TurnContext { date: "2026-08-23 周日".into(), current_note: None };
+        let ctx = TurnContext { date: "2026-08-23 周日".into(), current_note: None, follow_note: None };
         let out = compose_user_message(
             "看看".into(),
             Some(&page("t", "https://e.com", "网页正文")),

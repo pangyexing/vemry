@@ -27,8 +27,8 @@ use crate::provider::ProviderConfig;
 use crate::session::SessionLog;
 use crate::sources::{self, Source};
 use crate::tools::{
-    execute_read_tool, execute_write, is_session_tool, is_write_tool, parse_plan_items, prepare_write, propose_plan_def,
-    tool_defs, PlanItem, PlanStatus, ToolError,
+    execute_read_tool, execute_write, is_local_write, is_session_tool, is_write_tool, parse_plan_items, prepare_write,
+    propose_plan_def, tool_defs, PlanItem, PlanStatus, ToolError,
 };
 use crate::types::{
     ChatMessage, ChatRequest, ToolCall, ToolCallAccumulator, ToolDef, Usage, WebSearchResult,
@@ -149,6 +149,13 @@ pub struct RunnerConfig {
     /// glue layer pins it when it snapshots the session, so a settings change takes
     /// effect from the next session. Default false, so tests are undisturbed.
     pub plan_confirm: bool,
+    /// The note the session follows (the user's "keep your findings in this note"):
+    /// named in the turn context, and with `follow_auto` its local writes (append /
+    /// frontmatter / edit) pass the gate without a dialog — the follow is itself the
+    /// user's explicit grant for that one note, and the writes land as unreviewed
+    /// blocks the editor shows for review afterwards. Privacy-filtered per turn.
+    pub follow_note: Option<String>,
+    pub follow_auto: bool,
 }
 
 impl Default for RunnerConfig {
@@ -162,6 +169,8 @@ impl Default for RunnerConfig {
             context_soft_limit: 80_000,
             reasoning_effort: None,
             plan_confirm: false,
+            follow_note: None,
+            follow_auto: true,
         }
     }
 }
@@ -270,7 +279,7 @@ impl AgentRunner {
         // turn's iterations; the resolution at the head of the turn warms this
         // turn's new attachments into it in passing (see resolve_context_refs)
         let mut image_cache: HashMap<String, std::result::Result<String, String>> = HashMap::new();
-        let (system, open_note, resolved_refs, refs_filtered) = {
+        let (system, open_note, follow_note, resolved_refs, refs_filtered) = {
             let guard = self.vault.lock().unwrap();
             let vault = guard.as_ref().ok_or_else(|| AgentError::Api("no vault open".into()))?;
             let system = match &config.system_prompt {
@@ -280,6 +289,8 @@ impl AgentRunner {
             // The current note is privacy-filtered here (a private note does not even
             // give the model the fact that it is open)
             let open_note = current_note.filter(|n| !vault.is_private_rel(n, false));
+            // The followed note is filtered the same way: a private one is neither named nor auto-written
+            let follow_note = config.follow_note.clone().filter(|n| !vault.is_private_rel(n, false));
             // @ references resolve under the same lock at the same instant (a
             // regenerate resolves nothing: refs only apply to a new user message)
             let (resolved, filtered) = if user_message.is_some() && !refs.is_empty() {
@@ -292,7 +303,7 @@ impl AgentRunner {
             // persists at the end of the turn is already the clean version (which is
             // what makes a retry replay immune)
             scrub_private_refs(vault, history);
-            (system, open_note, resolved, filtered)
+            (system, open_note, follow_note, resolved, filtered)
         };
         let user_message_was_none = user_message.is_none();
         if let Some(user_message) = user_message {
@@ -346,7 +357,7 @@ impl AgentRunner {
                 log.append("privacy", json!({ "tool": "context_ref", "filtered": refs_filtered }));
             }
             on_event(AgentEvent::TurnStarted { turn: turn_id.clone() });
-            let ctx = TurnContext { date: local_date_string(), current_note: open_note };
+            let ctx = TurnContext { date: local_date_string(), current_note: open_note, follow_note: follow_note.clone() };
             let mut envelope =
                 ChatMessage::user_content(compose_user_content(user_message, page.as_ref(), &resolved_refs, &ctx));
             envelope.turn = Some(turn_id);
@@ -642,8 +653,9 @@ impl AgentRunner {
                     ));
                     continue;
                 }
+                let follow = follow_note.as_deref().filter(|_| config.follow_auto);
                 let result = self
-                    .execute_tool(call, &mut session_allow_writes, &config.session_allow, &mut plan_rejected, on_event, log)
+                    .execute_tool(call, &mut session_allow_writes, &config.session_allow, follow, &mut plan_rejected, on_event, log)
                     .await;
                 let (ok, output) = match result {
                     Ok(o) => (true, o),
@@ -765,11 +777,13 @@ impl AgentRunner {
         Ok(text)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute_tool(
         &self,
         call: &ToolCall,
         session_allow_writes: &mut bool,
         session_flag: &Option<Arc<AtomicBool>>,
+        follow: Option<&str>,
         plan_rejected: &mut bool,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
@@ -847,7 +861,10 @@ impl AgentRunner {
         // A standing grant answers without a dialog: nobody looked at this diff, so
         // its blocks stay pending in the editor; a decision made on the dialog is the
         // review itself (the grant a user issues on it covers the next writes, not this one)
-        let automatic = *session_allow_writes;
+        // The followed note takes its local writes without a dialog: the follow is the
+        // user's grant for that one note (whole-note overwrites and moves still ask)
+        let via_follow = !*session_allow_writes && follow == Some(write_req.path.as_str()) && is_local_write(name);
+        let automatic = *session_allow_writes || via_follow;
         let decision = if automatic {
             PermissionDecision::Allow
         } else {
@@ -855,6 +872,9 @@ impl AgentRunner {
             self.gate.request(&write_req).await
         };
         let mut permission = json!({ "path": &write_req.path, "decision": decision_label(&decision) });
+        if via_follow {
+            permission["via"] = json!("follow");
+        }
         // "Edit, then apply": the diff the user actually applied, next to the
         // proposed one in write_prepared — the ledger would otherwise hold the
         // proposal and never the bytes that landed
@@ -2011,6 +2031,62 @@ mod tests {
         let replayed = crate::sources::read_sources(&jsonl);
         let urls: Vec<&str> = replayed.iter().map(|s| s.url.as_str()).collect();
         assert_eq!(urls, vec!["https://a.io/x", "https://d.io/1"]);
+    }
+
+    /// The followed note: its local writes pass the gate without a dialog (the gate
+    /// here would deny), the permission line says why, the turn tail names the
+    /// working note, and a write to any other note still goes through the gate.
+    #[tokio::test]
+    async fn followed_note_takes_local_writes_without_the_gate() {
+        let f = fixture();
+        std::fs::write(f._dir.path().join("Other.md"), "# Other\n").unwrap();
+        *f.vault.lock().unwrap() = Some(Vault::open(f._dir.path()).unwrap());
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_batch(&[
+                ("c1", "append_note", r#"{"path": "Hello.md", "content": "- finding one"}"#),
+                ("c2", "set_frontmatter", r#"{"path": "Hello.md", "key": "status", "value": "reviewing"}"#),
+                ("c3", "append_note", r#"{"path": "Other.md", "content": "- elsewhere"}"#),
+            ]),
+            vec![text_chunk("写好了"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoDeny("not this one".into())));
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        let config = RunnerConfig { follow_note: Some("Hello.md".into()), ..Default::default() };
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &config,
+            &mut history,
+            Some("记下来".into()),
+            None,
+            vec![],
+            None,
+            &|_| {},
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        assert!(history[0].text().unwrap().contains("Working note: Hello.md"), "the tail names the working note");
+        let text_of = |id: &str| history.iter().find(|m| m.tool_call_id.as_deref() == Some(id)).unwrap().text().unwrap().to_string();
+        assert!(text_of("c1").starts_with("wrote Hello.md"), "{}", text_of("c1"));
+        assert!(text_of("c2").starts_with("wrote Hello.md"), "{}", text_of("c2"));
+        assert!(text_of("c3").contains("denied by user"), "{}", text_of("c3"));
+        let on_disk = std::fs::read_to_string(f._dir.path().join("Hello.md")).unwrap();
+        assert!(on_disk.starts_with("---\nstatus: reviewing\n---\n") && on_disk.contains("- finding one"), "{on_disk}");
+        assert_eq!(std::fs::read_to_string(f._dir.path().join("Other.md")).unwrap(), "# Other\n");
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert_eq!(jsonl.lines().filter(|l| l.contains(r#""via":"follow""#)).count(), 2, "{jsonl}");
+        // follow_auto=false keeps the name in the tail but every write asks again
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c4", "append_note", r#"{"path": "Hello.md", "content": "- two"}"#),
+            vec![text_chunk("好"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoDeny("ask me".into())));
+        let config = RunnerConfig { follow_note: Some("Hello.md".into()), follow_auto: false, ..Default::default() };
+        let mut history = vec![];
+        r.run(&ProviderConfig::zhipu("k".into()), &config, &mut history, Some("再记".into()), None, vec![], None, &|_| {}, &AtomicBool::new(false), &log).await.unwrap();
+        assert!(history.iter().find(|m| m.tool_call_id.as_deref() == Some("c4")).unwrap().text().unwrap().contains("denied by user"));
     }
 
     #[tokio::test]

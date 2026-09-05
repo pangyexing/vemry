@@ -16,6 +16,8 @@ pub enum WriteKind {
     Overwrite,
     Edit,
     Move,
+    /// append_note onto an existing note (a new one is a Create).
+    Append,
 }
 
 #[derive(Clone, Debug, Serialize)]

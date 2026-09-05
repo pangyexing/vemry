@@ -120,6 +120,10 @@ pub struct AgentState {
     /// session's jsonl wherever the session identity changes — it moves with
     /// `current_session` exactly as `history` does.
     pub sources: Arc<Mutex<Vec<vemry_agent::Source>>>,
+    /// The note the session follows (vemry_agent::Follow): local writes on it pass
+    /// the gate without a dialog. Rebuilt from the jsonl's `follow` lines with the
+    /// session, exactly like `sources`.
+    pub follow: Mutex<Option<vemry_agent::Follow>>,
 }
 
 impl AgentState {
@@ -136,6 +140,7 @@ impl AgentState {
     pub fn load_sources(&self, meta_dir: &std::path::Path, id: Option<&str>) {
         *self.sources.lock().unwrap() =
             id.map(|id| vemry_agent::session::read_session_sources(meta_dir, id)).unwrap_or_default();
+        *self.follow.lock().unwrap() = id.and_then(|id| vemry_agent::session::read_session_follow(meta_dir, id));
     }
 
     /// A change to the privacy zones invalidates the prompt snapshot alone: the
@@ -165,6 +170,7 @@ impl Default for AgentState {
             session_setup: Mutex::new(None),
             session_grant: Arc::new(AtomicBool::new(false)),
             sources: Arc::new(Mutex::new(vec![])),
+            follow: Mutex::new(None),
         }
     }
 }

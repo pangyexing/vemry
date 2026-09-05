@@ -110,6 +110,11 @@ CMD = {
          "{key} again while focused to pop out a separate chat window",
          "光标落进 AI 输入框——面板可见时聚焦面板,已聚焦时再按 {key} 弹出独立的 AI 对话窗口"),
     ),
+    "agent-follow-current": (
+        ("AI follows the current note", "让 AI 跟随当前笔记"),
+        ("The AI keeps this session's findings in the open note; appends and frontmatter changes on it apply without a dialog",
+         "本会话的结论写进当前打开的笔记;对它的追加与 frontmatter 修改不再逐次确认"),
+    ),
     "agent-attach-files": (
         ("Attach files to AI context", "附加文件到 AI 上下文"),
         ("Import images, PDFs or text files into the vault as context for your next "
@@ -487,6 +492,7 @@ add("permission.", {
     "summary.overwrite": ("Overwrite {path}", "覆盖写入 {path}"),
     "summary.edit": ("Edit {path}", "编辑 {path}"),
     "summary.move": ("Move {path} → {toPath}", "移动 {path} → {toPath}"),
+    "summary.append": ("Append to {path}", "追加到 {path}"),
     "deniedByUser": ("Denied by the user", "用户拒绝"),
     "denyReasonPlaceholder": ("Tell the agent why (optional)", "告诉 agent 为什么拒绝（可选）"),
     "confirmDeny": ("Confirm deny", "确认拒绝"),
@@ -717,6 +723,9 @@ add("sessionsView.", {
                        "✎ 编辑重发:上一条用户消息整轮被放弃"),
     "markCompact": ("▣ Context compacted ({level})", "▣ 上下文压缩({level})"),
     "planUpdate": ("Plan updated · {done}/{total}", "计划更新 · {done}/{total}"),
+    "follow": ("Following {path}", "跟随 {path}"),
+    "followEnd": ("Stopped following", "取消跟随"),
+    "viaFollow": (" · working note", " · 跟随笔记"),
     "sourcesSettled": ("Sources this turn · {n}", "本轮来源 · {n}"),
     "compactSummary": ("older conversation summarized", "旧对话摘要化"),
     "compactHandles": ("older tool results turned into handles", "旧工具结果句柄化"),
@@ -783,6 +792,7 @@ add("fileTree.", {
     "privacyInherited": ("Privacy zone — inherited from {zone}", "隐私区 — 继承自 {zone}"),
     "privacyCovered": ("In privacy zone · inherited from {zone}", "已在隐私区 · 继承自 {zone}"),
     "openWithSystemApp": ("Open with the system app", "用系统应用打开"),
+    "followAi": ("Let the AI follow this note", "让 AI 跟随此笔记"),
     "delete": ("Delete (move to trash)", "删除（移入废纸篓）"),
     "copyFailed": ("Copy failed", "复制失败"),
     "noFolderIntoItself": ("A folder cannot be moved inside itself", "不能把文件夹移动到它自己内部"),
@@ -916,6 +926,13 @@ add("clipBar.", {
 # ---------------------------------------------------------------- research panel
 add("agentPanel.", {
     "newSession": ("New session", "新会话"),
+    "sources": ("Sources · {n}", "来源 · {n}"),
+    "sourcesHint": ("Every web source this session cited, with whether a search confirmed it", "本会话引用过的全部网络来源,及是否经搜索核实"),
+    "noSources": ("No web sources in this session yet", "本会话还没有网络来源"),
+    "sourceVerified": ("verified", "已核实"),
+    "copyLink": ("Copy link", "复制链接"),
+    "linkCopied": ("Link copied", "已复制链接"),
+    "closeSources": ("Close the source list", "关闭来源列表"),
     "justNow": ("just now", "刚刚"),
     "minutesAgo": ("{n} min ago", "{n} 分钟前"),
     "hoursAgo": ("{n} h ago", "{n} 小时前"),
@@ -1040,6 +1057,20 @@ add("chat.", {
     "pinWord": ("pin", "钉住"),
     "planProgress": ("Plan · {done}/{total}", "计划 · {done}/{total}"),
     "planStatusDoing": ("in progress", "进行中"),
+    "followTag": ("working", "跟随"),
+    "followTitle": ("Working note {note}\nThe AI keeps its findings here; appends, frontmatter and edits on it apply without a dialog and show as unreviewed blocks in the editor",
+                    "跟随中 {note}\nAI 把结论写进这篇;对它的追加、frontmatter 与编辑不再逐次确认,落盘后在编辑器里显示为未审阅块"),
+    "followTitleAsk": ("Working note {note}\nThe AI keeps its findings here; every write still asks first",
+                       "跟随中 {note}\nAI 把结论写进这篇;每次写入仍先确认"),
+    "unfollow": ("Stop following", "取消跟随"),
+    "followMenuTitle": ("Working note", "跟随笔记"),
+    "followAutoOn": ("Local writes apply without asking", "局部写入自动放行"),
+    "followAutoOff": ("Ask before every write", "每次写入先确认"),
+    "followOpen": ("Open the note", "打开笔记"),
+    "followed": ("Following {name}: findings land in this note", "已跟随 {name}:结论会写进这篇"),
+    "unfollowed": ("Stopped following", "已取消跟随"),
+    "resumeResearch": ("This note came from an AI session", "这篇笔记来自一次 AI 会话"),
+    "resumeButton": ("Resume that session", "继续这项研究"),
     "planStatusSkipped": ("skipped", "已跳过"),
     "welcomeTitle": ("Research panel", "研究面板"),
     "welcomeBody": ("Ask, and the AI searches your notes (and the web) and answers with citations. "
@@ -1744,6 +1775,7 @@ add("clip.", {
 
 add("ipc.", {
     "fileExists": ("A file with that name already exists: {path}", "已存在同名文件: {path}"),
+    "followPrivate": ("A private note cannot be followed by the AI", "私密笔记不能让 AI 跟随"),
     "dirNotEmpty": ("That folder exists and is not empty — pick another place for a new vault, or open "
                     "the existing one with “Open vault”",
                     "目标目录已存在且不为空——新建请换一个位置,已有的库走「打开知识库」"),
