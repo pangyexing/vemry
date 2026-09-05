@@ -43,6 +43,7 @@ async fn live_agent_creates_note_via_tools() {
         transport: Arc::new(HttpTransport::new()),
         gate: Arc::new(AutoAllow),
         plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
+        actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
         vault: Arc::clone(&vault),
         sources: Arc::new(Mutex::new(vec![])),
     };
@@ -112,6 +113,7 @@ async fn live_responses_web_search() {
         transport: Arc::new(ResponsesTransport::new()),
         gate: Arc::new(AutoAllow),
         plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
+        actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
         vault: Arc::clone(&vault),
         sources: Arc::new(Mutex::new(vec![])),
     };

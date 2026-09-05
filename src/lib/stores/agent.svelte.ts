@@ -4,6 +4,8 @@ import { t } from "$lib/i18n/i18n.svelte";
 import {
   api,
   Channel,
+  type ActionsDecision,
+  type ActionsRequest,
   type AgentEvent,
   type ContextRef,
   type EditorSelection,
@@ -54,6 +56,7 @@ export interface AgentHandoff {
    *  stand at the gate forever. */
   pendingPermission: WriteRequest | null;
   pendingPlan: PlanRequest | null;
+  pendingActions: ActionsRequest | null;
 }
 
 /** The composer handle a mounted conversation surface registers with the store (at most
@@ -86,6 +89,9 @@ export type TimelineItem =
    *  (and pendingPlan points at it) the card carries the decision buttons, and once
    *  decided it renders the decision badge. */
   | { kind: "plan"; id: string; items: string[]; decision?: PlanDecision }
+  /** propose_actions' review card: the proposed items; while undecided (pendingActions
+   *  points at it) the card is editable and carries the write / discard buttons. */
+  | { kind: "actions"; id: string; items: ActionsRequest["items"]; decision?: ActionsDecision }
   /** A system notice line (a context compaction, a fork and the like), shown quietly. */
   | { kind: "notice"; text: string }
   | { kind: "error"; text: string };
@@ -166,6 +172,8 @@ class AgentStore {
   pendingPermission = $state<WriteRequest | null>(null);
   /** The pending plan gate request (of the same family as the permission gate): AgentChat's plan card raises its decision buttons from it. */
   pendingPlan = $state<PlanRequest | null>(null);
+  /** The pending actions gate request (propose_actions): the card is editable while it points at it. */
+  pendingActions = $state<ActionsRequest | null>(null);
   /** The context draft (chips) the next message will carry: web pages plus @ references.
    *  The research panel's "add to context", the reading projection and the @ picker all
    *  hand things over here, and the caller consumes and clears it on send. There is at
@@ -280,6 +288,7 @@ class AgentStore {
       dismissedSelection: this.dismissedSelection,
       pendingPermission: $state.snapshot(this.pendingPermission) as WriteRequest | null,
       pendingPlan: $state.snapshot(this.pendingPlan) as PlanRequest | null,
+      pendingActions: $state.snapshot(this.pendingActions) as ActionsRequest | null,
     };
   }
 
@@ -294,6 +303,7 @@ class AgentStore {
     this.dismissedSelection = typeof h.dismissedSelection === "string" ? h.dismissedSelection : null;
     this.pendingPermission = typeof h.pendingPermission === "object" ? (h.pendingPermission ?? null) : null;
     this.pendingPlan = typeof h.pendingPlan === "object" ? (h.pendingPlan ?? null) : null;
+    this.pendingActions = typeof h.pendingActions === "object" ? (h.pendingActions ?? null) : null;
   }
 
   /** Rebuild the timeline from Rust's current session (without switching the model
@@ -336,6 +346,7 @@ class AgentStore {
       this.queuedText = null;
       this.pendingPermission = null;
       this.pendingPlan = null;
+      this.pendingActions = null;
     }
     // created=false: the window was already open and was only focused, so the handoff
     // was not delivered — the draft and the references stay in the main window's store
@@ -368,6 +379,7 @@ class AgentStore {
     // answering it would only error
     this.pendingPermission = null;
     this.pendingPlan = null;
+    this.pendingActions = null;
     await this.loadCurrent();
   }
 
@@ -442,8 +454,9 @@ class AgentStore {
     if (idx < 0) return null;
     const item = this.timeline[idx];
     if (item.kind !== "user") return null;
+    // A selection's body and a view's query are not in the timeline and cannot be restored (the selection is probably still in the editor, the view still open)
     const refs = item.refs?.flatMap((r): ContextRef[] =>
-      r.kind === "selection"
+      r.kind === "selection" || r.kind === "view"
         ? []
         : r.kind === "block"
           ? [{ kind: "block", path: r.path, local_id: (r.block ?? "").replace(/^\^/, "") }]
@@ -514,6 +527,7 @@ class AgentStore {
       this.thinking = "";
       this.pendingPermission = null;
       this.pendingPlan = null;
+      this.pendingActions = null;
       this.activity++;
       void this.refreshSessions();
     }
@@ -535,6 +549,7 @@ class AgentStore {
     this.thinking = "";
     this.pendingPermission = null;
     this.pendingPlan = null;
+    this.pendingActions = null;
     this.sessionId = null;
     this.sessions = [];
     this.usage = null;
@@ -718,6 +733,20 @@ class AgentStore {
           plan = e.items;
           break;
         }
+        case "actions": {
+          items.push({ kind: "actions", id: e.id, items: e.items });
+          break;
+        }
+        case "actions_decision": {
+          for (let i = items.length - 1; i >= turnStart; i--) {
+            const item = items[i];
+            if (item.kind === "actions" && item.id === e.id && item.decision === undefined) {
+              item.decision = e.decision === "approve" ? { kind: "approve", items: e.items ?? [] } : { kind: "reject", reason: e.reason ?? "" };
+              break;
+            }
+          }
+          break;
+        }
         case "follow": {
           follow = e.path ? { path: e.path, auto: e.auto ?? true } : null;
           break;
@@ -873,6 +902,7 @@ class AgentStore {
         }
         this.pendingPermission = null;
         this.pendingPlan = null; // defensive: it is already null once the user has answered
+        this.pendingActions = null;
         break;
       }
       case "permission_request": {
@@ -882,6 +912,11 @@ class AgentStore {
       case "plan_request": {
         this.timeline.push({ kind: "plan", id: e.request.id, items: e.request.items });
         this.pendingPlan = e.request;
+        break;
+      }
+      case "actions_request": {
+        this.timeline.push({ kind: "actions", id: e.request.id, items: e.request.items });
+        this.pendingActions = e.request;
         break;
       }
       case "web_searching": {
@@ -1058,6 +1093,21 @@ class AgentStore {
     try {
       await api.agentPlanRespond(req.id, decision);
       this.activity++; // a plan decision enters the session log too
+    } catch (err) {
+      this.timeline.push({ kind: "error", text: String(err) });
+    }
+  }
+
+  /** The actions gate's decision (the same shape as respondPlan): the card's decision is filled in optimistically, and the loop continues within the same turn. */
+  async respondActions(decision: ActionsDecision) {
+    const req = this.pendingActions;
+    if (!req) return;
+    this.pendingActions = null;
+    const card = [...this.timeline].reverse().find((t) => t.kind === "actions" && t.id === req.id);
+    if (card && card.kind === "actions") card.decision = decision;
+    try {
+      await api.agentActionsRespond(req.id, decision);
+      this.activity++;
     } catch (err) {
       this.timeline.push({ kind: "error", text: String(err) });
     }

@@ -25,7 +25,10 @@ pub mod types;
 pub use client::{ChatTransport, HttpTransport};
 pub use context::ContextRef;
 pub use responses::ResponsesTransport;
-pub use permission::{PermissionDecision, PermissionGate, PlanDecision, PlanGate, PlanRequest, WriteRequest};
+pub use permission::{
+    ActionItem, ActionsDecision, ActionsGate, ActionsRequest, PermissionDecision, PermissionGate, PlanDecision, PlanGate,
+    PlanRequest, WriteRequest,
+};
 pub use prompt::{PageContext, TurnContext, PAGE_CONTEXT_MAX_CHARS};
 pub use provider::ProviderConfig;
 pub use runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};

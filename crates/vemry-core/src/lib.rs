@@ -19,6 +19,7 @@ pub mod privacy;
 pub mod provenance;
 pub mod query;
 pub mod search;
+pub mod taskedit;
 pub mod types;
 pub mod vault;
 pub mod watcher;

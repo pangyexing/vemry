@@ -28,7 +28,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-use vemry_agent::permission::{AutoApprovePlan, AutoDeny};
+use vemry_agent::permission::{AutoApproveActions, AutoApprovePlan, AutoDeny};
 use vemry_agent::testing::*;
 use vemry_agent::types::{StreamChunk, WebSearchResult};
 use vemry_agent::{AgentEvent, AgentRunner, PageContext, ProviderConfig, RunnerConfig};
@@ -137,6 +137,7 @@ async fn run_fixture(fx: &Value) -> Outcome {
         transport: transport.clone(),
         gate: Arc::new(AutoDeny("evals never write".into())),
         plan_gate: Arc::new(AutoApprovePlan),
+        actions_gate: Arc::new(AutoApproveActions),
         vault: vault.clone(),
         sources: Arc::new(Mutex::new(vec![])),
     };

@@ -8,6 +8,7 @@ mod menu;
 mod pasteboard;
 mod script_bridge;
 mod settings;
+mod skill_templates;
 
 use std::sync::{Arc, Mutex};
 use vemry_core::Vault;
@@ -169,6 +170,9 @@ pub fn run() {
             commands::agent_plan_respond,
             commands::agent_cancel,
             commands::agent_follow_set,
+            commands::agent_actions_respond,
+            commands::skill_examples_list,
+            commands::skill_install_example,
             commands::agent_is_running,
             commands::agent_session_new,
             commands::agent_session_list,

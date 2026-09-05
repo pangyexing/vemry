@@ -115,6 +115,11 @@ CMD = {
         ("The AI keeps this session's findings in the open note; appends and frontmatter changes on it apply without a dialog",
          "本会话的结论写进当前打开的笔记;对它的追加与 frontmatter 修改不再逐次确认"),
     ),
+    "open-journal-today": (
+        ("Open today's journal", "打开今日日志"),
+        ("journal/YYYY-MM-DD.md — created when missing; where the daily start and close land",
+         "journal/YYYY-MM-DD.md,缺则新建;今日启动与收尾的落点"),
+    ),
     "agent-attach-files": (
         ("Attach files to AI context", "附加文件到 AI 上下文"),
         ("Import images, PDFs or text files into the vault as context for your next "
@@ -422,6 +427,8 @@ add("palette.", {
 
 # ---------------------------------------------------------------- shared view chrome
 add("viewChrome.", {
+    "askAi": ("Ask AI", "问 AI"),
+    "askAiHint": ("Hand what this view shows to the AI as context", "把这个视图此刻显示的内容交给 AI 作上下文"),
     "closeView": ("Close view (Esc)", "关闭视图 (Esc)"),
     "closeViewLabel": ("Close view", "关闭视图"),
     "countFiltered": ("{shown} of {total}", "{shown}/{total}"),
@@ -727,6 +734,9 @@ add("sessionsView.", {
     "followEnd": ("Stopped following", "取消跟随"),
     "viaFollow": (" · working note", " · 跟随笔记"),
     "sourcesSettled": ("Sources this turn · {n}", "本轮来源 · {n}"),
+    "actions": ("Action items proposed · {n}", "提出行动项 · {n}"),
+    "actionsDecision.approve": ("Action items kept · {n}", "行动项已确认 · {n}"),
+    "actionsDecision.reject": ("Action items discarded", "行动项已放弃"),
     "compactSummary": ("older conversation summarized", "旧对话摘要化"),
     "compactHandles": ("older tool results turned into handles", "旧工具结果句柄化"),
     "markFork": ("⑂ Forked from session {from} (before turn {turn})", "⑂ 分叉自会话 {from}(第 {turn} 轮之前)"),
@@ -750,6 +760,10 @@ add("tool.", {
     "read_block": ("Read block", "读取块"),
     "clips_lookup": ("Look up clips", "查剪藏"),
     "list_sources": ("List sources", "列出来源"),
+    "recent_changes": ("Recent changes", "最近变化"),
+    "update_task": ("Update task", "更新任务"),
+    "set_block_field": ("Set field", "设置字段"),
+    "propose_actions": ("Propose actions", "提出行动项"),
     "mixed": ("Tool calls", "工具调用"),
 })
 
@@ -824,6 +838,7 @@ add("atPicker.", {
     "blocksOf": ("Blocks of {note}", "{note} 的块"),
     "pageBrowserSub": ("Current web page", "当前网页"),
     "pageReadingSub": ("Current reader page", "当前阅读页"),
+    "viewSub": ("Current view · {n} rows", "当前视图 · {n} 行"),
     "heading": ("Add context", "添加上下文"),
     "headingWithQuery": ("Add context: {query}", "添加上下文:{query}"),
     "keys": ("↑↓ move · ↵ confirm · esc close", "↑↓ 选择 · ↵ 确认 · esc 关闭"),
@@ -1071,6 +1086,24 @@ add("chat.", {
     "unfollowed": ("Stopped following", "已取消跟随"),
     "resumeResearch": ("This note came from an AI session", "这篇笔记来自一次 AI 会话"),
     "resumeButton": ("Resume that session", "继续这项研究"),
+    "starter4": ("Start my day: what is overdue, due today and in progress", "今日启动:过期、今天到期与进行中的任务"),
+    "starter5": ("Turn these meeting notes into action items", "把这份会议记录整理成行动项"),
+    "actionsTitle": ("Action items", "行动项"),
+    "actionsWaiting": ("Review, then write", "审阅后写入"),
+    "actionsWrite": ("Write {n} items", "写入 {n} 项"),
+    "actionsWriteNone": ("Keep none", "都不要"),
+    "actionsReject": ("✕ Discard", "✕ 放弃"),
+    "actionsApproved": ("Written {n} ✓", "已写入 {n} 项 ✓"),
+    "actionsRejected": ("Discarded", "已放弃"),
+    "actionsCancelled": ("Cancelled", "已取消"),
+    "actionsOwner": ("owner", "负责人"),
+    "actionsDue": ("due", "到期"),
+    "actionsTarget": ("target note", "目标笔记"),
+    "actionsSource": ("from: {source}", "来自:{source}"),
+    "actionsDuplicate": ("looks like an existing task → {path}", "疑似已有 → {path}"),
+    "actionsRejectPlaceholder": ("Tell the agent why (optional)", "告诉 agent 为什么放弃(可选)"),
+    "viewTag": ("view", "视图"),
+    "viewTitle": ("What the {view} shows right now goes in as context ({n} rows)", "{view} 此刻显示的内容作为上下文({n} 行)"),
     "planStatusSkipped": ("skipped", "已跳过"),
     "welcomeTitle": ("Research panel", "研究面板"),
     "welcomeBody": ("Ask, and the AI searches your notes (and the web) and answers with citations. "
@@ -1321,6 +1354,12 @@ add("settings.", {
                     " 即生效;停用改写文件的 `disabled` 字段。改动自下一个 AI 会话生效。"),
     "editWithSystemApp": ("Open in the system default app to edit", "用系统默认应用打开编辑"),
     "edit": ("Edit", "编辑"),
+    "skillExamples": ("Example skills", "示例 skill"),
+    "skillExamplesHint": ("Routines the AI can run once installed: they take effect in a new session and the file is yours to edit",
+                          "安装后 AI 可执行的例程:新会话生效,文件装好就是你的,可随意改"),
+    "installSkill": ("Install", "安装"),
+    "skillInstalled": ("Installed {path}", "已安装 {path}"),
+    "skillAlready": ("Already installed", "已安装"),
     "noSkills": ("(no skills yet — opening the research panel for the first time installs the research "
                  "template)", "（暂无 skill——首次打开研究面板会自动安装研究方法论模板）"),
     "userScripts": ("User scripts (.vemry/scripts/)", "用户脚本（.vemry/scripts/）"),

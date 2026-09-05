@@ -23,6 +23,7 @@
   import { isAgentImage } from "$lib/api";
   import RefIcon, { type RefIconKind } from "./RefIcon.svelte";
   import { agent, type DraftRef } from "$lib/stores/agent.svelte";
+  import { viewContext } from "$lib/stores/viewContext.svelte";
   import { vault, baseOf, parentOf, fileKind } from "$lib/stores/vault.svelte";
   import type { EditorSelection } from "$lib/api";
   import { browser } from "$lib/stores/browser.svelte";
@@ -93,6 +94,7 @@
     | { kind: "selection"; title: string; sub: string; sel: EditorSelection }
     | { kind: "page-browser"; title: string; sub: string }
     | { kind: "page-reading"; title: string; sub: string }
+    | { kind: "view"; title: string; sub: string }
     | { kind: "note" | "folder" | "file" | "image"; title: string; sub: string; path: string }
     /** The `@Note#` stage: the whole note, then its headings and anchorable blocks. */
     | { kind: "whole"; title: string; sub: string; path: string }
@@ -131,6 +133,10 @@
     }
     if (reading.current) {
       out.push({ kind: "page-reading", title: reading.current.title || reading.current.url, sub: t("atPicker.pageReadingSub") });
+    }
+    // The active projection view (the Agenda, the board): its live query as context
+    if (viewContext.current) {
+      out.push({ kind: "view", title: viewContext.current.label, sub: t("atPicker.viewSub", { n: viewContext.current.rows }) });
     }
     return out.map((c) => ({ c, key: keyOf(c) }));
   });
@@ -268,6 +274,12 @@
       else onClose();
       return;
     }
+    if (c.kind === "view") {
+      const ref = viewContext.ref();
+      if (ref) onPick(ref);
+      else onClose();
+      return;
+    }
     if (c.kind === "whole") {
       onPick({ kind: "note", path: c.path });
       return;
@@ -283,6 +295,7 @@
     if (c.kind === "disk") return "file";
     if (c.kind === "page-browser") return "page";
     if (c.kind === "page-reading") return "reading";
+    if (c.kind === "view") return "view";
     if (c.kind === "whole") return "note";
     return c.kind;
   }

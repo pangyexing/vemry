@@ -22,6 +22,8 @@ const QUERY_BLOCKS_MAX_LIMIT: usize = 200;
 const LINKS_MAX_EACH: usize = 100;
 /// clips_lookup takes a batch of URLs; one call must stay a lookup, not a scan.
 const CLIPS_LOOKUP_MAX: usize = 50;
+/// recent_changes lists at most this many blocks (the model asks for fewer).
+const RECENT_MAX_LIMIT: usize = 200;
 /// A plan has between one and this many steps (propose_plan's own 2-9 rule is
 /// stricter, since a one-step plan needs no confirmation).
 pub const PLAN_MAX_ITEMS: usize = 12;
@@ -74,18 +76,100 @@ pub fn parse_plan_items(args: &Value) -> Result<Vec<PlanItem>, String> {
 /// Tools that act on the session's own state rather than the vault: no privacy
 /// gate, no permission gate, executed by the runner itself.
 pub fn is_session_tool(name: &str) -> bool {
-    matches!(name, "update_plan" | "list_sources" | "propose_plan")
+    matches!(name, "update_plan" | "list_sources" | "propose_plan" | "propose_actions")
+}
+
+/// The action-list cap: a card the user can still review in one look.
+pub const ACTIONS_MAX_ITEMS: usize = 20;
+
+/// The action-list tool (always in the table): the model proposes, the user
+/// reviews the card, and only the confirmed list is written afterwards.
+pub fn propose_actions_def() -> ToolDef {
+    ToolDef::function(FunctionSpec {
+        name: "propose_actions".into(),
+        description: "Propose a list of items to write into the vault — action items from a meeting, tasks from an inbox, moves in a tidy-up — and wait for the user's review. Each item: text (a task line without the checkbox), owner, due (YYYY-MM-DD, resolved from relative dates against today), target (the note it belongs in, vault-relative path) and source (the sentence or block it came from). Call it once with the whole list, before writing anything; the result is the list the user kept, as edited — then write each item into its target with append_note (as `- [ ] text [owner:: x] 📅 due`) or update_task.".into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "owner": {"type": "string"},
+                            "due": {"type": "string", "description": "YYYY-MM-DD"},
+                            "target": {"type": "string", "description": "Vault-relative note path the item should land in"},
+                            "source": {"type": "string", "description": "Where it came from: a [[note#handle]] or the quoted sentence"}
+                        },
+                        "required": ["text"]
+                    }
+                }
+            },
+            "required": ["items"]
+        }),
+    })
+}
+
+/// Parse and validate propose_actions' items: 1..=ACTIONS_MAX_ITEMS non-empty texts, a
+/// due that is a calendar date when given.
+pub fn parse_action_items(args: &Value) -> Result<Vec<crate::permission::ActionItem>, String> {
+    let raw = args.get("items").and_then(|v| v.as_array()).ok_or("propose_actions needs an `items` array")?;
+    let mut out = Vec::with_capacity(raw.len());
+    for it in raw {
+        let text = it.get("text").and_then(|v| v.as_str()).map(str::trim).unwrap_or("");
+        if text.is_empty() {
+            return Err("every action item needs a non-empty `text`".into());
+        }
+        let opt = |k: &str| it.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+        let due = opt("due");
+        if let Some(d) = &due {
+            if !vemry_core::taskedit::is_date_token(d) {
+                return Err(format!("due must be YYYY-MM-DD (resolve relative dates against today first), got '{d}'"));
+            }
+        }
+        out.push(crate::permission::ActionItem { text: text.to_string(), owner: opt("owner"), due, target: opt("target"), source: opt("source") });
+    }
+    if out.is_empty() || out.len() > ACTIONS_MAX_ITEMS {
+        return Err(format!("an action list has 1-{ACTIONS_MAX_ITEMS} items"));
+    }
+    Ok(out)
+}
+
+/// The confirmed action list as the model reads it back: one line per item with the
+/// fields the user left, ready to be written as task lines.
+pub fn format_action_items(items: &[crate::permission::ActionItem]) -> String {
+    items
+        .iter()
+        .map(|a| {
+            let mut line = format!("- {}", a.text);
+            if let Some(o) = &a.owner {
+                line.push_str(&format!(" [owner:: {o}]"));
+            }
+            if let Some(d) = &a.due {
+                line.push_str(&format!(" 📅 {d}"));
+            }
+            if let Some(t) = &a.target {
+                line.push_str(&format!("  → {t}"));
+            }
+            if let Some(s) = &a.source {
+                line.push_str(&format!("  (from: {s})"));
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn is_write_tool(name: &str) -> bool {
-    matches!(name, "write_note" | "edit_note" | "move_note" | "append_note" | "set_frontmatter")
+    matches!(name, "write_note" | "edit_note" | "move_note" | "append_note" | "set_frontmatter" | "update_task" | "set_block_field")
 }
 
 /// The local writes a followed note takes without a dialog (see
 /// RunnerConfig::follow_note): an append, a frontmatter key, an exact-fragment
 /// edit. A whole-note overwrite and a move are never local.
 pub fn is_local_write(name: &str) -> bool {
-    matches!(name, "append_note" | "set_frontmatter" | "edit_note")
+    matches!(name, "append_note" | "set_frontmatter" | "edit_note" | "update_task" | "set_block_field")
 }
 
 pub fn tool_defs() -> Vec<ToolDef> {
@@ -153,6 +237,21 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {"urls": {"type": "array", "items": {"type": "string"}, "description": "Up to 50 URLs"}},
                 "required": ["urls"]
+            }),
+        ),
+        f(
+            "recent_changes",
+            "Blocks whose text changed since a date (from the vault's block change times): note, block handle, kind, the day it changed and the first line. For 'what did I do today / this week', 'what changed in this note since the review'. kind narrows to tasks or finished tasks (done).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "since": {"type": "string", "description": "YYYY-MM-DD (local), inclusive"},
+                    "folder": {"type": "string", "description": "Only notes under this folder"},
+                    "note": {"type": "string", "description": "Only this note"},
+                    "kind": {"type": "string", "enum": ["task", "done", "heading", "paragraph", "list_item", "claim", "evidence"]},
+                    "limit": {"type": "integer", "description": "Max results, default 50"}
+                },
+                "required": ["since"]
             }),
         ),
         f(
@@ -244,6 +343,35 @@ pub fn tool_defs() -> Vec<ToolDef> {
                     "value": {"description": "A string, an array of strings, or null to remove the key"}
                 },
                 "required": ["path", "key"]
+            }),
+        ),
+        f(
+            "update_task",
+            "Change one task block in place — its state and/or its dates — as one write on the task's own line (the same rewrite the Agenda and the board make): state todo/doing/done; due and scheduled as YYYY-MM-DD, or null to clear one. Use it instead of edit_note for ticking, rescheduling or scheduling a task. Requires user approval unless the note is the working note.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "block": {"type": "string", "description": "The task's handle from query_blocks or read_note: '^id' or 'bN'"},
+                    "state": {"type": "string", "enum": ["todo", "doing", "done"]},
+                    "due": {"description": "YYYY-MM-DD, or null to remove the due date"},
+                    "scheduled": {"description": "YYYY-MM-DD, or null to remove the scheduled date"}
+                },
+                "required": ["path", "block"]
+            }),
+        ),
+        f(
+            "set_block_field",
+            "Set, replace or remove (value null) one inline `[key:: value]` field on a block's first line — owner, project, priority, status, supports and the like. Kept in place when present, appended before the block's ^id when new. For a task's due/scheduled dates use update_task. Requires user approval unless the note is the working note.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "block": {"type": "string", "description": "The block's handle: '^id' or 'bN'"},
+                    "key": {"type": "string"},
+                    "value": {"description": "The value as text, or null to remove the field"}
+                },
+                "required": ["path", "block", "key"]
             }),
         ),
         f(
@@ -542,6 +670,65 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             }
             Ok(ReadOutcome { text: lines.join("\n"), filtered: 0 })
         }
+        "recent_changes" => {
+            let since = arg_str(args, "since")?.trim();
+            let since_ms = local_day_start_ms(since).ok_or_else(|| ToolError::Other(format!("since must be YYYY-MM-DD, got '{since}'")))?;
+            let folder = args.get("folder").and_then(|v| v.as_str()).unwrap_or("").trim_matches('/');
+            let only_note = match args.get("note").and_then(|v| v.as_str()) {
+                Some(p) => Some(existing_note_id(vault, p)?),
+                None => None,
+            };
+            let kind = args.get("kind").and_then(|v| v.as_str());
+            let limit = arg_usize(args, "limit", 50).min(RECENT_MAX_LIMIT);
+            let mut filtered = 0usize;
+            let mut hits: Vec<(u64, String)> = Vec::new();
+            for s in vault.index().summaries() {
+                if let Some(only) = &only_note {
+                    if &s.id != only {
+                        continue;
+                    }
+                }
+                if !folder.is_empty() && !s.id.as_str().starts_with(&format!("{folder}/")) {
+                    continue;
+                }
+                if vault.is_private(&s.id) {
+                    filtered += 1;
+                    continue;
+                }
+                let Some(blocks) = vault.index().blocks(&s.id) else { continue };
+                for b in blocks {
+                    if b.modified_ms < since_ms {
+                        continue;
+                    }
+                    if matches!(b.kind, vemry_core::BlockKind::Private) {
+                        filtered += 1;
+                        continue;
+                    }
+                    let kind_name = block_kind_name(&b.kind);
+                    let keep = match kind {
+                        None => true,
+                        Some("done") => matches!(b.kind, vemry_core::BlockKind::Task { state: vemry_core::TaskState::Done, .. }),
+                        Some(k) => kind_name == k,
+                    };
+                    if !keep {
+                        continue;
+                    }
+                    let day = local_day_of_ms(b.modified_ms);
+                    let first: String = b.content.lines().next().unwrap_or("").chars().take(120).collect();
+                    hits.push((b.modified_ms, format!("{}#{}\t{kind_name}\t{day}\t{first}", s.id.as_str().strip_suffix(".md").unwrap_or(s.id.as_str()), b.handle())));
+                }
+            }
+            hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            let total = hits.len();
+            let mut lines: Vec<String> = hits.into_iter().take(limit).map(|(_, l)| l).collect();
+            if lines.is_empty() {
+                return Ok(ReadOutcome { text: format!("(no blocks changed since {since})"), filtered });
+            }
+            if total > limit {
+                lines.push(format!("(+{} more not shown; narrow with folder, note or kind)", total - limit));
+            }
+            Ok(ReadOutcome { text: lines.join("\n"), filtered })
+        }
         "read_skill" => {
             let name = arg_str(args, "name")?;
             // resolves against the scanned listing only (no path join) — the
@@ -571,6 +758,80 @@ fn existing_note_id(vault: &Vault, path: &str) -> Result<NoteId, ToolError> {
         return Err(ToolError::Other(format!("note not found: {requested}")));
     }
     Ok(id)
+}
+
+/// The block kind as recent_changes and query_blocks name it.
+fn block_kind_name(kind: &vemry_core::BlockKind) -> &'static str {
+    use vemry_core::BlockKind::*;
+    match kind {
+        Paragraph => "paragraph",
+        Heading { .. } => "heading",
+        ListItem { .. } => "list_item",
+        Task { .. } => "task",
+        Claim => "claim",
+        Evidence { .. } => "evidence",
+        CodeBlock { .. } => "code_block",
+        Private => "private",
+    }
+}
+
+/// Local midnight of a `YYYY-MM-DD` as milliseconds since the epoch (the unit of
+/// `Block::modified_ms`); None for anything that is not a calendar date.
+fn local_day_start_ms(ymd: &str) -> Option<u64> {
+    use chrono::TimeZone;
+    let d = chrono::NaiveDate::parse_from_str(ymd, "%Y-%m-%d").ok()?;
+    let dt = chrono::Local.from_local_datetime(&d.and_hms_opt(0, 0, 0)?).single()?;
+    u64::try_from(dt.timestamp_millis()).ok()
+}
+
+/// The local calendar day of a millisecond timestamp.
+fn local_day_of_ms(ms: u64) -> String {
+    use chrono::TimeZone;
+    chrono::Local.timestamp_millis_opt(ms as i64).single().map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default()
+}
+
+/// Locate one block of an existing note for an in-place rewrite: the privacy gate
+/// first (`existing_note_id`), then the block by handle; a private block does not
+/// exist, and neither does a handle the parser would never mint. Returns the raw
+/// text and the block's index into its parse.
+fn locate_block(vault: &Vault, path: &str, handle: &str) -> Result<(NoteId, String, Vec<vemry_core::Block>, usize), ToolError> {
+    let id = existing_note_id(vault, path)?;
+    let clean = handle.trim().trim_start_matches('^');
+    if !vemry_core::blockid::is_valid_block_id(clean) {
+        return Err(ToolError::Other(format!("block not found: {id}#{clean}")));
+    }
+    let raw = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
+    let blocks = vemry_core::parser::parse_note(&raw).blocks;
+    let i = vemry_core::locate::find_block(&blocks, clean).ok_or_else(|| ToolError::Other(format!("block not found: {id}#{clean}")))?;
+    if matches!(blocks[i].kind, vemry_core::BlockKind::Private) {
+        return Err(ToolError::Other(format!("block not found: {id}#{clean}")));
+    }
+    Ok((id, raw, blocks, i))
+}
+
+/// A block-level rewrite as a WriteRequest: the block's slice replaced, everything
+/// else byte for byte, the diff over the whole note.
+fn block_rewrite_request(request_id: String, name: &str, id: &NoteId, raw: &str, span: std::ops::Range<usize>, new_slice: String) -> Result<WriteRequest, ToolError> {
+    let new_content = format!("{}{}{}", &raw[..span.start], new_slice, &raw[span.end..]);
+    if new_content == raw {
+        return Err(ToolError::Other("this change leaves the block unchanged".into()));
+    }
+    if !vemry_core::private_blocks_preserved(raw, &new_content) {
+        return Err(ToolError::Other("this change cannot be applied as written".into()));
+    }
+    let diff = unified_diff(raw, &new_content, id.as_str());
+    Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content })
+}
+
+/// A date argument: `null` clears, a `YYYY-MM-DD` sets, anything else is an error
+/// naming the key; absent = untouched (None outside).
+fn date_arg(args: &Value, key: &str) -> Result<Option<Option<String>>, ToolError> {
+    match args.get(key) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(s)) if vemry_core::taskedit::is_date_token(s.trim()) => Ok(Some(Some(s.trim().to_string()))),
+        Some(other) => Err(ToolError::Other(format!("{key} must be YYYY-MM-DD or null, got {other}"))),
+    }
 }
 
 /// Prepare a write tool into a WriteRequest for the permission gate. Nothing
@@ -761,6 +1022,84 @@ pub fn prepare_write(
             }
             let diff = unified_diff(&old, &new_content, id.as_str());
             Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content })
+        }
+        "update_task" => {
+            let (id, raw, blocks, i) = locate_block(vault, arg_str(args, "path")?, arg_str(args, "block")?)?;
+            let vemry_core::BlockKind::Task { .. } = blocks[i].kind else {
+                return Err(ToolError::Other(format!("{}#{} is not a task — update_task only ticks and reschedules tasks", id, blocks[i].handle())));
+            };
+            let state = match args.get("state").and_then(|v| v.as_str()) {
+                None => None,
+                Some("todo") => Some(vemry_core::TaskState::Todo),
+                Some("doing") => Some(vemry_core::TaskState::Doing),
+                Some("done") => Some(vemry_core::TaskState::Done),
+                Some(other) => return Err(ToolError::Other(format!("unknown task state '{other}' (todo, doing or done)"))),
+            };
+            let due = date_arg(args, "due")?;
+            let scheduled = date_arg(args, "scheduled")?;
+            if state.is_none() && due.is_none() && scheduled.is_none() {
+                return Err(ToolError::Other("update_task needs at least one of state, due or scheduled".into()));
+            }
+            let span = blocks[i].span.clone();
+            let slice = &raw[span.clone()];
+            // One rewrite for everything asked (the board's merged drag write): two
+            // writes would leave the second one's span stale
+            let new_slice = vemry_core::taskedit::rewrite_first_line(slice, |line| {
+                let mut out = line.to_string();
+                if let Some(st) = state {
+                    out = vemry_core::taskedit::set_checkbox(&out, st);
+                }
+                if let Some(d) = &due {
+                    out = vemry_core::taskedit::reschedule_line(&out, vemry_core::taskedit::DateField::Due, d.as_deref());
+                }
+                if let Some(d) = &scheduled {
+                    out = vemry_core::taskedit::reschedule_line(&out, vemry_core::taskedit::DateField::Scheduled, d.as_deref());
+                }
+                out
+            });
+            block_rewrite_request(request_id, name, &id, &raw, span, new_slice)
+        }
+        "set_block_field" => {
+            let (id, raw, blocks, i) = locate_block(vault, arg_str(args, "path")?, arg_str(args, "block")?)?;
+            let key = arg_str(args, "key")?.trim();
+            let value: Option<String> = match args.get("value") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) => Some(s.trim().to_string()),
+                Some(other) => Some(other.to_string()),
+            };
+            if let Some(v) = &value {
+                if v.is_empty() || v.contains(['\n', '\r', ']']) {
+                    return Err(ToolError::Other("a field value is one line and may not contain ']'".into()));
+                }
+            }
+            let span = blocks[i].span.clone();
+            let slice = &raw[span.clone()];
+            // A task's dates have their own spellings (📅 / due::): the same rewrite the board makes
+            let new_slice = match (vemry_core::taskedit::DateField::parse(key), &blocks[i].kind) {
+                (Some(field), vemry_core::BlockKind::Task { .. }) => {
+                    if let Some(v) = &value {
+                        if !vemry_core::taskedit::is_date_token(v) {
+                            return Err(ToolError::Other(format!("{key} on a task must be YYYY-MM-DD")));
+                        }
+                    }
+                    vemry_core::taskedit::rewrite_first_line(slice, |l| vemry_core::taskedit::reschedule_line(l, field, value.as_deref()))
+                }
+                _ => {
+                    let mut bad_key = false;
+                    let out = vemry_core::taskedit::rewrite_first_line(slice, |l| match vemry_core::taskedit::set_field_value(l, key, value.as_deref()) {
+                        Some(s) => s,
+                        None => {
+                            bad_key = true;
+                            l.to_string()
+                        }
+                    });
+                    if bad_key {
+                        return Err(ToolError::Other(format!("not a field key: '{key}' (letters, digits, _ and -, not all digits)")));
+                    }
+                    out
+                }
+            };
+            block_rewrite_request(request_id, name, &id, &raw, span, new_slice)
         }
         "move_note" => {
             let from = arg_str(args, "from")?;
@@ -1105,6 +1444,64 @@ mod tests {
         assert!(prepare_write(&vault, "f4".into(), "set_frontmatter", &json!({"path": "R.md", "key": "private", "value": "true"}), None).unwrap_err().to_string().contains("not allowed"));
         assert!(prepare_write(&vault, "f5".into(), "set_frontmatter", &json!({"path": "R.md", "key": "status", "value": "draft"}), None).unwrap_err().to_string().contains("unchanged"));
         assert!(matches!(prepare_write(&vault, "f6".into(), "set_frontmatter", &json!({"path": "secret/Plan.md", "key": "x", "value": "y"}), None).unwrap_err(), ToolError::Privacy(_)));
+    }
+
+    /// update_task: state and dates in one rewrite of the task's own line, a non-task refused, the diff local.
+    #[test]
+    fn update_task_rewrites_the_task_line_once() {
+        let (_d, vault) = fixture();
+        std::fs::write(vault.root().join("Todo.md"), "# Todo\n\n- [ ] write spec 📅 2026-09-01 ^t1\n  - sub note\n- plain item\n").unwrap();
+        let vault = Vault::open(vault.root()).unwrap();
+        let req = prepare_write(&vault, "u1".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "state": "done", "due": "2026-09-10", "scheduled": "2026-09-08"}), None).unwrap();
+        assert!(req.new_content.contains("- [x] write spec 📅 2026-09-10 ⏳ 2026-09-08 ^t1\n  - sub note\n- plain item\n"), "{}", req.new_content);
+        assert_eq!(req.kind, WriteKind::Edit);
+        let req = prepare_write(&vault, "u2".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "due": null}), None).unwrap();
+        assert!(req.new_content.contains("- [ ] write spec ^t1\n"), "{}", req.new_content);
+        let e = prepare_write(&vault, "u3".into(), "update_task", &json!({"path": "Todo.md", "block": "b2", "state": "done"}), None).unwrap_err();
+        assert!(e.to_string().contains("is not a task"), "{e}");
+        assert!(prepare_write(&vault, "u4".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1"}), None).is_err());
+        assert!(prepare_write(&vault, "u5".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "due": "next week"}), None).is_err());
+        assert!(matches!(prepare_write(&vault, "u6".into(), "update_task", &json!({"path": "secret/Plan.md", "block": "b0", "state": "done"}), None).unwrap_err(), ToolError::Privacy(_)));
+    }
+
+    /// set_block_field: set / replace / remove on the block's first line, a task's dates routed to the date grammar, bad keys refused.
+    #[test]
+    fn set_block_field_edits_one_field() {
+        let (_d, vault) = fixture();
+        std::fs::write(vault.root().join("P.md"), "# P\n\n- [ ] ship it [owner:: 王] ^p1\n\n> [!decision] go with A ^d1\n").unwrap();
+        let vault = Vault::open(vault.root()).unwrap();
+        let req = prepare_write(&vault, "s1".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": "李"}), None).unwrap();
+        assert!(req.new_content.contains("- [ ] ship it [owner:: 李] ^p1"), "{}", req.new_content);
+        let req = prepare_write(&vault, "s2".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "project", "value": "网关"}), None).unwrap();
+        assert!(req.new_content.contains("- [ ] ship it [owner:: 王] [project:: 网关] ^p1"), "{}", req.new_content);
+        let req = prepare_write(&vault, "s3".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": null}), None).unwrap();
+        assert!(req.new_content.contains("- [ ] ship it ^p1"), "{}", req.new_content);
+        let req = prepare_write(&vault, "s4".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "due", "value": "2026-09-10"}), None).unwrap();
+        assert!(req.new_content.contains("- [ ] ship it [owner:: 王] 📅 2026-09-10 ^p1"), "{}", req.new_content);
+        let req = prepare_write(&vault, "s5".into(), "set_block_field", &json!({"path": "P.md", "block": "^d1", "key": "date", "value": "2026-09-04"}), None).unwrap();
+        assert!(req.new_content.contains("> [!decision] go with A [date:: 2026-09-04] ^d1"), "{}", req.new_content);
+        assert!(prepare_write(&vault, "s6".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "bad key", "value": "x"}), None).unwrap_err().to_string().contains("not a field key"));
+        assert!(prepare_write(&vault, "s7".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": "a]b"}), None).is_err());
+    }
+
+    /// recent_changes: blocks stamped since the day (the fixture is written now, so today catches it and tomorrow does not); filters by kind and note; private notes counted only.
+    #[test]
+    fn recent_changes_lists_stamped_blocks() {
+        let (_d, vault) = fixture();
+        std::fs::write(vault.root().join("Work.md"), "# Work\n\n- [x] shipped ^w1\n- [ ] pending ^w2\n").unwrap();
+        let vault = Vault::open(vault.root()).unwrap();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let tomorrow = (chrono::Local::now() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+        let out = read(&vault, "recent_changes", json!({"since": today, "note": "Work.md"})).unwrap();
+        assert!(out.text.contains("Work#^w1\ttask\t") && out.text.contains("Work#^w2\ttask\t"), "{}", out.text);
+        let out = read(&vault, "recent_changes", json!({"since": today, "note": "Work.md", "kind": "done"})).unwrap();
+        assert!(out.text.contains("^w1") && !out.text.contains("^w2"), "{}", out.text);
+        let out = read(&vault, "recent_changes", json!({"since": tomorrow})).unwrap();
+        assert!(out.text.starts_with("(no blocks changed since"), "{}", out.text);
+        let out = read(&vault, "recent_changes", json!({"since": today})).unwrap();
+        assert!(!out.text.contains("TOPSECRET") && out.filtered >= 1, "private notes are counted, never listed: {}", out.text);
+        assert!(read(&vault, "recent_changes", json!({"since": "yesterday"})).is_err());
+        assert!(matches!(read(&vault, "recent_changes", json!({"since": today, "note": "secret/Plan.md"})).unwrap_err(), ToolError::Privacy(_)));
     }
 
     /// update_plan's argument grammar: statuses, the item cap, and the wording the model corrects itself by.

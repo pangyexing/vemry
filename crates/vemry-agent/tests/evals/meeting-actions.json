@@ -1,0 +1,29 @@
+{
+  "name": "meeting-actions",
+  "vault": {
+    "meetings/2026-09-05 weekly.md": "# Weekly 2026-09-05\n\n- Wang: SOW revision back to the vendor by Wednesday ^m1\n- Li: open the accounts for the new hire before Monday ^m2\n- everyone: sync the schedule in the weekly report ^m3\n",
+    "projects/Procurement.md": "# Procurement\n\n## Actions\n\n- [ ] sign the frame contract ^p1\n",
+    "projects/Onboarding.md": "# Onboarding\n\n## Actions\n\n- [ ] prepare the laptop ^o1\n"
+  },
+  "follow": "projects/Procurement.md",
+  "turns": [
+    {
+      "user": "把这次周会的行动项整理出来写进项目笔记",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "read_note", "args": { "path": "meetings/2026-09-05 weekly.md" } } } ],
+        [ { "tool": { "id": "c2", "name": "query_blocks", "args": { "kind": "task", "text": "SOW" } } } ],
+        [ { "tool": { "id": "a1", "name": "propose_actions", "args": { "items": [
+            { "text": "SOW revision back to the vendor", "owner": "Wang", "due": "2026-09-09", "target": "projects/Procurement.md", "source": "[[meetings/2026-09-05 weekly#^m1]]" },
+            { "text": "open the accounts for the new hire", "owner": "Li", "due": "2026-09-07", "target": "projects/Onboarding.md", "source": "[[meetings/2026-09-05 weekly#^m2]]" } ] } } } ],
+        [ { "tool": { "id": "w1", "name": "append_note", "args": { "path": "projects/Procurement.md", "anchor": "Actions", "content": "- [ ] SOW revision back to the vendor [owner:: Wang] 📅 2026-09-09" } } } ],
+        [ { "text": "已写入 1 项到采购笔记 [[meetings/2026-09-05 weekly#^m1]]；入职那条不在跟随笔记里，需要你确认。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "tool_output_contains": [ { "id": "a1", "text": "- SOW revision back to the vendor [owner:: Wang] 📅 2026-09-09  → projects/Procurement.md" }, { "id": "w1", "text": "wrote projects/Procurement.md" } ],
+    "note_contains": [ { "path": "projects/Procurement.md", "text": "- [ ] sign the frame contract ^p1\n- [ ] SOW revision back to the vendor [owner:: Wang] 📅 2026-09-09\n" } ]
+  }
+}

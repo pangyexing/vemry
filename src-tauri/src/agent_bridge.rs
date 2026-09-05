@@ -10,7 +10,10 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tokio::sync::oneshot;
 use vemry_agent::types::ChatMessage;
-use vemry_agent::{PermissionDecision, PermissionGate, PlanDecision, PlanGate, PlanRequest, WriteRequest};
+use vemry_agent::{
+    ActionsDecision, ActionsGate, ActionsRequest, PermissionDecision, PermissionGate, PlanDecision, PlanGate, PlanRequest,
+    WriteRequest,
+};
 
 /// One pending table: the gate inserts a oneshot at `park` and awaits it, and the
 /// decision resolves it back through the matching `agent_*_respond` command.
@@ -31,6 +34,11 @@ impl Cancellable for PermissionDecision {
 impl Cancellable for PlanDecision {
     fn cancelled() -> Self {
         PlanDecision::Reject { reason: "cancelled".into() }
+    }
+}
+impl Cancellable for ActionsDecision {
+    fn cancelled() -> Self {
+        ActionsDecision::Reject { reason: "cancelled".into() }
     }
 }
 
@@ -67,12 +75,14 @@ fn drain<D: Cancellable>(pending: &Pending<D>) {
 pub struct PendingGates {
     pub writes: Pending<PermissionDecision>,
     pub plans: Pending<PlanDecision>,
+    pub actions: Pending<ActionsDecision>,
 }
 
 impl PendingGates {
     pub fn deny_all(&self) {
         drain(&self.writes);
         drain(&self.plans);
+        drain(&self.actions);
     }
 }
 
@@ -212,4 +222,21 @@ pub fn resolve_permission(
 
 pub fn resolve_plan(pending: &Pending<PlanDecision>, request_id: &str, decision: PlanDecision) -> Result<(), String> {
     resolve(pending, "plan", request_id, decision)
+}
+
+/// The channel implementation of the actions gate: the decision comes back through
+/// `agent_actions_respond`.
+pub struct ChannelActionsGate {
+    pub pending: Pending<ActionsDecision>,
+}
+
+#[async_trait]
+impl ActionsGate for ChannelActionsGate {
+    async fn request(&self, req: &ActionsRequest) -> ActionsDecision {
+        park(&self.pending, &req.id).await
+    }
+}
+
+pub fn resolve_actions(pending: &Pending<ActionsDecision>, request_id: &str, decision: ActionsDecision) -> Result<(), String> {
+    resolve(pending, "actions", request_id, decision)
 }

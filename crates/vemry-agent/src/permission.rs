@@ -114,3 +114,54 @@ impl PlanGate for AutoApprovePlan {
         PlanDecision::Approve
     }
 }
+
+/// One action item the model extracted (a meeting's commitments, a tidy-up's moves):
+/// the text, and the fields the card lets the user correct before anything is
+/// written. `target` is the note it should land in; `source` the sentence it came
+/// from (a citation handle or a quote). The wire shape is shared with the frontend.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ActionItem {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// The action-list gate (propose_actions): the same family as the plan gate — the
+/// runner suspends, the user reviews the list (unticking, editing dates, owners and
+/// targets) and the confirmed list goes back to the model as a tool result; only
+/// then does the model write each item into its target through the ordinary write
+/// tools. Nothing here touches the vault.
+#[derive(Clone, Debug, Serialize)]
+pub struct ActionsRequest {
+    pub id: String,
+    pub items: Vec<ActionItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActionsDecision {
+    /// The items the user kept, as edited (the unticked ones are simply absent).
+    Approve { items: Vec<ActionItem> },
+    Reject { reason: String },
+}
+
+#[async_trait]
+pub trait ActionsGate: Send + Sync {
+    async fn request(&self, req: &ActionsRequest) -> ActionsDecision;
+}
+
+/// Test/automation gate: every item approved as proposed.
+pub struct AutoApproveActions;
+
+#[async_trait]
+impl ActionsGate for AutoApproveActions {
+    async fn request(&self, req: &ActionsRequest) -> ActionsDecision {
+        ActionsDecision::Approve { items: req.items.clone() }
+    }
+}

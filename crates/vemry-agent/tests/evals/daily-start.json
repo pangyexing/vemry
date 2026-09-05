@@ -1,0 +1,25 @@
+{
+  "name": "daily-start",
+  "vault": {
+    "projects/Gateway.md": "# Gateway\n\n- [ ] write the load test plan 📅 2026-09-01 ^g1\n- [/] review the rate limiter PR ^g2\n- [x] pick the metrics stack ^g3\n"
+  },
+  "follow": "projects/Gateway.md",
+  "turns": [
+    {
+      "user": "今日启动",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "query_blocks", "args": { "kind": "task", "task_state": "todo", "due_before": "2026-09-06" } } },
+          { "tool": { "id": "c2", "name": "query_blocks", "args": { "kind": "task", "task_state": "doing" } } } ],
+        [ { "tool": { "id": "u1", "name": "update_task", "args": { "path": "projects/Gateway.md", "block": "^g1", "scheduled": "2026-09-06" } } } ],
+        [ { "text": "今天三件事：过期的压测计划 [[projects/Gateway#^g1]] 已排进今天；限流 PR 评审 [[projects/Gateway#^g2]] 继续。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "max_tool_calls": 3,
+    "tool_output_contains": [ { "id": "u1", "text": "wrote projects/Gateway.md" } ],
+    "note_contains": [ { "path": "projects/Gateway.md", "text": "- [ ] write the load test plan 📅 2026-09-01 ⏳ 2026-09-06 ^g1" } ]
+  }
+}

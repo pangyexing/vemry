@@ -345,6 +345,8 @@ export type AgentEvent =
   | { type: "plan_request"; request: PlanRequest }
   /** The model's step list (update_plan, or the list confirmed at the plan gate): replaces the sticky plan card. */
   | { type: "plan_updated"; items: PlanItem[] }
+  /** propose_actions is suspended awaiting the user's review of the list (the actions gate). */
+  | { type: "actions_request"; request: ActionsRequest }
   /** The web sources this turn cited, settled by Rust at the end of the turn with their verification (authoritative for the turn's source card). */
   | { type: "sources_updated"; turn: string | null; items: SourceRecord[] }
   | { type: "web_searching" }
@@ -398,6 +400,30 @@ export type PlanDecision =
   | { kind: "approve" }
   | { kind: "approve_edited"; items: string[] }
   | { kind: "reject"; reason: string };
+
+/** One proposed action item (mirroring vemry_agent::permission::ActionItem): the card lets the user correct every field before anything is written. */
+export interface ActionItem {
+  text: string;
+  owner?: string | null;
+  due?: string | null;
+  target?: string | null;
+  source?: string | null;
+}
+
+/** The actions gate's request and decision (propose_actions; the same family as the plan gate). */
+export interface ActionsRequest {
+  id: string;
+  items: ActionItem[];
+}
+
+export type ActionsDecision = { kind: "approve"; items: ActionItem[] } | { kind: "reject"; reason: string };
+
+/** A row of the example-skills catalogue in Settings (mirroring commands.rs::SkillExample). */
+export interface SkillExample {
+  name: string;
+  description: string;
+  installed: boolean;
+}
 
 /** A row of the skills management list (mirroring commands.rs::SkillEntry; disabled ones included). */
 export interface SkillEntry {
@@ -520,7 +546,11 @@ export type ContextRef =
   | ({ kind: "selection" } & EditorSelection)
   /** One block of a note (the composer's `@Note#` stage): local_id is `^id` or `bN` without
    *  the caret; label is the chip's preview text and is stripped before sending. */
-  | { kind: "block"; path: string; local_id: string; label?: string };
+  | { kind: "block"; path: string; local_id: string; label?: string }
+  /** What a projection view shows right now (the Agenda, the board): Rust re-runs `query`
+   *  through the privacy-filtered query API. `path` is the view's id (`view:agenda`), the
+   *  audit's spelling; `label` is the chip's wording; `rows` is the count shown. */
+  | { kind: "view"; path: string; label: string; query: BlockQuery; rows?: number };
 
 /** The image extensions that can be sent to the model as an image reference (mirroring
  *  `image_mime` in vemry-agent's context.rs; the two change together). Every other
@@ -859,6 +889,11 @@ export const api = {
   /** Handing a plan-gate decision back (propose_plan): the loop continues within the same turn. */
   agentPlanRespond: (requestId: string, decision: PlanDecision) =>
     invoke<void>("agent_plan_respond", { requestId, decision }),
+  agentActionsRespond: (requestId: string, decision: ActionsDecision) =>
+    invoke<void>("agent_actions_respond", { requestId, decision }),
+  /** The example-skills catalogue and its installer (a file already there is never overwritten). */
+  skillExamplesList: () => invoke<SkillExample[]>("skill_examples_list"),
+  skillInstallExample: (name: string) => invoke<Scaffolded>("skill_install_example", { name }),
   agentCancel: () => invoke<void>("agent_cancel"),
   /** Follow a note (null stops): the session keeps its findings there and, with auto, local writes on it pass the gate without a dialog. */
   agentFollowSet: (path: string | null, auto: boolean) => invoke<void>("agent_follow_set", { path, auto }),

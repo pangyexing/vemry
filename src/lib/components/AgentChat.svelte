@@ -405,6 +405,66 @@
     return `${t("chat.planRejected")}${d.reason && d.reason !== own ? ` · ${d.reason}` : ""}`;
   }
 
+  /** ---- The action-list card (propose_actions): editable while pending — untick, fix the
+   *  owner, the date and the target note — and the kept rows go back to the model as the
+   *  list to write. `actionRows` is the working copy; a duplicate hint comes from a quick
+   *  task query per row (a task with the same key words already in the vault). */
+  type ActionsCard = Extract<TimelineItem, { kind: "actions" }>;
+  type ActionRow = { keep: boolean; text: string; owner: string; due: string; target: string; source: string; dup: string | null };
+  let actionRows = $state<ActionRow[]>([]);
+  let actionsRejecting = $state(false);
+  let actionsRejectReason = $state("");
+  $effect(() => {
+    const req = agent.pendingActions;
+    actionsRejecting = false;
+    actionsRejectReason = "";
+    if (!req) {
+      actionRows = [];
+      return;
+    }
+    actionRows = req.items.map((it) => ({ keep: true, text: it.text, owner: it.owner ?? "", due: it.due ?? "", target: it.target ?? "", source: it.source ?? "", dup: null }));
+    void findDuplicates(req.id);
+  });
+  /** A task already in the vault with the row's key words: the row is shown as a likely duplicate and unticked. */
+  async function findDuplicates(reqId: string) {
+    const rows = actionRows;
+    for (let i = 0; i < rows.length; i++) {
+      const key = rows[i].text.replace(/\s+/g, " ").trim().slice(0, 16);
+      if (key.length < 4) continue;
+      try {
+        const hits = await api.queryBlocks({ kind: "task", text: key, limit: 1 });
+        if (agent.pendingActions?.id !== reqId || actionRows !== rows) return;
+        if (hits.length) {
+          rows[i].dup = hits[0].note;
+          rows[i].keep = false;
+        }
+      } catch {
+        /* a hint only */
+      }
+    }
+  }
+  const keptCount = $derived(actionRows.filter((r) => r.keep).length);
+  function submitActions() {
+    const items = actionRows
+      .filter((r) => r.keep && r.text.trim())
+      .map((r) => ({
+        text: r.text.trim(),
+        owner: r.owner.trim() || null,
+        due: r.due.trim() || null,
+        target: r.target.trim() || null,
+        source: r.source.trim() || null,
+      }));
+    void agent.respondActions({ kind: "approve", items });
+  }
+  function submitActionsReject() {
+    void agent.respondActions({ kind: "reject", reason: actionsRejectReason.trim() || t("chat.actionsRejected") });
+  }
+  function actionsBadge(d: NonNullable<ActionsCard["decision"]>): string {
+    if (d.kind === "approve") return t("chat.actionsApproved", { n: d.items.length });
+    if (d.reason === "cancelled") return t("chat.actionsCancelled");
+    return t("chat.actionsRejected");
+  }
+
   /** The thousands abbreviation (for the usage gauge). */
   function fmtK(n: number): string {
     return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -800,7 +860,7 @@
     run(api.browserOpen(url));
   }
 
-  const welcomeExamples = $derived([t("chat.starter1"), t("chat.starter2"), t("chat.starter3")]);
+  const welcomeExamples = $derived([t("chat.starter1"), t("chat.starter2"), t("chat.starter3"), t("chat.starter4"), t("chat.starter5")]);
 
   function fillExample(text: string) {
     agent.draft = text;
@@ -947,6 +1007,7 @@
    *  it could not be told apart from the same-named "current note" chip. */
   function refLabel(d: DraftRef): string {
     if (d.kind === "page") return d.page.title || d.page.url;
+    if (d.kind === "view") return d.label;
     if (d.kind === "block") return baseOf(d.path);
     const name = baseOf(d.path);
     return d.kind === "folder" ? `${name}/` : name;
@@ -954,6 +1015,7 @@
   /** A chip's hover: the path; a selection adds its line range and the start of its text (a glance at which passage is attached). */
   function refTitle(d: DraftRef): string {
     if (d.kind === "page") return d.page.url;
+    if (d.kind === "view") return t("chat.viewTitle", { view: d.label, n: d.rows ?? 0 });
     // The image chip's permanent hint: no table of model capabilities is attempted (it cannot be judged reliably), and a text-only model will error on one
     if (d.kind === "image") return t("chat.needsMultimodal", { path: d.path });
     if (d.kind === "block") return `${d.path} ¶${blockHandle(d.local_id)}${d.label ? `\n\n${d.label}` : ""}`;
@@ -964,6 +1026,7 @@
   /** The identity shared by the chips and the deduplication: two different selections in one note are two chips. */
   function refKey(d: DraftRef): string {
     if (d.kind === "page") return `page:${d.page.url}`;
+    if (d.kind === "view") return `view:${d.path}`;
     if (d.kind === "selection") return `selection:${selKey(d)}`;
     if (d.kind === "block") return `block:${d.path}#${d.local_id}`;
     return `${d.kind}:${d.path}`;
@@ -1059,7 +1122,7 @@
         title: refTitle(d),
         label: refLabel(d),
         lines: d.kind === "selection" ? linesLabel(d) : d.kind === "block" ? `¶${blockHandle(d.local_id)}` : null,
-        tag: d.kind === "page" && d.page.truncated ? t("chat.tagTruncated") : null,
+        tag: d.kind === "page" && d.page.truncated ? t("chat.tagTruncated") : d.kind === "view" ? t("chat.viewTag") : null,
         removeLabel: t("chat.removeContext"),
         remove: () => agent.contextDraft.splice(di, 1),
       });
@@ -1458,6 +1521,62 @@
             {/if}
           </div>
         {/if}
+      {:else if item.kind === "actions"}
+        {@const pendingActs = agent.pendingActions?.id === item.id}
+        {@const shownActs = item.decision?.kind === "approve" ? item.decision.items : item.items}
+        <div class="plan-inline actions-card" class:rejected={item.decision?.kind === "reject"}>
+          <div class="plan-inline-head">
+            <span class="plan-inline-title">{t("chat.actionsTitle")}</span>
+            {#if item.decision}
+              <span class="plan-inline-badge" class:bad={item.decision.kind === "reject"}>{actionsBadge(item.decision)}</span>
+            {:else if pendingActs}
+              <span class="plan-inline-badge wait">{t("chat.actionsWaiting")}</span>
+            {/if}
+          </div>
+          {#if pendingActs}
+            {#each actionRows as r, ri (ri)}
+              <div class="act-row" class:off={!r.keep}>
+                <label class="act-keep"><input type="checkbox" bind:checked={r.keep} /></label>
+                <div class="act-body">
+                  <input class="act-text" bind:value={r.text} spellcheck="false" />
+                  <div class="act-meta">
+                    <input class="act-owner" bind:value={r.owner} placeholder={t("chat.actionsOwner")} spellcheck="false" />
+                    <input class="act-due" type="date" bind:value={r.due} title={t("chat.actionsDue")} />
+                    <input class="act-target" bind:value={r.target} list="act-notes" placeholder={t("chat.actionsTarget")} spellcheck="false" />
+                  </div>
+                  {#if r.dup}
+                    <div class="act-hint">{t("chat.actionsDuplicate", { path: r.dup })}</div>
+                  {:else if r.source}
+                    <div class="act-hint">{t("chat.actionsSource", { source: r.source })}</div>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+            <datalist id="act-notes">
+              {#each vault.notes as n (n.id)}<option value={n.id}></option>{/each}
+            </datalist>
+            {#if actionsRejecting}
+              <div class="plan-actions">
+                <!-- svelte-ignore a11y_autofocus -->
+                <input class="plan-reason" bind:value={actionsRejectReason} placeholder={t("chat.actionsRejectPlaceholder")} autofocus />
+                <button class="btn danger" onclick={submitActionsReject}>{t("chat.actionsReject")}</button>
+              </div>
+            {:else}
+              <div class="plan-actions">
+                <button class="btn subtle" onclick={() => (actionsRejecting = true)}>{t("chat.actionsReject")}</button>
+                <span class="plan-spacer"></span>
+                <button class="btn primary" onclick={submitActions}>{keptCount ? t("chat.actionsWrite", { n: keptCount }) : t("chat.actionsWriteNone")}</button>
+              </div>
+            {/if}
+          {:else}
+            {#each shownActs as a, ai (ai)}
+              <div class="plan-item">
+                <span class="plan-check">{ai + 1}.</span>
+                <span>{a.text}{a.owner ? ` · ${a.owner}` : ""}{a.due ? ` · ${a.due}` : ""}{a.target ? ` → ${a.target}` : ""}</span>
+              </div>
+            {/each}
+          {/if}
+        </div>
       {:else if item.kind === "plan"}
         <!-- It looks at pendingPlan alone and adds no running gate: in a window handed over with
              ⌘J the loop runs on the other window's channel and the local running is always false,
@@ -2532,6 +2651,59 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .plan-item.doing .plan-check { animation: none; }
+  }
+  .act-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px 0;
+    border-top: 1px solid var(--border);
+  }
+  .act-row.off .act-body {
+    opacity: 0.55;
+  }
+  .act-keep {
+    flex-shrink: 0;
+    padding-top: 3px;
+  }
+  .act-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .act-text,
+  .act-owner,
+  .act-due,
+  .act-target {
+    font-size: var(--fs-xs);
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
+    min-width: 0;
+  }
+  .act-text {
+    width: 100%;
+  }
+  .act-meta {
+    display: flex;
+    gap: 4px;
+  }
+  .act-owner {
+    width: 5em;
+  }
+  .act-due {
+    width: 9.5em;
+  }
+  .act-target {
+    flex: 1;
+  }
+  .act-hint {
+    font-size: 10px;
+    color: var(--fg-faint);
   }
   /* ---- The plan gate's inline card (propose_plan): the decision point in the timeline. The
      sticky card is the progress projection, and this card carries "confirm / edit / reject" —

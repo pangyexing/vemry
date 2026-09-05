@@ -1246,6 +1246,9 @@ async fn run_agent_turn(
         plan_gate: Arc::new(crate::agent_bridge::ChannelPlanGate {
             pending: Arc::clone(&state.agent.pending.plans),
         }),
+        actions_gate: Arc::new(crate::agent_bridge::ChannelActionsGate {
+            pending: Arc::clone(&state.agent.pending.actions),
+        }),
         vault: Arc::clone(&state.vault),
         sources: Arc::clone(&state.agent.sources),
     };
@@ -1397,6 +1400,16 @@ pub fn agent_plan_respond(
     decision: vemry_agent::PlanDecision,
 ) -> Result<(), String> {
     crate::agent_bridge::resolve_plan(&state.agent.pending.plans, &request_id, decision)
+}
+
+/// Handing an action-list decision back (propose_actions): resolve the matching oneshot, and the loop continues within the same turn.
+#[tauri::command]
+pub fn agent_actions_respond(
+    state: State<'_, AppState>,
+    request_id: String,
+    decision: vemry_agent::ActionsDecision,
+) -> Result<(), String> {
+    crate::agent_bridge::resolve_actions(&state.agent.pending.actions, &request_id, decision)
 }
 
 /// Follow a note (or stop, with path=None): the session keeps its findings there and
@@ -1563,63 +1576,8 @@ pub fn init_memory_file(app: AppHandle, state: State<'_, AppState>) -> Result<St
     Ok("VEMRY.md".into())
 }
 
-const RESEARCH_SKILL_TEMPLATE: &str = "\
----
-name: research
-description: The research method — plan first, the vault before the web, verify and cite every source, and let the conclusion settle into a note
----
-
-# Research method
-
-Follow this for any 'look into / search for / tell me about X' request.
-
-## Shape of the work
-
-1. A question with one clear answer needs no plan: answer it, cite it, stop.
-2. Anything wider is a plan first: call update_plan with 3-7 steps (all pending),
-   then keep it current as you go — doing when you start a step, done when it is
-   finished, skipped (with the reason in its text) when you drop it. Never
-   restate the plan in prose; the UI shows it.
-3. When the turn context names a working note, that note is where the findings
-   go: append_note adds a section or a finding, set_frontmatter records
-   `status:` and `sources:`. Those writes on the working note apply without a
-   dialog. Without a working note, propose to save the result as a note and let
-   the user decide.
-
-## Order: the vault first, then the web
-
-1. Search the vault first with search_notes / query_blocks — do not go looking
-   for what the user already knows; the clips/ directory holds clipped pages,
-   which count as existing knowledge too.
-2. Before citing a web URL, call clips_lookup: a page that has been clipped is
-   cited as a [[wikilink]] to the local note (and read with read_note), not as a
-   URL.
-3. Only when the vault has nothing, or nothing recent enough, search the web
-   (if web search is enabled in the settings).
-4. In a long conversation, call list_sources before citing again so one source
-   does not get two entries; a source marked unverified there was never confirmed
-   by a search — say so, or search to confirm it.
-
-## Citation discipline
-
-- Every factual claim gets a source right after it: `[title](url)` for the web,
-  `[[note#^id]]` for the vault (read_block is enough when a citation is all you need).
-- Distinguish a quotation (verbatim) from a paraphrase (summarised); mark an
-  inference with no source as unverified.
-- When sources disagree, say so rather than silently picking one.
-- Read one direction to its conclusion and write that conclusion down before
-  starting the next; do not carry whole pages from step to step.
-
-## Writing it down
-
-- A one-off question only needs an answer.
-- A systematic investigation becomes a note: the frontmatter records
-  `question:`, `status:` (draft → reviewing → settled) and `sources:`; the body
-  is organised as conclusion → each claim with its source → open questions, and
-  [[links]] connect it to related notes.
-- Suggest that a page worth keeping be opened in the built-in browser and
-  clipped into clips/.
-";
+/// The research skill's file (shared with the Settings examples: one copy of the text).
+const RESEARCH_SKILL_TEMPLATE: &str = crate::skill_templates::RESEARCH;
 
 /// The research skill's file in the two forms its installers need: the absolute path it
 /// is written to, and the vault-relative path the frontend opens. One spelling of the
@@ -1663,6 +1621,39 @@ pub fn ensure_research_skill(state: State<'_, AppState>) -> Result<bool, String>
     let installed = write_if_absent(&research_skill_path(&meta_dir).0, RESEARCH_SKILL_TEMPLATE)?;
     with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)))?;
     Ok(installed)
+}
+
+/// One row of the example-skills catalogue in Settings: installed = a file of that
+/// name is already in `.vemry/skills/` (the user's, whether or not its text is ours).
+#[derive(Serialize)]
+pub struct SkillExample {
+    pub name: String,
+    pub description: String,
+    pub installed: bool,
+}
+
+#[tauri::command]
+pub fn skill_examples_list(state: State<'_, AppState>) -> Result<Vec<SkillExample>, String> {
+    let dir = with_vault(&state, |v| Ok(v.meta_dir()))?.join(vemry_agent::skills::SKILLS_SUBDIR);
+    Ok(crate::skill_templates::EXAMPLES
+        .iter()
+        .map(|e| SkillExample { name: e.name.into(), description: e.description.into(), installed: dir.join(e.file).exists() })
+        .collect())
+}
+
+/// Install one example skill into `.vemry/skills/` (never overwriting a file that is
+/// there). The skill list travels with the session snapshot, so it takes effect in a
+/// new session. Returns the vault-relative path for the frontend to open.
+#[tauri::command]
+pub fn skill_install_example(state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
+    let example = crate::skill_templates::example(&name).ok_or_else(|| format!("unknown example skill: {name}"))?;
+    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
+    let sub = vemry_agent::skills::SKILLS_SUBDIR;
+    let created = write_if_absent(&meta_dir.join(sub).join(example.file), example.body)?;
+    if example.name == "research" && created {
+        let _ = with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)));
+    }
+    Ok(Scaffolded { path: format!(".vemry/{sub}/{}", example.file), created })
 }
 
 /// The skills management list (the settings page): disabled ones are listed too —

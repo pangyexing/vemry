@@ -20,15 +20,19 @@ use vemry_core::Vault;
 use crate::client::ChatTransport;
 use crate::compact;
 use crate::context::{resolve_context_refs, ContextRef};
-use crate::permission::{PermissionDecision, PermissionGate, PlanDecision, PlanGate, PlanRequest, WriteRequest};
+use crate::permission::{
+    ActionsDecision, ActionsGate, ActionsRequest, PermissionDecision, PermissionGate, PlanDecision, PlanGate, PlanRequest,
+    WriteRequest,
+};
 use crate::context::{inflate_images, scrub_private_refs, strip_images};
 use crate::prompt::{build_system_prompt, compose_user_content, PageContext, TurnContext};
 use crate::provider::ProviderConfig;
 use crate::session::SessionLog;
 use crate::sources::{self, Source};
 use crate::tools::{
-    execute_read_tool, execute_write, is_local_write, is_session_tool, is_write_tool, parse_plan_items, prepare_write,
-    propose_plan_def, tool_defs, PlanItem, PlanStatus, ToolError,
+    execute_read_tool, execute_write, format_action_items, is_local_write, is_session_tool, is_write_tool,
+    parse_action_items, parse_plan_items, prepare_write, propose_actions_def, propose_plan_def, tool_defs, PlanItem,
+    PlanStatus, ToolError,
 };
 use crate::types::{
     ChatMessage, ChatRequest, ToolCall, ToolCallAccumulator, ToolDef, Usage, WebSearchResult,
@@ -70,6 +74,9 @@ pub enum AgentEvent {
     /// The model sent its step list (update_plan, or the list confirmed at the plan
     /// gate): the sticky plan card is a projection of the latest one.
     PlanUpdated { items: Vec<PlanItem> },
+    /// propose_actions is suspended awaiting the user's review of the list (the
+    /// actions gate, of the same family as the plan gate).
+    ActionsRequest { request: ActionsRequest },
     /// The web sources this turn cited, settled against the session's table at the
     /// end of the turn (each with its verification); the audit jsonl has the same
     /// line, so a replay shows the same card.
@@ -179,6 +186,7 @@ pub struct AgentRunner {
     pub transport: Arc<dyn ChatTransport>,
     pub gate: Arc<dyn PermissionGate>,
     pub plan_gate: Arc<dyn PlanGate>,
+    pub actions_gate: Arc<dyn ActionsGate>,
     pub vault: Arc<Mutex<Option<Vault>>>,
     /// The session's source table (see sources.rs): the glue layer owns it with
     /// the session and hands the runner a clone of the handle; the runner settles
@@ -449,6 +457,8 @@ impl AgentRunner {
                 }
             }
             let mut tools = tool_defs();
+            // The action-list gate is always available: proposing is free, writing still goes through the write gate
+            tools.push(propose_actions_def());
             if config.plan_confirm {
                 // Same shape as web_search: an addition to the tool table frozen per
                 // session, so the prefix stays stable
@@ -811,6 +821,7 @@ impl AgentRunner {
         if is_session_tool(name) {
             return match name {
                 "propose_plan" => self.execute_plan(call, &args, plan_rejected, on_event, log).await,
+                "propose_actions" => self.execute_actions(call, &args, on_event, log).await,
                 "update_plan" => self.execute_plan_update(&args, on_event, log),
                 _ => Ok(sources::format_sources(&self.sources.lock().unwrap())),
             };
@@ -983,6 +994,40 @@ impl AgentRunner {
 }
 
 impl AgentRunner {
+    /// propose_actions: validate → record the `actions` line → emit the event → suspend
+    /// at the actions gate → record the decision → hand the kept list back. The model
+    /// then writes each item through the ordinary write tools (which have their own
+    /// gate, or the working note's grant).
+    async fn execute_actions(
+        &self,
+        call: &ToolCall,
+        args: &Value,
+        on_event: &(dyn Fn(AgentEvent) + Send + Sync),
+        log: &SessionLog,
+    ) -> std::result::Result<String, String> {
+        let items = parse_action_items(args)?;
+        log.append("actions", json!({ "id": &call.id, "items": &items }));
+        let request = ActionsRequest { id: call.id.clone(), items };
+        on_event(AgentEvent::ActionsRequest { request: request.clone() });
+        match self.actions_gate.request(&request).await {
+            ActionsDecision::Approve { items } => {
+                log.append("actions_decision", json!({ "id": &request.id, "decision": "approve", "items": &items }));
+                if items.is_empty() {
+                    return Ok("The user kept none of the items; write nothing.".into());
+                }
+                Ok(format!(
+                    "The user kept {} item(s), as edited below. Write each into its target now — append_note as a task line (`- [ ] text [owner:: x] 📅 due`) under the right heading, or update_task for an existing task — and write nothing that is not on this list:\n{}",
+                    items.len(),
+                    format_action_items(&items)
+                ))
+            }
+            ActionsDecision::Reject { reason } => {
+                log.append("actions_decision", json!({ "id": &request.id, "decision": "reject", "reason": &reason }));
+                Err(format!("The user rejected the action list: {reason}. Write nothing from it."))
+            }
+        }
+    }
+
     /// update_plan: validate → record the `plan_update` line → emit the event → a
     /// short receipt for the model. Session state only: no vault, no gate.
     fn execute_plan_update(
@@ -1239,6 +1284,7 @@ mod tests {
             transport,
             gate,
             plan_gate: Arc::new(crate::permission::AutoApprovePlan),
+            actions_gate: Arc::new(crate::permission::AutoApproveActions),
             vault: f.vault.clone(),
             sources: Arc::new(Mutex::new(vec![])),
         }
@@ -1817,6 +1863,7 @@ mod tests {
             transport: transport.clone(),
             gate: Arc::new(AutoAllow),
             plan_gate: Arc::new(AutoRejectPlan("先别动笔记".into())),
+            actions_gate: Arc::new(crate::permission::AutoApproveActions),
             vault: f.vault.clone(),
             sources: Arc::new(Mutex::new(vec![])),
         };
@@ -1853,6 +1900,7 @@ mod tests {
             transport,
             gate: Arc::new(AutoAllow),
             plan_gate: Arc::new(AutoEditPlan),
+            actions_gate: Arc::new(crate::permission::AutoApproveActions),
             vault: f.vault.clone(),
             sources: Arc::new(Mutex::new(vec![])),
         };
@@ -2087,6 +2135,61 @@ mod tests {
         let mut history = vec![];
         r.run(&ProviderConfig::zhipu("k".into()), &config, &mut history, Some("再记".into()), None, vec![], None, &|_| {}, &AtomicBool::new(false), &log).await.unwrap();
         assert!(history.iter().find(|m| m.tool_call_id.as_deref() == Some("c4")).unwrap().text().unwrap().contains("denied by user"));
+    }
+
+    /// propose_actions: the list reaches the ledger and the UI, the (auto-approving) gate
+    /// hands it back as task lines for the model to write, a bad date is an error before
+    /// any card is raised, and a rejection tells the model to write nothing.
+    #[tokio::test]
+    async fn propose_actions_round_trips_through_the_gate() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("a1", "propose_actions", r#"{"items": [{"text": "reply to the SOW", "owner": "Wang", "due": "2026-09-09", "target": "projects/Buy.md", "source": "[[Meeting#^m2]]"}, {"text": "sync the schedule"}]}"#),
+            vec![text_chunk("写入中"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoDeny("no".into())));
+        let mut history = vec![];
+        let (log, events) = run_plan_turn(&r, &f, &mut history).await;
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::ActionsRequest { request } if request.items.len() == 2 && request.items[0].owner.as_deref() == Some("Wang"))));
+        let result = history[2].text().unwrap();
+        assert!(result.contains("- reply to the SOW [owner:: Wang] 📅 2026-09-09  → projects/Buy.md  (from: [[Meeting#^m2]])"), "{result}");
+        assert!(result.contains("- sync the schedule"));
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert!(jsonl.lines().any(|l| l.contains(r#""kind":"actions""#) && l.contains("SOW")));
+        assert!(jsonl.lines().any(|l| l.contains(r#""kind":"actions_decision""#) && l.contains(r#""decision":"approve""#)));
+
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("a2", "propose_actions", r#"{"items": [{"text": "x", "due": "next Friday"}]}"#),
+            vec![text_chunk("改"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(AutoDeny("no".into())));
+        let mut history = vec![];
+        let (_log, events) = run_plan_turn(&r, &f, &mut history).await;
+        assert!(history[2].text().unwrap().contains("due must be YYYY-MM-DD"));
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::ActionsRequest { .. })), "no card for a bad list");
+
+        struct RejectActions;
+        #[async_trait]
+        impl ActionsGate for RejectActions {
+            async fn request(&self, _req: &ActionsRequest) -> ActionsDecision {
+                ActionsDecision::Reject { reason: "not now".into() }
+            }
+        }
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("a3", "propose_actions", r#"{"items": [{"text": "x"}]}"#),
+            vec![text_chunk("好"), finish_chunk("stop")],
+        ]));
+        let r = AgentRunner {
+            transport,
+            gate: Arc::new(AutoDeny("no".into())),
+            plan_gate: Arc::new(crate::permission::AutoApprovePlan),
+            actions_gate: Arc::new(RejectActions),
+            vault: f.vault.clone(),
+            sources: Arc::new(Mutex::new(vec![])),
+        };
+        let mut history = vec![];
+        run_plan_turn(&r, &f, &mut history).await;
+        assert!(history[2].text().unwrap().contains("rejected the action list: not now"));
     }
 
     #[tokio::test]

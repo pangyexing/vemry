@@ -9,6 +9,7 @@
   import { vault } from "$lib/stores/vault.svelte";
   import { scaffold } from "$lib/scaffold";
   import { agent } from "$lib/stores/agent.svelte";
+  import { localDate } from "$lib/views/tasks";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { types } from "$lib/stores/types.svelte";
   import { browser, MAIN_MIN_BESIDE_PANEL, PANEL_DEFAULT as BROWSER_PANEL_DEFAULT, PANEL_MIN as BROWSER_PANEL_MIN } from "$lib/stores/browser.svelte";
@@ -475,6 +476,23 @@
       const c = agent.composer;
       if (panelVisible && c && !c.isFocused()) { c.summon(); return; }
       void agent.openWindow(vault.currentPath, vault.editorSelection).catch((e) => toast.push(String(e), "error"));
+    },
+  });
+  registerCommand({
+    // Today's journal note (journal/YYYY-MM-DD.md): where the daily start and close land; created on first use
+    id: "open-journal-today", group: "note",
+    run: async () => {
+      if (!vault.root) return;
+      const path = `journal/${localDate()}.md`;
+      try {
+        if (!vault.notes.some((n) => n.id === path)) {
+          await api.noteWrite(path, `# ${localDate()}\n\n`);
+          await vault.refreshNotes();
+        }
+        await vault.openNote(path);
+      } catch (e) {
+        toast.push(String(e), "error");
+      }
     },
   });
   registerCommand({

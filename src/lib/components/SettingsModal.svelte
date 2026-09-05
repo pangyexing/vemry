@@ -5,7 +5,7 @@
 
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, EFFORT_OPTIONS, type LangSetting, type LinkOpenMode, type SkillEntry } from "$lib/api";
+  import { api, EFFORT_OPTIONS, type LangSetting, type LinkOpenMode, type SkillEntry, type SkillExample } from "$lib/api";
   import { setLanguage, t } from "$lib/i18n/i18n.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
@@ -57,6 +57,8 @@
   let writePolicy = $state<"allow" | "ask">("ask");
   /** The .vemry/skills/ management list (disabled ones included; changes take effect at once and a new AI session picks them up). */
   let skills = $state<SkillEntry[]>([]);
+  /** The example-skills catalogue (routines the AI can run once installed). */
+  let skillExamples = $state<SkillExample[]>([]);
   let newRule = $state("");
   let ruleError = $state<string | null>(null);
   /** Notes marked one by one: the frontmatter flag is what NoteSummary.private carries, and the
@@ -113,6 +115,7 @@
       void scripts.refresh();
       api.vaultWritePolicyGet().then((p) => (writePolicy = p)).catch(() => (writePolicy = "ask"));
       api.skillsList().then((s) => (skills = s)).catch(() => (skills = []));
+      api.skillExamplesList().then((s) => (skillExamples = s)).catch(() => (skillExamples = []));
     }
   });
 
@@ -137,6 +140,16 @@
     }
   }
 
+  async function installExample(name: string) {
+    try {
+      const r = await api.skillInstallExample(name);
+      toast.push(t(r.created ? "settings.skillInstalled" : "settings.skillAlready", { path: r.path }));
+      skills = await api.skillsList();
+      skillExamples = await api.skillExamplesList();
+    } catch (e) {
+      toast.push(String(e), "error");
+    }
+  }
   async function toggleSkill(file: string, enabled: boolean) {
     try {
       await api.skillSetEnabled(file, enabled);
@@ -635,6 +648,21 @@
                 </ul>
               {:else}
                 <small class="empty">{t("settings.noSkills")}</small>
+              {/if}
+              {#if skillExamples.some((e) => !e.installed)}
+                <h4 class="examples-title">{t("settings.skillExamples")}</h4>
+                <small>{t("settings.skillExamplesHint")}</small>
+                <ul class="script-list">
+                  {#each skillExamples.filter((e) => !e.installed) as e (e.name)}
+                    <li>
+                      <div class="script-row">
+                        <span class="script-name">{e.name}</span>
+                        <button class="btn small" onclick={() => void installExample(e.name)}>{t("settings.installSkill")}</button>
+                      </div>
+                      <small class="script-summary">{e.description}</small>
+                    </li>
+                  {/each}
+                </ul>
               {/if}
             </section>
             <section class="scripts">

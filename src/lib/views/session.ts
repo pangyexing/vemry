@@ -3,7 +3,7 @@
 
 import { t } from "$lib/i18n/i18n.svelte";
 import { isImeKeydown } from "$lib/ime";
-import type { PlanItem, RefTag, SourceRecord } from "$lib/api";
+import type { ActionItem, PlanItem, RefTag, SourceRecord } from "$lib/api";
 
 /** Every line carries `ts` (RFC3339) + `kind`; `raw` is the bad-line fallback. */
 export type SessionEntry =
@@ -38,6 +38,10 @@ export type SessionEntry =
       items?: string[];
       reason?: string;
     }
+  /** The action list propose_actions raised (id = the tool call id, which the decision line pairs by). */
+  | { kind: "actions"; ts: string; id: string; items: ActionItem[] }
+  /** The actions gate's decision: approve (items = what the user kept, as edited) / reject (reason). */
+  | { kind: "actions_decision"; ts: string; id: string; decision: "approve" | "reject"; items?: ActionItem[]; reason?: string }
   /** The session follows a note (path null = stopped); the last line wins. auto: local writes on it pass the gate without a dialog. */
   | { kind: "follow"; ts: string; path: string | null; auto?: boolean }
   /** The model's step list (update_plan, or the list confirmed at the plan gate); the latest one is the sticky plan card. */
@@ -146,7 +150,7 @@ export function planDecisionLabel(decision: string): string {
 /** Tools that carry their own card projection: the conversation timeline no longer
  *  pushes their raw JSON tool line (the plan card is propose_plan's projection). The
  *  live view and the replay share this one verdict. */
-export const CARD_TOOLS = new Set(["propose_plan", "update_plan"]);
+export const CARD_TOOLS = new Set(["propose_plan", "update_plan", "propose_actions"]);
 
 /** Whether a plan is settled: nothing pending or in progress — a finished plan leaves the sticky card on the next question. */
 export function planReconciled(items: PlanItem[]): boolean {

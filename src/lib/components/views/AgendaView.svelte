@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { api, type BlockHit } from "$lib/api";
+  import { api, type BlockQuery, type BlockHit } from "$lib/api";
+  import { viewContext } from "$lib/stores/viewContext.svelte";
+  import { askAboutView } from "$lib/askview";
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
@@ -45,6 +47,19 @@
    *  found by either, so a "both" state would only ever be a stricter version of one of
    *  them. */
   let dateKind = $state<DateField>();
+
+  // What this view shows is attachable to the AI (the @ picker's "current view", the
+  // header's "Ask AI"): the live query and the row count are registered while mounted.
+  // The text filter is applied by Rust's query as a substring match, the closest the
+  // query API has to the fuzzy filter here.
+  $effect(() => {
+    const q: BlockQuery = { kind: "task", limit: 5000 };
+    if (query.trim()) q.text = query.trim();
+    if (dateKind === "due") q.field = "due";
+    if (dateKind === "scheduled") q.field = "scheduled";
+    viewContext.set({ view: "agenda", label: query.trim() ? `${t("view.agenda")} · ${query.trim()}` : t("view.agenda"), query: q, rows: shown.length });
+    return () => viewContext.set(null);
+  });
 
   /** The rows are built before they are filtered: the grouping reads the state and dates
    *  rowOf gave, the filtering reads taskFilterKey, and both share one Row — so rowOf runs
@@ -247,7 +262,7 @@
 {/snippet}
 
 <div class="view">
-  <ViewHeader title={t("view.agenda")} total={countLabel(total, allRows.length, "task.count")} filterPlaceholder={t("task.filterPlaceholder")} bind:filter={query}>
+  <ViewHeader title={t("view.agenda")} total={countLabel(total, allRows.length, "task.count")} filterPlaceholder={t("task.filterPlaceholder")} bind:filter={query} askAi={askAboutView}>
     {#snippet left()}
       <!-- The legend doubles as a filter. As a legend it names the calendar and hourglass
         chip icons (they used to be recognisable only on hover); pressed, an entry keeps only

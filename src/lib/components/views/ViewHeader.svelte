@@ -40,6 +40,7 @@
     filter = $bindable(""),
     left,
     right,
+    askAi,
   }: {
     title: string;
     /** The count line, "37 tasks" and so on — each view decides what it counts */
@@ -48,6 +49,8 @@
     hint?: string;
     /** Given, it renders the filter box and doubles as its placeholder */
     filterPlaceholder?: string;
+    /** Given, an "Ask AI" button hands what the view shows to the composer as context */
+    askAi?: () => void;
     filter?: string;
     /** The left slot: on the same side as the count, for a legend and the like — things read
      *  along with the title (a legend may also be a filter, as Agenda's is: it then sits by
@@ -64,6 +67,9 @@
   {@render left?.()}
   <span class="spring"></span>
   {@render right?.()}
+  {#if askAi}
+    <button class="ask" title={t("viewChrome.askAiHint")} onclick={askAi}>{t("viewChrome.askAi")}</button>
+  {/if}
   {#if hint}<span class="hint">{hint}</span>{/if}
   {#if filterPlaceholder !== undefined}
     <input class="filter" bind:value={filter} placeholder={filterPlaceholder} spellcheck="false" />
@@ -113,6 +119,17 @@
     flex-shrink: 0;
     padding: 5px 10px;
     font-size: var(--fs-sm);
+  }
+  .ask {
+    flex-shrink: 0;
+    font-size: var(--fs-xs);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 2px 9px;
+  }
+  .ask:hover {
+    background: var(--bg-hover);
   }
   .close {
     flex-shrink: 0;

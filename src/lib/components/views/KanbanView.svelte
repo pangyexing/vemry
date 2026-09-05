@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { api, type BlockHit } from "$lib/api";
+  import { api, type BlockQuery, type BlockHit } from "$lib/api";
+  import { viewContext } from "$lib/stores/viewContext.svelte";
+  import { askAboutView } from "$lib/askview";
   import { vault, stemOf } from "$lib/stores/vault.svelte";
   import {
     chipDate,
@@ -70,6 +72,16 @@
   $effect(() => {
     void vault.indexVersion;
     void load();
+  });
+
+  // The board's live query, attachable to the AI (see AgendaView's registration)
+  $effect(() => {
+    const q: BlockQuery = { kind: "task", limit: 5000 };
+    if (query.trim()) q.text = query.trim();
+    const g = groupBy;
+    const label = g.by === "field" ? `${t("view.kanban")} · ${g.key}` : t("view.kanban");
+    viewContext.set({ view: "kanban", label: query.trim() ? `${label} · ${query.trim()}` : label, query: q, rows: total });
+    return () => viewContext.set(null);
   });
 
   /** The cards are built before they are filtered: the column assignment reads the column and
@@ -499,6 +511,7 @@
     total={countLabel(total, hits.length, "task.count")}
     filterPlaceholder={t("task.filterPlaceholder")}
     bind:filter={query}
+    askAi={askAboutView}
   >
     {#snippet right()}
       <!-- The grouping: the time axis, or any inline field the tasks carry (one column per value) -->

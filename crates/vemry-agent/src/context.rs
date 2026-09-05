@@ -82,6 +82,11 @@ pub enum ContextRef {
     /// local id (`^id` explicit, `bN` positional), resolved against the note at
     /// send time — a heading hands over its section, a list item its subtree.
     Block { path: String, local_id: String },
+    /// What a projection view shows right now (the Agenda, the board): the view's
+    /// query, re-run here through the same privacy-filtered query API the view and
+    /// the query_blocks tool use — not a new read path, the user's table made
+    /// citable. `path` is the view's id (`view:agenda`), the audit's spelling.
+    View { path: String, label: String, query: serde_json::Value },
 }
 
 /// The kind of a reference. A `ResolvedRef` carries it into envelope assembly
@@ -96,6 +101,7 @@ pub enum RefKind {
     Image,
     Selection,
     Block,
+    View,
 }
 
 impl RefKind {
@@ -107,6 +113,7 @@ impl RefKind {
             RefKind::Image => "image",
             RefKind::Selection => "selection",
             RefKind::Block => "block",
+            RefKind::View => "view",
         }
     }
     /// The envelope tag (always `{as_str()}-context`): assembly, scrub's locator
@@ -120,6 +127,7 @@ impl RefKind {
             RefKind::Image => "image-context",
             RefKind::Selection => "selection-context",
             RefKind::Block => "block-context",
+            RefKind::View => "view-context",
         }
     }
     /// The inverse of `as_str()`: used when reading a `StoredRef.kind` string back
@@ -133,6 +141,7 @@ impl RefKind {
             "image" => RefKind::Image,
             "selection" => RefKind::Selection,
             "block" => RefKind::Block,
+            "view" => RefKind::View,
             _ => return None,
         })
     }
@@ -147,6 +156,7 @@ impl ContextRef {
             ContextRef::Image { .. } => RefKind::Image,
             ContextRef::Selection { .. } => RefKind::Selection,
             ContextRef::Block { .. } => RefKind::Block,
+            ContextRef::View { .. } => RefKind::View,
         }
     }
     pub fn path(&self) -> &str {
@@ -156,7 +166,8 @@ impl ContextRef {
             | ContextRef::File { path }
             | ContextRef::Image { path }
             | ContextRef::Selection { path, .. }
-            | ContextRef::Block { path, .. } => path,
+            | ContextRef::Block { path, .. }
+            | ContextRef::View { path, .. } => path,
         }
     }
     /// A block reference's handle as the audit names it when the block could not
@@ -246,6 +257,7 @@ pub fn resolve_context_refs(
                         body
                     })
                 }
+                ContextRef::View { label, query, .. } => resolve_view(vault, label, query, &mut filtered),
             };
             // Whether the reference itself was filtered by the gate: for the
             // non-folder kinds any increase in filtered can only come from this
@@ -270,6 +282,47 @@ pub fn resolve_context_refs(
         })
         .collect();
     (out, filtered)
+}
+
+/// The cap on rows a view reference hands over (a view can hold thousands of tasks; the model gets the head and a count).
+const VIEW_CONTEXT_MAX_ROWS: usize = 200;
+
+/// A view reference: the view's query re-run through `query_for_agent` (the
+/// privacy-filtered query every tool and view goes through), rendered one block
+/// per line with its citation handle, state and dates — what the user is looking
+/// at, made citable.
+fn resolve_view(vault: &Vault, label: &str, query: &serde_json::Value, filtered: &mut usize) -> Result<String, String> {
+    let mut q: vemry_core::BlockQuery = serde_json::from_value(query.clone()).map_err(|e| format!("bad view query: {e}"))?;
+    q.limit = Some(q.limit.unwrap_or(VIEW_CONTEXT_MAX_ROWS).min(VIEW_CONTEXT_MAX_ROWS));
+    let (hits, hidden) = vault.query_for_agent(&q);
+    *filtered += hidden;
+    if hits.is_empty() {
+        return Ok(format!("({label}: no blocks)"));
+    }
+    let mut out = String::new();
+    for h in &hits {
+        let note = h.note.as_str().strip_suffix(".md").unwrap_or(h.note.as_str());
+        let mut meta = String::new();
+        if let vemry_core::BlockKind::Task { state, due, scheduled } = &h.block.kind {
+            meta.push_str(match state {
+                vemry_core::TaskState::Todo => " [todo]",
+                vemry_core::TaskState::Doing => " [doing]",
+                vemry_core::TaskState::Done => " [done]",
+            });
+            if let Some(d) = due {
+                meta.push_str(&format!(" due {d}"));
+            }
+            if let Some(d) = scheduled {
+                meta.push_str(&format!(" scheduled {d}"));
+            }
+        }
+        let first: String = h.block.content.lines().next().unwrap_or("").chars().take(160).collect();
+        out.push_str(&format!("[[{note}#{}]]{meta}\t{first}\n", h.block.handle()));
+    }
+    if hits.len() >= VIEW_CONTEXT_MAX_ROWS {
+        out.push_str(&format!("(showing the first {VIEW_CONTEXT_MAX_ROWS} rows; use query_blocks with a narrower filter for the rest)\n"));
+    }
+    Ok(out.trim_end().to_string())
 }
 
 fn run_read(vault: &Vault, tool: &str, args: serde_json::Value, filtered: &mut usize) -> Result<String, String> {
@@ -679,7 +732,9 @@ pub fn scrub_private_refs(vault: &Vault, messages: &mut [ChatMessage]) {
                     replace.push((*kind, attr, replacement));
                 }
                 // image: inflate_images re-gates every turn, so nothing happens here
-                RefKind::Image => {}
+                // An image has no envelope; a view's rows already went through the
+                // privacy-filtered query at resolution time and name no single note
+                RefKind::Image | RefKind::View => {}
             }
         }
         // Replace back to front: the ranges of the earlier blocks do not drift with
