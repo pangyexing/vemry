@@ -21,7 +21,7 @@ vemry keeps your knowledge as plain Markdown files on your own disk. No database
 no account, no sync service.
 
 On top of that folder it builds exactly one derived thing: a block-level index.
-Every view you see — agenda, board, timeline, graph, claims, evidence, session
+Every view you see — agenda, board, timeline, graph, claims, evidence, review, session
 replay — is a query over that index. So are your scripts. So are the AI agent's
 tools. There is no second data path, which is what makes the AI native here rather
 than bolted on.
@@ -43,7 +43,7 @@ than a promise. The index is derived and rebuildable; delete it and nothing is l
 
 ```
 Markdown on disk  →  block index  →  agenda · board · timeline · graph
-(single truth)       (only derived    claims · evidence · session replay
+(single truth)       (only derived    claims · evidence · review · session replay
                       layer)          your JS scripts · the agent's tools
 ```
 

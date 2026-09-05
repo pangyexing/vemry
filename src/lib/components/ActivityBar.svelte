@@ -51,6 +51,13 @@
     sessions: [
       "M3.5 5 h13", "M3.5 9 h13", "M3.5 13 h6", "M12.8 10.7 l4 2.3 -4 2.3 Z",
     ],
+    // Two stacked cards: the front one closed, the back one showing only its top and right
+    // edges behind it (a deck, not a single note), with the front's question line
+    review: [
+      "M3.5 7 h9 a1 1 0 0 1 1 1 v7.5 a1 1 0 0 1 -1 1 h-9 a1 1 0 0 1 -1 -1 v-7.5 a1 1 0 0 1 1 -1 Z",
+      "M6.5 4.5 h9 a1 1 0 0 1 1 1 v7.5",
+      "M6 10.5 h4",
+    ],
   };
 </script>
 
@@ -66,8 +73,8 @@
   // preview-slot semantics), and the rail only opens, closes and indicates the current one;
   // pressing the active view again closes its tab.
   // The views are grouped by meaning with an ab-sep between groups: vault-level projections
-  // (projections of the whole vault's tasks and links) | research (the products of a research
-  // session). A later entry point joins the group it belongs to rather than being appended
+  // (projections of the whole vault's tasks and links) | research and learning (the products of
+  // a research session, and the flashcards due). A later entry point joins the group it belongs to rather than being appended
   // linearly — once a group passes 4 or 5, merging entry points comes first, and the rail
   // does not grow forever.
   // view-reading is not in the bar: it means "return to the most recent projection", it only
@@ -83,11 +90,12 @@
       { cmd: "view-timeline", view: "timeline" },
       { cmd: "view-graph", view: "graph" },
     ],
-    // research
+    // research and learning
     [
       { cmd: "view-claims", view: "claims" },
       { cmd: "view-evidence", view: "evidence" },
       { cmd: "view-sessions", view: "sessions" },
+      { cmd: "view-review", view: "review" },
     ],
   ];
   const searchIcon = ["M8.75 4 a4.75 4.75 0 1 0 0 9.5 a4.75 4.75 0 1 0 0 -9.5", "M12.11 12.11 L16.5 16.5"];

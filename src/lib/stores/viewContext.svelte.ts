@@ -1,5 +1,5 @@
 // What the active projection view shows right now, as something the composer can
-// attach: the Agenda and the board register their live query and row count here on
+// attach: the Agenda, the board and the Review view register their live query and row count here on
 // every change (and clear it when they unmount), and the @ picker's "current view"
 // candidate and the view header's "Ask AI" button read it. The rows themselves are
 // not carried — Rust re-runs the query through the privacy-filtered query API, so
@@ -7,8 +7,8 @@
 import type { BlockQuery, ContextRef } from "$lib/api";
 
 export interface ViewContext {
-  /** The view's id: `agenda` / `kanban` — the audit records it as `view:<id>`. */
-  view: "agenda" | "kanban";
+  /** The view's id: `agenda` / `kanban` / `review` — the audit records it as `view:<id>`. */
+  view: "agenda" | "kanban" | "review";
   /** The chip's wording (the view's title, plus the grouping or the filter when set). */
   label: string;
   query: BlockQuery;

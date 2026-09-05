@@ -42,6 +42,7 @@
   import EvidenceView from "$lib/components/views/EvidenceView.svelte";
   import GraphView from "$lib/components/views/GraphView.svelte";
   import SessionsView from "$lib/components/views/SessionsView.svelte";
+  import ReviewView from "$lib/components/views/ReviewView.svelte";
   import ReadingView from "$lib/components/views/ReadingView.svelte";
 
   let paletteMode = $state<PaletteMode | null>(null);
@@ -529,6 +530,25 @@
     },
   });
   registerCommand({
+    // "Explain this": the editor's selection is the question, sent at once with the passage
+    // attached as a selection reference (the same reference the composer's automatic chip
+    // sends, so the audit records it as a selection, body dropped). The panel is shown so the
+    // answer is visible; with the detached window open the answer lands there
+    id: "explain-selection", group: "research",
+    run: () => {
+      if (!vault.root) return;
+      const sel = vault.editorSelection;
+      if (!sel || !sel.text.trim()) { toast.push(t("chat.noSelectionToExplain")); return; }
+      if (sel.private || vault.privatePaths.has(sel.path)) { toast.push(t("block.askPrivate"), "error"); return; }
+      if (agent.running) { toast.push(t("chat.busyExplain")); return; }
+      if (!agent.windowOpen) { vault.rightOpen = true; vault.rightTab = "agent"; }
+      const { path, from_line, to_line, text } = sel;
+      void agent.send(t("chat.explainPrompt"), vault.currentPath, [{ kind: "selection", path, from_line, to_line, text }])
+        .then(() => vault.refreshNotes())
+        .catch((e) => toast.push(String(e), "error"));
+    },
+  });
+  registerCommand({
     // The command entry point of the composer's "+" button (principle 5: everything is a
     // command): the native file dialog → import into the current note's attachment bucket →
     // chips. When no conversation surface is mounted (the panel is collapsed and no window is
@@ -958,6 +978,10 @@
     run: () => void vault.openView("sessions"),
   });
   registerCommand({
+    id: "view-review", group: "view",
+    run: () => void vault.openView("review"),
+  });
+  registerCommand({
     id: "view-reading", group: "view",
     run: () => {
       if (reading.current || reading.loading || reading.error) vault.enterReading();
@@ -1206,6 +1230,8 @@
               <GraphView />
             {:else if vault.mainView === "sessions"}
               <SessionsView />
+            {:else if vault.mainView === "review"}
+              <ReviewView />
             {:else if vault.mainView === "reading"}
               <ReadingView onPickQuoteTarget={pickNoteForQuote} />
             {/if}

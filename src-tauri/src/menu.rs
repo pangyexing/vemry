@@ -125,6 +125,7 @@ mod imp {
             .item(&item(app, lang, "view-evidence", &cmd("view-evidence"))?)
             .item(&item(app, lang, "view-graph", &cmd("view-graph"))?)
             .item(&item(app, lang, "view-sessions", &cmd("view-sessions"))?)
+            .item(&item(app, lang, "view-review", &cmd("view-review"))?)
             .item(&item(app, lang, "view-reading", &cmd("view-reading"))?)
             .separator()
             .item(&item(app, lang, "toggle-left", &cmd("toggle-left"))?)

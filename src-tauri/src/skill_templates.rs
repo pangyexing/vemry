@@ -31,6 +31,7 @@ pub const FEEDBACK_TRIAGE: &str = include_str!("../../examples/demo-vault/.vemry
 pub const ITERATION_PLAN: &str = include_str!("../../examples/demo-vault/.vemry/skills/iteration-plan.md");
 pub const RETRO: &str = include_str!("../../examples/demo-vault/.vemry/skills/retro.md");
 pub const BRIEF: &str = include_str!("../../examples/demo-vault/.vemry/skills/brief.md");
+pub const TUTOR: &str = include_str!("../../examples/demo-vault/.vemry/skills/tutor.md");
 
 /// One installable example block type (`.vemry/types/<file>`): the same shape as a skill example.
 pub struct ExampleType {
@@ -40,12 +41,13 @@ pub struct ExampleType {
     pub body: &'static str,
 }
 
-/// The example block types Settings offers: the product-document blocks.
+/// The example block types Settings offers: the product-document blocks and the flashcard.
 pub const TYPE_EXAMPLES: &[ExampleType] = &[
     ExampleType { file: "requirement.md", name: "requirement", description: "One product requirement, with its priority, status and owner on the line", body: include_str!("../../examples/demo-vault/.vemry/types/requirement.md") },
     ExampleType { file: "decision.md", name: "decision", description: "A product decision — indexed as a claim, so evidence supports it and the Claims view shows which decisions have none", body: include_str!("../../examples/demo-vault/.vemry/types/decision.md") },
     ExampleType { file: "question.md", name: "question", description: "An open question in a spec or a research note, with who owns the answer", body: include_str!("../../examples/demo-vault/.vemry/types/question.md") },
     ExampleType { file: "hypothesis.md", name: "hypothesis", description: "A hypothesis behind a change — the metric, the expected result, and a review date; the review shows up in the Agenda when it is due", body: include_str!("../../examples/demo-vault/.vemry/types/hypothesis.md") },
+    ExampleType { file: "card.md", name: "card", description: "A flashcard — the first line is the question, the body is the answer; the Review view shows it when it is due and writes the grade back onto the line", body: include_str!("../../examples/demo-vault/.vemry/types/card.md") },
 ];
 
 pub fn example_type(name: &str) -> Option<&'static ExampleType> {
@@ -104,6 +106,7 @@ pub const EXAMPLES: &[ExampleSkill] = &[
     ExampleSkill { file: "iteration-plan.md", name: "iteration-plan", description: "Planning the next iteration: score the backlog, pick within capacity, tag the chosen blocks with the iteration, write the iteration note", body: ITERATION_PLAN },
     ExampleSkill { file: "retro.md", name: "retro", description: "Closing an iteration: what shipped, which hypotheses held, which decisions changed, what carries over — and the release notes", body: RETRO },
     ExampleSkill { file: "brief.md", name: "brief", description: "Exporting an implementation brief for a coding agent, and filling the record back in when the work returns", body: BRIEF },
+    ExampleSkill { file: "tutor.md", name: "tutor", description: "The learning method — explain from what the note already says, make flashcards as [!card] blocks, and quiz from the cards that are due", body: TUTOR },
 ];
 
 pub fn example(name: &str) -> Option<&'static ExampleSkill> {

@@ -1,0 +1,27 @@
+{
+  "name": "make-cards",
+  "vault": {
+    "research/TCP.md": "# TCP congestion control\n\n> [!claim] Slow start doubles the congestion window every round trip until the first loss or ssthresh ^c1\n\n> [!claim] Cubic grows the window as a cubic function of the time since the last loss, so it recovers faster on long fat pipes than Reno ^c2\n",
+    "cards/TCP.md": "# TCP cards\n\nFrom [[research/TCP]].\n"
+  },
+  "follow": "cards/TCP.md",
+  "turns": [
+    {
+      "user": "把这篇 TCP 笔记做成卡片",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "read_note", "args": { "path": "research/TCP.md" } } } ],
+        [ { "tool": { "id": "c2", "name": "query_blocks", "args": { "tag": "card", "text": "slow start" } } } ],
+        [ { "tool": { "id": "c3", "name": "append_note", "args": { "path": "cards/TCP.md", "content": "> [!card] How fast does slow start grow the congestion window?\n> It doubles every round trip, until the first loss or ssthresh (from [[research/TCP#^c1]]).\n> [due:: 2026-09-06] #card\n\n> [!card] Why does Cubic recover faster than Reno on long fat pipes?\n> Its window grows as a cubic function of the time since the last loss, not linearly per RTT (from [[research/TCP#^c2]]).\n> [due:: 2026-09-06] #card\n" } } } ],
+        [ { "tool": { "id": "c4", "name": "query_blocks", "args": { "tag": "card", "note": "cards/TCP.md" } } } ],
+        [ { "text": "做了 2 张卡片,放在 [[cards/TCP]];第一张来自 [[research/TCP#^c1]]。打开复习视图就能开始。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "max_tool_calls": 4,
+    "tool_output_contains": [ { "id": "c4", "text": "\"note\": \"cards/TCP.md\"" }, { "id": "c4", "text": "[due:: 2026-09-06] #card" } ],
+    "note_contains": [ { "path": "cards/TCP.md", "text": "> [!card] How fast does slow start grow the congestion window?\n> It doubles every round trip, until the first loss or ssthresh (from [[research/TCP#^c1]]).\n> [due:: 2026-09-06] #card" } ]
+  }
+}

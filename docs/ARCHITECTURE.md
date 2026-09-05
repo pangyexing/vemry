@@ -2034,6 +2034,38 @@ as plain text, and the record filled back in from its summary — two pastes by 
 user; vemry never runs the coding agent, and automatic dispatch stays a separate
 design).
 
+### Learning: cards, the Review view, and the tutor
+
+A flashcard is a `> [!card]` callout tagged `#card` — the parser indexes it as a
+paragraph with a tag and inline fields, nothing was added to the grammar. The first
+line is the question, the quoted lines below are the answer, and the schedule
+(`due / interval / ease / reviews`) lives in fields on the callout's last line. The
+Review view (`ReviewView.svelte`, a projection in the tab system like the Agenda) is
+one `query_blocks({tag: card})` over the vault: it shows the cards due today or never
+graded one at a time, flips on Space, and takes one of four grades (`1`–`4`) with the
+resulting interval previewed on each button. A grade is a **user field write** on the
+block's span (`views/cards.ts`: read the note, check the callout's content against the
+index as tasks.ts does, rewrite exactly the span, requery when stale) — the note is the
+deck, there is no study database, and the agent's gate is not involved because the
+agent did not write it. The scheduling rule is the two-factor spaced-repetition one
+(interval grows by the ease; Again resets to today and the card returns at the end of
+the session; Hard ×1.2, Good 1 → 3 → ×ease, Easy ×ease ×1.3), measured from the day of
+the review so a late review is not penalised and studying ahead counts. A card graded
+in a note the view has written this session may carry a stale span: the view requeries
+before grading it.
+
+The `card` example type installs from Settings (`.vemry/types/card.md`), the `tutor`
+skill carries the method — explain from what the notes already say and end with one
+check question; make 5–12 one-fact cards per note into `cards/<topic>.md` (the working
+note when following), each answer citing its source block, `due` today and no other
+schedule field; quiz from the due cards one per message without writing grades (chat
+is practice, the Review view is the review); a knowledge check counts decks with
+`aggregate_blocks` and lists the cards whose `ease` keeps falling. The
+`explain-selection` command sends the editor's selection as a question at once, the
+passage attached as the same selection reference the composer's automatic chip sends.
+The view registers itself as a view reference (`view:review`), so "Ask AI" on its
+header attaches the card table.
+
 ### Restructuring a note by its blocks (restructure.rs)
 
 A whole-note overwrite of a note holding a private block is refused by the gate

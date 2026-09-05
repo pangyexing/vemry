@@ -138,6 +138,7 @@ mod tests {
         "cmd.view-evidence.title",
         "cmd.view-graph.title",
         "cmd.view-sessions.title",
+        "cmd.view-review.title",
         "cmd.view-reading.title",
         "cmd.toggle-left.title",
         "cmd.toggle-right.title",

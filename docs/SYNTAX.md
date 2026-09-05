@@ -215,6 +215,11 @@ parenthesis. Nothing is swallowed and no list is broken.
   `decision` is indexed as a claim (a decision is a claim about what to do:
   evidence supports it with `supports:` just the same, and the Claims view lists
   it); the rest are indexed as paragraphs
+- `card` is one of "the rest" to the parser (a paragraph), and a flashcard to the
+  Review view when it carries the `#card` tag: the first line is the question,
+  the quoted lines below are the answer, and the schedule fields
+  (`due` / `interval` / `ease` / `reviews`) sit on its last line — grading
+  rewrites those fields in place, so the note is the deck
 - `private` is the block-level privacy zone (see [Privacy markers](#privacy-markers)):
   it must start its line (after indentation), so inside a list item it goes on a
   continuation line of its own; a lazy line without `>` is outside the block

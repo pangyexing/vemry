@@ -54,6 +54,7 @@ add("view.", {
     "claims": ("Claims", "断言"),
     "evidence": ("Evidence", "证据"),
     "sessions": ("Session Replay", "会话回放"),
+    "review": ("Review", "复习"),
     "reading": ("Reader", "阅读投影"),
 })
 
@@ -114,6 +115,11 @@ CMD = {
         ("AI follows the current note", "让 AI 跟随当前笔记"),
         ("The AI keeps this session's findings in the open note; appends and frontmatter changes on it apply without a dialog",
          "本会话的结论写进当前打开的笔记;对它的追加与 frontmatter 修改不再逐次确认"),
+    ),
+    "explain-selection": (
+        ("Explain the selection", "解释选中内容"),
+        ("Send the selected passage to the AI as a question — the passage travels as a selection reference",
+         "把选中的段落发给 AI 解释;选区作为引用一起发出"),
     ),
     "open-journal-today": (
         ("Open today's journal", "打开今日日志"),
@@ -323,6 +329,11 @@ CMD = {
         ("Replay an AI session step by step — reads, writes, permission decisions and "
          "privacy filtering, all on the record",
          "逐条回放 AI 会话的读写、权限决定与隐私过滤——都有账可查"),
+    ),
+    "view-review": (
+        ("View: Review", "视图:复习"),
+        ("The flashcards due today, one at a time; a grade is written back onto the card's line",
+         "今天到期的卡片逐张复习;评分写回卡片所在行"),
     ),
     "view-reading": (
         ("View: Reader", "视图:阅读投影"),
@@ -667,6 +678,35 @@ add("claims.", {
     "decision": ("decision", "决策"),
     "count_one": ("{n} claim", "{n} 断言"),
     "count_other": ("{n} claims", "{n} 断言"),
+})
+
+add("review.", {
+    "count_one": ("{n} card", "{n} 张卡片"),
+    "count_other": ("{n} cards", "{n} 张卡片"),
+})
+
+add("reviewView.", {
+    "due": ("{n} due", "{n} 张到期"),
+    "filterPlaceholder": ("Filter: question / note", "过滤:问题 / 笔记"),
+    "empty1": ("No cards yet. Write ", "还没有卡片。在笔记里写 "),
+    "empty2": (" in a note — the first line is the question, the quoted lines below it the answer — "
+               "or ask the AI to make cards from a note.",
+               " ——首行是问题,下面的引用行是答案——或者让 AI 从一篇笔记生成卡片。"),
+    "noMatch": ("No cards match “{query}”.", "没有匹配「{query}」的卡片。"),
+    "allDone": ("All caught up", "今天的都复习完了"),
+    "nextDue": ("next card due {date}", "下一张 {date} 到期"),
+    "studyAhead": ("Study ahead", "提前复习"),
+    "aheadHint": ("studying ahead — not due yet", "提前复习——尚未到期"),
+    "newCard": ("new", "新卡"),
+    "showAnswer": ("Show answer", "看答案"),
+    "noAnswer": ("(no answer written yet)", "(还没写答案)"),
+    "grade.again": ("Again", "重来"),
+    "grade.hard": ("Hard", "困难"),
+    "grade.good": ("Good", "记得"),
+    "grade.easy": ("Easy", "轻松"),
+    "today": ("today", "今天"),
+    "days": ("{n} d", "{n} 天"),
+    "stale": ("The note changed underneath — reloaded, grade it again", "笔记刚被改动,已重新载入,请再评一次"),
 })
 
 add("evidence.", {
@@ -1122,6 +1162,11 @@ add("chat.", {
     "starter4": ("Start my day: what is overdue, due today and in progress", "今日启动:过期、今天到期与进行中的任务"),
     "starter5": ("Turn these meeting notes into action items", "把这份会议记录整理成行动项"),
     "starter6": ("Plan the next iteration from the backlog", "从 backlog 规划下一轮迭代"),
+    "starter7": ("Make flashcards from this note and quiz me", "把这篇笔记做成卡片,然后考我"),
+    "explainPrompt": ("Explain the selected passage: what it says, one example, and where it stops applying.",
+                      "解释选中的这段:说了什么、举一个例子、以及它在什么情况下不成立。"),
+    "noSelectionToExplain": ("Select a passage in the editor first", "先在编辑器里选中一段文字"),
+    "busyExplain": ("The AI is still answering — ask again when it finishes", "AI 还在回答,结束后再试"),
     "actionsTitle": ("Action items", "行动项"),
     "actionsWaiting": ("Review, then write", "审阅后写入"),
     "actionsWrite": ("Write {n} items", "写入 {n} 项"),

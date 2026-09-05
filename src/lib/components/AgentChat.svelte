@@ -920,7 +920,7 @@
     run(api.browserOpen(url));
   }
 
-  const welcomeExamples = $derived([t("chat.starter1"), t("chat.starter2"), t("chat.starter3"), t("chat.starter4"), t("chat.starter5"), t("chat.starter6")]);
+  const welcomeExamples = $derived([t("chat.starter1"), t("chat.starter2"), t("chat.starter3"), t("chat.starter4"), t("chat.starter5"), t("chat.starter6"), t("chat.starter7")]);
 
   function fillExample(text: string) {
     agent.draft = text;
