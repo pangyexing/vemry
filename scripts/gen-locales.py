@@ -510,6 +510,12 @@ add("permission.", {
     "summary.move": ("Move {path} → {toPath}", "移动 {path} → {toPath}"),
     "summary.append": ("Append to {path}", "追加到 {path}"),
     "rewrites": ("Rewrites {links} links in {notes} notes", "改写 {notes} 篇里的 {links} 个链接"),
+    "blockDiff": ("Blocks · moved {moved} · changed {changed} · added {added} · removed {removed}", "块 · 移动 {moved} · 修改 {changed} · 新增 {added} · 删除 {removed}"),
+    "rawDiff": ("Raw diff", "原始 diff"),
+    "blockKind.removed": ("Removed ({n})", "删除({n})"),
+    "blockKind.changed": ("Changed ({n})", "修改({n})"),
+    "blockKind.added": ("Added ({n})", "新增({n})"),
+    "blockKind.moved": ("Moved ({n})", "移动({n})"),
     "deniedByUser": ("Denied by the user", "用户拒绝"),
     "denyReasonPlaceholder": ("Tell the agent why (optional)", "告诉 agent 为什么拒绝（可选）"),
     "confirmDeny": ("Confirm deny", "确认拒绝"),
@@ -778,6 +784,8 @@ add("tool.", {
     "move_file": ("Move file", "移动文件"),
     "list_files": ("List files", "列出文件"),
     "audit_links": ("Audit links", "检查链接"),
+    "restructure_note": ("Restructure note", "重整笔记"),
+    "move_blocks": ("Move blocks", "搬块"),
     "mixed": ("Tool calls", "工具调用"),
 })
 

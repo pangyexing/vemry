@@ -165,7 +165,10 @@ pub fn format_action_items(items: &[crate::permission::ActionItem]) -> String {
 }
 
 pub fn is_write_tool(name: &str) -> bool {
-    matches!(name, "write_note" | "edit_note" | "move_note" | "move_file" | "append_note" | "set_frontmatter" | "update_task" | "set_block_field")
+    matches!(
+        name,
+        "write_note" | "edit_note" | "move_note" | "move_file" | "append_note" | "set_frontmatter" | "update_task" | "set_block_field" | "restructure_note" | "move_blocks"
+    )
 }
 
 /// The local writes a followed note takes without a dialog (see
@@ -395,6 +398,45 @@ pub fn tool_defs() -> Vec<ToolDef> {
                     "value": {"description": "The value as text, or null to remove the field"}
                 },
                 "required": ["path", "block", "key"]
+            }),
+        ),
+        f(
+            "restructure_note",
+            "Rearrange a whole note by its blocks: an outline of sections (heading text + level + the handles of the blocks under it, in order) and, optionally, the handles to remove. Blocks move byte for byte (their ^id travels with them); a heading that exists is reused; a block the outline does not name lands under '## Unassigned' rather than being lost; private blocks stay where they are. Use it instead of write_note to reorganise a long or messy note. Requires user approval.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "outline": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "heading": {"type": "string", "description": "Heading text (omit for the blocks before the first heading)"},
+                                "level": {"type": "integer", "description": "1-6, default 2"},
+                                "blocks": {"type": "array", "items": {"type": "string"}, "description": "Block handles in order: '^id' or 'bN' from read_note / query_blocks"}
+                            },
+                            "required": ["blocks"]
+                        }
+                    },
+                    "removed": {"type": "array", "items": {"type": "string"}, "description": "Handles of blocks to drop (must be listed explicitly)"}
+                },
+                "required": ["path", "outline"]
+            }),
+        ),
+        f(
+            "move_blocks",
+            "Move blocks (a list item takes its subtree) within a note or into another note: their ^id travels with them and every [[from#^id]] link in the vault is rewritten to the destination in the same write. anchor = a heading in the destination (its section's end) or omitted for the end. Private blocks are never moved. Requires user approval.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string", "description": "The source note"},
+                    "blocks": {"type": "array", "items": {"type": "string"}, "description": "Handles in the order they should land"},
+                    "to": {"type": "string", "description": "The destination note (must exist); omit to reorder within the source"},
+                    "anchor": {"type": "string", "description": "Heading text in the destination to land under, or omit for the end"},
+                    "leave_link": {"type": "boolean", "description": "Leave a `→ [[destination]]` line at the end of the source (default false)"}
+                },
+                "required": ["from", "blocks"]
             }),
         ),
         f(
@@ -796,6 +838,17 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
                 .map(|(id, block, target)| format!("[[{}#{block}]] supports:[[{target}]] reaches no claim", strip(id)))
                 .collect();
             section("Dangling supports", dangling, &mut out);
+            let anchors: Vec<String> = report
+                .dangling_anchors
+                .iter()
+                .filter(|(id, _, _)| {
+                    let p = vault.is_private(id);
+                    filtered += p as usize;
+                    !p
+                })
+                .map(|(id, block, target)| format!("[[{}#{block}]] → [[{target}]]: the note exists, the anchor does not", strip(id)))
+                .collect();
+            section("Dangling anchors (heading or block gone)", anchors, &mut out);
             let dups: Vec<String> = report
                 .duplicate_clips
                 .iter()
@@ -978,7 +1031,7 @@ fn block_rewrite_request(request_id: String, name: &str, id: &NoteId, raw: &str,
         return Err(ToolError::Other("this change cannot be applied as written".into()));
     }
     let diff = unified_diff(raw, &new_content, id.as_str());
-    Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content, rewrites: vec![], rewrite_texts: vec![] })
+    Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] })
 }
 
 /// A date argument: `null` clears, a `YYYY-MM-DD` sets, anything else is an error
@@ -1063,7 +1116,7 @@ pub fn prepare_write(
             let new_content = if is_new { with_agent_provenance(content, session) } else { content.to_string() };
             let diff = unified_diff(&old, &new_content, id.as_str());
             let kind = if is_new { WriteKind::Create } else { WriteKind::Overwrite };
-            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind, new_content, rewrites: vec![], rewrite_texts: vec![] })
+            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] })
         }
         "edit_note" => {
             let path = arg_str(args, "path")?;
@@ -1130,6 +1183,8 @@ pub fn prepare_write(
                 new_content,
                 rewrites: vec![],
                 rewrite_texts: vec![],
+                block_diff: None,
+                notes: vec![],
             })
         }
         "append_note" => {
@@ -1154,7 +1209,7 @@ pub fn prepare_write(
                 vault.check_portable_rel(id.as_str()).map_err(|e| ToolError::Other(e.to_string()))?;
                 let new_content = with_agent_provenance(&format!("{}\n", content.trim_matches(['\n', '\r'])), session);
                 let diff = unified_diff("", &new_content, id.as_str());
-                return Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Create, new_content, rewrites: vec![], rewrite_texts: vec![] });
+                return Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Create, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] });
             }
             let old = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
             let blocks = vemry_core::parser::parse_note(&old).blocks;
@@ -1174,7 +1229,7 @@ pub fn prepare_write(
                 return Err(ToolError::Other("this append leaves the note unchanged".into()));
             }
             let diff = unified_diff(&old, &new_content, id.as_str());
-            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Append, new_content, rewrites: vec![], rewrite_texts: vec![] })
+            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Append, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] })
         }
         "set_frontmatter" => {
             let path = arg_str(args, "path")?;
@@ -1197,7 +1252,7 @@ pub fn prepare_write(
                 return Err(ToolError::Other("this change leaves the frontmatter unchanged".into()));
             }
             let diff = unified_diff(&old, &new_content, id.as_str());
-            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content, rewrites: vec![], rewrite_texts: vec![] })
+            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] })
         }
         "update_task" => {
             let (id, raw, blocks, i) = locate_block(vault, arg_str(args, "path")?, arg_str(args, "block")?)?;
@@ -1277,6 +1332,119 @@ pub fn prepare_write(
             };
             block_rewrite_request(request_id, name, &id, &raw, span, new_slice)
         }
+        "restructure_note" => {
+            let id = existing_note_id(vault, arg_str(args, "path")?)?;
+            let outline: Vec<vemry_core::OutlineSection> =
+                serde_json::from_value(args.get("outline").cloned().unwrap_or(Value::Null)).map_err(|e| ToolError::Other(format!("bad outline: {e}")))?;
+            if outline.is_empty() {
+                return Err(ToolError::Other("restructure_note needs at least one outline section".into()));
+            }
+            let removed: Vec<String> = args
+                .get("removed")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
+                .unwrap_or_default();
+            let raw = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
+            let r = vemry_core::restructure::restructure(&raw, &outline, &removed).map_err(ToolError::Other)?;
+            if !vemry_core::private_blocks_preserved(&raw, &r.text) {
+                return Err(ToolError::Other("this restructure cannot be applied as written".into()));
+            }
+            if r.text == raw {
+                return Err(ToolError::Other("this restructure leaves the note unchanged".into()));
+            }
+            let diff = unified_diff(&raw, &r.text, id.as_str());
+            let block_diff = Some(vemry_core::block_diff(&raw, &r.text));
+            let mut notes = vec![];
+            if !r.unassigned.is_empty() {
+                notes.push(format!("{} block(s) the outline did not name landed under '## Unassigned': {}", r.unassigned.len(), r.unassigned.join(", ")));
+            }
+            Ok(WriteRequest {
+                id: request_id,
+                tool: name.into(),
+                path: id.to_string(),
+                to_path: None,
+                diff,
+                kind: WriteKind::Edit,
+                new_content: r.text,
+                rewrites: vec![],
+                rewrite_texts: vec![],
+                block_diff,
+                notes,
+            })
+        }
+        "move_blocks" => {
+            let from_id = existing_note_id(vault, arg_str(args, "from")?)?;
+            let handles: Vec<String> = args
+                .get("blocks")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
+                .unwrap_or_default();
+            if handles.is_empty() {
+                return Err(ToolError::Other("move_blocks needs at least one block handle".into()));
+            }
+            let anchor = args.get("anchor").and_then(|v| v.as_str()).map(str::trim).filter(|a| !a.is_empty() && !a.eq_ignore_ascii_case("end"));
+            let leave_link = args.get("leave_link").and_then(|v| v.as_bool()).unwrap_or(false);
+            let from_raw = vault.read_note(&from_id).map_err(|e| ToolError::Other(e.to_string()))?;
+            let (mut source, moved, ids) = vemry_core::restructure::extract_units(&from_raw, &handles).map_err(ToolError::Other)?;
+            let to_id = match args.get("to").and_then(|v| v.as_str()).map(str::trim).filter(|t| !t.is_empty()) {
+                Some(t) => Some(existing_note_id(vault, t)?).filter(|t| *t != from_id),
+                None => None,
+            };
+            let land = |text: &str, payload: &str| -> Result<String, ToolError> {
+                let blocks = vemry_core::parser::parse_note(text).blocks;
+                let offset = match anchor {
+                    Some(h) => vemry_core::insert::section_insert_offset(&blocks, text, h)
+                        .ok_or_else(|| ToolError::Other(format!("heading not found: {h} — land under an existing heading, or omit anchor for the end")))?,
+                    None => vemry_core::insert::content_end_offset(text),
+                };
+                Ok(vemry_core::insert::insert_at(text, offset, payload))
+            };
+            let mut rewrites = vec![];
+            let mut rewrite_texts = vec![];
+            let mut diff = String::new();
+            match &to_id {
+                None => {
+                    // a reorder within the note: the units come out and go back in at the anchor
+                    source = land(&source, &moved)?;
+                }
+                Some(to) => {
+                    let to_raw = vault.read_note(to).map_err(|e| ToolError::Other(e.to_string()))?;
+                    let to_new = land(&to_raw, &moved)?;
+                    if leave_link {
+                        source = vemry_core::insert::insert_at(&source, vemry_core::insert::content_end_offset(&source), &format!("→ [[{}]]", to.as_str().strip_suffix(".md").unwrap_or(to.as_str())));
+                    }
+                    diff.push_str(&unified_diff(&to_raw, &to_new, to.as_str()));
+                    rewrites.push(RewriteSummary { path: to.to_string(), links: handles.len() });
+                    rewrite_texts.push(RewriteText { path: to.to_string(), old: to_raw, new: to_new });
+                    // the vault's links to the moved blocks follow them (private referrers left out)
+                    let (d2, r2, t2) = rewrite_parts(vault, vault.plan_block_move_links(&from_id, to, &ids));
+                    diff.push_str(&d2);
+                    rewrites.extend(r2);
+                    rewrite_texts.extend(t2);
+                }
+            }
+            if !vemry_core::private_blocks_preserved(&from_raw, &source) {
+                return Err(ToolError::Other("this move cannot be applied as written".into()));
+            }
+            if source == from_raw && rewrite_texts.is_empty() {
+                return Err(ToolError::Other("this move leaves the note unchanged".into()));
+            }
+            let main_diff = unified_diff(&from_raw, &source, from_id.as_str());
+            let block_diff = Some(vemry_core::block_diff(&from_raw, &source));
+            Ok(WriteRequest {
+                id: request_id,
+                tool: name.into(),
+                path: from_id.to_string(),
+                to_path: None,
+                diff: format!("{main_diff}{diff}"),
+                kind: WriteKind::Edit,
+                new_content: source,
+                rewrites,
+                rewrite_texts,
+                block_diff,
+                notes: vec![],
+            })
+        }
         "move_note" => {
             let from = arg_str(args, "from")?;
             let to = arg_str(args, "to")?;
@@ -1316,6 +1484,8 @@ pub fn prepare_write(
                 new_content: String::new(),
                 rewrites,
                 rewrite_texts,
+                block_diff: None,
+                notes: vec![],
             })
         }
         "move_file" => {
@@ -1350,6 +1520,8 @@ pub fn prepare_write(
                 new_content: String::new(),
                 rewrites,
                 rewrite_texts,
+                block_diff: None,
+                notes: vec![],
             })
         }
         _ => Err(ToolError::Other(format!("unknown write tool: {name}"))),
@@ -1433,7 +1605,21 @@ pub fn execute_write(
     let hidden: usize =
         vemry_core::privacy::private_spans(content, &vemry_core::parser::parse_note(content).blocks).iter().map(|r| r.len()).sum();
     let seen = content.len() - hidden;
-    Ok(format!("wrote {id} ({seen} bytes)"))
+    let mut msg = format!("wrote {id} ({seen} bytes)");
+    // A write with side writes (a block move's destination, the links that followed the
+    // blocks): landed after the main note, a note changed meanwhile skipped
+    if !req.rewrite_texts.is_empty() {
+        let (done, skipped) = apply_rewrites(vault, &req.rewrite_texts);
+        msg.push_str(&format!("; also wrote {done} other note(s)"));
+        if skipped > 0 {
+            msg.push_str(&format!(", {skipped} skipped (changed meanwhile)"));
+        }
+    }
+    for n in &req.notes {
+        msg.push('\n');
+        msg.push_str(n);
+    }
+    Ok(msg)
 }
 
 /// A move's link-rewrite plan as the request carries it: private notes are left out
@@ -1827,6 +2013,50 @@ mod tests {
         let out = read(&vault, "audit_links", json!({})).unwrap();
         assert!(out.text.contains("## Unresolved links") && out.text.contains("## Orphan notes"), "{}", out.text);
         assert!(!out.text.contains("secret/") && !out.text.contains("Diary"), "private notes stay out of the report: {}", out.text);
+    }
+
+    /// restructure_note: blocks move under the outline byte for byte (ids kept), a
+    /// private block stays with its neighbour, an unnamed block lands unassigned and
+    /// is reported, and the request carries a block-level diff; move_blocks takes
+    /// blocks into another note with their links following.
+    #[test]
+    fn restructure_and_move_blocks_keep_ids_and_privacy() {
+        let (_d, vault) = fixture();
+        std::fs::write(vault.root().join("Messy.md"), "# Messy\n\nabout cats ^c1\n\n> [!private]\n> hush\n\nabout dogs ^d1\n\n- todo one ^t1\n").unwrap();
+        std::fs::write(vault.root().join("Dogs.md"), "# Dogs\n\n## Notes\n\nexisting\n").unwrap();
+        std::fs::write(vault.root().join("Ref.md"), "see [[Messy#^d1]]\n").unwrap();
+        let mut vault = Vault::open(vault.root()).unwrap();
+        let req = prepare_write(
+            &vault,
+            "r1".into(),
+            "restructure_note",
+            &json!({"path": "Messy.md", "outline": [
+                {"heading": "Dogs", "level": 2, "blocks": ["^d1"]},
+                {"heading": "Cats", "level": 2, "blocks": ["^c1"]}
+            ]}),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(req.new_content.contains("## Dogs\n\nabout dogs ^d1\n\n## Cats\n\nabout cats ^c1\n\n> [!private]\n> hush\n\n## Unassigned\n\n# Messy\n\n- todo one ^t1\n"), "{}", req.new_content);
+        let bd = req.block_diff.as_ref().unwrap();
+        assert!(bd.moved >= 1 && bd.added == 3, "{bd:?}"); // two new headings + Unassigned
+        assert!(req.notes[0].contains("landed under '## Unassigned': b0, ^t1"), "{:?}", req.notes);
+        let msg = execute_write(&mut vault, &req, None, None, true).unwrap();
+        assert!(msg.contains("Unassigned"), "{msg}");
+        assert!(std::fs::read_to_string(vault.root().join("Messy.md")).unwrap().contains("> hush"));
+        // a block move into another note under a heading, the vault's link following
+        let req = prepare_write(&vault, "m1".into(), "move_blocks", &json!({"from": "Messy.md", "blocks": ["^d1"], "to": "Dogs.md", "anchor": "Notes", "leave_link": true}), None, None).unwrap();
+        assert!(req.new_content.contains("→ [[Dogs]]") && !req.new_content.contains("about dogs"), "{}", req.new_content);
+        assert_eq!(req.rewrites.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), vec!["Dogs.md", "Ref.md"]);
+        let msg = execute_write(&mut vault, &req, None, None, true).unwrap();
+        assert!(msg.contains("also wrote 2 other note(s)"), "{msg}");
+        assert!(std::fs::read_to_string(vault.root().join("Dogs.md")).unwrap().contains("## Notes\n\nexisting\n\nabout dogs ^d1\n"));
+        assert_eq!(std::fs::read_to_string(vault.root().join("Ref.md")).unwrap(), "see [[Dogs#^d1]]\n");
+        // a private block cannot be moved; a missing anchor is an error
+        // the private block is the fourth block now (## Dogs, ## Cats, ^c1, private): positional b3
+        assert!(prepare_write(&vault, "m2".into(), "move_blocks", &json!({"from": "Messy.md", "blocks": ["b3"], "to": "Dogs.md"}), None, None).is_err());
+        assert!(prepare_write(&vault, "m3".into(), "move_blocks", &json!({"from": "Messy.md", "blocks": ["^c1"], "to": "Dogs.md", "anchor": "Nowhere"}), None, None).unwrap_err().to_string().contains("heading not found"));
     }
 
     /// update_plan's argument grammar: statuses, the item cap, and the wording the model corrects itself by.

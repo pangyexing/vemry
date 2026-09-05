@@ -24,6 +24,7 @@ pub const DAILY_CLOSE: &str = include_str!("../../examples/demo-vault/.vemry/ski
 pub const MEETING_ACTIONS: &str = include_str!("../../examples/demo-vault/.vemry/skills/meeting-actions.md");
 pub const WEEKLY_REPORT: &str = include_str!("../../examples/demo-vault/.vemry/skills/weekly-report.md");
 pub const TIDY: &str = include_str!("../../examples/demo-vault/.vemry/skills/tidy.md");
+pub const TIDY_NOTE: &str = include_str!("../../examples/demo-vault/.vemry/skills/tidy-note.md");
 
 /// The catalogue Settings offers. `description` is shown before installing (the
 /// same sentence as the file's frontmatter, so the list and the installed skill
@@ -64,6 +65,12 @@ pub const EXAMPLES: &[ExampleSkill] = &[
         name: "tidy",
         description: "Tidying a folder or the vault: audit first, propose every move and fix as a list the user reviews, then move with links rewritten — nothing is lost",
         body: TIDY,
+    },
+    ExampleSkill {
+        file: "tidy-note.md",
+        name: "tidy-note",
+        description: "Restructuring one messy note: read it whole, propose an outline, move blocks without rewording them, keep every id and every private block",
+        body: TIDY_NOTE,
     },
 ];
 

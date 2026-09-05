@@ -1,0 +1,34 @@
+{
+  "name": "restructure",
+  "vault": {
+    "杂记 0902.md": "# 杂记 0902\n\n压测结论：p95 12ms ^r1\n\n> [!private]\n> 私密备注\n\n读书笔记：第三章讲缓存 ^b1\n\n- [ ] 问王 SOW 进度 ^t1\n\n限流放网关层 ^d1\n"
+  },
+  "allow_writes": true,
+  "turns": [
+    {
+      "user": "帮我把这篇杂记整理一下",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "read_note", "args": { "path": "杂记 0902.md" } } } ],
+        [ { "text": "建议分成「网关」（压测结论、限流决策）与「读书」两节，任务单独留在末尾；没有要删的。确认吗？" } ]
+      ]
+    },
+    {
+      "user": "确认，按这个来",
+      "script": [
+        [ { "tool": { "id": "r1", "name": "restructure_note", "args": { "path": "杂记 0902.md", "outline": [
+            { "heading": "网关", "level": 2, "blocks": ["^r1", "^d1"] },
+            { "heading": "读书", "level": 2, "blocks": ["^b1"] },
+            { "heading": "待办", "level": 2, "blocks": ["^t1"] } ] } } } ],
+        [ { "text": "已按三节重整，块 id 未变 [[杂记 0902#^r1]]；原标题块归到「Unassigned」了，需要的话可以删。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "tool_output_contains": [ { "id": "r1", "text": "landed under '## Unassigned': b0" } ],
+    "note_contains": [
+      { "path": "杂记 0902.md", "text": "## 网关\n\n压测结论：p95 12ms ^r1\n\n> [!private]\n> 私密备注\n\n限流放网关层 ^d1\n\n## 读书\n\n读书笔记：第三章讲缓存 ^b1\n\n## 待办\n\n- [ ] 问王 SOW 进度 ^t1\n\n## Unassigned\n\n# 杂记 0902\n" }
+    ]
+  }
+}

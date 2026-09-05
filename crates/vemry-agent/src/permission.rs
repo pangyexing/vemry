@@ -47,6 +47,14 @@ pub struct WriteRequest {
     pub rewrites: Vec<RewriteSummary>,
     #[serde(skip)]
     pub rewrite_texts: Vec<RewriteText>,
+    /// For a block-level rewrite (a restructure, a block move, a whole-note
+    /// overwrite): how the note compares block by block, so the dialog can show
+    /// "moved 12 · changed 3 · added 2 · removed 0" instead of a wall of red and green.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_diff: Option<vemry_core::BlockDiff>,
+    /// Lines for the model's tool result beyond "wrote …" (what landed unassigned, say).
+    #[serde(skip)]
+    pub notes: Vec<String>,
 }
 
 /// One note a move rewrites links in, as the dialog shows it.

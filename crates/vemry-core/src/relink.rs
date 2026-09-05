@@ -99,6 +99,68 @@ impl Vault {
         out
     }
 
+    /// The notes whose links to specific blocks must change when those blocks move
+    /// from `from` to `to`: every `[[…#^id]]` whose note part resolves to `from` and
+    /// whose id is one of `ids` is respelled with the destination's name (a bare
+    /// name when it still resolves uniquely, else the path), heading and alias kept.
+    pub fn plan_block_move_links(&self, from: &NoteId, to: &NoteId, ids: &[String]) -> Vec<Relink> {
+        if ids.is_empty() {
+            return vec![];
+        }
+        let to_path = to.as_str().strip_suffix(".md").unwrap_or(to.as_str()).to_string();
+        let to_stem = to.stem().to_string();
+        let bare_ok = !self.index().summaries().iter().any(|s| &s.id != to && s.id.stem().eq_ignore_ascii_case(&to_stem));
+        let mut sources: Vec<NoteId> = self.index().backlinks_of(from);
+        for extra in [from, to] {
+            if !sources.contains(extra) {
+                sources.push(extra.clone());
+            }
+        }
+        let mut out = Vec::new();
+        for src in sources {
+            let Ok(raw) = self.read_note(&src) else { continue };
+            let parsed = parse_note(&raw);
+            let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+            for b in &parsed.blocks {
+                if matches!(b.kind, crate::BlockKind::Private) {
+                    continue;
+                }
+                for l in &b.links {
+                    let Some(id) = &l.block_ref else { continue };
+                    if !ids.iter().any(|x| x == id) {
+                        continue;
+                    }
+                    // an empty note part inside the source note means "this note"
+                    let resolved = if l.target.is_empty() { Some(src.clone()) } else { self.index().resolve_target(&l.target, &src) };
+                    if resolved.as_ref() != Some(from) {
+                        continue;
+                    }
+                    let target = if l.target.contains('/') || !bare_ok { to_path.clone() } else { to_stem.clone() };
+                    let mut inner = format!("{target}#^{id}");
+                    if let Some(a) = &l.alias {
+                        inner.push('|');
+                        inner.push_str(a);
+                    }
+                    edits.push((l.span.clone(), format!("[[{inner}]]")));
+                }
+            }
+            if edits.is_empty() {
+                continue;
+            }
+            edits.sort_by_key(|(r, _)| r.start);
+            let mut new = String::with_capacity(raw.len());
+            let mut pos = 0;
+            for (r, rep) in &edits {
+                new.push_str(&raw[pos..r.start]);
+                new.push_str(rep);
+                pos = r.end;
+            }
+            new.push_str(&raw[pos..]);
+            out.push(Relink { path: src.to_string(), links: edits.len(), old: raw, new });
+        }
+        out
+    }
+
     /// The notes whose references to a non-note file must change when it moves from
     /// `from_rel` to `to_rel`: Markdown links and embeds (`](path)`, raw and
     /// encoded), angle-bracket autolinks and wikilink embeds (`[[path`), plus the
@@ -207,6 +269,19 @@ mod tests {
         let (_d, v) = vault_with(&[("Idea.md", "# Idea\n"), ("archive/Plan.md", "# Plan\n"), ("A.md", "[[Idea]]\n")]);
         let plan = v.plan_note_move_links(&NoteId::new("Idea.md"), &NoteId::new("new/Plan.md"));
         assert_eq!(plan[0].new, "[[new/Plan]]\n");
+    }
+
+    #[test]
+    fn block_move_respells_only_the_moved_ids() {
+        let (_d, v) = vault_with(&[
+            ("Src.md", "# Src\n\nkeep ^k1\n\ngo ^g1\n"),
+            ("Dst.md", "# Dst\n"),
+            ("Ref.md", "[[Src#^g1]] and [[Src#^k1]] and [[Src#^g1|alias]]\n"),
+        ]);
+        let plan = v.plan_block_move_links(&NoteId::new("Src.md"), &NoteId::new("Dst.md"), &["g1".into()]);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].links, 2);
+        assert_eq!(plan[0].new, "[[Dst#^g1]] and [[Src#^k1]] and [[Dst#^g1|alias]]\n");
     }
 
     #[test]

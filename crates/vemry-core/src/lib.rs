@@ -21,6 +21,7 @@ pub mod privacy;
 pub mod provenance;
 pub mod query;
 pub mod relink;
+pub mod restructure;
 pub mod search;
 pub mod taskedit;
 pub mod types;
@@ -45,6 +46,7 @@ pub use provenance::{
     ProvenanceLedger, Replacement, RevertPlan,
 };
 pub use relink::Relink;
+pub use restructure::{block_diff, BlockDiff, OutlineSection};
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use parser::{is_writable_frontmatter_key, set_frontmatter_disabled, set_frontmatter_key, FrontmatterValue};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};

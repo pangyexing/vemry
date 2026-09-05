@@ -4,6 +4,8 @@
   import { classifyDiff } from "$lib/views/diff";
 
   let editing = $state(false);
+  /** A block-level request (a restructure, a block move) opens on its block diff; this switches to the raw line diff. */
+  let rawDiff = $state(false);
   let editedContent = $state("");
   let denyReason = $state("");
   let showDeny = $state(false);
@@ -14,6 +16,7 @@
   $effect(() => {
     if (req) {
       editing = false;
+      rawDiff = false;
       editedContent = req.new_content;
       denyReason = "";
       showDeny = false;
@@ -86,6 +89,30 @@
 
       {#if editing}
         <textarea class="edit-area" bind:value={editedContent} spellcheck="false"></textarea>
+      {:else if req.block_diff && !rawDiff}
+        <!-- A block-level write is read block by block: what moved is folded (moving is the point of a
+             restructure and not a risk), what was removed is open (the one thing worth a second look) -->
+        {@const bd = req.block_diff}
+        <div class="bdiff">
+          <div class="bdiff-sum">
+            {t("permission.blockDiff", { moved: bd.moved, changed: bd.changed, added: bd.added, removed: bd.removed })}
+            <button class="bdiff-raw" onclick={() => (rawDiff = true)}>{t("permission.rawDiff")}</button>
+          </div>
+          {#each ["removed", "changed", "added", "moved"] as kind (kind)}
+            {@const rows = bd.items.filter((i) => i.kind === kind)}
+            {#if rows.length}
+              <details class="bdiff-group" open={kind !== "moved"}>
+                <summary>{t(`permission.blockKind.${kind}` as never, { n: rows.length })}</summary>
+                {#each rows as r, ri (ri)}
+                  <div class="bdiff-row {kind}">
+                    {#if r.old}<span class="bdiff-old">{r.old}</span><span class="bdiff-arrow">→</span>{/if}
+                    <span>{r.text}</span>
+                  </div>
+                {/each}
+              </details>
+            {/if}
+          {/each}
+        </div>
       {:else}
         <pre class="diff">{#each diffLines as line, i (i)}<span class={line.cls}>{line.text}
 </span>{/each}</pre>
@@ -196,6 +223,60 @@
   }
   .diff .ctx {
     color: var(--fg-muted);
+  }
+  .bdiff {
+    flex: 1;
+    overflow: auto;
+    margin: 0 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: var(--fs-xs);
+    min-height: 120px;
+    padding: 6px 10px;
+  }
+  .bdiff-sum {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 600;
+    color: var(--fg-muted);
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .bdiff-raw {
+    font-size: var(--fs-xs);
+    color: var(--accent);
+  }
+  .bdiff-group {
+    margin-top: 6px;
+  }
+  .bdiff-group summary {
+    cursor: pointer;
+    color: var(--fg-muted);
+  }
+  .bdiff-row {
+    display: flex;
+    gap: 6px;
+    padding: 1px 0 1px 14px;
+    font-family: var(--font-mono);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .bdiff-row.removed {
+    color: var(--danger);
+  }
+  .bdiff-row.added {
+    color: var(--accent);
+  }
+  .bdiff-row.moved {
+    color: var(--fg-faint);
+  }
+  .bdiff-old {
+    color: var(--fg-faint);
+    text-decoration: line-through;
+  }
+  .bdiff-arrow {
+    color: var(--fg-faint);
   }
   .edit-area {
     flex: 1;

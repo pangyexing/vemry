@@ -18,6 +18,10 @@ pub struct AuditReport {
     pub dangling_supports: Vec<(NoteId, String, String)>,
     /// Clips of one normalised source URL: (url, the notes holding it), only groups of two or more.
     pub duplicate_clips: Vec<(String, Vec<NoteId>)>,
+    /// (the linking note, the block handle, the target) — a `[[note#heading]]` or
+    /// `[[note#^id]]` whose note exists but whose anchor does not (a renamed heading,
+    /// a block that moved without its links).
+    pub dangling_anchors: Vec<(NoteId, String, String)>,
 }
 
 impl Vault {
@@ -47,6 +51,15 @@ impl Vault {
             }
             if let Some(blocks) = self.index().blocks(id) {
                 for b in blocks {
+                    for l in &b.links {
+                        if l.heading.is_none() && l.block_ref.is_none() {
+                            continue;
+                        }
+                        let target = l.raw.trim_start_matches("[[").trim_end_matches("]]").split('|').next().unwrap_or("").to_string();
+                        if matches!(self.resolve_ref(&target, Some(id)), Ok(RefResolution::AnchorMissing { .. })) {
+                            report.dangling_anchors.push((id.clone(), b.handle(), target));
+                        }
+                    }
                     let BlockKind::Evidence { supports } = &b.kind else { continue };
                     for target in supports {
                         let ok = matches!(
@@ -88,7 +101,7 @@ mod tests {
         };
         w("A.md", "links [[B]] and [[Missing]]\n\n> [!claim] sleep matters ^c1\n");
         w("B.md", "# B\n\n> [!evidence] walker 2017 supports:[[A#^c1]] supports:[[A#^nope]]\n");
-        w("Lonely.md", "nobody links here\n");
+        w("Lonely.md", "nobody links here, see [[A#Gone heading]] and [[A#^c1]]\n");
         w("clips/One.md", "---\nsource: https://Example.com/p\n---\n# One\n");
         w("clips/Two.md", "---\nsource: https://example.com/p\n---\n# Two\n");
         let v = Vault::open(dir.path()).unwrap();
@@ -102,6 +115,9 @@ mod tests {
         assert_eq!(r.dangling_supports[0].2, "A#^nope");
         assert_eq!(r.duplicate_clips.len(), 1);
         assert_eq!(r.duplicate_clips[0].1.len(), 2);
+        // a dangling supports:: is a dangling anchor too (it is a wikilink to a block); the heading one joins it
+        assert_eq!(r.dangling_anchors.len(), 2, "{:?}", r.dangling_anchors);
+        assert!(r.dangling_anchors.iter().any(|(_, _, t)| t == "A#Gone heading"));
         let scoped = v.audit_links(Some("clips"));
         assert!(scoped.unresolved.is_empty() && scoped.duplicate_clips.len() == 1);
     }

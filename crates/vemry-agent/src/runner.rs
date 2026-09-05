@@ -56,6 +56,10 @@ const WRAP_UP_REMAINING: usize = 5;
 const MAX_TRANSIENT_RETRIES: u32 = 2;
 
 /// Events streamed to the UI (and mirrored into the session log).
+/// A permission request carries the whole write (content, diff, block diff): the
+/// variant is large, but an event is raised, sent and dropped, never stored — boxing
+/// it would only add an allocation to the hot text_delta path's enum.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {

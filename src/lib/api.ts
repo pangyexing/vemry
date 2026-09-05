@@ -313,6 +313,17 @@ export interface WriteRequest {
   new_content: string;
   /** A move's link rewrites, one per note that changes (the diffs are in `diff`); absent for every other write. */
   rewrites?: { path: string; links: number }[];
+  /** A block-level rewrite's summary (a restructure, a block move): how the note compares block by block. */
+  block_diff?: BlockDiff;
+}
+
+/** How two versions of a note compare block by block (mirroring vemry_core::restructure::BlockDiff). */
+export interface BlockDiff {
+  moved: number;
+  changed: number;
+  added: number;
+  removed: number;
+  items: { kind: "moved" | "changed" | "added" | "removed"; text: string; old?: string }[];
 }
 
 /** What "undo this turn's writes" did (mirroring vemry_agent::undo::UndoReport). */
