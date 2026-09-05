@@ -1518,9 +1518,12 @@
     background: var(--bg-hover);
     color: var(--fg);
   }
-  /* Once collapsed the grid column disappears entirely, and the only way to reopen it floats in the corner on that column's docking side */
+  /* Once collapsed the grid column disappears entirely, and the only way to reopen it floats in
+     the corner on that column's docking side. Anchored to .frame-main, not the viewport: the
+     browser panel column lies beyond frame-main's right edge, and a viewport-fixed button would
+     land on top of that panel's own controls */
   .reopen {
-    position: fixed;
+    position: absolute;
     top: 8px;
     z-index: 40;
     display: grid;
