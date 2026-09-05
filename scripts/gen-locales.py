@@ -862,6 +862,9 @@ add("reader.", {
 
 # ---------------------------------------------------------------- browser panel chrome (docked panel and the detached bar)
 add("browserPanel.", {
+    "closeBrowser": ("Close the browser (all tabs)", "关闭浏览器(所有标签页)"),
+    "newTabEmpty": ("Type an address above — bookmarks and recents show up here", "在上面输入网址;收藏与最近会显示在这里"),
+    "noMatch": ("Nothing matches", "没有匹配的"),
     "tabs": ("Browser tabs", "浏览标签页"),
     "newTab": ("New tab", "新标签页"),
     "closeTab": ("Close tab", "关闭标签页"),

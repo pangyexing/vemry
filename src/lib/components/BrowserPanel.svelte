@@ -18,7 +18,8 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { onMount, tick } from "svelte";
   import { Menu } from "@tauri-apps/api/menu";
-  import { api, onBrowserbarCommand, onBrowserbarResult, type BrowserbarAction } from "$lib/api";
+  import { api, onBrowserbarCommand, onBrowserbarResult, type BrowserbarAction, type HistoryEntryView } from "$lib/api";
+  import { isUrlLike, prettyUrl } from "$lib/urls";
   import { executeCommand, fuzzyFilter } from "$lib/commands/registry";
   import { domainOf } from "$lib/markdown";
   import { isMac, k } from "$lib/shortcut";
@@ -34,8 +35,11 @@
   let { mode = "docked" }: { mode?: "docked" | "bar" } = $props();
   const inBar = $derived(mode === "bar");
 
+  const BLANK = "about:blank";
   const cur = $derived(browser.current);
-  const url = $derived(cur?.url ?? "");
+  /** A blank tab (just opened with + or ⌘T): its page is hidden and the slot shows the new-tab page. */
+  const isBlank = $derived(cur?.url === BLANK);
+  const url = $derived(cur && !isBlank ? cur.url : "");
   const starred = $derived(browser.isBookmarked(url));
   /** The note the current page has been clipped into (the badge and "open it" both read it). */
   const clippedPath = $derived(clips.pathFor(url));
@@ -69,12 +73,18 @@
   const reload = () => run(api.browserReload(cur?.label));
   const activate = (label: string) => run(api.browserActivate(label));
   const closeTab = (label: string) => run(api.browserCloseTab(label), false);
-  /** + and ⌘T: the next address submitted opens a new tab (docked: through the ⌘L palette with its recents and bookmarks; bar: the inline address input). */
+  /** + and ⌘T: a blank tab in place. Docked, its slot shows the new-tab page (an address input,
+   *  bookmarks, recents) and takes the keyboard; in the bar the address input opens for it. No
+   *  popup anywhere — the user's eye stays on the panel. */
   function newTab() {
-    browser.newTabIntent = true;
-    if (inBar) void openAddr(true);
-    else void executeCommand("open-url");
+    void api
+      .browserNewTab()
+      .then(() => {
+        if (inBar) void openAddr(false);
+      })
+      .catch(err);
   }
+  const closeAll = () => run(api.browserCloseAll(), false);
   async function tabMenu(e: MouseEvent, tab: { label: string; url: string }) {
     e.preventDefault();
     const menu = await Menu.new({
@@ -89,11 +99,9 @@
 
   // ---- the address row ----
   let addrEditing = $state(false);
-  let addrNewTab = false;
   let addrValue = $state("");
   let addrEl = $state<HTMLInputElement | null>(null);
   async function openAddr(forNewTab = false) {
-    addrNewTab = forNewTab;
     addrValue = forNewTab ? "" : url;
     addrEditing = true;
     await tick();
@@ -102,16 +110,15 @@
   }
   function closeAddr(back = true) {
     addrEditing = false;
-    browser.newTabIntent = false;
-    if (back) refocus();
+    if (back && !isBlank) refocus();
   }
   function addrKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") {
       e.preventDefault();
       const v = addrValue.trim();
       if (!v) return closeAddr();
-      // A bare Enter navigates the active tab; ⌘Enter, or the address opened by "+", opens a new one
-      const newTab = addrNewTab || e.metaKey || e.ctrlKey || !cur;
+      // A bare Enter navigates the active tab (a blank one included); ⌘Enter opens a new one
+      const newTab = e.metaKey || e.ctrlKey || !cur;
       const p = newTab ? api.browserOpen(v, true) : api.browserNavigate(v, cur?.label);
       p.then(() => closeAddr()).catch(err);
     } else if (e.key === "Escape") {
@@ -339,6 +346,64 @@
     if (url) void clips.lookup([url]);
   });
 
+  // ---- docked: the new-tab page in a blank tab's slot — an address input that takes the
+  // keyboard at once, then bookmarks and recents (the same two lists as the palette's web
+  // space, rendered in place so opening a tab never sends the eye to a popup) ----
+  let ntQuery = $state("");
+  let ntSel = $state(0);
+  let ntEl = $state<HTMLInputElement | null>(null);
+  let ntHistory = $state<HistoryEntryView[]>([]);
+  $effect(() => {
+    if (inBar || !isBlank) return;
+    ntQuery = "";
+    ntSel = 0;
+    api
+      .browserHistoryList()
+      .then((l) => (ntHistory = l))
+      .catch(() => (ntHistory = []));
+    queueMicrotask(() => ntEl?.focus());
+  });
+  type NtRow = { url: string; title: string; starred: boolean; head?: string };
+  const ntRows = $derived.by((): NtRow[] => {
+    const seen = new Set<string>();
+    const dedup = (rows: NtRow[]) => rows.filter((c) => (seen.has(c.url) ? false : (seen.add(c.url), true)));
+    const q = ntQuery.trim().toLowerCase();
+    const hit = (c: NtRow) => !q || `${c.title} ${prettyUrl(c.url)}`.toLowerCase().includes(q);
+    const marks = dedup(browser.bookmarks.map((b) => ({ url: b.url, title: b.title, starred: true }))).filter(hit).slice(0, q ? 24 : 8);
+    const recents = dedup(ntHistory.map((h) => ({ url: h.url, title: h.title, starred: false }))).filter(hit).slice(0, q ? 24 : 12);
+    if (!q) {
+      if (marks[0]) marks[0] = { ...marks[0], head: t("palette.bookmarks") };
+      if (recents[0]) recents[0] = { ...recents[0], head: t("palette.recent") };
+    }
+    return [...marks, ...recents].slice(0, 24);
+  });
+  $effect(() => {
+    void ntSel;
+    void ntRows;
+    rootEl?.querySelector(".nt-row.sel")?.scrollIntoView({ block: "nearest" });
+  });
+  function ntOpen(target: string) {
+    if (!cur) return;
+    run(api.browserNavigate(target, cur.label));
+  }
+  function ntKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const v = ntQuery.trim();
+      if (isUrlLike(v)) ntOpen(v);
+      else if (ntRows[ntSel]) ntOpen(ntRows[ntSel].url);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      if (cur) closeTab(cur.label); // a blank tab abandoned is a tab closed
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      ntSel = Math.min(ntSel + 1, Math.max(0, ntRows.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      ntSel = Math.max(ntSel - 1, 0);
+    }
+  }
+
   // ---- docked mode: telling Rust where the panel column is. Only the anchors go over
   // (the column's width and the chrome's height), and only when they change — Rust places
   // the tab from them on every window resize itself. During a sash drag nothing is sent
@@ -428,7 +493,7 @@
           onauxclick={(e) => { if (e.button === 1) closeTab(tab.label); }}
           oncontextmenu={(e) => void tabMenu(e, tab)}
         >
-          <span class="tab-title">{tab.title || domainOf(tab.url) || tab.url}</span>
+          <span class="tab-title">{tab.url === BLANK ? t("browserPanel.newTab") : tab.title || domainOf(tab.url) || tab.url}</span>
           <button class="tab-close" title={t("browserPanel.closeTab")} aria-label={t("browserPanel.closeTab")} onclick={(e) => { e.stopPropagation(); closeTab(tab.label); }}>
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M2 2 L8 8 M8 2 L2 8" /></svg>
           </button>
@@ -443,10 +508,13 @@
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="1.75" /><path d="M12.5 3.5 V16.5" /></svg>
         </button>
       {:else}
-        <!-- Detach only: there is no "hide the panel" — the panel is there exactly while it has
-          tabs, so closing the last tab (× or ⌘W) is how it goes away -->
+        <!-- Detach, and close: × closes the browser outright (every tab), the plain "close a window"
+          gesture — there is no hide-but-keep state, so nothing else is needed here -->
         <button class="ico" title={t("browserPanel.detach")} aria-label={t("browserPanel.detach")} onclick={toggleDock}>
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5 H11.5 M16.5 3.5 V8.5 M16.5 3.5 L9.5 10.5 M8.5 4.5 H4.5 A1 1 0 0 0 3.5 5.5 V15.5 A1 1 0 0 0 4.5 16.5 H14.5 A1 1 0 0 0 15.5 15.5 V11.5" /></svg>
+        </button>
+        <button class="ico" title={t("browserPanel.closeBrowser")} aria-label={t("browserPanel.closeBrowser")} onclick={closeAll}>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 3 L11 11 M11 3 L3 11" /></svg>
         </button>
       {/if}
     </div>
@@ -485,15 +553,15 @@
           <StarIcon filled={starred} size={13} />
         </button>
       {/if}
-      <button class="act" title={inBar ? t("clipBar.summonAgentHint") : t("browserPanel.aiDockedHint")} onclick={() => void ai()} disabled={!cur || agent.grabbingPage}>AI</button>
+      <button class="act" title={inBar ? t("clipBar.summonAgentHint") : t("browserPanel.aiDockedHint")} onclick={() => void ai()} disabled={!cur || isBlank || agent.grabbingPage}>AI</button>
       <span class="clipgroup">
         <button
           class="act primary"
           title={clipTarget.path ? t("clipBar.selectionToTargetHint", { path: `${clipTarget.path}${clipTarget.heading ? ` › ${clipTarget.heading}` : ""}` }) : t("clipBar.selectionDefaultHint")}
           onclick={() => clip("clip-selection")}
-          disabled={!cur}
+          disabled={!cur || isBlank}
         >{t("reader.selectionToTarget", { name: clipTarget.name ?? t("reader.note") })}</button>
-        <button class="act primary caret" title={t("browserPanel.clipMenuHint")} aria-label={t("browserPanel.clipMenuHint")} onclick={() => void clipMenu()} disabled={!cur}>▾</button>
+        <button class="act primary caret" title={t("browserPanel.clipMenuHint")} aria-label={t("browserPanel.clipMenuHint")} onclick={() => void clipMenu()} disabled={!cur || isBlank}>▾</button>
       </span>
       {#if clippedPath}
         <button class="ico clipped" title={t("clipBar.openClippedHint", { path: clippedPath })} aria-label={t("reader.alreadyClipped")} onclick={openClipped}>✓</button>
@@ -537,9 +605,33 @@
       </div>
     {/if}
   {:else}
-    <!-- The native tab view is laid over this slot; what is drawn here shows only while the tab is veiled under an overlay -->
-    <div class="page-slot">
-      {#if browser.veiled}
+    <!-- The native tab view is laid over this slot; what is drawn here shows for a blank tab
+      (its new-tab page) and while the tab is veiled under an overlay -->
+    <div class="page-slot" class:newtab={isBlank}>
+      {#if isBlank}
+        <div class="nt">
+          <input
+            class="nt-input"
+            bind:this={ntEl}
+            bind:value={ntQuery}
+            placeholder={t("clipBar.urlPlaceholder")}
+            spellcheck="false"
+            oninput={() => (ntSel = 0)}
+            onkeydown={ntKeydown}
+          />
+          <div class="nt-list">
+            {#each ntRows as row, i (row.url)}
+              {#if row.head}<div class="nt-head">{row.head}</div>{/if}
+              <button class="nt-row" class:sel={i === ntSel} onclick={() => ntOpen(row.url)} onpointerenter={() => (ntSel = i)}>
+                <span class="nt-title">{#if row.starred}<span class="nt-star"><StarIcon filled size={11} /></span>{/if}{row.title || prettyUrl(row.url)}</span>
+                <span class="nt-url">{prettyUrl(row.url)}</span>
+              </button>
+            {:else}
+              <div class="nt-empty">{t(ntQuery.trim() ? "browserPanel.noMatch" : "browserPanel.newTabEmpty")}</div>
+            {/each}
+          </div>
+        </div>
+      {:else if browser.veiled}
         <div class="veil">
           <div class="veil-title">{cur?.title || domainOf(url)}</div>
           <div class="veil-hint">{domainOf(url)}</div>
@@ -797,6 +889,86 @@
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+  .page-slot.newtab {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+  /* The new-tab page: the address first, the lists under it, the same row language as the palette's */
+  .nt {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 12px 8px;
+    gap: 10px;
+  }
+  .nt-input {
+    flex: none;
+    font-size: var(--fs-md);
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-panel);
+    color: var(--fg);
+    outline: none;
+  }
+  .nt-input:focus {
+    border-color: var(--accent);
+  }
+  .nt-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .nt-head {
+    font-size: var(--fs-xs);
+    color: var(--fg-faint);
+    padding: 10px 8px 4px;
+  }
+  .nt-row {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    text-align: left;
+    padding: 6px 8px;
+    border: none;
+    background: none;
+    color: var(--fg);
+    border-radius: 6px;
+    cursor: pointer;
+    min-width: 0;
+  }
+  .nt-row.sel {
+    background: var(--accent-soft);
+  }
+  .nt-title,
+  .nt-url {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nt-title {
+    font-size: var(--fs-sm);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .nt-star {
+    color: var(--accent);
+    display: inline-flex;
+  }
+  .nt-url {
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+  }
+  .nt-empty {
+    color: var(--fg-faint);
+    font-size: var(--fs-sm);
+    padding: 12px 8px;
   }
   .veil {
     display: flex;

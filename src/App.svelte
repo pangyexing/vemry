@@ -521,7 +521,10 @@
   });
   registerCommand({
     id: "browser-new-tab", hotkey: k("Mod+T"), group: "research",
-    run: () => { browser.newTabIntent = true; paletteMode = "url"; },
+    // A blank tab in place, its new-tab page (address, bookmarks, recents) in the panel — no popup
+    run: async () => {
+      try { await api.browserNewTab(); } catch (e) { toast.push(String(e), "error"); }
+    },
   });
   registerCommand({
     id: "browser-close-tab", group: "research",

@@ -14,17 +14,7 @@
 
   export type PaletteMode = "commands" | "notes" | "pick-note" | "search" | "capture" | "vaults" | "url" | "types";
 
-  /** A URL's display and filter form: the scheme is dropped and the percent encoding decoded
-   *  (so a non-ASCII path is readable and can be matched by a query in that script); a failed
-   *  decode (a malformed sequence) is kept as written. Opening still uses the raw url field. */
-  function prettyUrl(u: string): string {
-    const s = u.replace(/^https?:\/\//, "");
-    try {
-      return decodeURI(s);
-    } catch {
-      return s;
-    }
-  }
+  import { prettyUrl } from "$lib/urls";
 
   interface Item {
     id: string;
@@ -444,7 +434,6 @@
   });
 
   function close() {
-    browser.newTabIntent = false; // a cancelled "new tab" must not turn the next plain ↩ into one
     mode = null;
   }
 
@@ -488,10 +477,8 @@
       }
       const url = it?.url ?? query.trim();
       if (url) {
-        // ⌘↩, or the palette opened by the tab strip's + / ⌘T, opens a new tab; a bare ↩ navigates the active one
-        const newTab = modifier || browser.newTabIntent;
-        browser.newTabIntent = false;
-        await api.browserOpen(url, newTab).catch((e) => toast.push(String(e), "error"));
+        // ⌘↩ opens a new tab; a bare ↩ navigates the active one (a blank tab included)
+        await api.browserOpen(url, modifier).catch((e) => toast.push(String(e), "error"));
       }
       return;
     }

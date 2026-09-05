@@ -48,8 +48,6 @@ class BrowserStore {
   veiled = $state(false);
   /** The image lightbox is open (an overlay outside any component, so it reports here). */
   lightboxOpen = $state(false);
-  /** The next URL submitted opens a new tab rather than navigating the active one (set by the tab strip's + and ⌘T, consumed by the palette). */
-  newTabIntent = false;
 
   /** The panel column is on screen (docked shape): exactly while there are tabs. */
   get panelOpen(): boolean {

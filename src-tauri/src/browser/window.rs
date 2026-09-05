@@ -47,8 +47,13 @@ fn note_navigation(app: &AppHandle, label: &str, url: &Url) -> bool {
     update_entry(app, label, |e| e.url = url.to_string());
     emit(app, &BrowserEvent::Navigated { label: label.to_string(), url: url.to_string() });
     super::history::record_visit(app, url.as_str());
+    // A blank tab is kept hidden under the panel's new-tab page; the first real navigation brings the view out
+    apply_layout(app);
     true
 }
+
+/// The blank page a new tab starts on (the shell's own page): never recorded, never shown.
+pub const BLANK: &str = "about:blank";
 
 /// Turn user input into a URL: a bare domain gets https://, and only http(s) is
 /// accepted (no file:, javascript:, tauri:).
@@ -146,7 +151,7 @@ pub async fn browser_open(
         let app2 = app.clone();
         let url2 = url.clone();
         app.run_on_main_thread(move || {
-            let _ = tx.send(open_in_shell(&app2, &url2, focus));
+            let _ = tx.send(open_in_shell(&app2, Some(&url2), focus));
         })
         .map_err(|e| e.to_string())?;
     }
@@ -158,11 +163,45 @@ pub async fn browser_open(
     result
 }
 
+/// Open a blank tab (the tab strip's `+`, ⌘T): the tab exists at once, its page stays
+/// hidden under the panel's new-tab page (an address input, bookmarks, recents), and
+/// the first navigation — from that page, ⌘L or a link — fills it. Returns the label.
+#[tauri::command]
+pub async fn browser_new_tab(app: AppHandle) -> Result<String, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
+    {
+        let app2 = app.clone();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(open_in_shell(&app2, None, false));
+        })
+        .map_err(|e| e.to_string())?;
+    }
+    let result = rx.await.map_err(|_| "tab creation was interrupted".to_string())?;
+    ensure_pool_soon(&app, 1500);
+    result
+}
+
+/// Close every tab — the panel's × (and the detached window with it). Reopening is
+/// ⌘L or "open browser", which reopens the last page from the history.
+#[tauri::command]
+pub fn browser_close_all(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let labels: Vec<String> = {
+        let inner = state.browser.0.lock().unwrap();
+        let mut v: Vec<(u32, String)> = inner.tabs.iter().map(|(l, e)| (e.id, l.clone())).collect();
+        v.sort();
+        v.into_iter().map(|(_, l)| l).collect()
+    };
+    for label in labels {
+        close_tab(&app, &label);
+    }
+    Ok(())
+}
+
 /// Main thread: open a new tab — claiming the warm-up shell first (a hidden
 /// about:blank child webview whose WKWebView, subprocess and ad-blocking rules are
 /// already built, so opening is left with navigating and showing). With no shell
 /// it takes the cold path and builds one. Returns the tab's label.
-fn open_in_shell(app: &AppHandle, url: &Url, focus: bool) -> Result<String, String> {
+fn open_in_shell(app: &AppHandle, url: Option<&Url>, focus: bool) -> Result<String, String> {
     let state = app.state::<AppState>();
     let pooled = state.browser.0.lock().unwrap().pool.take();
     let (label, id) = match pooled.filter(|(l, _)| app.get_webview(l).is_some()) {
@@ -329,34 +368,38 @@ fn build_tab(app: &AppHandle, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Main thread: claim a shell as a real tab — registration, navigation, the move
-/// into the detached window when that is the shape, placement, showing.
-fn claim_tab(app: &AppHandle, id: u32, label: &str, url: &Url, focus: bool) -> Result<(), String> {
+/// Main thread: claim a shell as a real tab — registration, navigation (none for a
+/// blank tab: the shell already shows the blank page), the move into the detached
+/// window when that is the shape, placement, showing.
+fn claim_tab(app: &AppHandle, id: u32, label: &str, url: Option<&Url>, focus: bool) -> Result<(), String> {
     let webview = app.get_webview(label).ok_or_else(|| "the tab was destroyed".to_string())?;
+    let url_str = url.map(|u| u.to_string()).unwrap_or_else(|| BLANK.to_string());
     let shape = {
         let Some(s) = app.try_state::<AppState>() else { return Err("no state".into()) };
         let mut inner = s.browser.0.lock().unwrap();
         inner.tabs.insert(
             label.to_string(),
-            BrowserEntry { id, url: url.to_string(), title: String::new() },
+            BrowserEntry { id, url: url_str.clone(), title: String::new() },
         );
         inner.active = Some(label.to_string());
         inner.shape
     };
     // Registered before navigating: the update_entry/Navigated that on_navigation
     // performs when it allows the navigation has to find the registry entry
-    if let Err(e) = webview.navigate(url.clone()) {
-        // A tab that cannot even start navigating is rare but must not be left: hidden plus registered = a ghost entry
-        if let Some(s) = app.try_state::<AppState>() {
-            let mut inner = s.browser.0.lock().unwrap();
-            inner.tabs.remove(label);
-            inner.views.remove(label);
-            inner.active = inner.tabs.iter().max_by_key(|(_, e)| e.id).map(|(l, _)| l.clone());
+    if let Some(url) = url {
+        if let Err(e) = webview.navigate(url.clone()) {
+            // A tab that cannot even start navigating is rare but must not be left: hidden plus registered = a ghost entry
+            if let Some(s) = app.try_state::<AppState>() {
+                let mut inner = s.browser.0.lock().unwrap();
+                inner.tabs.remove(label);
+                inner.views.remove(label);
+                inner.active = inner.tabs.iter().max_by_key(|(_, e)| e.id).map(|(l, _)| l.clone());
+            }
+            let _ = webview.close();
+            return Err(e.to_string());
         }
-        let _ = webview.close();
-        return Err(e.to_string());
     }
-    emit(app, &BrowserEvent::Opened { label: label.to_string(), url: url.to_string() });
+    emit(app, &BrowserEvent::Opened { label: label.to_string(), url: url_str });
     if shape == Shape::Detached {
         // The tab was built as a child of the main window (the shell always is) and moves into the detached window now
         let win = ensure_detached_window(app)?;
@@ -522,7 +565,7 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> tauri::Rect {
 /// does not lag).
 pub fn apply_layout(app: &AppHandle) {
     let Some(s) = app.try_state::<AppState>() else { return };
-    let (shape, active, panel, labels, bar_expanded) = {
+    let (shape, active, panel, labels, bar_expanded, active_blank) = {
         let inner = s.browser.0.lock().unwrap();
         (
             inner.shape,
@@ -530,6 +573,7 @@ pub fn apply_layout(app: &AppHandle) {
             inner.panel,
             inner.tabs.keys().cloned().collect::<Vec<_>>(),
             inner.bar_expanded,
+            inner.active.as_ref().and_then(|l| inner.tabs.get(l)).is_some_and(|e| e.url == BLANK),
         )
     };
     let (bounds, show_active) = match shape {
@@ -555,6 +599,8 @@ pub fn apply_layout(app: &AppHandle) {
             (rect(0.0, BAR_H, inner.width, inner.height - BAR_H), true)
         }
     };
+    // A blank tab stays hidden: the panel draws its new-tab page in the slot instead
+    let show_active = show_active && !active_blank;
     for label in labels {
         let Some(wv) = app.get_webview(&label) else { continue };
         if active.as_deref() == Some(label.as_str()) {

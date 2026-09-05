@@ -721,6 +721,10 @@ export const api = {
   /** Navigate the active tab, or open a new one (newTab, or none open yet); returns the tab's label. */
   browserOpen: (url: string, newTab = false, focus = true) =>
     invoke<string>("browser_open", { url, newTab, focus }),
+  /** A blank tab (the tab strip's +, ⌘T): it shows the panel's new-tab page until its first navigation; returns the label. */
+  browserNewTab: () => invoke<string>("browser_new_tab"),
+  /** Close every tab — the browser goes away (and the detached window with it). */
+  browserCloseAll: () => invoke<void>("browser_close_all"),
   /** The DNS prefetch (called behind a debounce when ⌘L input pauses): it pushes the
    *  target domain's resolution into the system cache early, so WebKit skips the
    *  resolution step after return. Only a complete domain is sent (the Rust side checks

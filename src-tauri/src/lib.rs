@@ -205,6 +205,8 @@ pub fn run() {
             commands::script_prompt_respond,
             commands::script_eval_block,
             browser::window::browser_open,
+            browser::window::browser_new_tab,
+            browser::window::browser_close_all,
             browser::window::browser_navigate,
             browser::window::browser_back,
             browser::window::browser_forward,

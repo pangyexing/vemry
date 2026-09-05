@@ -1439,7 +1439,12 @@ prompt for.
 One component for both shapes (`BrowserPanel.svelte`; `mode="docked"` in the panel
 column, `mode="bar"` as the root of the `browserbar` webview). The tab strip: a tab
 per `browser-N` (title, else domain; × closes, middle click too, a native context
-menu), `+` for a new tab, then detach (docked) or dock back (bar). The
+menu), `+` for a new tab — a **blank tab in place** (`browser_new_tab`): its page stays
+hidden and the slot shows the panel's own new-tab page (an address input that takes the
+keyboard, bookmarks, recents; Esc abandons the tab), so opening a tab never sends the
+eye to a popup — then detach (docked) or dock back (bar), and × which closes the
+browser outright (`browser_close_all`; the plain "close a window" gesture, since there
+is no hide-but-keep state). The
 address row: ← → ↻ (history.back/forward sent blind — canGoBack is unknowable), the
 address (domain plus title; a click edits it inline: ↵ navigates the active tab,
 ⌘↵ or an address opened by `+` opens a new one; in the main window ⌘L opens the
