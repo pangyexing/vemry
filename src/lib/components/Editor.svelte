@@ -666,7 +666,15 @@
         .filter((f) => (f.split("/").pop() ?? "").toLowerCase() === lower)
         .sort((a, b) => a.length - b.length || a.localeCompare(b))[0] ?? null;
     }
-    return hit && fileKind(hit) === "image" ? hit : null;
+    if (hit) return fileKind(hit) === "image" ? hit : null;
+    // The file list is a projection that can lag behind the disk: the clip localiser
+    // writes clips/assets/ and rewrites the note in one go, and clip://localized reaches
+    // the buffer before the list refresh's round trip returns — a lookup at that moment
+    // misses and the widget would be nailed as "missing" (its DOM is reused as long as
+    // the target is the same). An explicit path (one with a /) needs no lookup at all:
+    // it is read as written, and a file that is not there fails in the read itself. A
+    // bare name has nothing to go on without the list.
+    return rel.includes("/") && fileKind(rel) === "image" ? rel : null;
   }
 
   /** An image embed's target → a blob URL (resolved through resolveAsset, with the blob cached at component level). */
