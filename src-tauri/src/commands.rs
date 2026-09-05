@@ -1740,6 +1740,29 @@ pub fn skill_install_example(state: State<'_, AppState>, name: String) -> Result
     Ok(Scaffolded { path: format!(".vemry/{sub}/{}", example.file), created })
 }
 
+/// The example block types Settings offers (the same shape as the skill examples).
+#[tauri::command]
+pub fn type_examples_list(state: State<'_, AppState>) -> Result<Vec<SkillExample>, String> {
+    let dir = with_vault(&state, |v| Ok(v.root().join(vemry_core::vault::TYPES_DIR)))?;
+    Ok(crate::skill_templates::TYPE_EXAMPLES
+        .iter()
+        .map(|e| SkillExample { name: e.name.into(), description: e.description.into(), installed: dir.join(e.file).exists() })
+        .collect())
+}
+
+/// Install one example block type into `.vemry/types/` (never overwriting); the
+/// editor's menus and the agent's next session pick it up (TypesChanged is broadcast).
+#[tauri::command]
+pub fn type_install_example(app: AppHandle, state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
+    let example = crate::skill_templates::example_type(&name).ok_or_else(|| format!("unknown example type: {name}"))?;
+    let dir = with_vault(&state, |v| Ok(v.root().join(vemry_core::vault::TYPES_DIR)))?;
+    let created = write_if_absent(&dir.join(example.file), example.body)?;
+    if created {
+        broadcast(&app, &VaultEvent::TypesChanged);
+    }
+    Ok(Scaffolded { path: format!("{}/{}", vemry_core::vault::TYPES_DIR, example.file), created })
+}
+
 /// The skills management list (the settings page): disabled ones are listed too —
 /// the management view differs from the injection view, and list_skills shows the
 /// agent only what is enabled.

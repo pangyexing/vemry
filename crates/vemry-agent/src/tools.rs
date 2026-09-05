@@ -103,7 +103,8 @@ pub fn propose_actions_def() -> ToolDef {
                             "owner": {"type": "string"},
                             "due": {"type": "string", "description": "YYYY-MM-DD"},
                             "target": {"type": "string", "description": "Vault-relative note path the item should land in"},
-                            "source": {"type": "string", "description": "Where it came from: a [[note#handle]] or the quoted sentence"}
+                            "source": {"type": "string", "description": "Where it came from: a [[note#handle]] or the quoted sentence"},
+                            "fields": {"type": "object", "description": "Extra editable fields, key → value (a scoring's reach / impact / confidence / effort); write them afterwards with set_block_field", "additionalProperties": {"type": "string"}}
                         },
                         "required": ["text"]
                     }
@@ -131,7 +132,12 @@ pub fn parse_action_items(args: &Value) -> Result<Vec<crate::permission::ActionI
                 return Err(format!("due must be YYYY-MM-DD (resolve relative dates against today first), got '{d}'"));
             }
         }
-        out.push(crate::permission::ActionItem { text: text.to_string(), owner: opt("owner"), due, target: opt("target"), source: opt("source") });
+        let fields: std::collections::BTreeMap<String, String> = it
+            .get("fields")
+            .and_then(|v| v.as_object())
+            .map(|o| o.iter().filter_map(|(k, v)| v.as_str().or(v.as_number().map(|_| "")).map(|_| (k.clone(), if v.is_string() { v.as_str().unwrap().to_string() } else { v.to_string() }))).collect())
+            .unwrap_or_default();
+        out.push(crate::permission::ActionItem { text: text.to_string(), owner: opt("owner"), due, target: opt("target"), source: opt("source"), fields });
     }
     if out.is_empty() || out.len() > ACTIONS_MAX_ITEMS {
         return Err(format!("an action list has 1-{ACTIONS_MAX_ITEMS} items"));
@@ -154,6 +160,9 @@ pub fn format_action_items(items: &[crate::permission::ActionItem]) -> String {
             }
             if let Some(t) = &a.target {
                 line.push_str(&format!("  → {t}"));
+            }
+            for (k, v) in &a.fields {
+                line.push_str(&format!(" [{k}:: {v}]"));
             }
             if let Some(s) = &a.source {
                 line.push_str(&format!("  (from: {s})"));
@@ -263,6 +272,22 @@ pub fn tool_defs() -> Vec<ToolDef> {
             json!({
                 "type": "object",
                 "properties": {"folder": {"type": "string", "description": "Only notes under this folder"}}
+            }),
+        ),
+        f(
+            "aggregate_blocks",
+            "Count blocks instead of listing them: how many tasks per iteration, how much feedback per feature, how many blocks changed per week. The same filters as query_blocks (kind, tag, note, field) plus group_by: a field key, 'note', or 'week' (the ISO week the block last changed). Use it for trends and totals — query_blocks is capped at 200 rows and cannot count.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["paragraph", "heading", "list_item", "task", "claim", "evidence", "code_block"]},
+                    "tag": {"type": "string"},
+                    "note": {"type": "string"},
+                    "field": {"type": "string", "description": "Inline-field filter, query_blocks grammar"},
+                    "task_state": {"type": "string", "enum": ["todo", "doing", "done"]},
+                    "group_by": {"type": "string", "description": "A field key, 'note', or 'week'"}
+                },
+                "required": ["group_by"]
             }),
         ),
         f(
@@ -861,6 +886,47 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             section("Duplicate clips (same source)", dups, &mut out);
             Ok(ReadOutcome { text: out.trim_end().to_string(), filtered })
         }
+        "aggregate_blocks" => {
+            let group_by = arg_str(args, "group_by")?.trim().to_string();
+            let mut q_args = args.clone();
+            if let Some(o) = q_args.as_object_mut() {
+                o.remove("group_by");
+                o.insert("limit".into(), json!(5000));
+            }
+            let q: BlockQuery = serde_json::from_value(q_args).map_err(|e| ToolError::Other(format!("bad query: {e}")))?;
+            let (hits, filtered) = vault.query_for_agent(&q);
+            let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+            for h in &hits {
+                let key = match group_by.as_str() {
+                    "note" => h.note.as_str().strip_suffix(".md").unwrap_or(h.note.as_str()).to_string(),
+                    "week" => {
+                        use chrono::{Datelike, TimeZone};
+                        chrono::Local
+                            .timestamp_millis_opt(h.block.modified_ms as i64)
+                            .single()
+                            .map(|d| format!("{}-W{:02}", d.iso_week().year(), d.iso_week().week()))
+                            .unwrap_or_else(|| "(unknown)".into())
+                    }
+                    key => h
+                        .block
+                        .fields
+                        .iter()
+                        .find(|f| f.key.eq_ignore_ascii_case(key))
+                        .map(|f| f.value.clone())
+                        .unwrap_or_else(|| "(none)".into()),
+                };
+                *counts.entry(key).or_default() += 1;
+            }
+            if counts.is_empty() {
+                return Ok(ReadOutcome { text: "(no matching blocks)".into(), filtered });
+            }
+            let mut rows: Vec<(String, usize)> = counts.into_iter().collect();
+            rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            let total: usize = rows.iter().map(|r| r.1).sum();
+            let mut lines: Vec<String> = rows.iter().take(100).map(|(k, n)| format!("{k}\t{n}")).collect();
+            lines.push(format!("(total {total} blocks in {} groups)", rows.len()));
+            Ok(ReadOutcome { text: lines.join("\n"), filtered })
+        }
         "recent_changes" => {
             let since = arg_str(args, "since")?.trim();
             let since_ms = local_day_start_ms(since).ok_or_else(|| ToolError::Other(format!("since must be YYYY-MM-DD, got '{since}'")))?;
@@ -1298,6 +1364,14 @@ pub fn prepare_write(
                 Some(Value::String(s)) => Some(s.trim().to_string()),
                 Some(other) => Some(other.to_string()),
             };
+            // `supports:` on an evidence block is not an inline field (`[supports:: [[x]]]` would
+            // close the bracket at the link's first `]`): it is the parser's own `supports:[[…]]`
+            // tail, appended to the block's text with edit_note
+            if key.eq_ignore_ascii_case("supports") {
+                return Err(ToolError::Other(
+                    "supports is not an inline field: append ` supports:[[note#^id]]` to the evidence block's text with edit_note (before its trailing ^id)".into(),
+                ));
+            }
             if let Some(v) = &value {
                 if v.is_empty() || v.contains(['\n', '\r', ']']) {
                     return Err(ToolError::Other("a field value is one line and may not contain ']'".into()));
@@ -1949,6 +2023,7 @@ mod tests {
         assert!(req.new_content.contains("> [!decision] go with A [date:: 2026-09-04] ^d1"), "{}", req.new_content);
         assert!(prepare_write(&vault, "s6".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "bad key", "value": "x"}), None, None).unwrap_err().to_string().contains("not a field key"));
         assert!(prepare_write(&vault, "s7".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "owner", "value": "a]b"}), None, None).is_err());
+        assert!(prepare_write(&vault, "s8".into(), "set_block_field", &json!({"path": "P.md", "block": "^p1", "key": "supports", "value": "[[X#^y]]"}), None, None).unwrap_err().to_string().contains("edit_note"));
     }
 
     /// recent_changes: blocks stamped since the day (the fixture is written now, so today catches it and tomorrow does not); filters by kind and note; private notes counted only.

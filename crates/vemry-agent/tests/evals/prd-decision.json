@@ -1,0 +1,25 @@
+{
+  "name": "prd-decision",
+  "vault": {
+    "projects/Gateway/PRD.md": "---\nstatus: draft\nproject: Gateway\n---\n# Gateway PRD\n\n## Requirements\n\n> [!requirement] p99 under 50 ms at 10k QPS\n> [priority:: P0] [status:: draft] ^r1\n\n## Decisions\n\n> [!decision] rate limiting lives in the gateway, not in each service\n> [date:: 2026-09-04] ^d1\n\n## Change log\n",
+    "projects/Gateway/feedback.md": "# Feedback\n\n> [!evidence] Ops: limits per service were impossible to keep consistent [feature:: rate-limit] [sentiment:: negative] ^f1\n"
+  },
+  "follow": "projects/Gateway/feedback.md",
+  "turns": [
+    {
+      "user": "这条运维反馈支撑哪个决策？挂上去",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "query_blocks", "args": { "kind": "claim", "note": "projects/Gateway/PRD.md" } } } ],
+        [ { "tool": { "id": "c2", "name": "edit_note", "args": { "path": "projects/Gateway/feedback.md", "old_str": "[sentiment:: negative] ^f1", "new_str": "[sentiment:: negative] supports:[[projects/Gateway/PRD#^d1]] ^f1" } } } ],
+        [ { "tool": { "id": "c3", "name": "aggregate_blocks", "args": { "kind": "evidence", "note": "projects/Gateway/feedback.md", "group_by": "feature" } } } ],
+        [ { "text": "已把这条反馈挂到决策 [[projects/Gateway/PRD#^d1]] 上；目前 rate-limit 相关反馈 1 条。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "tool_output_contains": [ { "id": "c1", "text": "\"kind\": {\n      \"type\": \"claim\"" }, { "id": "c3", "text": "rate-limit\t1" } ],
+    "note_contains": [ { "path": "projects/Gateway/feedback.md", "text": "[sentiment:: negative] supports:[[projects/Gateway/PRD#^d1]] ^f1" } ]
+  }
+}

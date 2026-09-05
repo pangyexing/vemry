@@ -161,6 +161,11 @@ pub struct ActionItem {
     pub target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// Extra fields the card lets the user edit (a scoring's reach / impact /
+    /// confidence / effort, say), key → value; written by the model afterwards with
+    /// set_block_field. Kept in the order given.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub fields: std::collections::BTreeMap<String, String>,
 }
 
 /// The action-list gate (propose_actions): the same family as the plan gate — the

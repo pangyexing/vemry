@@ -438,6 +438,8 @@ export interface ActionItem {
   due?: string | null;
   target?: string | null;
   source?: string | null;
+  /** Extra editable fields (a scoring's reach / impact / confidence / effort), key → value. */
+  fields?: Record<string, string>;
 }
 
 /** The actions gate's request and decision (propose_actions; the same family as the plan gate). */
@@ -930,6 +932,9 @@ export const api = {
   /** The example-skills catalogue and its installer (a file already there is never overwritten). */
   skillExamplesList: () => invoke<SkillExample[]>("skill_examples_list"),
   skillInstallExample: (name: string) => invoke<Scaffolded>("skill_install_example", { name }),
+  /** The example block types and their installer (the same shape as the skill examples). */
+  typeExamplesList: () => invoke<SkillExample[]>("type_examples_list"),
+  typeInstallExample: (name: string) => invoke<Scaffolded>("type_install_example", { name }),
   agentCancel: () => invoke<void>("agent_cancel"),
   /** Follow a note (null stops): the session keeps its findings there and, with auto, local writes on it pass the gate without a dialog. */
   agentFollowSet: (path: string | null, auto: boolean) => invoke<void>("agent_follow_set", { path, auto }),

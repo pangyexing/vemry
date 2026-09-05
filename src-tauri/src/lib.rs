@@ -176,6 +176,8 @@ pub fn run() {
             commands::html_to_markdown,
             commands::skill_examples_list,
             commands::skill_install_example,
+            commands::type_examples_list,
+            commands::type_install_example,
             commands::agent_is_running,
             commands::agent_session_new,
             commands::agent_session_list,

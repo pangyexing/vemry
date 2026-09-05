@@ -25,6 +25,32 @@ pub const MEETING_ACTIONS: &str = include_str!("../../examples/demo-vault/.vemry
 pub const WEEKLY_REPORT: &str = include_str!("../../examples/demo-vault/.vemry/skills/weekly-report.md");
 pub const TIDY: &str = include_str!("../../examples/demo-vault/.vemry/skills/tidy.md");
 pub const TIDY_NOTE: &str = include_str!("../../examples/demo-vault/.vemry/skills/tidy-note.md");
+pub const PRD: &str = include_str!("../../examples/demo-vault/.vemry/skills/prd.md");
+pub const DECISION_LOG: &str = include_str!("../../examples/demo-vault/.vemry/skills/decision-log.md");
+pub const FEEDBACK_TRIAGE: &str = include_str!("../../examples/demo-vault/.vemry/skills/feedback-triage.md");
+pub const ITERATION_PLAN: &str = include_str!("../../examples/demo-vault/.vemry/skills/iteration-plan.md");
+pub const RETRO: &str = include_str!("../../examples/demo-vault/.vemry/skills/retro.md");
+pub const BRIEF: &str = include_str!("../../examples/demo-vault/.vemry/skills/brief.md");
+
+/// One installable example block type (`.vemry/types/<file>`): the same shape as a skill example.
+pub struct ExampleType {
+    pub file: &'static str,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub body: &'static str,
+}
+
+/// The example block types Settings offers: the product-document blocks.
+pub const TYPE_EXAMPLES: &[ExampleType] = &[
+    ExampleType { file: "requirement.md", name: "requirement", description: "One product requirement, with its priority, status and owner on the line", body: include_str!("../../examples/demo-vault/.vemry/types/requirement.md") },
+    ExampleType { file: "decision.md", name: "decision", description: "A product decision — indexed as a claim, so evidence supports it and the Claims view shows which decisions have none", body: include_str!("../../examples/demo-vault/.vemry/types/decision.md") },
+    ExampleType { file: "question.md", name: "question", description: "An open question in a spec or a research note, with who owns the answer", body: include_str!("../../examples/demo-vault/.vemry/types/question.md") },
+    ExampleType { file: "hypothesis.md", name: "hypothesis", description: "A hypothesis behind a change — the metric, the expected result, and a review date; the review shows up in the Agenda when it is due", body: include_str!("../../examples/demo-vault/.vemry/types/hypothesis.md") },
+];
+
+pub fn example_type(name: &str) -> Option<&'static ExampleType> {
+    TYPE_EXAMPLES.iter().find(|e| e.name == name)
+}
 
 /// The catalogue Settings offers. `description` is shown before installing (the
 /// same sentence as the file's frontmatter, so the list and the installed skill
@@ -72,6 +98,12 @@ pub const EXAMPLES: &[ExampleSkill] = &[
         description: "Restructuring one messy note: read it whole, propose an outline, move blocks without rewording them, keep every id and every private block",
         body: TIDY_NOTE,
     },
+    ExampleSkill { file: "prd.md", name: "prd", description: "From scattered input to a PRD: background, goal, requirement blocks with their sources, decisions, open questions, a change log", body: PRD },
+    ExampleSkill { file: "decision-log.md", name: "decision-log", description: "Decisions and their evidence: which decisions have none, which feedback contradicts one, what a decision superseded", body: DECISION_LOG },
+    ExampleSkill { file: "feedback-triage.md", name: "feedback-triage", description: "User feedback into blocks with feature, sentiment and source, linked to the requirement or decision it bears on", body: FEEDBACK_TRIAGE },
+    ExampleSkill { file: "iteration-plan.md", name: "iteration-plan", description: "Planning the next iteration: score the backlog, pick within capacity, tag the chosen blocks with the iteration, write the iteration note", body: ITERATION_PLAN },
+    ExampleSkill { file: "retro.md", name: "retro", description: "Closing an iteration: what shipped, which hypotheses held, which decisions changed, what carries over — and the release notes", body: RETRO },
+    ExampleSkill { file: "brief.md", name: "brief", description: "Exporting an implementation brief for a coding agent, and filling the record back in when the work returns", body: BRIEF },
 ];
 
 pub fn example(name: &str) -> Option<&'static ExampleSkill> {

@@ -220,7 +220,9 @@ pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
             let fields = if private { vec![] } else { scan_fields(&raw[span.clone()], span.start) };
             let kind = match ctype.as_str() {
                 "private" => BlockKind::Private,
-                "claim" => BlockKind::Claim,
+                // A decision is a claim about what to do: evidence supports it the same
+                // way, the Claims view lists it, and audit_links checks its supports
+                "claim" | "decision" => BlockKind::Claim,
                 "evidence" => {
                     let supports = match raw[span.clone()].find("supports:") {
                         Some(p) => {

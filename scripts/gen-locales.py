@@ -664,6 +664,7 @@ add("timeline.", {
 })
 
 add("claims.", {
+    "decision": ("decision", "决策"),
     "count_one": ("{n} claim", "{n} 断言"),
     "count_other": ("{n} claims", "{n} 断言"),
 })
@@ -778,6 +779,7 @@ add("tool.", {
     "clips_lookup": ("Look up clips", "查剪藏"),
     "list_sources": ("List sources", "列出来源"),
     "recent_changes": ("Recent changes", "最近变化"),
+    "aggregate_blocks": ("Count blocks", "统计块"),
     "update_task": ("Update task", "更新任务"),
     "set_block_field": ("Set field", "设置字段"),
     "propose_actions": ("Propose actions", "提出行动项"),
@@ -1114,6 +1116,7 @@ add("chat.", {
     "resumeButton": ("Resume that session", "继续这项研究"),
     "starter4": ("Start my day: what is overdue, due today and in progress", "今日启动:过期、今天到期与进行中的任务"),
     "starter5": ("Turn these meeting notes into action items", "把这份会议记录整理成行动项"),
+    "starter6": ("Plan the next iteration from the backlog", "从 backlog 规划下一轮迭代"),
     "actionsTitle": ("Action items", "行动项"),
     "actionsWaiting": ("Review, then write", "审阅后写入"),
     "actionsWrite": ("Write {n} items", "写入 {n} 项"),
@@ -1396,6 +1399,9 @@ add("settings.", {
                     " 即生效;停用改写文件的 `disabled` 字段。改动自下一个 AI 会话生效。"),
     "editWithSystemApp": ("Open in the system default app to edit", "用系统默认应用打开编辑"),
     "edit": ("Edit", "编辑"),
+    "typeExamples": ("Example block types", "示例块类型"),
+    "typeExamplesHint": ("The product-document blocks: requirement, decision, question, hypothesis — installed into .vemry/types/, the editor's / menu and the AI learn them",
+                         "产品文档的几种块:需求、决策、开放问题、假设——装进 .vemry/types/,编辑器 / 菜单与 AI 都认识它们"),
     "skillExamples": ("Example skills", "示例 skill"),
     "skillExamplesHint": ("Routines the AI can run once installed: they take effect in a new session and the file is yours to edit",
                           "安装后 AI 可执行的例程:新会话生效,文件装好就是你的,可随意改"),
@@ -1808,7 +1814,8 @@ add("memoryFile.", {
         "## Organising files\n"
         "- Where things go: clips in `clips/`, attachments in `attachments/<note path>/`, one hub note per project folder\n"
         "- Naming: notes by topic, dates as YYYY-MM-DD, no version numbers in file names\n"
-        "- Every note carries `project:` when it belongs to one; tidy-ups fill it in\n",
+        "- Every note carries `project:` when it belongs to one; tidy-ups fill it in\n"
+        "- Iterations are a field on the block: `iteration:: v0.8` on tasks and requirements; the board grouped by it is the iteration view\n",
         "用你自己的话描述组织结构与偏好，例如：\n\n"
         "## 结构\n"
         "- `inbox.md`：速记收集箱，未整理的想法先进这里\n"
@@ -1821,7 +1828,8 @@ add("memoryFile.", {
         "## 资料组织约定\n"
         "- 落点：剪藏进 `clips/`，附件进 `attachments/<笔记路径>/`，每个项目文件夹一篇枢纽笔记\n"
         "- 命名：笔记按主题命名，日期写 YYYY-MM-DD，文件名不带版本号\n"
-        "- 属于某个项目的笔记带 `project:`，整理时补齐\n"),
+        "- 属于某个项目的笔记带 `project:`，整理时补齐\n"
+        "- 迭代是块上的字段：任务与需求写 `iteration:: v0.8`，看板按它分组就是迭代视图\n"),
 })
 
 # ---------------------------------------------------------------- errors surfaced from Rust

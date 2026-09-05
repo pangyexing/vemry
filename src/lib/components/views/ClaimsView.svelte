@@ -65,6 +65,7 @@
               onclick={() => vault.openNote(c.claim.note)}
               onkeydown={(e) => (e.key === "Enter" || e.key === " ") && vault.openNote(c.claim.note)}
             >
+              {#if /^\s*(?:>\s*)?\[!decision\]/i.test(c.claim.block.content)}<span class="kind">{t("claims.decision")}</span>{/if}
               <span class="text">{c.text}</span>
               <!-- The chip is only attached when there is a ^id: a ^id is this claim's handle
                 and is content, while "no ^id" is an absence, explained once by the line below
@@ -165,6 +166,16 @@
   }
   .claim:hover {
     background: var(--bg-hover);
+  }
+  .kind {
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1;
+    padding: 2px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+    margin-right: 6px;
   }
   .text {
     flex: 1;

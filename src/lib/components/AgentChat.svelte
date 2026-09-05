@@ -410,7 +410,7 @@
    *  list to write. `actionRows` is the working copy; a duplicate hint comes from a quick
    *  task query per row (a task with the same key words already in the vault). */
   type ActionsCard = Extract<TimelineItem, { kind: "actions" }>;
-  type ActionRow = { keep: boolean; text: string; owner: string; due: string; target: string; source: string; dup: string | null };
+  type ActionRow = { keep: boolean; text: string; owner: string; due: string; target: string; source: string; dup: string | null; fields: { key: string; value: string }[] };
   let actionRows = $state<ActionRow[]>([]);
   let actionsRejecting = $state(false);
   let actionsRejectReason = $state("");
@@ -422,7 +422,16 @@
       actionRows = [];
       return;
     }
-    actionRows = req.items.map((it) => ({ keep: true, text: it.text, owner: it.owner ?? "", due: it.due ?? "", target: it.target ?? "", source: it.source ?? "", dup: null }));
+    actionRows = req.items.map((it) => ({
+      keep: true,
+      text: it.text,
+      owner: it.owner ?? "",
+      due: it.due ?? "",
+      target: it.target ?? "",
+      source: it.source ?? "",
+      dup: null,
+      fields: Object.entries(it.fields ?? {}).map(([key, value]) => ({ key, value })),
+    }));
     void findDuplicates(req.id);
   });
   /** A task already in the vault with the row's key words: the row is shown as a likely duplicate and unticked. */
@@ -453,6 +462,7 @@
         due: r.due.trim() || null,
         target: r.target.trim() || null,
         source: r.source.trim() || null,
+        fields: r.fields.length ? Object.fromEntries(r.fields.filter((f) => f.key.trim()).map((f) => [f.key.trim(), f.value.trim()])) : undefined,
       }));
     void agent.respondActions({ kind: "approve", items });
   }
@@ -884,7 +894,7 @@
     run(api.browserOpen(url));
   }
 
-  const welcomeExamples = $derived([t("chat.starter1"), t("chat.starter2"), t("chat.starter3"), t("chat.starter4"), t("chat.starter5")]);
+  const welcomeExamples = $derived([t("chat.starter1"), t("chat.starter2"), t("chat.starter3"), t("chat.starter4"), t("chat.starter5"), t("chat.starter6")]);
 
   function fillExample(text: string) {
     agent.draft = text;
@@ -1572,6 +1582,14 @@
                     <input class="act-due" type="date" bind:value={r.due} title={t("chat.actionsDue")} />
                     <input class="act-target" bind:value={r.target} list="act-notes" placeholder={t("chat.actionsTarget")} spellcheck="false" />
                   </div>
+                  {#if r.fields.length}
+                    <!-- The extra fields (a scoring's numbers, say): each editable on the row, written afterwards as [key:: value] -->
+                    <div class="act-meta act-fields">
+                      {#each r.fields as f, fi (fi)}
+                        <label class="act-field"><span>{f.key}</span><input bind:value={f.value} spellcheck="false" /></label>
+                      {/each}
+                    </div>
+                  {/if}
                   {#if r.dup}
                     <div class="act-hint">{t("chat.actionsDuplicate", { path: r.dup })}</div>
                   {:else if r.source}
@@ -1600,7 +1618,7 @@
             {#each shownActs as a, ai (ai)}
               <div class="plan-item">
                 <span class="plan-check">{ai + 1}.</span>
-                <span>{a.text}{a.owner ? ` · ${a.owner}` : ""}{a.due ? ` · ${a.due}` : ""}{a.target ? ` → ${a.target}` : ""}</span>
+                <span>{a.text}{a.owner ? ` · ${a.owner}` : ""}{a.due ? ` · ${a.due}` : ""}{a.fields ? Object.entries(a.fields).map(([k, v]) => ` · ${k} ${v}`).join("") : ""}{a.target ? ` → ${a.target}` : ""}</span>
               </div>
             {/each}
           {/if}
@@ -2732,6 +2750,25 @@
   .act-hint {
     font-size: 10px;
     color: var(--fg-faint);
+  }
+  .act-fields {
+    flex-wrap: wrap;
+  }
+  .act-field {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    color: var(--fg-muted);
+  }
+  .act-field input {
+    width: 4.5em;
+    font-size: var(--fs-xs);
+    padding: 1px 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
   }
   /* ---- The plan gate's inline card (propose_plan): the decision point in the timeline. The
      sticky card is the progress projection, and this card carries "confirm / edit / reject" —

@@ -63,6 +63,8 @@
   let skills = $state<SkillEntry[]>([]);
   /** The example-skills catalogue (routines the AI can run once installed). */
   let skillExamples = $state<SkillExample[]>([]);
+  /** The example block types (product-document blocks) Settings can install. */
+  let typeExamples = $state<SkillExample[]>([]);
   let newRule = $state("");
   let ruleError = $state<string | null>(null);
   /** Notes marked one by one: the frontmatter flag is what NoteSummary.private carries, and the
@@ -124,6 +126,7 @@
       api.vaultWritePolicyGet().then((p) => (writePolicy = p)).catch(() => (writePolicy = "ask"));
       api.skillsList().then((s) => (skills = s)).catch(() => (skills = []));
       api.skillExamplesList().then((s) => (skillExamples = s)).catch(() => (skillExamples = []));
+      api.typeExamplesList().then((s) => (typeExamples = s)).catch(() => (typeExamples = []));
     }
   });
 
@@ -154,6 +157,15 @@
       toast.push(t(r.created ? "settings.skillInstalled" : "settings.skillAlready", { path: r.path }));
       skills = await api.skillsList();
       skillExamples = await api.skillExamplesList();
+    } catch (e) {
+      toast.push(String(e), "error");
+    }
+  }
+  async function installTypeExample(name: string) {
+    try {
+      const r = await api.typeInstallExample(name);
+      toast.push(t(r.created ? "settings.skillInstalled" : "settings.skillAlready", { path: r.path }));
+      typeExamples = await api.typeExamplesList();
     } catch (e) {
       toast.push(String(e), "error");
     }
@@ -686,6 +698,21 @@
                 </ul>
               {:else}
                 <small class="empty">{t("settings.noSkills")}</small>
+              {/if}
+              {#if typeExamples.some((e) => !e.installed)}
+                <h4 class="examples-title">{t("settings.typeExamples")}</h4>
+                <small>{t("settings.typeExamplesHint")}</small>
+                <ul class="script-list">
+                  {#each typeExamples.filter((e) => !e.installed) as e (e.name)}
+                    <li>
+                      <div class="script-row">
+                        <span class="script-name">{e.name}</span>
+                        <button class="btn small" onclick={() => void installTypeExample(e.name)}>{t("settings.installSkill")}</button>
+                      </div>
+                      <small class="script-summary">{e.description}</small>
+                    </li>
+                  {/each}
+                </ul>
               {/if}
               {#if skillExamples.some((e) => !e.installed)}
                 <h4 class="examples-title">{t("settings.skillExamples")}</h4>

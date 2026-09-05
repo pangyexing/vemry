@@ -210,9 +210,11 @@ parenthesis. Nothing is swallowed and no list is broken.
   `tip`/`hint`/`important`, `success`/`check`/`done`, `question`/`help`/`faq`,
   `warning`/`caution`/`attention`,
   `danger`/`error`/`failure`/`fail`/`missing`/`bug`, `example`, `quote`/`cite`,
-  plus vemry's own `claim` and `evidence`
+  plus vemry's own `claim`, `decision` and `evidence`
 - `claim`, `evidence` and `private` become their own block types in the index;
-  the rest are indexed as paragraphs
+  `decision` is indexed as a claim (a decision is a claim about what to do:
+  evidence supports it with `supports:` just the same, and the Claims view lists
+  it); the rest are indexed as paragraphs
 - `private` is the block-level privacy zone (see [Privacy markers](#privacy-markers)):
   it must start its line (after indentation), so inside a list item it goes on a
   continuation line of its own; a lazy line without `>` is outside the block
