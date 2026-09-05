@@ -171,6 +171,7 @@ pub fn run() {
             commands::agent_cancel,
             commands::agent_follow_set,
             commands::agent_actions_respond,
+            commands::agent_undo_turn,
             commands::skill_examples_list,
             commands::skill_install_example,
             commands::agent_is_running,

@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use similar::TextDiff;
 use vemry_core::{BlockQuery, NoteId, Vault};
 
-use crate::permission::{WriteKind, WriteRequest};
+use crate::permission::{RewriteSummary, RewriteText, WriteKind, WriteRequest};
 use crate::types::{FunctionSpec, ToolDef};
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +24,9 @@ const LINKS_MAX_EACH: usize = 100;
 const CLIPS_LOOKUP_MAX: usize = 50;
 /// recent_changes lists at most this many blocks (the model asks for fewer).
 const RECENT_MAX_LIMIT: usize = 200;
+/// list_files lists at most this many files; audit_links at most this many rows per section.
+const LIST_FILES_MAX_LIMIT: usize = 500;
+const AUDIT_MAX_ROWS: usize = 50;
 /// A plan has between one and this many steps (propose_plan's own 2-9 rule is
 /// stricter, since a one-step plan needs no confirmation).
 pub const PLAN_MAX_ITEMS: usize = 12;
@@ -162,7 +165,7 @@ pub fn format_action_items(items: &[crate::permission::ActionItem]) -> String {
 }
 
 pub fn is_write_tool(name: &str) -> bool {
-    matches!(name, "write_note" | "edit_note" | "move_note" | "append_note" | "set_frontmatter" | "update_task" | "set_block_field")
+    matches!(name, "write_note" | "edit_note" | "move_note" | "move_file" | "append_note" | "set_frontmatter" | "update_task" | "set_block_field")
 }
 
 /// The local writes a followed note takes without a dialog (see
@@ -237,6 +240,26 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {"urls": {"type": "array", "items": {"type": "string"}, "description": "Up to 50 URLs"}},
                 "required": ["urls"]
+            }),
+        ),
+        f(
+            "list_files",
+            "List non-note files in the vault (attachments, PDFs, images, anything that is not .md) with their size. Optionally under one folder, or of one kind.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "folder": {"type": "string", "description": "Only files under this folder"},
+                    "kind": {"type": "string", "enum": ["image", "pdf", "other"]},
+                    "limit": {"type": "integer", "description": "Max results, default 100"}
+                }
+            }),
+        ),
+        f(
+            "audit_links",
+            "The vault's link health in one call: unresolved [[wikilinks]] (with the note and block they sit in), orphan notes nothing links to, evidence whose supports:: reaches no claim, and clips of the same page. Optionally scoped to one folder. Use it before a tidy-up and propose fixes with propose_actions.",
+            json!({
+                "type": "object",
+                "properties": {"folder": {"type": "string", "description": "Only notes under this folder"}}
             }),
         ),
         f(
@@ -389,12 +412,25 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         f(
             "move_note",
-            "Move or rename a note to a new vault-relative path. Does not rewrite links (wiki-links by the old name become unresolved). Requires user approval.",
+            "Move or rename a note to a new vault-relative path, rewriting every [[wikilink]] in the vault that pointed at it (in the author's spelling: a bare name stays a bare name while it still resolves, a path stays a path) in the same write. The diff shows the rewrites. Requires user approval.",
             json!({
                 "type": "object",
                 "properties": {
                     "from": {"type": "string", "description": "Current path, e.g. 'inbox/Idea.md'"},
-                    "to": {"type": "string", "description": "New path including .md, e.g. 'projects/Idea.md'"}
+                    "to": {"type": "string", "description": "New path including .md, e.g. 'projects/Idea.md'"},
+                    "rewrite_links": {"type": "boolean", "description": "Rewrite links that pointed at the note (default true)"}
+                },
+                "required": ["from", "to"]
+            }),
+        ),
+        f(
+            "move_file",
+            "Move or rename a non-note file (an image, a PDF, any attachment), rewriting the embeds and links that pointed at it (![[…]], [text](path), <path>) in the same write. Requires user approval.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string", "description": "Current path, e.g. 'attachments/Alpha/shot.png'"},
+                    "to": {"type": "string", "description": "New path with the extension, e.g. 'projects/alpha/assets/shot.png'"}
                 },
                 "required": ["from", "to"]
             }),
@@ -670,6 +706,108 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             }
             Ok(ReadOutcome { text: lines.join("\n"), filtered: 0 })
         }
+        "list_files" => {
+            let folder = args.get("folder").and_then(|v| v.as_str()).unwrap_or("").trim_matches('/');
+            let kind = args.get("kind").and_then(|v| v.as_str());
+            let limit = arg_usize(args, "limit", 100).min(LIST_FILES_MAX_LIMIT);
+            let mut filtered = 0usize;
+            let mut rows: Vec<String> = Vec::new();
+            let mut total = 0usize;
+            for rel in vault.list_files() {
+                if rel.to_ascii_lowercase().ends_with(".md") {
+                    continue;
+                }
+                if !folder.is_empty() && !rel.starts_with(&format!("{folder}/")) {
+                    continue;
+                }
+                let k = file_kind(&rel);
+                if let Some(want) = kind {
+                    if k != want {
+                        continue;
+                    }
+                }
+                if vault.is_private_rel(&rel, false) {
+                    filtered += 1;
+                    continue;
+                }
+                total += 1;
+                if rows.len() < limit {
+                    let size = std::fs::metadata(vault.root().join(&rel)).map(|m| m.len()).unwrap_or(0);
+                    rows.push(format!("{rel}\t{k}\t{}", human_size(size)));
+                }
+            }
+            if rows.is_empty() {
+                return Ok(ReadOutcome { text: "(no files)".into(), filtered });
+            }
+            if total > rows.len() {
+                rows.push(format!("(+{} more not shown; narrow with folder or kind)", total - rows.len()));
+            }
+            Ok(ReadOutcome { text: rows.join("\n"), filtered })
+        }
+        "audit_links" => {
+            let folder = args.get("folder").and_then(|v| v.as_str()).map(|f| f.trim_matches('/')).filter(|f| !f.is_empty());
+            let report = vault.audit_links(folder);
+            let mut filtered = 0usize;
+            let mut out = String::new();
+            let strip = |id: &NoteId| id.as_str().strip_suffix(".md").unwrap_or(id.as_str()).to_string();
+            let section = |title: &str, rows: Vec<String>, out: &mut String| {
+                out.push_str(&format!("## {title} ({})\n", rows.len()));
+                if rows.is_empty() {
+                    out.push_str("(none)\n");
+                }
+                for r in rows.iter().take(AUDIT_MAX_ROWS) {
+                    out.push_str(r);
+                    out.push('\n');
+                }
+                if rows.len() > AUDIT_MAX_ROWS {
+                    out.push_str(&format!("(+{} more)\n", rows.len() - AUDIT_MAX_ROWS));
+                }
+            };
+            let unresolved: Vec<String> = report
+                .unresolved
+                .iter()
+                .filter(|(id, _, _)| {
+                    let p = vault.is_private(id);
+                    filtered += p as usize;
+                    !p
+                })
+                .map(|(id, block, target)| format!("[[{}#{block}]] → [[{target}]] unresolved", strip(id)))
+                .collect();
+            section("Unresolved links", unresolved, &mut out);
+            let orphans: Vec<String> = report
+                .orphans
+                .iter()
+                .filter(|id| {
+                    let p = vault.is_private(id);
+                    filtered += p as usize;
+                    !p
+                })
+                .map(|id| format!("[[{}]]", strip(id)))
+                .collect();
+            section("Orphan notes (no backlinks)", orphans, &mut out);
+            let dangling: Vec<String> = report
+                .dangling_supports
+                .iter()
+                .filter(|(id, _, _)| {
+                    let p = vault.is_private(id);
+                    filtered += p as usize;
+                    !p
+                })
+                .map(|(id, block, target)| format!("[[{}#{block}]] supports:[[{target}]] reaches no claim", strip(id)))
+                .collect();
+            section("Dangling supports", dangling, &mut out);
+            let dups: Vec<String> = report
+                .duplicate_clips
+                .iter()
+                .filter_map(|(url, ids)| {
+                    let visible: Vec<String> = ids.iter().filter(|id| !vault.is_private(id)).map(|id| format!("[[{}]]", strip(id))).collect();
+                    filtered += ids.len() - visible.len();
+                    (visible.len() > 1).then(|| format!("{url}: {}", visible.join(", ")))
+                })
+                .collect();
+            section("Duplicate clips (same source)", dups, &mut out);
+            Ok(ReadOutcome { text: out.trim_end().to_string(), filtered })
+        }
         "recent_changes" => {
             let since = arg_str(args, "since")?.trim();
             let since_ms = local_day_start_ms(since).ok_or_else(|| ToolError::Other(format!("since must be YYYY-MM-DD, got '{since}'")))?;
@@ -775,6 +913,26 @@ fn block_kind_name(kind: &vemry_core::BlockKind) -> &'static str {
     }
 }
 
+/// A file's kind by extension, as list_files names it.
+fn file_kind(rel: &str) -> &'static str {
+    let ext = rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "tiff" | "heic" => "image",
+        "pdf" => "pdf",
+        _ => "other",
+    }
+}
+
+fn human_size(bytes: u64) -> String {
+    if bytes >= 1 << 20 {
+        format!("{:.1} MB", bytes as f64 / (1u64 << 20) as f64)
+    } else if bytes >= 1 << 10 {
+        format!("{} KB", bytes >> 10)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 /// Local midnight of a `YYYY-MM-DD` as milliseconds since the epoch (the unit of
 /// `Block::modified_ms`); None for anything that is not a calendar date.
 fn local_day_start_ms(ymd: &str) -> Option<u64> {
@@ -820,7 +978,7 @@ fn block_rewrite_request(request_id: String, name: &str, id: &NoteId, raw: &str,
         return Err(ToolError::Other("this change cannot be applied as written".into()));
     }
     let diff = unified_diff(raw, &new_content, id.as_str());
-    Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content })
+    Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content, rewrites: vec![], rewrite_texts: vec![] })
 }
 
 /// A date argument: `null` clears, a `YYYY-MM-DD` sets, anything else is an error
@@ -889,7 +1047,7 @@ pub fn prepare_write(
             let new_content = if is_new { with_agent_provenance(content, session) } else { content.to_string() };
             let diff = unified_diff(&old, &new_content, id.as_str());
             let kind = if is_new { WriteKind::Create } else { WriteKind::Overwrite };
-            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind, new_content })
+            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind, new_content, rewrites: vec![], rewrite_texts: vec![] })
         }
         "edit_note" => {
             let path = arg_str(args, "path")?;
@@ -954,6 +1112,8 @@ pub fn prepare_write(
                 diff,
                 kind: WriteKind::Edit,
                 new_content,
+                rewrites: vec![],
+                rewrite_texts: vec![],
             })
         }
         "append_note" => {
@@ -978,7 +1138,7 @@ pub fn prepare_write(
                 vault.check_portable_rel(id.as_str()).map_err(|e| ToolError::Other(e.to_string()))?;
                 let new_content = with_agent_provenance(&format!("{}\n", content.trim_matches(['\n', '\r'])), session);
                 let diff = unified_diff("", &new_content, id.as_str());
-                return Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Create, new_content });
+                return Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Create, new_content, rewrites: vec![], rewrite_texts: vec![] });
             }
             let old = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
             let blocks = vemry_core::parser::parse_note(&old).blocks;
@@ -998,7 +1158,7 @@ pub fn prepare_write(
                 return Err(ToolError::Other("this append leaves the note unchanged".into()));
             }
             let diff = unified_diff(&old, &new_content, id.as_str());
-            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Append, new_content })
+            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Append, new_content, rewrites: vec![], rewrite_texts: vec![] })
         }
         "set_frontmatter" => {
             let path = arg_str(args, "path")?;
@@ -1021,7 +1181,7 @@ pub fn prepare_write(
                 return Err(ToolError::Other("this change leaves the frontmatter unchanged".into()));
             }
             let diff = unified_diff(&old, &new_content, id.as_str());
-            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content })
+            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content, rewrites: vec![], rewrite_texts: vec![] })
         }
         "update_task" => {
             let (id, raw, blocks, i) = locate_block(vault, arg_str(args, "path")?, arg_str(args, "block")?)?;
@@ -1125,14 +1285,55 @@ pub fn prepare_write(
             // Portability before the permission gate: an illegal Windows file name
             // goes straight back to the model to correct
             vault.check_portable_rel(to_id.as_str()).map_err(|e| ToolError::Other(e.to_string()))?;
+            // The links that pointed at the note follow it in the same write (the
+            // author's spelling kept); the dialog shows them as the move's diff
+            let rewrite = args.get("rewrite_links").and_then(|v| v.as_bool()).unwrap_or(true);
+            let plan = if rewrite { vault.plan_note_move_links(&from_id, &to_id) } else { vec![] };
+            let (diff, rewrites, rewrite_texts) = rewrite_parts(vault, plan);
             Ok(WriteRequest {
                 id: request_id,
                 tool: name.into(),
                 path: from_id.to_string(),
                 to_path: Some(to_id.to_string()),
-                diff: String::new(),
+                diff,
                 kind: WriteKind::Move,
                 new_content: String::new(),
+                rewrites,
+                rewrite_texts,
+            })
+        }
+        "move_file" => {
+            let from = arg_str(args, "from")?.trim().trim_matches('/');
+            let to = arg_str(args, "to")?.trim().trim_matches('/');
+            if from.to_ascii_lowercase().ends_with(".md") || to.to_ascii_lowercase().ends_with(".md") {
+                return Err(ToolError::Other("move_file moves attachments; a note moves with move_note".into()));
+            }
+            // Privacy before existence on both sides, worded like a miss / an invalid path
+            if vault.is_private_rel(from, false) {
+                return Err(ToolError::Privacy(vemry_core::reject(vemry_core::PathReject::NotFound, from).to_string()));
+            }
+            if !vault.list_files().iter().any(|f| f == from) {
+                return Err(ToolError::Other(vemry_core::reject(vemry_core::PathReject::NotFound, from).to_string()));
+            }
+            if vault.is_private_rel(to, false) {
+                return Err(ToolError::Privacy(format!("invalid path: {to}")));
+            }
+            if std::fs::symlink_metadata(vault.root().join(to)).is_ok() {
+                return Err(ToolError::Other(format!("already exists: {to}")));
+            }
+            vault.check_portable_rel(to).map_err(|e| ToolError::Other(e.to_string()))?;
+            let plan = vault.plan_file_move_links(from, to);
+            let (diff, rewrites, rewrite_texts) = rewrite_parts(vault, plan);
+            Ok(WriteRequest {
+                id: request_id,
+                tool: name.into(),
+                path: from.to_string(),
+                to_path: Some(to.to_string()),
+                diff,
+                kind: WriteKind::Move,
+                new_content: String::new(),
+                rewrites,
+                rewrite_texts,
             })
         }
         _ => Err(ToolError::Other(format!("unknown write tool: {name}"))),
@@ -1153,7 +1354,7 @@ pub fn execute_write(
     session: Option<&str>,
     reviewed: bool,
 ) -> Result<String, String> {
-    if req.tool == "move_note" {
+    if req.tool == "move_note" || req.tool == "move_file" {
         // AllowEdited means nothing for a move (there is no content to edit), so
         // the override is defensively ignored
         return execute_move(vault, req);
@@ -1219,26 +1420,90 @@ pub fn execute_write(
     Ok(format!("wrote {id} ({seen} bytes)"))
 }
 
+/// A move's link-rewrite plan as the request carries it: private notes are left out
+/// (the model never learns they exist, and their links are not rewritten — a link
+/// inside a private note to the moved note goes stale; the user sees it in the
+/// editor), the diffs are concatenated for the dialog, and the texts travel apart.
+fn rewrite_parts(vault: &Vault, plan: Vec<vemry_core::Relink>) -> (String, Vec<RewriteSummary>, Vec<RewriteText>) {
+    let mut diff = String::new();
+    let mut summaries = Vec::new();
+    let mut texts = Vec::new();
+    for r in plan {
+        if vault.note_id(&r.path).map(|id| vault.is_private(&id)).unwrap_or(true) {
+            continue;
+        }
+        diff.push_str(&unified_diff(&r.old, &r.new, &r.path));
+        summaries.push(RewriteSummary { path: r.path.clone(), links: r.links });
+        texts.push(RewriteText { path: r.path, old: r.old, new: r.new });
+    }
+    (diff, summaries, texts)
+}
+
+/// Land a move's link rewrites after the rename: a note that changed meanwhile is
+/// skipped (its links go stale rather than a stranger's edit being overwritten).
+/// Returns (notes rewritten, notes skipped).
+fn apply_rewrites(vault: &mut Vault, texts: &[RewriteText]) -> (usize, usize) {
+    let (mut done, mut skipped) = (0, 0);
+    for r in texts {
+        let Ok(id) = vault.note_id(&r.path) else {
+            skipped += 1;
+            continue;
+        };
+        match vault.read_note(&id) {
+            Ok(cur) if cur == r.old => {
+                if vault.write_note(&id, &r.new).is_ok() {
+                    done += 1;
+                } else {
+                    skipped += 1;
+                }
+            }
+            _ => skipped += 1,
+        }
+    }
+    (done, skipped)
+}
+
 /// move_note's execution side: both the index and privacy can change while the
 /// permission gate is awaited, so both sides are re-checked (the same spirit as
 /// execute_write's TOCTOU re-check); the rename itself goes through
 /// `rename_path`.
 fn execute_move(vault: &mut Vault, req: &WriteRequest) -> Result<String, String> {
     let to_path = req.to_path.as_deref().ok_or("missing move target")?;
-    let from = vault.note_id(&req.path).map_err(|e| e.to_string())?;
-    let from = vault.index().canonical_id(&from).unwrap_or(from);
-    if vault.is_private(&from) {
-        return Err(format!("note not found: {}", req.path));
+    let landed = if req.tool == "move_file" {
+        if vault.is_private_rel(&req.path, false) {
+            return Err(vemry_core::reject(vemry_core::PathReject::NotFound, &req.path).to_string());
+        }
+        if vault.is_private_rel(to_path, false) {
+            return Err(format!("invalid path: {to_path}"));
+        }
+        vault.rename_path(&req.path, to_path).map_err(|e| e.to_string())?
+    } else {
+        let from = vault.note_id(&req.path).map_err(|e| e.to_string())?;
+        let from = vault.index().canonical_id(&from).unwrap_or(from);
+        if vault.is_private(&from) {
+            return Err(format!("note not found: {}", req.path));
+        }
+        let to = vault.note_id(to_path).map_err(|e| e.to_string())?;
+        if vault.is_private(&to) {
+            return Err(format!("invalid path: {to_path}"));
+        }
+        if vault.index().canonical_id(&to).is_some() {
+            return Err(format!("already exists: {to}"));
+        }
+        vault.rename_path(from.as_str(), to.as_str()).map_err(|e| e.to_string())?
+    };
+    // Rename first, rewrite second: a failed rewrite leaves a stale link, never half a move
+    let (done, skipped) = apply_rewrites(vault, &req.rewrite_texts);
+    let links: usize = req.rewrites.iter().map(|r| r.links).sum();
+    let mut msg = format!("moved {} -> {landed}", req.path);
+    if !req.rewrite_texts.is_empty() {
+        msg.push_str(&format!(" (rewrote {links} links in {done} notes"));
+        if skipped > 0 {
+            msg.push_str(&format!("; {skipped} notes changed meanwhile and were left as they were"));
+        }
+        msg.push(')');
     }
-    let to = vault.note_id(to_path).map_err(|e| e.to_string())?;
-    if vault.is_private(&to) {
-        return Err(format!("invalid path: {to_path}"));
-    }
-    if vault.index().canonical_id(&to).is_some() {
-        return Err(format!("already exists: {to}"));
-    }
-    let landed = vault.rename_path(from.as_str(), to.as_str()).map_err(|e| e.to_string())?;
-    Ok(format!("moved {from} -> {landed}"))
+    Ok(msg)
 }
 
 /// New agent-created notes get provenance frontmatter (origin and the
@@ -1502,6 +1767,50 @@ mod tests {
         assert!(!out.text.contains("TOPSECRET") && out.filtered >= 1, "private notes are counted, never listed: {}", out.text);
         assert!(read(&vault, "recent_changes", json!({"since": "yesterday"})).is_err());
         assert!(matches!(read(&vault, "recent_changes", json!({"since": today, "note": "secret/Plan.md"})).unwrap_err(), ToolError::Privacy(_)));
+    }
+
+    /// move_note carries the link rewrites the move needs (private referrers left out),
+    /// and executing lands the rename first and the rewrites second; move_file does the
+    /// same for an attachment's embeds; list_files and audit_links read the vault's shape.
+    #[test]
+    fn move_rewrites_links_and_files_have_their_tools() {
+        let (_d, vault) = fixture();
+        std::fs::write(vault.root().join("Ref.md"), "see [[Hello]] and [[Hello#^x]]\n").unwrap();
+        std::fs::write(vault.root().join("secret/Also.md"), "TOPSECRET [[Hello]]\n").unwrap();
+        std::fs::create_dir_all(vault.root().join("attachments/Hello")).unwrap();
+        std::fs::write(vault.root().join("attachments/Hello/shot.png"), b"png").unwrap();
+        std::fs::write(vault.root().join("Pic.md"), "![[shot.png]] and ![](attachments/Hello/shot.png)\n").unwrap();
+        let mut vault = Vault::open(vault.root()).unwrap();
+        let req = prepare_write(&vault, "m1".into(), "move_note", &json!({"from": "Hello.md", "to": "archive/Hi.md"}), None).unwrap();
+        assert_eq!(req.kind, WriteKind::Move);
+        assert_eq!(req.rewrites.len(), 1, "the private referrer is left out: {:?}", req.rewrites);
+        assert_eq!(req.rewrites[0].path, "Ref.md");
+        assert_eq!(req.rewrites[0].links, 2);
+        assert!(req.diff.contains("+see [[Hi]] and [[Hi#^x]]"), "{}", req.diff);
+        let msg = execute_write(&mut vault, &req, None, None, true).unwrap();
+        assert!(msg.contains("moved Hello.md -> archive/Hi.md (rewrote 2 links in 1 notes)"), "{msg}");
+        assert_eq!(std::fs::read_to_string(vault.root().join("Ref.md")).unwrap(), "see [[Hi]] and [[Hi#^x]]\n");
+        assert!(std::fs::read_to_string(vault.root().join("secret/Also.md")).unwrap().contains("[[Hello]]"), "a private note is never rewritten");
+        // rewrite_links=false: a plain move
+        let req = prepare_write(&vault, "m2".into(), "move_note", &json!({"from": "archive/Hi.md", "to": "Hi2.md", "rewrite_links": false}), None).unwrap();
+        assert!(req.rewrites.is_empty() && req.diff.is_empty());
+        // move_file rewrites the embeds
+        let req = prepare_write(&vault, "f1".into(), "move_file", &json!({"from": "attachments/Hello/shot.png", "to": "assets/shot-1.png"}), None).unwrap();
+        assert_eq!(req.kind, WriteKind::Move);
+        assert_eq!(req.rewrites[0].links, 2, "{:?}", req.rewrites);
+        let msg = execute_write(&mut vault, &req, None, None, true).unwrap();
+        assert!(msg.starts_with("moved attachments/Hello/shot.png -> assets/shot-1.png"), "{msg}");
+        assert!(vault.root().join("assets/shot-1.png").exists());
+        assert_eq!(std::fs::read_to_string(vault.root().join("Pic.md")).unwrap(), "![[shot-1.png]] and ![](assets/shot-1.png)\n");
+        assert!(prepare_write(&vault, "f2".into(), "move_file", &json!({"from": "Pic.md", "to": "x.md"}), None).is_err());
+        assert!(matches!(prepare_write(&vault, "f3".into(), "move_file", &json!({"from": "secret/x.png", "to": "y.png"}), None).unwrap_err(), ToolError::Privacy(_)));
+        // list_files and audit_links
+        let out = read(&vault, "list_files", json!({"kind": "image"})).unwrap();
+        assert!(out.text.contains("assets/shot-1.png\timage\t3 B"), "{}", out.text);
+        assert!(!out.text.contains(".md"));
+        let out = read(&vault, "audit_links", json!({})).unwrap();
+        assert!(out.text.contains("## Unresolved links") && out.text.contains("## Orphan notes"), "{}", out.text);
+        assert!(!out.text.contains("secret/") && !out.text.contains("Diary"), "private notes stay out of the report: {}", out.text);
     }
 
     /// update_plan's argument grammar: statuses, the item cap, and the wording the model corrects itself by.

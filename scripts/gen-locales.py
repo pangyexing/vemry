@@ -500,6 +500,7 @@ add("permission.", {
     "summary.edit": ("Edit {path}", "编辑 {path}"),
     "summary.move": ("Move {path} → {toPath}", "移动 {path} → {toPath}"),
     "summary.append": ("Append to {path}", "追加到 {path}"),
+    "rewrites": ("Rewrites {links} links in {notes} notes", "改写 {notes} 篇里的 {links} 个链接"),
     "deniedByUser": ("Denied by the user", "用户拒绝"),
     "denyReasonPlaceholder": ("Tell the agent why (optional)", "告诉 agent 为什么拒绝（可选）"),
     "confirmDeny": ("Confirm deny", "确认拒绝"),
@@ -737,6 +738,7 @@ add("sessionsView.", {
     "actions": ("Action items proposed · {n}", "提出行动项 · {n}"),
     "actionsDecision.approve": ("Action items kept · {n}", "行动项已确认 · {n}"),
     "actionsDecision.reject": ("Action items discarded", "行动项已放弃"),
+    "undo": ("↶ Undid this turn's writes · {n} reverted, {skipped} skipped", "↶ 撤销本轮写入 · 还原 {n},跳过 {skipped}"),
     "compactSummary": ("older conversation summarized", "旧对话摘要化"),
     "compactHandles": ("older tool results turned into handles", "旧工具结果句柄化"),
     "markFork": ("⑂ Forked from session {from} (before turn {turn})", "⑂ 分叉自会话 {from}(第 {turn} 轮之前)"),
@@ -764,6 +766,9 @@ add("tool.", {
     "update_task": ("Update task", "更新任务"),
     "set_block_field": ("Set field", "设置字段"),
     "propose_actions": ("Propose actions", "提出行动项"),
+    "move_file": ("Move file", "移动文件"),
+    "list_files": ("List files", "列出文件"),
+    "audit_links": ("Audit links", "检查链接"),
     "mixed": ("Tool calls", "工具调用"),
 })
 
@@ -1102,6 +1107,11 @@ add("chat.", {
     "actionsSource": ("from: {source}", "来自:{source}"),
     "actionsDuplicate": ("looks like an existing task → {path}", "疑似已有 → {path}"),
     "actionsRejectPlaceholder": ("Tell the agent why (optional)", "告诉 agent 为什么放弃(可选)"),
+    "undoTurn": ("↶ Undo this turn's writes", "↶ 撤销本轮写入"),
+    "undoTurnHint": ("Put back every write of this turn that has not been edited since (moves moved back, links restored)",
+                     "把这一轮落盘的写入逐项还原(未被再编辑的才还原;移动移回、链接改回)"),
+    "undone": ("Undone {n} writes{skipped}", "已撤销 {n} 项{skipped}"),
+    "undoneSkipped": (", {n} skipped (edited since)", ",{n} 项已被编辑过跳过"),
     "viewTag": ("view", "视图"),
     "viewTitle": ("What the {view} shows right now goes in as context ({n} rows)", "{view} 此刻显示的内容作为上下文({n} 行)"),
     "planStatusSkipped": ("skipped", "已跳过"),
@@ -1762,7 +1772,11 @@ add("memoryFile.", {
         "## Conventions\n"
         "- Tags: #idea #reading #todo\n"
         "- Linking: create a [[link]] the first time a concept appears\n"
-        "- AI preferences: say what you intend before editing a note; put surveys in `reviews/`\n",
+        "- AI preferences: say what you intend before editing a note; put surveys in `reviews/`\n\n"
+        "## Organising files\n"
+        "- Where things go: clips in `clips/`, attachments in `attachments/<note path>/`, one hub note per project folder\n"
+        "- Naming: notes by topic, dates as YYYY-MM-DD, no version numbers in file names\n"
+        "- Every note carries `project:` when it belongs to one; tidy-ups fill it in\n",
         "用你自己的话描述组织结构与偏好，例如：\n\n"
         "## 结构\n"
         "- `inbox.md`：速记收集箱，未整理的想法先进这里\n"
@@ -1771,7 +1785,11 @@ add("memoryFile.", {
         "## 约定\n"
         "- 标签体系：#idea #reading #todo\n"
         "- 建链原则：概念第一次出现时建 [[链接]]\n"
-        "- AI 行为偏好：修改笔记前先说明意图；综述放在 `reviews/` 目录\n"),
+        "- AI 行为偏好：修改笔记前先说明意图；综述放在 `reviews/` 目录\n\n"
+        "## 资料组织约定\n"
+        "- 落点：剪藏进 `clips/`，附件进 `attachments/<笔记路径>/`，每个项目文件夹一篇枢纽笔记\n"
+        "- 命名：笔记按主题命名，日期写 YYYY-MM-DD，文件名不带版本号\n"
+        "- 属于某个项目的笔记带 `project:`，整理时补齐\n"),
 })
 
 # ---------------------------------------------------------------- errors surfaced from Rust

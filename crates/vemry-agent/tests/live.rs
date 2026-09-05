@@ -46,6 +46,7 @@ async fn live_agent_creates_note_via_tools() {
         actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
         vault: Arc::clone(&vault),
         sources: Arc::new(Mutex::new(vec![])),
+        journal: Arc::new(Mutex::new(vec![])),
     };
     let mut history = vec![];
     tokio::time::timeout(
@@ -116,6 +117,7 @@ async fn live_responses_web_search() {
         actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
         vault: Arc::clone(&vault),
         sources: Arc::new(Mutex::new(vec![])),
+        journal: Arc::new(Mutex::new(vec![])),
     };
     let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(vec![]));
     let ev = events.clone();

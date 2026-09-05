@@ -42,6 +42,8 @@ export type SessionEntry =
   | { kind: "actions"; ts: string; id: string; items: ActionItem[] }
   /** The actions gate's decision: approve (items = what the user kept, as edited) / reject (reason). */
   | { kind: "actions_decision"; ts: string; id: string; decision: "approve" | "reject"; items?: ActionItem[]; reason?: string }
+  /** "Undo this turn's writes" ran: how many writes were put back and how many skipped (edited since). */
+  | { kind: "undo"; ts: string; turn: string; reverted: number; skipped: number }
   /** The session follows a note (path null = stopped); the last line wins. auto: local writes on it pass the gate without a dialog. */
   | { kind: "follow"; ts: string; path: string | null; auto?: boolean }
   /** The model's step list (update_plan, or the list confirmed at the plan gate); the latest one is the sticky plan card. */

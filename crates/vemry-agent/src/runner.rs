@@ -29,6 +29,7 @@ use crate::prompt::{build_system_prompt, compose_user_content, PageContext, Turn
 use crate::provider::ProviderConfig;
 use crate::session::SessionLog;
 use crate::sources::{self, Source};
+use crate::undo::{self, WriteRecord};
 use crate::tools::{
     execute_read_tool, execute_write, format_action_items, is_local_write, is_session_tool, is_write_tool,
     parse_action_items, parse_plan_items, prepare_write, propose_actions_def, propose_plan_def, tool_defs, PlanItem,
@@ -104,6 +105,9 @@ pub enum AgentEvent {
     /// truncated: the model's output was cut off by the length limit
     /// (finish_reason=length), and the UI can offer "continue".
     TurnFinished { truncated: bool },
+    /// A write landed on disk in this turn (after the vault events): the UI counts
+    /// them per turn to offer "undo this turn's writes".
+    WriteLanded { turn: Option<String>, tool: String, path: String },
     /// A write tool landed on disk. The vault's own watcher swallows the change as
     /// a self-write (the same suppression that keeps a user's save from echoing), so
     /// the glue layer broadcasts these as vault events — the open note reloads, the
@@ -192,6 +196,9 @@ pub struct AgentRunner {
     /// the session and hands the runner a clone of the handle; the runner settles
     /// each turn's citations into it and `list_sources` reads it.
     pub sources: Arc<Mutex<Vec<Source>>>,
+    /// The write journal (undo.rs): what every landed write replaced, so a turn's
+    /// writes can be put back; owned by the glue layer with the session.
+    pub journal: Arc<Mutex<Vec<WriteRecord>>>,
 }
 
 /// The two-field effort mapping on the Chat Completions line: the official Chat
@@ -665,7 +672,7 @@ impl AgentRunner {
                 }
                 let follow = follow_note.as_deref().filter(|_| config.follow_auto);
                 let result = self
-                    .execute_tool(call, &mut session_allow_writes, &config.session_allow, follow, &mut plan_rejected, on_event, log)
+                    .execute_tool(call, &mut session_allow_writes, &config.session_allow, follow, turn_id.as_deref(), &mut plan_rejected, on_event, log)
                     .await;
                 let (ok, output) = match result {
                     Ok(o) => (true, o),
@@ -794,6 +801,7 @@ impl AgentRunner {
         session_allow_writes: &mut bool,
         session_flag: &Option<Arc<AtomicBool>>,
         follow: Option<&str>,
+        turn: Option<&str>,
         plan_rejected: &mut bool,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
@@ -915,7 +923,11 @@ impl AgentRunner {
         let vault = guard.as_mut().ok_or("no vault open")?;
         // What the write will mean to the index, judged before it lands (created or
         // modified; a move removes one path and adds another)
-        let events: Vec<vemry_core::VaultEvent> = match (&write_req.to_path, vault.note_id(&write_req.path)) {
+        // A file move is not a note event (the glue layer's IndexReady at the end of the turn refreshes the tree)
+        let events: Vec<vemry_core::VaultEvent> = if write_req.tool == "move_file" {
+            vec![]
+        } else {
+            match (&write_req.to_path, vault.note_id(&write_req.path)) {
             (Some(to), Ok(from)) => match vault.note_id(to) {
                 Ok(to_id) => vec![
                     vemry_core::VaultEvent::NoteRemoved { id: from },
@@ -929,12 +941,32 @@ impl AgentRunner {
                 vemry_core::VaultEvent::NoteAdded { id }
             }],
             (_, Err(_)) => vec![],
+            }
         };
+        // What the write replaces, for the journal (a move records its path pair and rewrites)
+        let previous = if write_req.to_path.is_some() { None } else { undo::previous_text(vault, &write_req.path) };
         let text = execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id), !automatic)?;
+        undo::record(
+            &mut self.journal.lock().unwrap(),
+            WriteRecord {
+                turn: turn.map(String::from),
+                tool: name.to_string(),
+                path: write_req.path.clone(),
+                old: previous,
+                new: if write_req.to_path.is_some() {
+                    None
+                } else {
+                    Some(content_override.clone().unwrap_or_else(|| write_req.new_content.clone()))
+                },
+                to: write_req.to_path.clone(),
+                rewrites: write_req.rewrite_texts.clone(),
+            },
+        );
         drop(guard);
         if !events.is_empty() {
             on_event(AgentEvent::VaultChanged { events });
         }
+        on_event(AgentEvent::WriteLanded { turn: turn.map(String::from), tool: name.to_string(), path: write_req.path.clone() });
         Ok(text)
     }
 
@@ -1287,6 +1319,7 @@ mod tests {
             actions_gate: Arc::new(crate::permission::AutoApproveActions),
             vault: f.vault.clone(),
             sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
         }
     }
 
@@ -1866,6 +1899,7 @@ mod tests {
             actions_gate: Arc::new(crate::permission::AutoApproveActions),
             vault: f.vault.clone(),
             sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
         };
         let mut history = vec![];
         let (_log, events) = run_plan_turn(&r, &f, &mut history).await;
@@ -1903,6 +1937,7 @@ mod tests {
             actions_gate: Arc::new(crate::permission::AutoApproveActions),
             vault: f.vault.clone(),
             sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
         };
         let mut history = vec![];
         let (log, _events) = run_plan_turn(&r, &f, &mut history).await;
@@ -2186,6 +2221,7 @@ mod tests {
             actions_gate: Arc::new(RejectActions),
             vault: f.vault.clone(),
             sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
         };
         let mut history = vec![];
         run_plan_turn(&r, &f, &mut history).await;

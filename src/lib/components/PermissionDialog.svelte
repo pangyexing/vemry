@@ -27,7 +27,11 @@
     // A move has no content diff: two lines of paths, borrowing the diff's add and delete
     // colours — the rendering still goes through the single {#each} below, so how a line is
     // drawn is decided in one place
-    if (req.to_path) return [{ cls: "del", text: `- ${req.path}` }, { cls: "add", text: `+ ${req.to_path}` }];
+    if (req.to_path) {
+      const paths = [{ cls: "del", text: `- ${req.path}` }, { cls: "add", text: `+ ${req.to_path}` }];
+      // The links the move rewrites follow as an ordinary diff (one hunk per note)
+      return req.diff ? [...paths, { cls: "ctx", text: "" }, ...classifyDiff(req.diff)] : paths;
+    }
     if (!req.diff) return [{ cls: "ctx", text: t("permission.newFile") }, ...req.new_content.split("\n").map((l) => ({ cls: "add", text: `+ ${l}` }))];
     return classifyDiff(req.diff);
   });
@@ -75,6 +79,9 @@
       <header>
         <span class="summary">{t(`permission.summary.${req.kind}`, { path: req.path, toPath: req.to_path ?? "" })}</span>
         <span class="path">{req.path}</span>
+        {#if req.rewrites?.length}
+          <span class="path">{t("permission.rewrites", { notes: req.rewrites.length, links: req.rewrites.reduce((n, r) => n + r.links, 0) })}</span>
+        {/if}
       </header>
 
       {#if editing}

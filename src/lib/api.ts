@@ -303,6 +303,15 @@ export interface WriteRequest {
    *  so it sends the kind and never the wording. */
   kind: "create" | "overwrite" | "edit" | "move" | "append";
   new_content: string;
+  /** A move's link rewrites, one per note that changes (the diffs are in `diff`); absent for every other write. */
+  rewrites?: { path: string; links: number }[];
+}
+
+/** What "undo this turn's writes" did (mirroring vemry_agent::undo::UndoReport). */
+export interface UndoReport {
+  reverted: number;
+  skipped: number;
+  skipped_paths: string[];
 }
 
 export interface WebSearchResult {
@@ -347,6 +356,8 @@ export type AgentEvent =
   | { type: "plan_updated"; items: PlanItem[] }
   /** propose_actions is suspended awaiting the user's review of the list (the actions gate). */
   | { type: "actions_request"; request: ActionsRequest }
+  /** A write landed in this turn: the UI counts them per turn to offer "undo this turn's writes". */
+  | { type: "write_landed"; turn: string | null; tool: string; path: string }
   /** The web sources this turn cited, settled by Rust at the end of the turn with their verification (authoritative for the turn's source card). */
   | { type: "sources_updated"; turn: string | null; items: SourceRecord[] }
   | { type: "web_searching" }
@@ -891,6 +902,8 @@ export const api = {
     invoke<void>("agent_plan_respond", { requestId, decision }),
   agentActionsRespond: (requestId: string, decision: ActionsDecision) =>
     invoke<void>("agent_actions_respond", { requestId, decision }),
+  /** Put back every write one turn landed (skipping notes edited since); refused while the agent runs. */
+  agentUndoTurn: (turn: string) => invoke<UndoReport>("agent_undo_turn", { turn }),
   /** The example-skills catalogue and its installer (a file already there is never overwritten). */
   skillExamplesList: () => invoke<SkillExample[]>("skill_examples_list"),
   skillInstallExample: (name: string) => invoke<Scaffolded>("skill_install_example", { name }),

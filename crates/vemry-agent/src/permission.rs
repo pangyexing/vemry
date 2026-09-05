@@ -40,6 +40,29 @@ pub struct WriteRequest {
     pub kind: WriteKind,
     /// Full file content that would be written if allowed (empty for moves).
     pub new_content: String,
+    /// A move's link rewrites, one summary per note that changes (the diffs are in
+    /// `diff`); empty for every other write. The texts to land travel separately
+    /// (`rewrite_texts`) and never over the event channel.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rewrites: Vec<RewriteSummary>,
+    #[serde(skip)]
+    pub rewrite_texts: Vec<RewriteText>,
+}
+
+/// One note a move rewrites links in, as the dialog shows it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RewriteSummary {
+    pub path: String,
+    pub links: usize,
+}
+
+/// The text of one rewrite: what the note holds now (re-checked at execute time)
+/// and what it becomes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RewriteText {
+    pub path: String,
+    pub old: String,
+    pub new: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,0 +1,34 @@
+{
+  "name": "tidy-move",
+  "vault": {
+    "inbox/压测记录 0903.md": "# 压测记录\n\np95 12ms ^r1\n",
+    "projects/网关/PRD.md": "# PRD\n\n依据 [[压测记录 0903#^r1]] 与 [[inbox/压测记录 0903]]\n",
+    "clips/Envoy limits.md": "---\nsource: https://example.com/envoy\n---\n# Envoy\n",
+    "clips/Envoy limits (1).md": "---\nsource: https://example.com/envoy\n---\n# Envoy again\n"
+  },
+  "allow_writes": true,
+  "turns": [
+    {
+      "user": "整理 inbox，把资料归到项目里",
+      "script": [
+        [ { "tool": { "id": "c1", "name": "audit_links", "args": {} } }, { "tool": { "id": "c2", "name": "list_notes", "args": { "folder": "inbox" } } } ],
+        [ { "tool": { "id": "a1", "name": "propose_actions", "args": { "items": [
+            { "text": "move inbox/压测记录 0903.md → projects/网关/会议/压测记录 0903.md", "target": "projects/网关/会议/压测记录 0903.md", "source": "convention: meeting notes live with their project" } ] } } } ],
+        [ { "tool": { "id": "m1", "name": "move_note", "args": { "from": "inbox/压测记录 0903.md", "to": "projects/网关/会议/压测记录 0903.md" } } } ],
+        [ { "tool": { "id": "c3", "name": "audit_links", "args": {} } } ],
+        [ { "text": "已移动 1 篇，2 个链接随之改写；重复剪藏 Envoy 两篇留给你决定。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "tools_ok": true,
+    "tool_output_contains": [
+      { "id": "c1", "text": "## Duplicate clips (same source) (1)" },
+      { "id": "m1", "text": "rewrote 2 links in 1 notes" },
+      { "id": "c3", "text": "## Unresolved links (0)" }
+    ],
+    "exists": ["projects/网关/会议/压测记录 0903.md"],
+    "gone": ["inbox/压测记录 0903.md"],
+    "note_contains": [ { "path": "projects/网关/PRD.md", "text": "依据 [[压测记录 0903#^r1]] 与 [[projects/网关/会议/压测记录 0903]]" } ]
+  }
+}

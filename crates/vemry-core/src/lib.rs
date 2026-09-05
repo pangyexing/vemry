@@ -6,6 +6,7 @@
 //! AI agent tools — consumes the same `query`/`search`/`links` APIs.
 
 pub mod attach_migrate;
+pub mod audit;
 pub mod block;
 pub mod blockid;
 pub mod blocktimes;
@@ -18,6 +19,7 @@ pub mod parser;
 pub mod privacy;
 pub mod provenance;
 pub mod query;
+pub mod relink;
 pub mod search;
 pub mod taskedit;
 pub mod types;
@@ -26,6 +28,7 @@ pub mod watcher;
 pub mod weburl;
 
 pub use attach_migrate::MigrationReport;
+pub use audit::AuditReport;
 pub use block::{Block, BlockKind, Field, TaskState, WikiLink};
 pub use blockid::{plan_block_id, BlockIdInsert, BlockIdPlan, BlockSelector, PlanTarget};
 pub use event::VaultEvent;
@@ -39,6 +42,7 @@ pub use provenance::{
     added_blocks, plan_revert, stamps_of, BlockProvenance, BlockStamp, Hunk, InsertOrigin, Origin, ProvenanceEntry,
     ProvenanceLedger, Replacement, RevertPlan,
 };
+pub use relink::Relink;
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use parser::{is_writable_frontmatter_key, set_frontmatter_disabled, set_frontmatter_key, FrontmatterValue};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};

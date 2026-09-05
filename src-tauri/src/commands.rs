@@ -1169,6 +1169,7 @@ async fn run_agent_turn(
             state.agent.reset_session_scope();
             state.agent.sources.lock().unwrap().clear();
             *state.agent.follow.lock().unwrap() = None;
+            state.agent.journal.lock().unwrap().clear();
             *owner = Some(root);
         }
     }
@@ -1251,6 +1252,7 @@ async fn run_agent_turn(
         }),
         vault: Arc::clone(&state.vault),
         sources: Arc::clone(&state.agent.sources),
+        journal: Arc::clone(&state.agent.journal),
     };
     // The thinking level: an in-session override (passed by the frontend, and by a
     // retry too — a regenerate keeps the override) wins, otherwise the setting's
@@ -1402,6 +1404,34 @@ pub fn agent_plan_respond(
     crate::agent_bridge::resolve_plan(&state.agent.pending.plans, &request_id, decision)
 }
 
+/// Undo every write one turn landed (see vemry_agent::undo): notes get their previous
+/// text back when they still hold what the write left, created notes go to the
+/// trash, moves move back, rewrites are restored; anything edited since is skipped.
+/// Refused while the agent runs (the journal is being appended to). An `undo` marker
+/// goes into the jsonl (counts only, never the texts).
+#[tauri::command]
+pub fn agent_undo_turn(app: AppHandle, state: State<'_, AppState>, turn: String) -> Result<vemry_agent::UndoReport, String> {
+    if state.agent.running.load(Ordering::SeqCst) {
+        return Err(crate::i18n::t(crate::i18n::current(), "ipc.agentRunning"));
+    }
+    let report = {
+        let mut guard = state.vault.lock().unwrap();
+        let vault = guard.as_mut().ok_or("no vault open")?;
+        let mut journal = state.agent.journal.lock().unwrap();
+        vemry_agent::undo::undo_turn(vault, &mut journal, &turn)
+    };
+    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
+    if let Some(id) = state.agent.current_session.lock().unwrap().as_deref() {
+        if let Ok(log) = SessionLog::open(&meta_dir, id) {
+            log.append("undo", json!({ "turn": &turn, "reverted": report.reverted, "skipped": report.skipped }));
+        }
+    }
+    broadcast(&app, &VaultEvent::IndexReady {
+        note_count: state.vault.lock().unwrap().as_ref().map(|v| v.index().note_count()).unwrap_or(0),
+    });
+    Ok(report)
+}
+
 /// Handing an action-list decision back (propose_actions): resolve the matching oneshot, and the loop continues within the same turn.
 #[tauri::command]
 pub fn agent_actions_respond(
@@ -1467,6 +1497,7 @@ pub fn agent_session_new(state: State<'_, AppState>) -> Result<(), String> {
     state.agent.reset_session_scope();
     state.agent.sources.lock().unwrap().clear();
             *state.agent.follow.lock().unwrap() = None;
+            state.agent.journal.lock().unwrap().clear();
     Ok(())
 }
 
@@ -1519,6 +1550,7 @@ pub fn agent_session_delete(state: State<'_, AppState>, id: String) -> Result<()
         state.agent.reset_session_scope();
         state.agent.sources.lock().unwrap().clear();
             *state.agent.follow.lock().unwrap() = None;
+            state.agent.journal.lock().unwrap().clear();
     }
     with_vault(&state, |v| delete_session(&v.meta_dir(), &id))
 }

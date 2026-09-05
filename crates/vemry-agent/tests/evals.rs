@@ -16,7 +16,8 @@
 //!               "answer_contains": ["…"], "note_contains": [{"path": "…", "text": "…"}] } }
 //! ```
 //! Writes go through an auto-denying gate, so a fixture that expects a write to land
-//! must set `follow` (the followed note takes its local writes without a dialog).
+//! must set `follow` (the followed note takes its local writes without a dialog) or
+//! `allow_writes` (every write allowed, for moves and other non-local writes).
 //! ```
 //! ```
 //! A chunk is one of `{"text": "…"}`, `{"finish": "stop"}`,
@@ -140,6 +141,7 @@ async fn run_fixture(fx: &Value) -> Outcome {
         actions_gate: Arc::new(AutoApproveActions),
         vault: vault.clone(),
         sources: Arc::new(Mutex::new(vec![])),
+        journal: Arc::new(Mutex::new(vec![])),
     };
     let log_dir = tempfile::tempdir().unwrap();
     let log = SessionLog::create(log_dir.path()).unwrap();
@@ -149,6 +151,7 @@ async fn run_fixture(fx: &Value) -> Outcome {
     let config = RunnerConfig {
         plan_confirm: fx["plan_confirm"].as_bool().unwrap_or(false),
         follow_note: fx["follow"].as_str().map(String::from),
+        write_policy: if fx["allow_writes"].as_bool().unwrap_or(false) { vemry_agent::WritePolicy::Allow } else { vemry_agent::WritePolicy::Ask },
         ..Default::default()
     };
     let provider = ProviderConfig::zhipu("eval-key".into());
@@ -193,6 +196,16 @@ async fn run_fixture(fx: &Value) -> Outcome {
             let text = c["text"].as_str().unwrap();
             let on_disk = std::fs::read_to_string(vault_dir.path().join(path)).unwrap_or_default();
             assert!(on_disk.contains(text), "[{}] note {path} lacks {text:?}:\n{on_disk}", fx["name"]);
+        }
+    }
+    if let Some(paths) = fx["expect"]["exists"].as_array() {
+        for p in paths.iter().filter_map(|p| p.as_str()) {
+            assert!(vault_dir.path().join(p).exists(), "[{}] {p} should exist", fx["name"]);
+        }
+    }
+    if let Some(paths) = fx["expect"]["gone"].as_array() {
+        for p in paths.iter().filter_map(|p| p.as_str()) {
+            assert!(!vault_dir.path().join(p).exists(), "[{}] {p} should be gone", fx["name"]);
         }
     }
     drop(vault_guard);

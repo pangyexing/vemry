@@ -20,6 +20,7 @@ pub mod sources;
 #[doc(hidden)]
 pub mod testing;
 pub mod tools;
+pub mod undo;
 pub mod types;
 
 pub use client::{ChatTransport, HttpTransport};
@@ -34,6 +35,7 @@ pub use provider::ProviderConfig;
 pub use runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};
 pub use session::Follow;
 pub use sources::Source;
+pub use undo::{UndoReport, WriteRecord};
 pub use tools::{is_local_write, PlanItem, PlanStatus};
 
 #[derive(thiserror::Error, Debug)]

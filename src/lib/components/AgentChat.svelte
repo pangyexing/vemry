@@ -729,6 +729,30 @@
     return -1;
   });
 
+  /** The turn id of the user message a bubble answers (undo is offered per turn). */
+  function turnIdFor(i: number): string | undefined {
+    for (let j = i; j >= 0; j--) {
+      const it = agent.timeline[j];
+      if (it.kind === "user") return it.turn;
+    }
+    return undefined;
+  }
+  /** Whether this bubble's turn landed writes that can still be undone. */
+  function undoableTurn(i: number): string | null {
+    const turn = turnIdFor(i);
+    if (!turn || agent.undoneTurns[turn] || !(agent.writesByTurn[turn] > 0)) return null;
+    return turn;
+  }
+  async function undoTurn(turn: string) {
+    try {
+      const r = await agent.undoTurn(turn);
+      toast.push(t("chat.undone", { n: r.reverted, skipped: r.skipped ? t("chat.undoneSkipped", { n: r.skipped }) : "" }));
+      await vault.refreshNotes();
+    } catch (e) {
+      toast.push(String(e), "error");
+    }
+  }
+
   const run = (p: Promise<unknown>) => void p.catch((e) => toast.push(String(e), "error"));
 
   const urlLike = $derived(isUrlLike(agent.draft.trim()));
@@ -1506,6 +1530,7 @@
                  its text and press a button here instead (the selection semantics are unchanged).
                  It is not shown while streaming. -->
             {#if isTurnFinal(i) && !(agent.running && i === lastAssistantIndex)}
+              {@const undoable = undoableTurn(i)}
               <div class="msg-foot" class:current={i === lastAssistantIndex}>
                 <button title={t("chat.copyAnswerHint")} onclick={() => void copyAnswer(body)}>{t("chat.copy")}</button>
                 <button title={t("chat.insertAnswerHint")} onclick={() => void insertAnswer(body)}>{t("chat.insert")}</button>
@@ -1516,6 +1541,9 @@
                 <button title={t("chat.saveAsNoteHint")} onclick={() => void saveAsNote(body, i)}>{t("chat.saveAsNote")}</button>
                 {#if i === lastAssistantIndex && !agent.running}
                   <button title={t("chat.regenerateHint")} onclick={doRetry}>{t("chat.regenerate")}</button>
+                {/if}
+                {#if undoable && !agent.running}
+                  <button class="undo" title={t("chat.undoTurnHint")} onclick={() => void undoTurn(undoable)}>{t("chat.undoTurn")}</button>
                 {/if}
               </div>
             {/if}

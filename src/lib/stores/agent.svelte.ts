@@ -160,6 +160,12 @@ class AgentStore {
   /** The session's source table (every web citation with its verdict), the union of
    *  what Rust settled turn by turn — the sources workbench lists it. */
   sourceTable = $state<SourceRecord[]>([]);
+  /** How many writes each turn landed in this live session (turn id → count), and the
+   *  turns already undone: the action bar offers "undo this turn's writes" from them.
+   *  Live only — the journal behind it is in memory on the Rust side and gone after a
+   *  restart or a session switch. */
+  writesByTurn = $state<Record<string, number>>({});
+  undoneTurns = $state<Record<string, boolean>>({});
   thinking = $state("");
   /** The most recent usage event (the gauge of turns, context size and cache hit rate). */
   usage = $state<TurnUsage | null>(null);
@@ -390,6 +396,14 @@ class AgentStore {
     this.activity++;
   }
 
+  /** Undo every write one turn landed; returns the report for the caller's toast. */
+  async undoTurn(turn: string) {
+    const report = await api.agentUndoTurn(turn);
+    this.undoneTurns[turn] = true;
+    this.activity++;
+    return report;
+  }
+
   /** A turn is being abandoned (a regenerate, an edit-and-resend): its sources leave the table, as Rust drops them. */
   private dropTurnSources(turn: string | undefined) {
     if (!turn) return;
@@ -546,6 +560,8 @@ class AgentStore {
     this.plan = null;
     this.follow = null;
     this.sourceTable = [];
+    this.writesByTurn = {};
+    this.undoneTurns = {};
     this.thinking = "";
     this.pendingPermission = null;
     this.pendingPlan = null;
@@ -589,6 +605,8 @@ class AgentStore {
     this.plan = null;
     this.follow = null;
     this.sourceTable = [];
+    this.writesByTurn = {};
+    this.undoneTurns = {};
     this.thinking = "";
     this.sessionId = null;
     this.resetSessionScoped();
@@ -642,6 +660,8 @@ class AgentStore {
     let plan: PlanItem[] | null = null;
     let follow: { path: string; auto: boolean } | null = null;
     this.sourceTable = [];
+    this.writesByTurn = {}; // the journal is live-only: a rebuilt timeline offers no undo
+    this.undoneTurns = {};
     let turnStart = 0;
     const finishTurn = () => {
       this.harvestTurn(items, turnStart);
@@ -773,6 +793,10 @@ class AgentStore {
         }
         case "compact": {
           items.push({ kind: "notice", text: compactNotice(e.level) });
+          break;
+        }
+        case "undo": {
+          items.push({ kind: "notice", text: t("sessionsView.undo", { n: e.reverted, skipped: e.skipped }) });
           break;
         }
         case "fork": {
@@ -917,6 +941,10 @@ class AgentStore {
       case "actions_request": {
         this.timeline.push({ kind: "actions", id: e.request.id, items: e.request.items });
         this.pendingActions = e.request;
+        break;
+      }
+      case "write_landed": {
+        if (e.turn) this.writesByTurn[e.turn] = (this.writesByTurn[e.turn] ?? 0) + 1;
         break;
       }
       case "web_searching": {

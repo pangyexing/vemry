@@ -134,6 +134,10 @@ pub struct AgentState {
     /// the gate without a dialog. Rebuilt from the jsonl's `follow` lines with the
     /// session, exactly like `sources`.
     pub follow: Mutex<Option<vemry_agent::Follow>>,
+    /// The write journal (vemry_agent::undo): what each landed write of this session
+    /// replaced, so "undo this turn's writes" can put them back. In memory only —
+    /// cleared with the session, gone after a restart (the provenance bar remains).
+    pub journal: Arc<Mutex<Vec<vemry_agent::WriteRecord>>>,
 }
 
 impl AgentState {
@@ -151,6 +155,7 @@ impl AgentState {
         *self.sources.lock().unwrap() =
             id.map(|id| vemry_agent::session::read_session_sources(meta_dir, id)).unwrap_or_default();
         *self.follow.lock().unwrap() = id.and_then(|id| vemry_agent::session::read_session_follow(meta_dir, id));
+        self.journal.lock().unwrap().clear();
     }
 
     /// A change to the privacy zones invalidates the prompt snapshot alone: the
@@ -181,6 +186,7 @@ impl Default for AgentState {
             session_grant: Arc::new(AtomicBool::new(false)),
             sources: Arc::new(Mutex::new(vec![])),
             follow: Mutex::new(None),
+            journal: Arc::new(Mutex::new(vec![])),
         }
     }
 }
