@@ -66,6 +66,7 @@
   "app.noReaderPageYet": "No web page has been read yet — try clicking a citation in an AI answer",
   "app.noVisibleEditor": "No note editor is visible — open a note, or pin a clip target",
   "app.nothingSelected": "No text selected",
+  "app.openBrowserHint": "Open the browser ({key} to type an address)",
   "app.openSidebar": "Open the sidebar",
   "app.openSidebarKey": "Open the sidebar ({key})",
   "app.openVaultFirst": "Open a vault first",

@@ -161,6 +161,12 @@
     sash.addEventListener("pointercancel", up);
   }
 
+  /** The research panel header's browser entry: tabs elsewhere (the detached window) come
+   *  forward, otherwise a blank tab opens with the new-tab page in the panel column. */
+  function openBrowserHere() {
+    const p = browser.tabs.length > 0 ? api.browserOpenLast() : api.browserNewTab();
+    void p.catch((e) => toast.push(String(e), "error"));
+  }
   /** The browser panel's sash (its left edge, on the notes side of the boundary): the width is
    *  live while dragging, and the native tab is veiled for the drag — the pointer would be lost
    *  to the native view the moment it crossed into the panel, and a per-frame relayout of the
@@ -1175,12 +1181,24 @@
           <div class="tabs" oncontextmenu={tabsMenu}>
             <button class:active={vault.rightTab === "outline"} onclick={() => (vault.rightTab = "outline")}>{t("app.tabOutline")}</button>
             <button class:active={vault.rightTab === "agent"} onclick={() => (vault.rightTab = "agent")}>{t("app.tabResearch")}</button>
-            <button class="panel-close" title={t("app.collapseSidebarKey", { key: k("Mod+.") })} aria-label={t("app.collapseSidebar")} onclick={() => (vault.rightOpen = false)}>
-              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style:transform={vault.swapSides ? "scaleX(-1)" : null}>
-                <rect x="2.5" y="3.5" width="15" height="13" rx="1.75" />
-                <path d="M12.5 3.5 V16.5 M6.5 8 L8.5 10 L6.5 12" />
-              </svg>
-            </button>
+            <span class="tools">
+              {#if !(browser.panelOpen && browser.shape === "docked")}
+                <!-- The browser's entry, in the corner the panel appears in: shown only while the
+                  panel is not on screen (with tabs elsewhere it brings them forward, otherwise a
+                  blank tab with the new-tab page) -->
+                <button title={t("app.openBrowserHint", { key: k("Mod+L") })} aria-label={t("cmd.open-browser.title")} onclick={openBrowserHere}>
+                  <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 10 a7 7 0 1 0 14 0 a7 7 0 1 0 -14 0 M3 10 H17 M10 3 c-3.6 3.2 -3.6 10.8 0 14 M10 3 c3.6 3.2 3.6 10.8 0 14" />
+                  </svg>
+                </button>
+              {/if}
+              <button title={t("app.collapseSidebarKey", { key: k("Mod+.") })} aria-label={t("app.collapseSidebar")} onclick={() => (vault.rightOpen = false)}>
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style:transform={vault.swapSides ? "scaleX(-1)" : null}>
+                  <rect x="2.5" y="3.5" width="15" height="13" rx="1.75" />
+                  <path d="M12.5 3.5 V16.5 M6.5 8 L8.5 10 L6.5 12" />
+                </svg>
+              </button>
+            </span>
           </div>
           <!-- Both panels stay mounted and are switched with CSS: changing tabs loses neither the
             scroll position, the input draft nor the research panel's web-context attachment -->
@@ -1502,8 +1520,14 @@
     color: var(--fg);
     border-bottom-color: var(--accent);
   }
-  .tabs .panel-close {
+  /* The header's tools at the right end: the browser entry (while the panel is off screen) and the collapse */
+  .tabs .tools {
     margin-left: auto;
+    align-self: center;
+    display: flex;
+    gap: 2px;
+  }
+  .tabs .tools button {
     display: grid;
     place-items: center;
     width: 26px;
@@ -1512,9 +1536,8 @@
     border-radius: 6px;
     border-bottom: none;
     color: var(--fg-muted);
-    align-self: center;
   }
-  .tabs .panel-close:hover {
+  .tabs .tools button:hover {
     background: var(--bg-hover);
     color: var(--fg);
   }

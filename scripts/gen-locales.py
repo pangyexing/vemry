@@ -1315,6 +1315,7 @@ add("settings.", {
 
 # ---------------------------------------------------------------- app shell / toasts
 add("app.", {
+    "openBrowserHint": ("Open the browser ({key} to type an address)", "打开浏览器({key} 输入网址)"),
     # Joins the items of an inline list; the separator differs per language
     "listSep": (", ", "、"),
     "recordedIn": ("Recorded in {path}", "已记入 {path}"),

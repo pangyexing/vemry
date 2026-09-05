@@ -66,6 +66,7 @@
   "app.noReaderPageYet": "还没有打开过网页投影——点击 AI 回答里的引用试试",
   "app.noVisibleEditor": "当前没有可见的笔记编辑器——先打开一篇笔记,或用钉住目标",
   "app.nothingSelected": "未选中文字",
+  "app.openBrowserHint": "打开浏览器({key} 输入网址)",
   "app.openSidebar": "打开侧栏",
   "app.openSidebarKey": "打开侧栏 ({key})",
   "app.openVaultFirst": "先打开一个知识库",
