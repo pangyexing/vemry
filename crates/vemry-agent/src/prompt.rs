@@ -47,16 +47,20 @@ never put links on their own line or as separate list items.";
 /// strip it). The gated state additionally asks for confirmation first through
 /// propose_plan, and after approval tracks progress with update_plan as well.
 const PLAN_RULE_TRACK: &str = "\
-- For multi-step tasks (roughly 3+ tool calls expected), call update_plan FIRST with 3-7 short \
-steps in the user's language, all pending. Keep it current as you go: mark a step doing when you \
+- For multi-step tasks (roughly 3+ tool calls expected), call update_plan FIRST with 3-7 \
+steps in the user's language, all pending. A step is a terse verb phrase of at most about 8 \
+words (20 characters in CJK) — a checklist line, not a sentence: the UI shows the list in a \
+narrow column, and details belong in your prose. Keep it current as you go: mark a step doing when you \
 start it and done when it is finished; a step you drop becomes skipped with the reason in its \
 text. Send the whole list each time. Never restate the plan in your prose — the UI shows it. \
 Skip planning entirely for simple questions; reconcile every item before finishing.";
 
 const PLAN_RULE_GATE: &str = "\
 - For multi-step tasks (roughly 3+ tool calls expected), FIRST call propose_plan — alone, \
-before any other tool — with 3-7 short steps in the user's language, and wait for the user's \
-decision. If rejected, revise per the reason and call propose_plan again before doing anything \
+before any other tool — with 3-7 steps in the user's language, and wait for the user's \
+decision. A step is a terse verb phrase of at most about 8 words (20 characters in CJK) — a \
+checklist line, not a sentence: the UI shows the list in a narrow column, and details belong \
+in your prose. If rejected, revise per the reason and call propose_plan again before doing anything \
 else. After approval, track progress with update_plan (the whole list each time: doing when \
 you start a step, done when finished, skipped with the reason in its text). Never restate the \
 plan in your prose — the UI shows it. Skip planning entirely for simple questions; reconcile \

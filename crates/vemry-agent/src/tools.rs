@@ -387,7 +387,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "text": {"type": "string", "description": "One short step in the user's language"},
+                                "text": {"type": "string", "description": "One step in the user's language: a terse verb phrase of at most about 8 words (20 CJK characters), not a sentence"},
                                 "status": {"type": "string", "enum": ["pending", "doing", "done", "skipped"]}
                             },
                             "required": ["text", "status"]
@@ -568,7 +568,7 @@ pub fn propose_plan_def() -> ToolDef {
                 "items": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Plan steps in the user's language, one short phrase each"
+                    "description": "Plan steps in the user's language, each a terse verb phrase of at most about 8 words (20 CJK characters), not a sentence"
                 }
             },
             "required": ["items"]

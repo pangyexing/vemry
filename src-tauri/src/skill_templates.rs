@@ -61,7 +61,7 @@ pub const EXAMPLES: &[ExampleSkill] = &[
     ExampleSkill {
         file: "research.md",
         name: "research",
-        description: "The research method — plan first, the vault before the web, verify and cite every source, and let the conclusion settle into a note",
+        description: "The research method — a fixed plan skeleton, the vault before the web, verify and cite every source, and one rule for where the result lands",
         body: RESEARCH,
     },
     ExampleSkill {
