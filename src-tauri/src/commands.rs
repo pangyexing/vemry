@@ -397,7 +397,7 @@ pub fn types_list(state: State<'_, AppState>) -> Result<Vec<vemry_core::BlockTyp
     with_vault(&state, |v| Ok(vemry_core::list_block_types(&v.meta_dir())))
 }
 
-/// What a scaffold command (`type_create`, `init_research_skill`) hands back: the
+/// What a scaffold command (`type_create`, `skill_create`, `skill_customize`) hands back: the
 /// vault-relative path of the file, and whether it was written just now. A file
 /// the user already has is left untouched and reported with `created: false`
 /// rather than as an error — it is the end state the command exists to reach, so
@@ -1044,7 +1044,7 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
 
 /// Read the whole object of .vemry/config.json (missing or broken JSON = None).
 /// Reading and writing share this one parse point: write_policy and
-/// research_skill_installed live in the same file.
+/// skills_disabled live in the same file.
 fn vault_config_read(vault: &Vault) -> Option<serde_json::Value> {
     let dir = vault.meta_dir();
     let s = std::fs::read_to_string(dir.join("config.json")).ok()?;
@@ -1679,93 +1679,22 @@ pub fn init_memory_file(app: AppHandle, state: State<'_, AppState>) -> Result<St
     Ok("VEMRY.md".into())
 }
 
-/// The research skill's file (shared with the Settings examples: one copy of the text).
-const RESEARCH_SKILL_TEMPLATE: &str = crate::skill_templates::RESEARCH;
-
-/// The research skill's file in the two forms its installers need: the absolute path it
-/// is written to, and the vault-relative path the frontend opens. One spelling of the
-/// directory (vemry-agent owns it) and of the name, so the file that is written and the
-/// file that is reported cannot drift apart.
-fn research_skill_path(meta_dir: &std::path::Path) -> (std::path::PathBuf, String) {
-    const FILE: &str = "research.md";
-    let sub = vemry_agent::skills::SKILLS_SUBDIR;
-    (meta_dir.join(sub).join(FILE), format!(".vemry/{sub}/{FILE}"))
-}
-
-/// Install the research methodology skill into .vemry/skills/ (a skill is a meta
-/// file and does not enter the block index; the skill list travels with the session
-/// snapshot, so it takes effect in a new session). One already there is left as it is.
-#[tauri::command]
-pub fn init_research_skill(state: State<'_, AppState>) -> Result<Scaffolded, String> {
-    let (path, rel) = research_skill_path(&with_vault(&state, |v| Ok(v.meta_dir()))?);
-    let created = write_if_absent(&path, RESEARCH_SKILL_TEMPLATE)?;
-    if created {
-        let _ = with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)));
-    }
-    Ok(Scaffolded { path: rel, created })
-}
-
-/// Install the research methodology skill automatically the first time the research
-/// panel is opened ("check the vault before the web, cite discipline, write it
-/// down" should not be behaviour a new user cannot reach). Idempotent: installing
-/// once sets a marker, so deleting or disabling it afterwards does not resurrect it.
-/// Returns whether it was installed just now (for the frontend's toast).
-#[tauri::command]
-pub fn ensure_research_skill(state: State<'_, AppState>) -> Result<bool, String> {
-    let (meta_dir, already_marked) = with_vault(&state, |v| {
-        let dir = v.meta_dir();
-        let marked = vault_config_get(v, "research_skill_installed").and_then(|b| b.as_bool()).unwrap_or(false);
-        Ok((dir, marked))
-    })?;
-    if already_marked {
-        return Ok(false);
-    }
-    // Already there = the user installed it themselves: only the marker is added.
-    let installed = write_if_absent(&research_skill_path(&meta_dir).0, RESEARCH_SKILL_TEMPLATE)?;
-    with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)))?;
-    Ok(installed)
-}
-
-/// One row of the example-skills catalogue in Settings: installed = a file of that
-/// name is already in `.vemry/skills/` (the user's, whether or not its text is ours).
+/// One row of the example block types catalogue in Settings: installed = a file of
+/// that name is already in `.vemry/types/` (the user's, whether or not its text is ours).
 #[derive(Serialize)]
-pub struct SkillExample {
+pub struct TypeExample {
     pub name: String,
     pub description: String,
     pub installed: bool,
 }
 
+/// The example block types Settings offers.
 #[tauri::command]
-pub fn skill_examples_list(state: State<'_, AppState>) -> Result<Vec<SkillExample>, String> {
-    let dir = with_vault(&state, |v| Ok(v.meta_dir()))?.join(vemry_agent::skills::SKILLS_SUBDIR);
-    Ok(crate::skill_templates::EXAMPLES
-        .iter()
-        .map(|e| SkillExample { name: e.name.into(), description: e.description.into(), installed: dir.join(e.file).exists() })
-        .collect())
-}
-
-/// Install one example skill into `.vemry/skills/` (never overwriting a file that is
-/// there). The skill list travels with the session snapshot, so it takes effect in a
-/// new session. Returns the vault-relative path for the frontend to open.
-#[tauri::command]
-pub fn skill_install_example(state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
-    let example = crate::skill_templates::example(&name).ok_or_else(|| format!("unknown example skill: {name}"))?;
-    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
-    let sub = vemry_agent::skills::SKILLS_SUBDIR;
-    let created = write_if_absent(&meta_dir.join(sub).join(example.file), example.body)?;
-    if example.name == "research" && created {
-        let _ = with_vault(&state, |v| vault_config_set(v, "research_skill_installed", json!(true)));
-    }
-    Ok(Scaffolded { path: format!(".vemry/{sub}/{}", example.file), created })
-}
-
-/// The example block types Settings offers (the same shape as the skill examples).
-#[tauri::command]
-pub fn type_examples_list(state: State<'_, AppState>) -> Result<Vec<SkillExample>, String> {
+pub fn type_examples_list(state: State<'_, AppState>) -> Result<Vec<TypeExample>, String> {
     let dir = with_vault(&state, |v| Ok(v.root().join(vemry_core::vault::TYPES_DIR)))?;
-    Ok(crate::skill_templates::TYPE_EXAMPLES
+    Ok(crate::type_templates::TYPE_EXAMPLES
         .iter()
-        .map(|e| SkillExample { name: e.name.into(), description: e.description.into(), installed: dir.join(e.file).exists() })
+        .map(|e| TypeExample { name: e.name.into(), description: e.description.into(), installed: dir.join(e.file).exists() })
         .collect())
 }
 
@@ -1773,7 +1702,7 @@ pub fn type_examples_list(state: State<'_, AppState>) -> Result<Vec<SkillExample
 /// editor's menus and the agent's next session pick it up (TypesChanged is broadcast).
 #[tauri::command]
 pub fn type_install_example(app: AppHandle, state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
-    let example = crate::skill_templates::example_type(&name).ok_or_else(|| format!("unknown example type: {name}"))?;
+    let example = crate::type_templates::example_type(&name).ok_or_else(|| format!("unknown example type: {name}"))?;
     let dir = with_vault(&state, |v| Ok(v.root().join(vemry_core::vault::TYPES_DIR)))?;
     let created = write_if_absent(&dir.join(example.file), example.body)?;
     if created {
@@ -1782,44 +1711,137 @@ pub fn type_install_example(app: AppHandle, state: State<'_, AppState>, name: St
     Ok(Scaffolded { path: format!("{}/{}", vemry_core::vault::TYPES_DIR, example.file), created })
 }
 
-/// The skills management list (the settings page): disabled ones are listed too —
-/// the management view differs from the injection view, and list_skills shows the
-/// agent only what is enabled.
+/// One row of the skills list in Settings: the union of the built-ins and the vault's
+/// own files, disabled ones included — the management view differs from the injection
+/// view, and `list_skills` shows the agent only what is enabled. `source` says which
+/// layer the row is (`builtin` / `vault` / `override`); `outdated` flags a customised
+/// copy the built-in has moved past since it was made.
 #[derive(Serialize)]
 pub struct SkillEntry {
     pub file: String,
     pub name: String,
     pub description: String,
     pub disabled: bool,
+    pub source: &'static str,
+    pub version: u64,
+    pub outdated: bool,
 }
 
 #[tauri::command]
 pub fn skills_list(state: State<'_, AppState>) -> Result<Vec<SkillEntry>, String> {
     let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
-    // The directory scan and the frontmatter parsing live in vemry-agent's skills.rs
-    // (the same implementation as the agent's injection view); this only maps the
-    // IPC shape
+    // The directory scan, the built-in catalogue and the frontmatter parsing live in
+    // vemry-agent's skills.rs (the same implementation as the agent's injection
+    // view); this only maps the IPC shape
     Ok(vemry_agent::skills::list_skills_all(&meta_dir)
         .into_iter()
-        .map(|s| SkillEntry { file: s.file, name: s.name, description: s.description, disabled: s.disabled })
+        .map(|s| SkillEntry {
+            file: s.file,
+            name: s.name,
+            description: s.description,
+            disabled: s.disabled,
+            source: s.source.as_str(),
+            version: s.version,
+            outdated: s.outdated,
+        })
         .collect())
 }
 
-/// Enable or disable one skill: rewrite the disabled field of its frontmatter. The
-/// file name comes from skills_list (a path shape is not accepted).
+/// The vault-relative path of a skill file, the one spelling the four commands share.
+fn skill_rel_path(file: &str) -> String {
+    format!(".vemry/{}/{file}", vemry_agent::skills::SKILLS_SUBDIR)
+}
+
+/// The listed skill of that name — the listing is what refuses a symlink, so a file
+/// name taken from it is safe to write.
+fn skill_entry(meta_dir: &std::path::Path, name: &str) -> Result<vemry_agent::skills::SkillFileEntry, String> {
+    vemry_agent::skills::list_skills_all(meta_dir)
+        .into_iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| crate::i18n::t(crate::i18n::current(), "ipc.skillNotFound"))
+}
+
+/// Enable or disable one skill by its listed name. A vault file has the `disabled:`
+/// line of its frontmatter rewritten in place; a built-in has no file, so its name goes
+/// into (or out of) the vault config's `skills_disabled` list. The skill list is part of
+/// the prompt snapshot, so the snapshot is dropped: the switch applies from the next turn.
 #[tauri::command]
-pub fn skill_set_enabled(state: State<'_, AppState>, file: String, enabled: bool) -> Result<(), String> {
-    if file.contains('/') || file.contains('\\') || file.contains("..") || !file.ends_with(".md") {
-        return Err("bad skill file name".into());
+pub fn skill_set_enabled(state: State<'_, AppState>, name: String, enabled: bool) -> Result<(), String> {
+    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
+    let entry = skill_entry(&meta_dir, &name)?;
+    if entry.source == vemry_agent::skills::SkillSource::Builtin {
+        let key = vemry_agent::skills::DISABLED_BUILTINS_KEY;
+        with_vault(&state, |v| {
+            let mut off: Vec<String> = vault_config_get(v, key)
+                .and_then(|d| d.as_array().cloned())
+                .map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            if enabled {
+                off.retain(|n| n != &name);
+            } else if !off.contains(&name) {
+                off.push(name.clone());
+            }
+            vault_config_set(v, key, json!(off))
+        })?;
+    } else {
+        let path = meta_dir.join(vemry_agent::skills::SKILLS_SUBDIR).join(&entry.file);
+        let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        std::fs::write(&path, vemry_core::set_frontmatter_disabled(&raw, !enabled)).map_err(|e| e.to_string())?;
     }
-    let path = with_vault(&state, |v| Ok(v.meta_dir()))?.join(vemry_agent::skills::SKILLS_SUBDIR).join(&file);
-    let meta = std::fs::symlink_metadata(&path).map_err(|_| "skill not found".to_string())?;
-    if !meta.is_file() {
-        return Err("skill not found".into());
+    state.agent.invalidate_prompt_snapshot();
+    Ok(())
+}
+
+/// A customised copy of a built-in: the built-in's file written into `.vemry/skills/`
+/// (never over one that is there), which shadows the built-in by name from then on
+/// and is the user's to edit. A name the vault already overrides under some other file
+/// name hands that file back instead of creating a second one. The frontend opens it.
+#[tauri::command]
+pub fn skill_customize(state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
+    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
+    let entry = skill_entry(&meta_dir, &name)?;
+    if entry.source != vemry_agent::skills::SkillSource::Builtin {
+        return Ok(Scaffolded { path: skill_rel_path(&entry.file), created: false });
     }
-    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let new = vemry_core::set_frontmatter_disabled(&raw, !enabled);
-    std::fs::write(&path, new).map_err(|e| e.to_string())
+    let builtin = vemry_agent::skills::builtin_skill(&name)
+        .ok_or_else(|| crate::i18n::t(crate::i18n::current(), "ipc.skillNotFound"))?;
+    let created = write_if_absent(&meta_dir.join(vemry_agent::skills::SKILLS_SUBDIR).join(builtin.file), builtin.text)?;
+    state.agent.invalidate_prompt_snapshot();
+    Ok(Scaffolded { path: skill_rel_path(builtin.file), created })
+}
+
+/// Back to the built-in: the customised copy goes to the OS trash (recoverable, like
+/// every delete), so the built-in of that name shows again from the next turn.
+#[tauri::command]
+pub fn skill_restore(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
+    let entry = skill_entry(&meta_dir, &name)?;
+    if entry.source != vemry_agent::skills::SkillSource::Override {
+        return Err(crate::i18n::t(crate::i18n::current(), "ipc.skillNotFound"));
+    }
+    with_vault_mut(&state, |v| v.delete_path(&skill_rel_path(&entry.file)).map_err(crate::i18n::err))?;
+    state.agent.invalidate_prompt_snapshot();
+    Ok(())
+}
+
+/// A new vault skill from the skeleton every built-in follows (`.vemry/skills/<stem>.md`,
+/// the stem sanitised the way a note title is); one already there is left as it is. The
+/// frontend opens it either way.
+#[tauri::command]
+pub fn skill_create(state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(crate::i18n::t(crate::i18n::current(), "ipc.skillNameEmpty"));
+    }
+    let stem = vemry_core::sanitize_filename(name);
+    let file = format!("{stem}.md");
+    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
+    let created = write_if_absent(
+        &meta_dir.join(vemry_agent::skills::SKILLS_SUBDIR).join(&file),
+        &vemry_agent::skills::skill_skeleton(name),
+    )?;
+    state.agent.invalidate_prompt_snapshot();
+    Ok(Scaffolded { path: skill_rel_path(&file), created })
 }
 
 /// Vault-relative paths currently in the privacy zone — drives the badges in the

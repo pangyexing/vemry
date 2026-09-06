@@ -1,6 +1,7 @@
 ---
 name: brief
 description: Exporting an implementation brief for a coding agent, and filling the record back in when the work returns
+version: 1
 ---
 
 # Implementation brief, and the record back

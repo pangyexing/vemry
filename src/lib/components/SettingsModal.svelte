@@ -5,7 +5,8 @@
 
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, EFFORT_OPTIONS, type LangSetting, type LinkOpenMode, type SkillEntry, type SkillExample } from "$lib/api";
+  import { api, EFFORT_OPTIONS, type LangSetting, type LinkOpenMode, type SkillEntry, type TypeExample } from "$lib/api";
+  import { scaffold } from "$lib/scaffold";
   import { setLanguage, t } from "$lib/i18n/i18n.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
@@ -59,12 +60,12 @@
   let rules = $state<string[]>([]);
   /** This vault's persistent write policy: "allow" = AI writes are pre-authorised (allow_always was granted). */
   let writePolicy = $state<"allow" | "ask">("ask");
-  /** The .vemry/skills/ management list (disabled ones included; changes take effect at once and a new AI session picks them up). */
+  /** The skills list: the built-ins and the vault's own files (disabled ones included; a switch applies from the next turn). */
   let skills = $state<SkillEntry[]>([]);
-  /** The example-skills catalogue (routines the AI can run once installed). */
-  let skillExamples = $state<SkillExample[]>([]);
+  /** The name typed for a new skill. */
+  let newSkill = $state("");
   /** The example block types (product-document blocks) Settings can install. */
-  let typeExamples = $state<SkillExample[]>([]);
+  let typeExamples = $state<TypeExample[]>([]);
   let newRule = $state("");
   let ruleError = $state<string | null>(null);
   /** Notes marked one by one: the frontmatter flag is what NoteSummary.private carries, and the
@@ -125,7 +126,6 @@
       void scripts.refresh();
       api.vaultWritePolicyGet().then((p) => (writePolicy = p)).catch(() => (writePolicy = "ask"));
       api.skillsList().then((s) => (skills = s)).catch(() => (skills = []));
-      api.skillExamplesList().then((s) => (skillExamples = s)).catch(() => (skillExamples = []));
       api.typeExamplesList().then((s) => (typeExamples = s)).catch(() => (typeExamples = []));
     }
   });
@@ -151,15 +151,34 @@
     }
   }
 
-  async function installExample(name: string) {
+  /** The skill rows' badge: which layer the row is, in words. */
+  function sourceLabel(s: SkillEntry): string {
+    return t(s.source === "builtin" ? "settings.skillBuiltin" : s.source === "override" ? "settings.skillOverride" : "settings.skillCustom");
+  }
+  /** Opening a skill file in the editor closes the dialog: the editor is behind it. */
+  async function openSkill(file: string) {
+    open = false;
+    await vault.openFile(`.vemry/skills/${file}`);
+  }
+  async function customizeSkill(name: string) {
+    open = false;
+    await scaffold(() => api.skillCustomize(name));
+  }
+  async function restoreSkill(name: string) {
     try {
-      const r = await api.skillInstallExample(name);
-      toast.push(t(r.created ? "settings.skillInstalled" : "settings.skillAlready", { path: r.path }));
+      await api.skillRestore(name);
+      toast.push(t("settings.skillRestored", { name }));
       skills = await api.skillsList();
-      skillExamples = await api.skillExamplesList();
     } catch (e) {
       toast.push(String(e), "error");
     }
+  }
+  async function createSkill() {
+    const name = newSkill.trim();
+    if (!name) return;
+    newSkill = "";
+    open = false;
+    await scaffold(() => api.skillCreate(name));
   }
   async function installTypeExample(name: string) {
     try {
@@ -170,9 +189,9 @@
       toast.push(String(e), "error");
     }
   }
-  async function toggleSkill(file: string, enabled: boolean) {
+  async function toggleSkill(name: string, enabled: boolean) {
     try {
-      await api.skillSetEnabled(file, enabled);
+      await api.skillSetEnabled(name, enabled);
       skills = await api.skillsList();
     } catch (e) {
       toast.push(String(e), "error");
@@ -672,33 +691,43 @@
             </section>
             <section class="scripts">
               <h3>{t("settings.skills")}</h3>
-              <small>
-                {t("settings.skillsHint1")}<code>.vemry/skills/*.md</code>{t("settings.skillsHint2")}
-              </small>
-              {#if skills.length}
-                <ul class="script-list">
-                  {#each skills as s (s.file)}
-                    <li>
-                      <div class="script-row">
-                        <label class="script-toggle">
-                          <input type="checkbox" checked={!s.disabled} onchange={() => toggleSkill(s.file, s.disabled)} />
-                          <span class="script-name">{s.name}</span>
-                        </label>
-                        <button
-                          class="btn small"
-                          title={t("settings.editWithSystemApp")}
-                          onclick={() => api.fileOpenSystem(`.vemry/skills/${s.file}`).catch((e) => toast.push(String(e), "error"))}
-                        >{t("settings.edit")}</button>
-                      </div>
-                      {#if s.description}
-                        <small class="script-summary">{s.description}</small>
+              <small>{t("settings.skillsHint")}</small>
+              <ul class="script-list">
+                {#each skills as s (s.name)}
+                  <li>
+                    <div class="script-row">
+                      <label class="script-toggle">
+                        <input type="checkbox" checked={!s.disabled} onchange={() => toggleSkill(s.name, s.disabled)} />
+                        <span class="script-name">{s.name}</span>
+                      </label>
+                      <span class="source-badge" class:custom={s.source !== "builtin"}>{sourceLabel(s)}</span>
+                      {#if s.outdated}
+                        <span class="source-badge outdated" title={t("settings.skillOutdatedHint")}>{t("settings.skillOutdated")}</span>
                       {/if}
-                    </li>
-                  {/each}
-                </ul>
-              {:else}
-                <small class="empty">{t("settings.noSkills")}</small>
-              {/if}
+                      {#if s.source === "builtin"}
+                        <button class="btn small" onclick={() => void customizeSkill(s.name)}>{t("settings.skillCustomize")}</button>
+                      {:else}
+                        <button class="btn small" onclick={() => void openSkill(s.file)}>{t("settings.edit")}</button>
+                        {#if s.source === "override"}
+                          <button class="btn small" onclick={() => void restoreSkill(s.name)}>{t("settings.skillRestore")}</button>
+                        {/if}
+                      {/if}
+                    </div>
+                    {#if s.description}
+                      <small class="script-summary">{s.description}</small>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+              <div class="rule-add">
+                <input
+                  bind:value={newSkill}
+                  placeholder={t("settings.skillNewPlaceholder")}
+                  spellcheck="false"
+                  onkeydown={(e) => e.key === "Enter" && !isImeKeydown(e) && void createSkill()}
+                />
+                <button class="btn" onclick={() => void createSkill()}>{t("settings.skillNew")}</button>
+              </div>
               {#if typeExamples.some((e) => !e.installed)}
                 <h4 class="examples-title">{t("settings.typeExamples")}</h4>
                 <small>{t("settings.typeExamplesHint")}</small>
@@ -708,21 +737,6 @@
                       <div class="script-row">
                         <span class="script-name">{e.name}</span>
                         <button class="btn small" onclick={() => void installTypeExample(e.name)}>{t("settings.installSkill")}</button>
-                      </div>
-                      <small class="script-summary">{e.description}</small>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-              {#if skillExamples.some((e) => !e.installed)}
-                <h4 class="examples-title">{t("settings.skillExamples")}</h4>
-                <small>{t("settings.skillExamplesHint")}</small>
-                <ul class="script-list">
-                  {#each skillExamples.filter((e) => !e.installed) as e (e.name)}
-                    <li>
-                      <div class="script-row">
-                        <span class="script-name">{e.name}</span>
-                        <button class="btn small" onclick={() => void installExample(e.name)}>{t("settings.installSkill")}</button>
                       </div>
                       <small class="script-summary">{e.description}</small>
                     </li>
@@ -1091,6 +1105,23 @@
   .grant-badge:hover {
     color: var(--danger);
     border-color: var(--danger);
+  }
+  /* which layer a skill row is: quiet for a built-in, the accent for the user's own file */
+  .source-badge {
+    font-size: var(--fs-xs);
+    color: var(--fg-faint);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1px 8px;
+    white-space: nowrap;
+  }
+  .source-badge.custom {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .source-badge.outdated {
+    color: var(--fg-muted);
+    border-style: dashed;
   }
   .grant-row {
     display: flex;

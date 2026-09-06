@@ -1,6 +1,7 @@
 ---
 name: retro
-description: Closing an iteration: what shipped, which hypotheses held, which decisions changed, what carries over — and the release notes
+description: "Closing an iteration: what shipped, which hypotheses held, which decisions changed, what carries over — and the release notes"
+version: 1
 ---
 
 # Iteration retro

@@ -1,6 +1,7 @@
 ---
 name: daily-close
-description: The evening routine: what got done and what changed today, appended to today's journal note
+description: "The evening routine: what got done and what changed today, appended to today's journal note"
+version: 1
 ---
 
 # Daily close

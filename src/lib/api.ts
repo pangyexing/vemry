@@ -88,7 +88,7 @@ export interface FieldSpec {
   type?: string;
 }
 
-/** What a scaffold command (`typeCreate`, `initResearchSkill`) hands back (mirrors commands.rs
+/** What a scaffold command (`typeCreate`, `skillCreate`, `skillCustomize`) hands back (mirrors commands.rs
  *  `Scaffolded`): the file's vault-relative path, and whether it was written just now —
  *  `false` means it was already there and was left untouched. */
 export interface Scaffolded {
@@ -467,19 +467,26 @@ export interface ReadRequest {
 }
 export type ReadAnswer = { kind: "allow"; urls: string[]; auto_sources: boolean } | { kind: "deny"; reason: string };
 
-/** A row of the example-skills catalogue in Settings (mirroring commands.rs::SkillExample). */
-export interface SkillExample {
+/** A row of the example block types catalogue in Settings (mirroring commands.rs::TypeExample). */
+export interface TypeExample {
   name: string;
   description: string;
   installed: boolean;
 }
 
-/** A row of the skills management list (mirroring commands.rs::SkillEntry; disabled ones included). */
+/** A row of the skills list in Settings (mirroring commands.rs::SkillEntry; disabled ones included).
+ *  `source`: "builtin" ships with vemry and has no file in the vault; "vault" is the vault's own;
+ *  "override" is a vault file shadowing a built-in of the same name. `file` is the vault file
+ *  name — for a built-in, the name a customised copy takes. */
 export interface SkillEntry {
   file: string;
   name: string;
   description: string;
   disabled: boolean;
+  source: "builtin" | "vault" | "override";
+  version: number;
+  /** An override whose version is behind the built-in it shadows. */
+  outdated: boolean;
 }
 
 export type VaultEvent =
@@ -948,11 +955,8 @@ export const api = {
   agentReadRespond: (requestId: string, answer: ReadAnswer) => invoke<void>("agent_read_respond", { requestId, answer }),
   /** Put back every write one turn landed (skipping notes edited since); refused while the agent runs. */
   agentUndoTurn: (turn: string) => invoke<UndoReport>("agent_undo_turn", { turn }),
-  /** The example-skills catalogue and its installer (a file already there is never overwritten). */
-  skillExamplesList: () => invoke<SkillExample[]>("skill_examples_list"),
-  skillInstallExample: (name: string) => invoke<Scaffolded>("skill_install_example", { name }),
-  /** The example block types and their installer (the same shape as the skill examples). */
-  typeExamplesList: () => invoke<SkillExample[]>("type_examples_list"),
+  /** The example block types and their installer (a file already there is never overwritten). */
+  typeExamplesList: () => invoke<TypeExample[]>("type_examples_list"),
   typeInstallExample: (name: string) => invoke<Scaffolded>("type_install_example", { name }),
   agentCancel: () => invoke<void>("agent_cancel"),
   /** Follow a note (null stops): the session keeps its findings there and, with auto, local writes on it pass the gate without a dialog. */
@@ -1009,15 +1013,16 @@ export const api = {
   initMemoryFile: () => invoke<string>("init_memory_file"),
   /** The `#` quick-memory convention: one bullet lands in VEMRY.md's conventions section. */
   memoryAppend: (text: string) => invoke<void>("memory_append", { text }),
-  /** Write the research skill (`.vemry/skills/research.md`); one already there is left as it is. */
-  initResearchSkill: () => invoke<Scaffolded>("init_research_skill"),
-  /** Install the research methodology skill automatically the first time the research
-   *  panel is opened (idempotent; deleting it does not resurrect it); returns whether it
-   *  was installed just now. */
-  ensureResearchSkill: () => invoke<boolean>("ensure_research_skill"),
+  /** The skills list: built-ins and the vault's own files, by listed name. */
   skillsList: () => invoke<SkillEntry[]>("skills_list"),
-  skillSetEnabled: (file: string, enabled: boolean) =>
-    invoke<void>("skill_set_enabled", { file, enabled }),
+  /** Switch one skill on or off by name (a built-in by the vault config, a vault file by its frontmatter); applies from the next turn. */
+  skillSetEnabled: (name: string, enabled: boolean) => invoke<void>("skill_set_enabled", { name, enabled }),
+  /** A customised copy of a built-in in `.vemry/skills/` (shadows it by name; never overwrites one that is there). */
+  skillCustomize: (name: string) => invoke<Scaffolded>("skill_customize", { name }),
+  /** Trash the customised copy so the built-in of that name shows again. */
+  skillRestore: (name: string) => invoke<void>("skill_restore", { name }),
+  /** A new vault skill from the skeleton; one already there is left as it is. */
+  skillCreate: (name: string) => invoke<Scaffolded>("skill_create", { name }),
   /** The vault's persistent write policy ("allow" = writes are pre-authorised). */
   vaultWritePolicyGet: () => invoke<"allow" | "ask">("vault_write_policy_get"),
   vaultWritePolicySet: (policy: "allow" | "ask") =>

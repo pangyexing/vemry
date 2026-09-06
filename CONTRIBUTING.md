@@ -16,7 +16,7 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | UI / views / interaction | `src/` | Svelte 5 + TS |
 | A new command | `src/lib/commands/registry.ts` + `App.svelte` | TS |
 | Editor behaviour | `src/lib/editor/` | CodeMirror 6 |
-| AI tools / prompts / skills | `crates/vemry-agent/src/{tools,prompt,skills}.rs` | Rust |
+| AI tools / prompts / skills | `crates/vemry-agent/src/{tools,prompt,skills}.rs` + the built-in skills in `crates/vemry-agent/skills/` | Rust |
 | LLM transport (Chat Completions / DeepSeek Responses + search) | `crates/vemry-agent/src/{client,responses}.rs` | Rust |
 | Script sandbox / `vemry.*` API / workflows | `crates/vemry-script/src/` | Rust |
 | Clipping (extraction / html→md / frontmatter) | `crates/vemry-clip/src/` | Rust |

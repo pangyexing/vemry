@@ -65,7 +65,7 @@ Three constraints follow:
 | `compact.rs` | v0.7 two-level context compaction, pure logic. Level one replaces older successful tool results with recoverable handles (the note is on disk; calling again fetches it back — ERROR lines are never cleared). Level two has the LLM summarise everything before the current turn, with a hard truncation as the fallback if summarising fails. `is_context_overflow` is the trigger for reactive self-healing |
 | `session.rs` | The `.vemry/sessions/*.jsonl` audit log: every user message, model output, tool call, diff and permission decision. It is the data source for the v0.2 session-replay view. v0.8 added a title override row (manual rename; the last one wins, and a fork inherits it). v0.7 added retry/edit_resend/compact/fork marker rows (the audit is immutable; the presentation layer folds on the markers) and `fork_session` — a research-tree fork that copies the audit prefix. The fork point is located by turn id: the runner stamps one `turn` id into the audit's user row, the model-history envelope and the `TurnStarted` event at the top of each turn, because timeline, audit and sidecar each counting user ordinals independently falls out of step after a compaction synthesises a message or an edit-and-resend leaves a stale row. Older sessions with no ids fall back to ordinal counting |
 | `prompt.rs` | The system prompt is fixed rules + VEMRY.md (8k cap; over that it truncates and points at indexing it) + a Skills summary (name — description) + a vault overview. v0.7: **frozen as a session-level snapshot** — the glue layer takes it once per session and reuses it, because rebuilding between turns guarantees a provider prefix-cache miss, and DeepSeek's hit/miss price difference is roughly 30×. Volatile information (the date, the current note) rides the turn-context tail in `compose_user_message` instead |
-| `skills.rs` | Instruction-level skills (v0.3): listing and reading `.vemry/skills/*.md` by name (frontmatter `name`/`description`/`disabled`), and the implementation of the `read_skill` tool. See "Programmability". The glue layer's `skill_templates.rs` holds the example skills Settings can install (research, daily-start, daily-close, meeting-actions, weekly-report — routines, each a one-line start in the composer; installing never overwrites a file that is there) |
+| `skills.rs` | Instruction-level skills: the built-in playbooks (`crates/vemry-agent/skills/*.md`, compiled in, parsed once per process) and the vault's `.vemry/skills/*.md` in one listing by name — a vault file shadows the built-in of the same name; frontmatter `name`/`description`/`disabled`/`version` — and the implementation of the `read_skill` tool. See "Skills (instruction-level)". The glue layer's `type_templates.rs` holds the example block types Settings can install (never overwriting a file that is there) |
 
 ### crates/vemry-script — the scripting layer (depends on core, not on agent or Tauri)
 
@@ -678,13 +678,33 @@ with fields — no note points at a type.
 
 ### Skills (instruction-level)
 
-`.vemry/skills/*.md`, with frontmatter `name` (defaulting to the file stem),
-`description` and `disabled`. VEMRY.md is the resident constitution; skills load on
-demand: `build_system_prompt` injects a `## Skills` summary section each turn
-(names and descriptions only) and the model calls the `read_skill` tool for the
-full text when it wants it (read-level, truncated at 30k characters). `read_skill`
-matches a name exactly against the already-scanned list and never concatenates
-caller input into a path, so it is immune to traversal by construction.
+Two layers of playbook, one listing. The built-in skills ship inside vemry-agent
+(`crates/vemry-agent/skills/*.md`, `include_str!` into the binary, parsed once per
+process) and never land in the vault by themselves: a vault that wants one changed
+takes a copy ("customise" in Settings writes the built-in's file into
+`.vemry/skills/`), and from then on the copy shadows the built-in **by listed name**
+(frontmatter `name`, defaulting to the file stem). The vault's other files are its own
+skills. So an update to the binary reaches every vault that has not customised the
+skill; a customised copy is the user's for good, and Settings flags it as "built-in
+updated" when the `version` in its frontmatter is behind the built-in's (a copy without
+one counts as 0) — "restore built-in" trashes the copy. Switching off: a vault file by
+its `disabled:` frontmatter line (rewritten in place); a built-in by its name in the
+vault config's `skills_disabled` list, since there is no file to write. A disabled
+override hides the built-in behind it too — the row the user switched off is the
+skill. Every switch, copy and new skill drops the prompt snapshot, so it applies from
+the next turn; a file's text is read live.
+
+VEMRY.md is the resident constitution; skills load on demand: `build_system_prompt`
+injects a `## Skills` summary section (names and descriptions only) and the model
+calls the `read_skill` tool for the full text when it wants it (read-level, truncated
+at 30k characters). `read_skill` matches a name exactly against the already-scanned
+list — the vault's file first, then the built-in — and never concatenates caller
+input into a path, so it is immune to traversal by construction. A frontmatter serde
+cannot parse (an unquoted description with a colon in it is the usual slip) falls
+back to a line scan for the four keys the loader reads, so a skill never loses its
+description, and a `disabled: true` never loses its effect, to a YAML edge. A new
+skill from Settings starts from the seven-section skeleton every built-in follows
+(When / Plan / Inputs / Do / Landing / Shape / Never).
 
 **Privacy semantics (a deliberate trade-off)**: `.vemry` is a built-in privacy zone
 as far as the agent is concerned, and two directories are deliberate, narrow

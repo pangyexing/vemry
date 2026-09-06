@@ -1,6 +1,7 @@
 ---
 name: weekly-report
-description: The weekly report: what shipped this week, what is blocked, what is planned next — appended to the week's note, with a copyable version for others
+description: "The weekly report: what shipped this week, what is blocked, what is planned next — appended to the week's note, with a copyable version for others"
+version: 1
 ---
 
 # Weekly report

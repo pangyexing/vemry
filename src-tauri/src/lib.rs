@@ -8,7 +8,7 @@ mod menu;
 mod pasteboard;
 mod script_bridge;
 mod settings;
-mod skill_templates;
+mod type_templates;
 
 use std::sync::{Arc, Mutex};
 use vemry_core::Vault;
@@ -175,8 +175,6 @@ pub fn run() {
             commands::agent_undo_turn,
             commands::format_markdown,
             commands::html_to_markdown,
-            commands::skill_examples_list,
-            commands::skill_install_example,
             commands::type_examples_list,
             commands::type_install_example,
             commands::agent_is_running,
@@ -200,10 +198,11 @@ pub fn run() {
             commands::session_read,
             commands::init_memory_file,
             commands::memory_append,
-            commands::init_research_skill,
-            commands::ensure_research_skill,
             commands::skills_list,
             commands::skill_set_enabled,
+            commands::skill_customize,
+            commands::skill_restore,
+            commands::skill_create,
             commands::vault_write_policy_get,
             commands::vault_write_policy_set,
             commands::privacy_list,

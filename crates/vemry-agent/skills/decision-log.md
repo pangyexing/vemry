@@ -1,6 +1,7 @@
 ---
 name: decision-log
-description: Decisions and their evidence: which decisions have none, which feedback contradicts one, what a decision superseded
+description: "Decisions and their evidence: which decisions have none, which feedback contradicts one, what a decision superseded"
+version: 1
 ---
 
 # Decision log

@@ -1,6 +1,7 @@
 ---
 name: tidy
-description: Tidying a folder or the vault: audit first, propose every move and fix as a list the user reviews, then move with links rewritten — nothing is lost
+description: "Tidying a folder or the vault: audit first, propose every move and fix as a list the user reviews, then move with links rewritten — nothing is lost"
+version: 1
 ---
 
 # Tidy up

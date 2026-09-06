@@ -150,7 +150,6 @@ mod imp {
             .separator()
             .item(&item(app, lang, "open-memory", &cmd("open-memory"))?)
             .item(&item(app, lang, "init-memory", &cmd("init-memory"))?)
-            .item(&item(app, lang, "init-research-skill", &cmd("init-research-skill"))?)
             .build()?;
 
         let window = SubmenuBuilder::new(app, i18n::t(lang, "menu.window"))

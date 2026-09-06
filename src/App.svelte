@@ -831,7 +831,6 @@
     run: () => vault.openNote("VEMRY.md"),
   });
   registerCommand({ id: "block-type", group: "note", run: () => { paletteMode = "types"; } });
-  registerCommand({ id: "init-research-skill", group: "research", run: () => scaffold(api.initResearchSkill) });
   registerCommand({
     id: "reveal-in-tree", group: "nav",
     run: () => vault.revealInTree(),

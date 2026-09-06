@@ -1,4 +1,4 @@
-// A scaffold command (a block type, the research skill) writes its file once and opens it
+// A scaffold command (a block type, a new or customised skill) writes its file once and opens it
 // in the editor. A file already there is the end state the command exists to reach, so it
 // is opened too — with a toast saying so — rather than reported as a failure. Shared by
 // App.svelte's commands and the palette's "block type…" rows.

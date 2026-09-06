@@ -1,6 +1,7 @@
 ---
 name: tidy-note
-description: Restructuring one messy note: read it whole, propose an outline, move blocks without rewording them, keep every id and every private block
+description: "Restructuring one messy note: read it whole, propose an outline, move blocks without rewording them, keep every id and every private block"
+version: 1
 ---
 
 # Tidy one note

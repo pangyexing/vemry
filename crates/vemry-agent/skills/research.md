@@ -1,6 +1,7 @@
 ---
 name: research
 description: The research method — a fixed plan skeleton, the vault before the web, verify and cite every source, and one rule for where the result lands
+version: 1
 ---
 
 # Research method

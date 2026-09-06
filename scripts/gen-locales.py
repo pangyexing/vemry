@@ -226,12 +226,6 @@ CMD = {
         ("Open one of the vault's block types (.vemry/types/*.md), or type a new name to create it — book gets the full example",
          "打开知识库里的块类型（.vemry/types/*.md），或输入新名字创建——book 会得到完整示例"),
     ),
-    "init-research-skill": (
-        ("Install research skill", "初始化研究方法论 skill"),
-        ("Write .vemry/skills/research.md: search the vault before the web, citation "
-         "discipline, how to record what you learn",
-         "写入 .vemry/skills/research.md:先查库再搜索、引用纪律、沉淀约定"),
-    ),
     "reveal-in-tree": (
         ("Reveal current note in file tree", "在文件树定位当前笔记"),
         ("Expand the left panel and scroll to the current note", "展开左栏并滚到当前笔记"),
@@ -1086,8 +1080,6 @@ add("chat.", {
     "thisNote": ("this note", "本笔记"),
     "citationsMaterialized": ("Wrote {n} block ids into the cited notes", "已为引用的 {n} 个块写入 id"),
     "citationsDropped": ("{n} citations could not be pinned to a block and point to the note instead", "{n} 条引用无法定位到块，改为指向笔记"),
-    "skillInstalled": ("Research skill installed (.vemry/skills/research.md — disable it in Settings)",
-                       "已安装研究方法论 skill(.vemry/skills/research.md,可在设置中停用)"),
     "planRejectedByUser": ("Rejected by the user", "用户否决"),
     "planApproved": ("Approved ✓", "已确认 ✓"),
     "planApprovedEdited": ("Approved with edits ✓", "已修改并确认 ✓"),
@@ -1497,25 +1489,30 @@ add("settings.", {
     "noMarkedNotes": ("(no notes marked one by one)", "（暂无逐篇标记的笔记）"),
     "unmarkNote": ("Unmark", "取消标记"),
     "openNote": ("Open this note", "打开此笔记"),
-    "skills": ("AI skills (.vemry/skills/)", "AI Skills（.vemry/skills/）"),
-    "skillsHint1": ("Instruction-level skills: the summary lives in the AI's system prompt, the body is "
-                    "read on demand. Drop a ", "指令级技能:摘要常驻 AI 的 system prompt,正文按需读取。放置 "),
-    "skillsHint2": (" in place and it is live; disable one by editing its `disabled` field. Changes take "
-                    "effect from the next AI session.",
-                    " 即生效;停用改写文件的 `disabled` 字段。改动自下一个 AI 会话生效。"),
-    "editWithSystemApp": ("Open in the system default app to edit", "用系统默认应用打开编辑"),
+    "skills": ("AI skills", "AI Skills"),
+    "skillsHint": ("The methods the AI follows for a matching task. Built-in ones ship with vemry and update "
+                   "with it; a customised copy in .vemry/skills/ is your file and shadows the built-in of the "
+                   "same name. Switches apply from the next turn; a file's text is read live.",
+                   "AI 处理匹配任务时遵循的方法。内置的随 vemry 一起更新；.vemry/skills/ 里的自定义副本是你的文件，"
+                   "会覆盖同名内置。开关自下一轮生效；文件正文每次实时读取。"),
+    "skillBuiltin": ("built-in", "内置"),
+    "skillCustom": ("custom", "自定义"),
+    "skillOverride": ("custom · shadows the built-in", "自定义 · 覆盖内置"),
+    "skillOutdated": ("built-in updated", "内置已更新"),
+    "skillOutdatedHint": ("The built-in skill has changed since this copy was made — restore it to take the new "
+                          "version, or customise again from it", "这份副本做好之后内置版本又改过——恢复内置即用新版，或在新版基础上再自定义"),
+    "skillCustomize": ("Customise", "自定义副本"),
+    "skillRestore": ("Restore built-in", "恢复内置"),
+    "skillRestored": ("Restored the built-in {name}; the copy is in the trash", "已恢复内置 {name}，副本已移到废纸篓"),
+    "skillNew": ("New skill", "新建 skill"),
+    "skillNewPlaceholder": ("skill name", "skill 名称"),
     "edit": ("Edit", "编辑"),
     "typeExamples": ("Example block types", "示例块类型"),
     "typeExamplesHint": ("The product-document blocks: requirement, decision, question, hypothesis — installed into .vemry/types/, the editor's / menu and the AI learn them",
                          "产品文档的几种块:需求、决策、开放问题、假设——装进 .vemry/types/,编辑器 / 菜单与 AI 都认识它们"),
-    "skillExamples": ("Example skills", "示例 skill"),
-    "skillExamplesHint": ("Routines the AI can run once installed: they take effect in a new session and the file is yours to edit",
-                          "安装后 AI 可执行的例程:新会话生效,文件装好就是你的,可随意改"),
     "installSkill": ("Install", "安装"),
     "skillInstalled": ("Installed {path}", "已安装 {path}"),
     "skillAlready": ("Already installed", "已安装"),
-    "noSkills": ("(no skills yet — opening the research panel for the first time installs the research "
-                 "template)", "（暂无 skill——首次打开研究面板会自动安装研究方法论模板）"),
     "userScripts": ("User scripts (.vemry/scripts/)", "用户脚本（.vemry/scripts/）"),
     "reloadScripts": ("Reload", "重新加载"),
     "userScriptsHint1": ("Drop a ", "放置 "),
@@ -2004,6 +2001,8 @@ add("ipc.", {
     "typeFrontmatterBroken": ("The type's frontmatter is not valid YAML, so it cannot be switched — open the file and fix it",
                               "该类型的 frontmatter 不是有效的 YAML，无法切换，请打开文件修正"),
     "memoryExists": ("VEMRY.md already exists", "VEMRY.md 已存在"),
+    "skillNotFound": ("That skill no longer exists", "该 skill 已不存在"),
+    "skillNameEmpty": ("A skill needs a name", "skill 需要一个名字"),
     "trashFailed": ("Could not move it to the trash: {error}", "移入废纸篓失败: {error}"),
     "rulesUpdateRunning": ("A rule update is already running", "拦截规则更新正在进行中"),
     "noRuleSource": ("No rule subscription source is configured", "没有配置拦截规则订阅源"),

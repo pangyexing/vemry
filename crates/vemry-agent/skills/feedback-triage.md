@@ -1,6 +1,7 @@
 ---
 name: feedback-triage
 description: User feedback into blocks with feature, sentiment and source, linked to the requirement or decision it bears on
+version: 1
 ---
 
 # Feedback triage

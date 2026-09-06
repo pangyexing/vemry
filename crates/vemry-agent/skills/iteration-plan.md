@@ -1,6 +1,7 @@
 ---
 name: iteration-plan
-description: Planning the next iteration: score the backlog, pick within capacity, tag the chosen blocks with the iteration, write the iteration note
+description: "Planning the next iteration: score the backlog, pick within capacity, tag the chosen blocks with the iteration, write the iteration note"
+version: 1
 ---
 
 # Iteration plan

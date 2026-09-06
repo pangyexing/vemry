@@ -513,8 +513,10 @@ mod tests {
     #[test]
     fn skills_inject_summaries_not_bodies() {
         let (_d, vault) = fixture();
-        // no skills → no section
-        assert!(!build_system_prompt(&vault, false).contains("## Skills"));
+        // the built-ins alone give the section (they ship with the binary)
+        let p = build_system_prompt(&vault, false);
+        assert!(p.contains("## Skills"));
+        assert!(p.contains("- research — "), "{p}");
 
         let skills = vault.root().join(".vemry/skills");
         std::fs::create_dir_all(&skills).unwrap();
@@ -564,9 +566,10 @@ mod tests {
         let p = build_system_prompt(&vault, false);
         assert!(p.contains("[VEMRY.md truncated"), "must note the truncation");
         // The prompt length stays bounded: the body is cut near the limit rather
-        // than inlined whole. The slack is the rest of the prompt (rules, vault
-        // overview), which the oversize above comfortably exceeds.
-        assert!(p.chars().count() < MEMORY_INJECT_MAX_CHARS + 4000, "{}", p.chars().count());
+        // than inlined whole. The slack is the rest of the prompt (rules, the
+        // built-in skills list, vault overview), which the oversize above
+        // comfortably exceeds.
+        assert!(p.chars().count() < MEMORY_INJECT_MAX_CHARS + 7000, "{}", p.chars().count());
     }
 
     fn page(title: &str, url: &str, markdown: &str) -> PageContext {

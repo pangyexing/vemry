@@ -1,6 +1,7 @@
 ---
 name: daily-start
-description: The morning routine: what is overdue, due today or in progress, what yesterday's journal promised — into three things for today
+description: "The morning routine: what is overdue, due today or in progress, what yesterday's journal promised — into three things for today"
+version: 1
 ---
 
 # Daily start

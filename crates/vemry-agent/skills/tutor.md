@@ -1,6 +1,7 @@
 ---
 name: tutor
 description: The learning method — explain from what the note already says, make flashcards as [!card] blocks, and quiz from the cards that are due
+version: 1
 ---
 
 # Tutor

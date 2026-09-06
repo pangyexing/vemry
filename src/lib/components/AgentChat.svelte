@@ -139,19 +139,6 @@
     const from = after > 0 && after < tail.length - 40 ? after : Math.max(0, tail.indexOf(" ") + 1);
     return tail.slice(from);
   });
-  /** The research methodology skill is installed automatically the first time a conversation surface opens (idempotent per vault). */
-  let ensuredSkillFor: string | null = null;
-  $effect(() => {
-    const root = vault.root;
-    if (!root || ensuredSkillFor === root) return;
-    ensuredSkillFor = root;
-    api
-      .ensureResearchSkill()
-      .then((installed) => {
-        if (installed) toast.push(t("chat.skillInstalled"));
-      })
-      .catch(() => {});
-  });
   // The queued message is sent automatically when the turn ends (the queue itself lives in the
   // store: whichever surface is mounted sends it; with none mounted the queue is kept and the
   // next conversation surface to mount sends it. The effect is not moved up into the store — it

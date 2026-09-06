@@ -1,6 +1,7 @@
 ---
 name: prd
-description: From scattered input to a PRD: background, goal, requirement blocks with their sources, decisions, open questions, a change log
+description: "From scattered input to a PRD: background, goal, requirement blocks with their sources, decisions, open questions, a change log"
+version: 1
 ---
 
 # PRD

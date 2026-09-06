@@ -1,6 +1,7 @@
 ---
 name: meeting-actions
-description: Meeting notes into action items: who, what, by when — each quoting its sentence, deduplicated, reviewed on the card, then written into the project notes
+description: "Meeting notes into action items: who, what, by when — each quoting its sentence, deduplicated, reviewed on the card, then written into the project notes"
+version: 1
 ---
 
 # Meeting notes into action items
