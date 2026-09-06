@@ -22,7 +22,7 @@ import { t } from "$lib/i18n/i18n.svelte";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import katex from "katex";
 import { toast } from "$lib/stores/toast.svelte";
-import { CALLOUT_GROUP, CALLOUT_HEAD_RE } from "$lib/callout";
+import { CALLOUT_GROUP, CALLOUT_HEAD_RE, calloutDefaultTitle } from "$lib/callout";
 import { scanFields } from "$lib/fields";
 import { POSITIONAL_RE } from "$lib/citation";
 
@@ -414,7 +414,7 @@ function renderBlockList(
     const head = CALLOUT_HEAD_RE.exec(quote[0]);
     if (head) {
       const group = CALLOUT_GROUP[head[1].toLowerCase()] ?? "info";
-      const title = head[3].trim() ? inline(head[3].trim()) : escapeHtml(head[1]);
+      const title = head[3].trim() ? inline(head[3].trim()) : escapeHtml(calloutDefaultTitle(head[1]));
       const body = quote.slice(1).map(inline).join("<br>");
       out.push(`<div class="md-callout md-co-${group}"><div class="md-co-head">${title}</div>${body ? `<p>${body}</p>` : ""}</div>`);
     } else {

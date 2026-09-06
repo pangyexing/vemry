@@ -76,7 +76,7 @@ const headingLines = [1, 2, 3, 4, 5, 6].map((n) => Decoration.line({ class: `cm-
 // callout type → colour and icon group (the common alias table plus vemry's
 // claim/evidence)
 // exported: the completion source uses it as the list of callout type candidates
-import { CALLOUT_GROUP } from "$lib/callout";
+import { CALLOUT_GROUP, calloutDefaultTitle } from "$lib/callout";
 
 // lucide-style stroke icons (a 24 viewBox)
 const CALLOUT_ICONS: Record<string, string> = {
@@ -772,7 +772,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
                 from: first.from + co[1].length,
                 to: first.from + co[0].length,
                 deco: Decoration.replace({
-                  widget: new CalloutIconWidget(group, title ? "" : co[3]),
+                  widget: new CalloutIconWidget(group, title ? "" : calloutDefaultTitle(co[3])),
                 }),
               });
             break;

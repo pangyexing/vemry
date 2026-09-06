@@ -211,6 +211,8 @@ parenthesis. Nothing is swallowed and no list is broken.
   `warning`/`caution`/`attention`,
   `danger`/`error`/`failure`/`fail`/`missing`/`bug`, `example`, `quote`/`cite`,
   plus vemry's own `claim`, `decision` and `evidence`
+- A head written without a title shows the type's name in the UI language (a
+  `[!warning]` reads 警告 under a Chinese UI); the file keeps only the type
 - `claim`, `evidence` and `private` become their own block types in the index;
   `decision` is indexed as a claim (a decision is a claim about what to do:
   evidence supports it with `supports:` just the same, and the Claims view lists

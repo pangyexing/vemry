@@ -909,7 +909,6 @@ button:focus-visible,
   gap: 6px;
   vertical-align: -3px;
   margin-right: 6px;
-  text-transform: capitalize;
 }
 .cm-lp-co-icon svg {
   width: 15px;

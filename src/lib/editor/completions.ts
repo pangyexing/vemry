@@ -20,7 +20,7 @@ import { localDate } from "$lib/views/tasks";
 import type { BlockType, FieldStat } from "$lib/api";
 import { blockAt, frontmatterEnd } from "./blocks";
 import { type FieldChipHandler, inCode } from "./livepreview";
-import { CALLOUT_GROUP } from "$lib/callout";
+import { CALLOUT_GROUP, calloutDefaultTitle } from "$lib/callout";
 import { declaredField, fieldValueKind, scanFields } from "$lib/fields";
 
 /** Tab accepts the selected completion, like Enter; with none open it falls through
@@ -274,7 +274,7 @@ export function calloutCompletions(context: CompletionContext): CompletionResult
   const options = Object.keys(CALLOUT_GROUP).map(
     (name): Completion => ({
       label: name,
-      detail: CALLOUT_GROUP[name],
+      detail: calloutDefaultTitle(name),
       type: "text",
       // closeBrackets has already added the ]: with a ] after the cursor only the type name is inserted
       apply: (view: EditorView, _completion, applyFrom: number, applyTo: number) => {

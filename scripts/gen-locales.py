@@ -846,6 +846,22 @@ add("planDecision.", {
     "approve": ("Plan approved", "计划已确认"),
     "approve_edited": ("Plan approved with edits", "计划修改后确认"),
     "reject": ("Plan rejected", "计划被否决"),
+# The default title of a callout head written without one (callout.ts::calloutDefaultTitle);
+# the keys are the recognised types, so `callout.<type>` resolves and an unknown type shows its own name.
+add("callout.", {
+    "note": ("Note", "备注"), "info": ("Info", "信息"), "todo": ("To do", "待办"),
+    "abstract": ("Abstract", "摘要"), "summary": ("Summary", "摘要"), "tldr": ("TL;DR", "摘要"),
+    "tip": ("Tip", "提示"), "hint": ("Hint", "提示"), "important": ("Important", "重要"),
+    "success": ("Success", "成功"), "check": ("Check", "检查"), "done": ("Done", "完成"),
+    "question": ("Question", "问题"), "help": ("Help", "帮助"), "faq": ("FAQ", "常见问题"),
+    "warning": ("Warning", "警告"), "caution": ("Caution", "注意"), "attention": ("Attention", "注意"),
+    "danger": ("Danger", "危险"), "error": ("Error", "错误"), "failure": ("Failure", "失败"),
+    "fail": ("Fail", "失败"), "missing": ("Missing", "缺失"), "bug": ("Bug", "缺陷"),
+    "example": ("Example", "示例"), "quote": ("Quote", "引用"), "cite": ("Cite", "引用"),
+    "claim": ("Claim", "主张"), "decision": ("Decision", "决策"), "evidence": ("Evidence", "证据"),
+    "private": ("Private", "私密"),
+})
+
 })
 
 add("decision.", {
