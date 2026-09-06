@@ -938,6 +938,47 @@ add("atPicker.", {
     "extracting": ("Extracting…", "抽取中…"),
 })
 
+# ---------------------------------------------------------------- the built-in skills, as the UI names them
+# A built-in skill's file is English (the model reads it); what the welcome, the / picker
+# and Settings show for it comes from here. A vault's own skill shows its own description.
+add("skill.", {
+    "research.title": ("Research a topic", "调研主题"),
+    "research.desc": ("The vault first, verified web sources, one note", "先查库,网页来源要核实,落成一篇笔记"),
+    "tutor.title": ("Explain and quiz", "讲解与卡片"),
+    "tutor.desc": ("Explain from the notes, make flashcards, quiz from the due cards", "按笔记讲解、做闪卡、从到期卡片考你"),
+    "daily-start.title": ("Start the day", "今日启动"),
+    "daily-start.desc": ("Overdue, due today, in progress — three things for today", "过期、今天到期、进行中,定今天三件事"),
+    "daily-close.title": ("Close the day", "今日收尾"),
+    "daily-close.desc": ("Done today, notes touched, carry-over — into the journal", "今天做完了什么、动了哪些笔记、结转什么,记进日志"),
+    "weekly-report.title": ("Weekly report", "周报"),
+    "weekly-report.desc": ("Shipped, slipped, next week — appended to the week's note", "本周完成、延误、下周,追加到本周笔记"),
+    "meeting-actions.title": ("Meeting notes into actions", "会议记录变行动项"),
+    "meeting-actions.desc": ("Who, what, by when — reviewed on a card, then written", "谁、做什么、何时,卡片上审阅后写入"),
+    "prd.title": ("Write a PRD", "写 PRD"),
+    "prd.desc": ("Scattered input into requirement, decision and question blocks", "零散输入变需求、决策与开放问题块"),
+    "feedback-triage.title": ("Triage feedback", "反馈归集"),
+    "feedback-triage.desc": ("Feedback into evidence blocks, linked to what they bear on", "反馈变证据块,链到它支持的需求或决策"),
+    "decision-log.title": ("Decision log", "决策记录"),
+    "decision-log.desc": ("Which decisions have no evidence, what contradicts, what superseded", "哪些决策没有证据、哪条反馈相悖、谁被替代"),
+    "iteration-plan.title": ("Plan the iteration", "迭代规划"),
+    "iteration-plan.desc": ("Score the backlog, pick within capacity, tag and write", "给 backlog 打分、按容量挑选、打标签并写迭代笔记"),
+    "retro.title": ("Retro", "复盘"),
+    "retro.desc": ("Shipped, hypotheses, decisions, carry-over — and the release notes", "交付、假设、决策、结转,以及发布说明"),
+    "brief.title": ("Implementation brief", "实现简报"),
+    "brief.desc": ("A brief for a coding agent, and its summary recorded back", "导出给编码 agent 的简报,再把它的总结回填"),
+    "tidy.title": ("Tidy a folder", "整理文件夹"),
+    "tidy.desc": ("Audit, review every move on a card, links rewritten", "先审计,每一步移动先在卡片上审阅,链接随之改写"),
+    "tidy-note.title": ("Restructure a note", "重整一篇笔记"),
+    "tidy-note.desc": ("Outline first, blocks moved not retyped, ids kept", "先出大纲,块只移动不重打,id 保留"),
+})
+add("skillGroup.", {
+    "research": ("Research", "研究"),
+    "daily": ("Daily", "日常"),
+    "product": ("Product", "产品"),
+    "tidy": ("Tidy", "整理"),
+    "vault": ("This vault", "库内"),
+})
+
 # ---------------------------------------------------------------- the composer's / picker (skills)
 add("skillPicker.", {
     "heading": ("Choose a method", "选择方法"),
@@ -1211,7 +1252,8 @@ add("chat.", {
     "skillTitle": ("This message follows the {name} skill", "本条消息按 {name} 方法处理"),
     "statusSkill": ("by {name}", "按 {name}"),
     "skillPlaceholder": ("What should {name} work on? Enter alone runs it as is", "要按 {name} 处理什么?直接回车也可以"),
-    "welcomeSkills": ("Or start from a method (type / in the box at any time):", "或从一个方法开始(输入框里随时可键入 /):"),
+    "welcomeSkills": ("Start from a method", "从一个方法开始"),
+    "welcomeSkillsHint": ("or type / in the box at any time", "输入框里键入 / 随时可选"),
     "readTitle": ("Pages to read", "要读的网页"),
     "readWaiting": ("Your click is the fetch", "点一下才会抓取"),
     "readOpen": ("Read {n} pages", "读取 {n} 页"),
@@ -1226,7 +1268,6 @@ add("chat.", {
     "readAutoSources": ("Read without asking for the rest of this session", "本会话不再询问,自动读取"),
     "viewTitle": ("What the {view} shows right now goes in as context ({n} rows)", "{view} 此刻显示的内容作为上下文({n} 行)"),
     "planStatusSkipped": ("skipped", "已跳过"),
-    "welcomeTitle": ("Research panel", "研究面板"),
     "welcomeBody": ("Ask, and the AI searches your notes (and the web) and answers with citations. "
                     "Click a citation to read the article; clip what is worth keeping back into the "
                     "vault, and the next answer uses it.",

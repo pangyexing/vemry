@@ -10,6 +10,7 @@
   import { isImeKeydown } from "$lib/ime";
   import RefIcon from "./RefIcon.svelte";
   import { composerOverlayRect, type OverlayRect } from "./overlaypos";
+  import { skillDesc, skillTitle } from "$lib/skills";
 
   let {
     query,
@@ -41,8 +42,11 @@
       .catch(() => (skills = []));
   });
   const MAX_SHOW = 12;
-  /** Matched on the name, the description and the triggers (the words a user would type, in any language). */
-  const cands = $derived(fuzzyFilter(skills, query, (s) => `${s.name} ${s.description} ${s.triggers.join(" ")}`).slice(0, MAX_SHOW));
+  /** Matched on the name, the title and description the UI shows, the file's own description
+   *  and the triggers (the words a user would type, in any language). */
+  const cands = $derived(
+    fuzzyFilter(skills, query, (s) => `${s.name} ${skillTitle(s)} ${skillDesc(s)} ${s.description} ${s.triggers.join(" ")}`).slice(0, MAX_SHOW),
+  );
 
   let sel = $state(0);
   $effect(() => {
@@ -107,10 +111,10 @@
       <div class="at-empty">{t("skillPicker.empty")}</div>
     {/if}
     {#each cands as s, i (s.name)}
-      <button class="at-row" class:sel={i === selIdx} title={s.description} onmouseenter={() => (sel = i)} onclick={() => onPick(s.name)}>
+      <button class="at-row" class:sel={i === selIdx} title={skillDesc(s)} onmouseenter={() => (sel = i)} onclick={() => onPick(s.name)}>
         <span class="at-icon"><RefIcon kind="skill" size={14} /></span>
         <span class="at-title">/{s.name}</span>
-        <span class="at-sub">{s.description}</span>
+        <span class="at-sub">{skillTitle(s) !== s.name ? `${skillTitle(s)} · ` : ""}{skillDesc(s)}</span>
         {#if s.source !== "builtin"}<span class="at-sub tag">{t("settings.skillCustom")}</span>{/if}
       </button>
     {/each}

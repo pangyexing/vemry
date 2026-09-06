@@ -15,6 +15,7 @@
   import { POSITIONAL_RE, TRANSIENT_CITE_RE, blocksOf, findBlock, materializeCitations, parseRefTarget } from "$lib/citation";
   import AtPicker, { linesLabel } from "./AtPicker.svelte";
   import SkillPicker from "./SkillPicker.svelte";
+  import { groupSkills, skillDesc, skillTitle } from "$lib/skills";
   import RefIcon, { type RefIconKind } from "./RefIcon.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
   import { tick } from "svelte";
@@ -1019,8 +1020,10 @@
   }
 
   /** The welcome's method chips: every enabled skill (built-in and the vault's own), fetched
-   *  while the panel is empty; a click attaches the skill and puts the caret in the box. */
+   *  while the panel is empty and shown by scene under the title the catalog gives it; a
+   *  click attaches the skill and puts the caret in the box. */
   let welcomeSkills = $state<SkillEntry[]>([]);
+  const welcomeGroups = $derived(groupSkills(welcomeSkills));
   $effect(() => {
     if (agent.timeline.length !== 0) return;
     api
@@ -1653,15 +1656,21 @@
     <div class="turns">
     {#if agent.timeline.length === 0}
       <div class="welcome">
-        <p class="welcome-title">{t("chat.welcomeTitle")}</p>
         <p class="welcome-hint">
           {t("chat.welcomeBody")}
         </p>
-        {#if welcomeSkills.length}
-          <p class="welcome-hint faint">{t("chat.welcomeSkills")}</p>
-          <div class="welcome-examples">
-            {#each welcomeSkills as s (s.name)}
-              <button class="example" title={s.description} onclick={() => useSkill(s.name)}>/{s.name}</button>
+        {#if welcomeGroups.length}
+          <p class="welcome-lead">
+            {t("chat.welcomeSkills")}<span class="faint"> · {t("chat.welcomeSkillsHint")}</span>
+          </p>
+          <div class="welcome-groups">
+            {#each welcomeGroups as g (g.label)}
+              <span class="welcome-group-label">{g.label}</span>
+              <div class="welcome-examples">
+                {#each g.skills as s (s.name)}
+                  <button class="example" title={`/${s.name} — ${skillDesc(s)}`} onclick={() => useSkill(s.name)}>{skillTitle(s)}</button>
+                {/each}
+              </div>
             {/each}
           </div>
         {/if}
@@ -2251,29 +2260,49 @@
   .welcome {
     padding: 24px 8px;
   }
-  .welcome-title {
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
   .welcome-hint {
     font-size: var(--fs-sm);
     color: var(--fg-muted);
     line-height: 1.6;
     margin-bottom: 6px;
   }
+  /* the methods: a scene label in the left column, its chips wrapping beside it — one row a
+     scene, so the eye reads "daily: start, close, report…" rather than an alphabet of names */
+  .welcome-lead {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    margin: 18px 0 8px;
+  }
+  .welcome-lead .faint {
+    font-weight: 400;
+  }
+  .welcome-groups {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 10px;
+    row-gap: 8px;
+    align-items: baseline;
+    margin-bottom: 18px;
+  }
+  .welcome-group-label {
+    font-size: var(--fs-xs);
+    color: var(--fg-faint);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    padding-top: 5px;
+  }
   .welcome-examples {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
     gap: 6px;
-    margin: 6px 0 14px;
   }
   .example {
     font-size: var(--fs-xs);
-    color: var(--fg-muted);
+    color: var(--fg);
     border: 1px solid var(--border);
     border-radius: 999px;
-    padding: 4px 12px;
+    padding: 3px 10px;
     text-align: left;
   }
   .example:hover {

@@ -65,6 +65,12 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
   });
 }
 
+/** Whether a key built at runtime (`skill.<name>.title`) is in the catalog — the guard that
+ *  lets such a key be passed to `t` without a cast that would hide a missing entry. */
+export function hasKey(key: string): key is MessageKey {
+  return key in EN;
+}
+
 /** English needs a plural form where Chinese does not; keys come in
  *  `<base>_one` / `<base>_other` pairs. Callers pass the base key. */
 export function tn(base: string, n: number, params?: Record<string, string | number>): string {

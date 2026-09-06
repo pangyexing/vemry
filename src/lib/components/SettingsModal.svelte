@@ -7,6 +7,7 @@
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { api, EFFORT_OPTIONS, type LangSetting, type LinkOpenMode, type SkillEntry, type TypeExample } from "$lib/api";
   import { scaffold } from "$lib/scaffold";
+  import { skillDesc } from "$lib/skills";
   import { setLanguage, t } from "$lib/i18n/i18n.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
@@ -713,8 +714,8 @@
                         {/if}
                       {/if}
                     </div>
-                    {#if s.description}
-                      <small class="script-summary">{s.description}</small>
+                    {#if skillDesc(s)}
+                      <small class="script-summary">{skillDesc(s)}</small>
                     {/if}
                   </li>
                 {/each}
