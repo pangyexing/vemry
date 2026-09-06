@@ -1,9 +1,10 @@
-// The single state machine of in-app updates. The settings page and the "check for
-// updates" command share this logic; rule 5 of the controlled network egress: a check
-// or a download is only ever started by the two explicit actions here — check() (a
-// user click, or one silent check at startup once updater_auto_check is on) and
-// downloadAndInstall() (always a user click). There is no background path at all.
-import { t } from "$lib/i18n/i18n.svelte";
+// The single state machine of in-app updates, and the one surface every phase shows
+// on: the update dialog (UpdateDialog.svelte). The settings page only mirrors it.
+// Rule 5 of the controlled network egress: a check or a download is only ever started
+// by the two explicit actions here — check() (a user click, or one silent check at
+// startup once updater_auto_check is on) and downloadAndInstall() (always a user
+// click). There is no background path at all.
+import { api, type SettingsView } from "$lib/api";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
@@ -20,6 +21,11 @@ export type UpdatePhase =
 
 class UpdaterStore {
   phase = $state<UpdatePhase>("idle");
+  /** The update dialog is showing. A check the user asked for opens it at once (so the
+   *  wait is visible); the silent startup check opens it only on a new version that was
+   *  not skipped. Closing it never stops anything — a download sent to the background
+   *  brings the dialog back with its outcome. */
+  open = $state(false);
   /** The version running now (from tauri.conf, read once at startup). */
   current = $state("");
   /** The new version found and its release notes. */
@@ -29,17 +35,40 @@ class UpdaterStore {
   progress = $state(0);
   total = $state<number | null>(null);
   error = $state("");
+  /** Which step failed: the dialog titles a failed check and a failed download differently. */
+  errorStage = $state<"check" | "download">("check");
+  /** The mirror of updater_auto_check behind the dialog's checkbox: seeded from the
+   *  startup settings fetch, written straight through by setAutoCheck, and kept in step
+   *  by SettingsModal after its own save. */
+  autoCheck = $state(false);
+  /** The version "skip this version" muted (settings.updater_skipped_version): the
+   *  silent check does not open the dialog for it; a check the user asks for still does. */
+  skipped = $state<string | null>(null);
   #update: Update | null = null;
 
   constructor() {
     void getVersion().then((v) => (this.current = v)).catch(() => {});
   }
 
-  /** interactive=false is the silent check at startup: it fails silently and only toasts when there really is a new version. */
+  /** The startup path hands over the settings it fetched anyway (no second IPC). */
+  applySettings(s: SettingsView) {
+    this.autoCheck = s.updater_auto_check;
+    this.skipped = s.updater_skipped_version;
+  }
+
+  /** interactive=false is the silent check at startup: it fails silently and only opens the dialog on a new version. */
   async check(interactive = true) {
-    if (this.phase === "checking" || this.phase === "downloading") return;
+    // A download in flight or an update waiting for its restart: a new check would only
+    // find the same version again, so an ask just shows where things stand
+    if (this.phase === "checking" || this.phase === "downloading" || this.phase === "ready") {
+      if (interactive) this.open = true;
+      return;
+    }
     this.phase = "checking";
     this.error = "";
+    // Opened before the answer, so the wait is visible; closing it meanwhile discards
+    // the answer from view (the settings page still reflects it)
+    if (interactive) this.open = true;
     try {
       const u = await check();
       if (u) {
@@ -47,15 +76,47 @@ class UpdaterStore {
         this.version = u.version;
         this.notes = u.body ?? "";
         this.phase = "available";
-        if (!interactive) toast.push(t("vaultStore.updateAvailable", { version: u.version }));
+        if (!interactive && u.version !== this.skipped) this.open = true;
       } else {
         this.#update = null;
         this.phase = "uptodate";
       }
     } catch (e) {
       this.phase = "error";
+      this.errorStage = "check";
       this.error = String(e);
-      if (interactive) toast.push(t("vaultStore.updateCheckFailed", { error: String(e) }), "error");
+    }
+  }
+
+  /** Show the dialog for the state already in hand (the settings page's "install" button). */
+  show() {
+    this.open = true;
+  }
+
+  /** Close the dialog and leave everything as it is. */
+  close() {
+    this.open = false;
+  }
+
+  /** "Skip this version": the silent startup check stays quiet about this one; a
+   *  later version, or a check the user asks for, shows it again. */
+  async skip() {
+    this.skipped = this.version;
+    this.open = false;
+    try {
+      await api.settingsSet({ updater_skipped_version: this.version });
+    } catch (e) {
+      toast.push(String(e), "error");
+    }
+  }
+
+  /** The dialog's checkbox writes the setting at once (no save button to reach). */
+  async setAutoCheck(on: boolean) {
+    this.autoCheck = on;
+    try {
+      await api.settingsSet({ updater_auto_check: on });
+    } catch (e) {
+      toast.push(String(e), "error");
     }
   }
 
@@ -74,8 +135,12 @@ class UpdaterStore {
       this.phase = "ready";
     } catch (e) {
       this.phase = "error";
+      this.errorStage = "download";
       this.error = String(e);
     }
+    // The plugin has no way to abort a download, so "continue in background" only
+    // hides the dialog; the outcome (restart, or the failure) brings it back
+    this.open = true;
   }
 
   async restart() {

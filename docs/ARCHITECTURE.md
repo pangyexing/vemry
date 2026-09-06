@@ -1896,7 +1896,10 @@ still allowing only http(s)) renders it into `mainView = "reading"`.
    looking at that page), after which the note references local files.
 5. App updates (tauri-plugin-updater, v0.6) — by default the check happens only when
    the user clicks "check for updates"; turning on "check at startup" in settings adds
-   one silent query to GitHub Releases' `latest.json` at launch. Downloading and
+   one silent query to GitHub Releases' `latest.json` at launch. Either way the whole
+   flow runs in one dialog: the version found with skip / later / install, the
+   download's progress, then the restart ("skip this version" only mutes the silent
+   check; a check the user asks for shows the version again). Downloading and
    installing always need a click, and the package's minisign signature is verified
    (the public key is compiled into the app and the private key exists only in the
    publisher's CI secrets; the version's single source of truth is the workspace

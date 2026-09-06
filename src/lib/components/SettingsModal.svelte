@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  /** The category page ids; App's check-updates command lands on the "updates" page through this */
+  /** The category page ids; App's settings commands pick the page to open on through this */
   export type SettingsTab = "general" | "ai" | "browser" | "vault" | "updates";
 </script>
 
@@ -297,6 +297,7 @@
     });
     // The language takes effect at once (each window's frontend has its own $state; the Rust side already rebuilt the menu inside settings_set)
     setLanguage(language);
+    updater.autoCheck = updaterAutoCheck; // the update dialog's checkbox mirrors the same setting
     void prefs.refresh(); // the in-process mirror of the editor's click gestures: after a successful write it is read back from the single source of truth rather than copied field by field
     saved = true;
     dirty = false;
@@ -524,7 +525,8 @@
                     {t("settings.downloading")}{updater.total ? ` ${Math.round((updater.progress / updater.total) * 100)}%` : ""}
                   </button>
                 {:else if updater.phase === "available"}
-                  <button class="btn small" onclick={() => updater.downloadAndInstall()}>{t("settings.downloadInstall", { version: updater.version })}</button>
+                  <!-- The dialog carries the install (its progress and the restart): this only brings it back -->
+                  <button class="btn small" onclick={() => updater.show()}>{t("settings.downloadInstall", { version: updater.version })}</button>
                 {:else if updater.phase === "ready"}
                   <button class="btn small" onclick={() => updater.restart()}>{t("settings.restartToFinish")}</button>
                 {:else}

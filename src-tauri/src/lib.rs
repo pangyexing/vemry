@@ -42,8 +42,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         // In-app updates: the check is user-initiated by default (a setting can turn
         // on one silent check at startup), while downloading and installing always
-        // need the user's confirmation; the installer is verified by a minisign
-        // signature.
+        // need the user's confirmation in the update dialog; the installer is
+        // verified by a minisign signature.
         // Rule 5 of the controlled network egress, see "Network egress list" in
         // docs/ARCHITECTURE.md.
         .plugin(tauri_plugin_updater::Builder::new().build())

@@ -94,12 +94,18 @@ pub struct Settings {
     #[serde(default)]
     pub format_punctuation: bool,
     /// Check for updates automatically at startup (one silent check; a new version
-    /// is only announced, never downloaded).
+    /// opens the update dialog, and is never downloaded on its own).
     /// Off by default — offline first: with it off, an update check happens only
     /// when the user presses "check for updates"; downloading and installing always
     /// need the user's explicit confirmation.
     #[serde(default)]
     pub updater_auto_check: bool,
+    /// The version the user answered "skip this version" to in the update dialog:
+    /// the silent startup check stays quiet about it (a later version shows again),
+    /// while a check the user asks for still shows it — skipping mutes a nag, it
+    /// does not hide a release from someone looking for one.
+    #[serde(default)]
+    pub updater_skipped_version: Option<String>,
     /// The note body's font size (px), applied to the editor and the reading
     /// projection; the UI font size does not follow it.
     /// settings_set clamps it to 15..=18, so editing the JSON by hand cannot put it
@@ -220,6 +226,7 @@ impl Default for Settings {
             format_cjk_spacing: false,
             format_punctuation: false,
             updater_auto_check: false,
+            updater_skipped_version: None,
             note_font_size: default_note_font_size(),
             readable_line_width: true,
             reasoning_effort: default_reasoning_effort(),
@@ -419,6 +426,16 @@ mod tests {
         assert!(!s.updater_auto_check);
         let s: Settings = serde_json::from_str(r#"{"updater_auto_check":true}"#).unwrap();
         assert!(s.updater_auto_check);
+    }
+
+    /// The skipped version is a field added later: an old config missing it means
+    /// nothing was skipped, and a stored value must be kept.
+    #[test]
+    fn updater_skipped_version_defaults_none_keeps_stored() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.updater_skipped_version, None);
+        let s: Settings = serde_json::from_str(r#"{"updater_skipped_version":"0.7.0"}"#).unwrap();
+        assert_eq!(s.updater_skipped_version.as_deref(), Some("0.7.0"));
     }
 
     /// The body font size is a field added later: an old config missing it takes the

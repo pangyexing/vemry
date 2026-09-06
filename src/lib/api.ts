@@ -264,6 +264,8 @@ export interface SettingsView {
   format_cjk_spacing: boolean;
   format_punctuation: boolean;
   updater_auto_check: boolean;
+  /** The version "skip this version" muted for the silent startup check (null = none). */
+  updater_skipped_version: string | null;
   note_font_size: number;
   readable_line_width: boolean;
   /** The thinking depth level: none/low/high/max (DeepSeek's official default is high). */
@@ -294,6 +296,8 @@ export interface SettingsUpdate {
   format_cjk_spacing?: boolean;
   format_punctuation?: boolean;
   updater_auto_check?: boolean;
+  /** Set-only (see commands.rs): the update dialog's "skip this version". */
+  updater_skipped_version?: string;
   note_font_size?: number;
   readable_line_width?: boolean;
   reasoning_effort?: string;

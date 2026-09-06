@@ -858,6 +858,8 @@ pub struct SettingsView {
     pub format_cjk_spacing: bool,
     pub format_punctuation: bool,
     pub updater_auto_check: bool,
+    /// The version "skip this version" muted for the silent startup check (None = none).
+    pub updater_skipped_version: Option<String>,
     pub note_font_size: u8,
     pub readable_line_width: bool,
     pub reasoning_effort: String,
@@ -892,6 +894,9 @@ pub struct SettingsUpdate {
     pub format_cjk_spacing: Option<bool>,
     pub format_punctuation: Option<bool>,
     pub updater_auto_check: Option<bool>,
+    /// Set-only: the dialog's "skip this version". Nothing clears it — a later
+    /// release differs from it, and a check the user asks for ignores it anyway.
+    pub updater_skipped_version: Option<String>,
     pub note_font_size: Option<u8>,
     pub readable_line_width: Option<bool>,
     pub reasoning_effort: Option<String>,
@@ -934,6 +939,7 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         format_cjk_spacing: s.format_cjk_spacing,
         format_punctuation: s.format_punctuation,
         updater_auto_check: s.updater_auto_check,
+        updater_skipped_version: s.updater_skipped_version,
         note_font_size: s.note_font_size,
         readable_line_width: s.readable_line_width,
         reasoning_effort: s.reasoning_effort,
@@ -1004,6 +1010,9 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     }
     if let Some(v) = update.updater_auto_check {
         s.updater_auto_check = v;
+    }
+    if let Some(v) = update.updater_skipped_version {
+        s.updater_skipped_version = Some(v);
     }
     if let Some(v) = update.note_font_size {
         s.note_font_size = v.clamp(15, 18);

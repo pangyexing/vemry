@@ -362,8 +362,8 @@ CMD = {
     ),
     "check-updates": (
         ("Check for updates", "检查更新"),
-        ("Ask GitHub Releases for a newer version (progress shows in Settings)",
-         "向 GitHub Releases 查询新版本(设置页可看进度)"),
+        ("Ask GitHub Releases for a newer version and offer to install it",
+         "向 GitHub Releases 查询新版本,有则提示安装"),
     ),
     "clear-agent": (
         ("New AI session", "新建 AI 会话"),
@@ -1368,6 +1368,31 @@ add("chat.", {
     "popOutHint": ("Press {key} again to pop out a separate window", "再按 {key} 弹出独立窗口"),
 })
 
+# ---------------------------------------------------------------- update dialog
+add("updater.", {
+    "checkingTitle": ("Checking for updates…", "正在检查更新…"),
+    "availableTitle": ("A new version of vemry is available", "vemry 有新版本"),
+    "availableBody": ("vemry {version} is available for download. You have {current}. Download it now?",
+                      "vemry {version} 可供下载,你当前的版本是 {current}。要现在下载吗?"),
+    "notes": ("Release notes", "更新说明"),
+    "autoCheck": ("Check for updates automatically at startup", "以后启动时自动检查更新"),
+    "skip": ("Skip this version", "跳过这个版本"),
+    "later": ("Remind me later", "稍后提醒我"),
+    "install": ("Install update", "安装更新"),
+    "downloadingTitle": ("Updating vemry to {version}", "正在更新 vemry 到 {version}"),
+    "downloadingBody": ("Downloading the update… the package is verified before it is installed.",
+                        "正在下载更新…安装包会在安装前经签名校验。"),
+    "background": ("Continue in background", "后台继续"),
+    "readyTitle": ("Update installed", "更新已安装"),
+    "readyBody": ("Restart vemry to finish updating to {version}.", "重启 vemry 以完成到 {version} 的更新。"),
+    "restartLater": ("Later", "稍后"),
+    "restartNow": ("Restart now", "立即重启"),
+    "upToDateTitle": ("You're up to date", "已是最新版本"),
+    "upToDateBody": ("vemry {current} is the newest version.", "vemry {current} 已是最新版本。"),
+    "checkFailedTitle": ("Could not check for updates", "无法检查更新"),
+    "installFailedTitle": ("The update could not be installed", "更新未能安装"),
+})
+
 # ---------------------------------------------------------------- settings dialog
 add("settings.", {
     "title": ("Settings", "设置"),
@@ -1456,7 +1481,7 @@ add("settings.", {
     "appUpdates": ("App updates", "应用更新"),
     "currentVersion": ("Current version {version}", "当前版本 {version}"),
     "downloading": ("Downloading…", "下载中…"),
-    "downloadInstall": ("Download and install {version}", "下载并安装 {version}"),
+    "downloadInstall": ("Install {version}…", "安装 {version}…"),
     "restartToFinish": ("Restart to finish the update", "重启以完成更新"),
     "checking": ("Checking…", "检查中…"),
     "upToDate": ("Up to date", "已是最新版本"),
@@ -1464,11 +1489,13 @@ add("settings.", {
     "installedRestart": ("Installed — takes effect after a restart", "已安装,重启后生效"),
     "autoCheck": ("Check for updates at startup", "启动时自动检查更新"),
     "autoCheckHint": ("Off by default (offline-first: without it, the app only goes online when you click "
-                      "“check for updates”). On, it asks GitHub Releases once at startup and only tells "
-                      "you about a new version; downloading and installing always need your confirmation, "
-                      "and the package signature is verified.",
+                      "“check for updates”). On, it asks GitHub Releases once at startup and only shows "
+                      "the update dialog when there is a new version (a version you skipped stays quiet); "
+                      "downloading and installing always need your confirmation, and the package "
+                      "signature is verified.",
                       "默认关闭(离线优先:不开启则只有点「检查更新」才联网)。开启后启动时向 GitHub Releases "
-                      "静默查询一次,发现新版只提示;下载与安装始终需要你确认,安装包经签名校验。"),
+                      "静默查询一次,发现新版才弹出更新提示(跳过的版本不再提示);下载与安装始终需要你确认,"
+                      "安装包经签名校验。"),
     "adblock": ("Ad blocking (subscription rules, native WebKit blocking, macOS only)",
                 "去广告(订阅规则,WebKit 原生拦截,仅 macOS)"),
     "adblockActive": ("Active · {n} rules", "已生效 · {n} 条规则"),
@@ -1685,8 +1712,6 @@ add("vaultStore.", {
                       "输入框已过期，脚本 {script} 收到的是「取消」"),
     "grantExpired": ("The permission request expired — the write from script {script} was treated as denied",
                      "授权请求已过期，脚本 {script} 的写入按「拒绝」处理"),
-    "updateAvailable": ("vemry {version} is out — update it in Settings", "vemry {version} 已发布,可在设置里更新"),
-    "updateCheckFailed": ("Update check failed: {error}", "检查更新失败: {error}"),
     "pinnedTargetGone": ("The pinned target {path} no longer exists — unpinned", "钉住的目标 {path} 已不存在,已解除钉住"),
     "compacted": ("Context compacted ({level})", "上下文已压缩({level})"),
     "forkedHere": ("Forked a new session from here", "已从此处分叉出新会话"),

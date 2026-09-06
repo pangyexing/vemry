@@ -33,6 +33,7 @@
   import ContextMenu from "$lib/components/ContextMenu.svelte";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import ScriptGrantDialog from "$lib/components/ScriptGrantDialog.svelte";
+  import UpdateDialog from "$lib/components/UpdateDialog.svelte";
   import SettingsModal, { type SettingsTab } from "$lib/components/SettingsModal.svelte";
   import CommandPalette, { type PaletteMode } from "$lib/components/CommandPalette.svelte";
   import AgendaView from "$lib/components/views/AgendaView.svelte";
@@ -100,7 +101,7 @@
   }
   // The clip destination's vault-switch cleanup and restore live inside the clipTarget store (persisted per vault)
   let settingsOpen = $state(false);
-  /** Which category page the settings open on: the ordinary entry lands on "General", and check-updates lands straight on "Updates" */
+  /** Which category page the settings open on: the ordinary entry lands on "General", and the AI entry on "AI" */
   let settingsTab = $state<SettingsTab>("general");
 
   // ---- The sidebars: dragging a sash, double-clicking to reset, swapping sides (swapSides) ----
@@ -207,11 +208,13 @@
   });
 
   vault.loadRecent();
-  // The settings are fetched once at startup (the prefs mirror brings updater_auto_check back
+  // The settings are fetched once at startup (the prefs mirror brings the updater's fields back
   // with it): one silent update check — only when the user turned it on in the settings (off by
-  // default, offline first)
+  // default, offline first); a new version opens the update dialog, a skipped one stays quiet
   void prefs.refresh().then((s) => {
-    if (s?.updater_auto_check) void updater.check(false);
+    if (!s) return;
+    updater.applySettings(s);
+    if (s.updater_auto_check) void updater.check(false);
   });
 
   // ---- user scripts: palette sync + toasts + blocking dialogs ----
@@ -1041,10 +1044,8 @@
   });
   registerCommand({ id: "settings", group: "system", run: () => { settingsTab = "general"; settingsOpen = true; } });
   registerCommand({ id: "settings-ai", group: "system", run: () => { settingsTab = "ai"; settingsOpen = true; } });
-  registerCommand({
-    id: "check-updates", group: "system",
-    run: () => { settingsTab = "updates"; settingsOpen = true; void updater.check(true); },
-  });
+  // The whole flow (checking, the version found, download, restart) runs in the update dialog
+  registerCommand({ id: "check-updates", group: "system", run: () => void updater.check(true) });
   registerCommand({
     // The old "clear the AI conversation" only cleared the timeline and not the model context —
     // the meaning is now a new session: the UI and Rust's history change gear together, and the
@@ -1332,6 +1333,7 @@
 <ContextMenu />
 <PermissionDialog />
 <ScriptGrantDialog />
+<UpdateDialog />
 <SettingsModal bind:open={settingsOpen} bind:tab={settingsTab} />
 
 <style>

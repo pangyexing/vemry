@@ -57,7 +57,8 @@ Then:
 5. Write the release notes (include the Gatekeeper instructions while there is no
    Apple certificate), then publish.
 6. **Test the upgrade for real**: install an older version → *Check for updates*
-   in the app → download and install → restart and confirm the version.
+   in the app → *Install update* in the dialog → *Restart now* and confirm the
+   version.
 
 > Note that the Release workflow only builds; it does not run tests or clippy. "All
 > four legs green" therefore refers to **CI**, not to Release — check CI on `main`
@@ -93,5 +94,6 @@ measured not to work for signing at package time. `pnpm tauri dev` is unaffected
 The update check and download are the fifth controlled network exit (see
 "The network-exit list" in [ARCHITECTURE.md](ARCHITECTURE.md)): by default it happens only when the
 user asks for it; turning on automatic checking in Settings adds one silent check
-at startup; downloading and installing always need the user's confirmation; and
-the package's minisign signature is verified.
+at startup (which opens the update dialog only for a new version the user has not
+skipped); downloading and installing always need the user's confirmation; and the
+package's minisign signature is verified.
