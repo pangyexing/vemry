@@ -7,13 +7,14 @@
   // current note" comes from the editor in the main window and from the main window's push in
   // the chat window (agent.hostNote); anything that has to happen in the main window goes
   // through host.ts.
-  import { api, AGENT_IMAGE_EXTS, EFFORT_OPTIONS, type EffortValue, isAgentImage, type WebSearchResult } from "$lib/api";
+  import { api, type SkillEntry, AGENT_IMAGE_EXTS, EFFORT_OPTIONS, type EffortValue, isAgentImage, type WebSearchResult } from "$lib/api";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { agent, blockHandle, type ComposerHandle, type DraftRef, type TimelineItem } from "$lib/stores/agent.svelte";
   import type { ReadRequest } from "$lib/api";
   import HoverCard, { type HoverCardData } from "./HoverCard.svelte";
   import { POSITIONAL_RE, TRANSIENT_CITE_RE, blocksOf, findBlock, materializeCitations, parseRefTarget } from "$lib/citation";
   import AtPicker, { linesLabel } from "./AtPicker.svelte";
+  import SkillPicker from "./SkillPicker.svelte";
   import RefIcon, { type RefIconKind } from "./RefIcon.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
   import { tick } from "svelte";
@@ -94,7 +95,7 @@
   const selForSend = $derived.by(() => {
     const s = curSel;
     if (!s || s.private || vault.privatePaths.has(s.path) || selKey(s) === agent.dismissedSelection) return null;
-    const explicit = agent.contextDraft.filter((d) => d.kind !== "page");
+    const explicit = materialRefs();
     if (explicit.length >= MAX_REFS) return null;
     if (explicit.some((d) => d.kind === "selection" && selKey(d) === selKey(s))) return null;
     // A stable identity: the same selection reuses the previous object, so downstream deriveds
@@ -103,6 +104,11 @@
     if (lastSel && selKey(lastSel) === selKey(s) && lastSel.text === s.text) return lastSel;
     return (lastSel = s);
   });
+  /** The chips that count against the reference cap: the vault material — not the attached web
+   *  page (its own slot) and not the skill (the method, one short text outside the cap in Rust too). */
+  function materialRefs(): DraftRef[] {
+    return agent.contextDraft.filter((d) => d.kind !== "page" && d.kind !== "skill");
+  }
   /** The reference draft at send time: the explicit chips plus the automatic selection (last;
    *  the envelope is ordered exactly as the chips row is). The caller clears contextDraft after
    *  consuming it, while the automatic chip lives with the selection. */
@@ -389,6 +395,10 @@
   const gateWaiting = $derived(!!(agent.pendingPlan || agent.pendingRead || agent.pendingActions || agent.pendingPermission));
   const runStatus = $derived.by(() => {
     if (!agent.running) return "";
+    const by = agent.activeSkill ? `${t("chat.statusSkill", { name: agent.activeSkill })} · ` : "";
+    return by + runVerb();
+  });
+  const runVerb = () => {
     if (agent.pendingPlan) return t("chat.statusWaitingPlan");
     if (agent.pendingRead) return t("chat.statusWaitingRead");
     if (agent.pendingActions) return t("chat.statusWaitingActions");
@@ -414,7 +424,7 @@
       if (it.kind === "sources" && it.searching) return t("chat.searching");
     }
     return t(agent.phase === "text" ? "chat.statusAnswering" : "chat.thinking");
-  });
+  };
 
   /** ---- The decision state of the plan gate's (propose_plan) inline card: at most one plan is
    *  pending at a time, so this is one piece of component-level state; a new request resets it on
@@ -1008,10 +1018,18 @@
     run(api.browserOpen(url));
   }
 
-  const welcomeExamples = $derived([t("chat.starter1"), t("chat.starter2"), t("chat.starter3"), t("chat.starter4"), t("chat.starter5"), t("chat.starter6"), t("chat.starter7")]);
-
-  function fillExample(text: string) {
-    agent.draft = text;
+  /** The welcome's method chips: every enabled skill (built-in and the vault's own), fetched
+   *  while the panel is empty; a click attaches the skill and puts the caret in the box. */
+  let welcomeSkills = $state<SkillEntry[]>([]);
+  $effect(() => {
+    if (agent.timeline.length !== 0) return;
+    api
+      .skillsList()
+      .then((s) => (welcomeSkills = s.filter((x) => !x.disabled)))
+      .catch(() => (welcomeSkills = []));
+  });
+  function useSkill(name: string) {
+    pushRef({ kind: "skill", path: name });
     composerEl?.focus();
   }
 
@@ -1029,6 +1047,8 @@
     t("chat.placeholder4"),
   ]);
   const PH_INTERVAL = 4000;
+  /** The skill chip on the row, if any: the placeholder then asks what it should work on. */
+  const draftSkill = $derived(agent.contextDraft.find((d) => d.kind === "skill")?.path ?? null);
   let phIdx = $state(0);
   $effect(() => {
     if (agent.draft !== "" || agent.running) {
@@ -1041,7 +1061,10 @@
   });
 
   async function send() {
-    const text = agent.draft.trim();
+    let text = agent.draft.trim();
+    // A skill chip with nothing typed: the routine is the whole request (`/daily-start`)
+    const skill = agent.contextDraft.find((d) => d.kind === "skill");
+    if (!text && skill) text = `/${skill.path}`;
     if (!text) return;
     // Nothing is muted while a turn runs: one message is queued (sending again overwrites it) and sent automatically when the turn ends
     if (agent.running) {
@@ -1126,10 +1149,48 @@
       atQuery = null;
       atStart = -1;
     }
+    detectSlash(upto);
   }
   function closeAt() {
     atQuery = null;
     atStart = -1;
+  }
+  // ---- the / skill picker: the method for the message, chosen by name ----
+  let skillPicker = $state<SkillPicker | null>(null);
+  /** null = not triggered; non-null = the filter text between the / and the cursor. */
+  let slashQuery = $state<string | null>(null);
+  let slashStart = -1;
+  /** The / triggers at the start of the draft or after whitespace, and the token is a run of
+   *  non-whitespace without another slash — so a URL (`https://…`) and a path (`research/x`)
+   *  never open it, and the memo (`#`) and URL modes, which test the whole draft, are untouched. */
+  const SLASH_RE = /(^|\s)\/([^\s/]*)$/;
+  function detectSlash(upto: string) {
+    const m = SLASH_RE.exec(upto);
+    if (m) {
+      slashQuery = m[2];
+      slashStart = upto.length - m[2].length - 1;
+    } else {
+      closeSlash();
+    }
+  }
+  function closeSlash() {
+    slashQuery = null;
+    slashStart = -1;
+  }
+  /** A skill was chosen: the /token goes, the chip comes (the same consume-then-push shape as @). */
+  function onSlashPick(name: string) {
+    const el = composerEl;
+    if (slashStart >= 0) {
+      const end = slashStart + 1 + (slashQuery?.length ?? 0);
+      const caret = slashStart;
+      agent.draft = agent.draft.slice(0, slashStart) + agent.draft.slice(end);
+      queueMicrotask(() => {
+        el?.focus();
+        el?.setSelectionRange(caret, caret);
+      });
+    }
+    closeSlash();
+    pushRef({ kind: "skill", path: name });
   }
   /** The toolbar's "+" button: it inserts an @ at the cursor to trigger the same candidate layer
    *  (going through exactly the same detectAt/onAtPick path as typing @ by hand, with the token
@@ -1156,6 +1217,7 @@
   function refLabel(d: DraftRef): string {
     if (d.kind === "page") return d.page.title || d.page.url;
     if (d.kind === "view") return d.label;
+    if (d.kind === "skill") return `/${d.path}`;
     if (d.kind === "block") return baseOf(d.path);
     const name = baseOf(d.path);
     return d.kind === "folder" ? `${name}/` : name;
@@ -1164,6 +1226,7 @@
   function refTitle(d: DraftRef): string {
     if (d.kind === "page") return d.page.url;
     if (d.kind === "view") return t("chat.viewTitle", { view: d.label, n: d.rows ?? 0 });
+    if (d.kind === "skill") return t("chat.skillTitle", { name: d.path });
     // The image chip's permanent hint: no table of model capabilities is attempted (it cannot be judged reliably), and a text-only model will error on one
     if (d.kind === "image") return t("chat.needsMultimodal", { path: d.path });
     if (d.kind === "block") return `${d.path} ¶${blockHandle(d.local_id)}${d.label ? `\n\n${d.label}` : ""}`;
@@ -1270,7 +1333,7 @@
         title: refTitle(d),
         label: refLabel(d),
         lines: d.kind === "selection" ? linesLabel(d) : d.kind === "block" ? `¶${blockHandle(d.local_id)}` : null,
-        tag: d.kind === "page" && d.page.truncated ? t("chat.tagTruncated") : d.kind === "view" ? t("chat.viewTag") : null,
+        tag: d.kind === "page" && d.page.truncated ? t("chat.tagTruncated") : d.kind === "view" ? t("chat.viewTag") : d.kind === "skill" ? t("chat.skillTag") : null,
         removeLabel: t("chat.removeContext"),
         remove: () => agent.contextDraft.splice(di, 1),
       });
@@ -1325,10 +1388,15 @@
       agent.attachPage(ref.page);
       return true;
     }
+    // One method per message: a second skill replaces the first, and it leads the row
+    if (ref.kind === "skill") {
+      agent.contextDraft = [ref, ...agent.contextDraft.filter((d) => d.kind !== "skill")];
+      return true;
+    }
     if (agent.contextDraft.some((d) => refKey(d) === refKey(ref))) return false;
     // The automatic selection chip takes a slot (choosing it pins the live chip as an explicit one and takes no new slot)
     const auto = selForSend && !(ref.kind === "selection" && selKey(ref) === selKey(selForSend)) ? 1 : 0;
-    if (agent.contextDraft.filter((d) => d.kind !== "page").length + auto >= MAX_REFS) {
+    if (materialRefs().length + auto >= MAX_REFS) {
       toast.push(t("chat.maxRefs", { n: MAX_REFS }));
       return false;
     }
@@ -1466,6 +1534,7 @@
     if (summonHint) hideSummonHint();
     // With the candidate overlay open the keyboard gives way first (↑/↓/Enter/Tab/Esc belong to it, and everything else types as usual)
     if (atQuery != null && picker?.handleKey(e)) return;
+    if (slashQuery != null && skillPicker?.handleKey(e)) return;
     if (e.key !== "Enter" || e.shiftKey || isImeKeydown(e)) return;
     e.preventDefault();
     submit(e.altKey);
@@ -1588,11 +1657,14 @@
         <p class="welcome-hint">
           {t("chat.welcomeBody")}
         </p>
-        <div class="welcome-examples">
-          {#each welcomeExamples as ex (ex)}
-            <button class="example" onclick={() => fillExample(ex)}>{ex}</button>
-          {/each}
-        </div>
+        {#if welcomeSkills.length}
+          <p class="welcome-hint faint">{t("chat.welcomeSkills")}</p>
+          <div class="welcome-examples">
+            {#each welcomeSkills as s (s.name)}
+              <button class="example" title={s.description} onclick={() => useSkill(s.name)}>/{s.name}</button>
+            {/each}
+          </div>
+        {/if}
         <p class="welcome-hint faint">
           {t("chat.welcomeHint", { key: k("Mod+L") })}
         </p>
@@ -1654,7 +1726,7 @@
                 <span class="user-page" title={t("chat.privateRefHint")}><PrivacyIcon size={12} /> {t("chat.privateRef")}</span>
               {:else}
                 <span class="user-page" title={r.path}
-                  ><RefIcon kind={r.kind} size={12} /> {r.path}{r.lines ? ` ${linesLabel({ from_line: r.lines[0], to_line: r.lines[1] })}` : ""}{r.block ? ` ¶${r.block}` : ""}</span
+                  ><RefIcon kind={r.kind} size={12} /> {r.kind === "skill" ? `/${r.path}` : r.path}{r.lines ? ` ${linesLabel({ from_line: r.lines[0], to_line: r.lines[1] })}` : ""}{r.block ? ` ¶${r.block}` : ""}</span
                 >
               {/if}
             {/each}
@@ -2015,11 +2087,16 @@
     {#if atQuery != null}
       <AtPicker bind:this={picker} query={atQuery} anchor={composerEl} {curSel} onPick={onAtPick} onPickFiles={onAtPickFiles} onStage={onAtStage} onClose={closeAt} />
     {/if}
+    {#if slashQuery != null}
+      <SkillPicker bind:this={skillPicker} query={slashQuery} anchor={composerEl} onPick={onSlashPick} onClose={closeSlash} />
+    {/if}
     <div class="input-wrap">
       {#if agent.draft === ""}
         <div class="ph" aria-hidden="true">
           {#if agent.running}
             <span>{t("chat.runningQueueHint")}</span>
+          {:else if draftSkill}
+            <span>{t("chat.skillPlaceholder", { name: draftSkill })}</span>
           {:else}
             {#key phIdx}<span class="ph-item">{PH_HINTS[phIdx]}</span>{/key}
           {/if}
@@ -2033,7 +2110,7 @@
         oninput={detectAt}
         onclick={detectAt}
         onkeyup={detectAt}
-        onblur={() => { closeAt(); hideSummonHint(); }}
+        onblur={() => { closeAt(); closeSlash(); hideSummonHint(); }}
         aria-label={t("chat.composerAria")}
         rows="1"
       ></textarea>
@@ -2186,10 +2263,10 @@
   }
   .welcome-examples {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: 6px;
-    margin: 10px 0 14px;
+    margin: 6px 0 14px;
   }
   .example {
     font-size: var(--fs-xs);

@@ -8,12 +8,13 @@
 //! Fixture shape (see the files for examples):
 //! ```json
 //! { "name": "…", "vault": { "path.md": "content" }, "plan_confirm": false, "follow": "note.md",
-//!   "turns": [ { "user": "…", "page_url": "…", "script": [ [chunk…], [chunk…] ] } ],
+//!   "turns": [ { "user": "…", "page_url": "…", "skill": "research", "script": [ [chunk…], [chunk…] ] } ],
 //!   "expect": { "citations_resolve": true, "max_tool_calls": 2, "tools_ok": true,
 //!               "no_writes": true, "sources": [{"url": "…", "verified": false}],
 //!               "plan": ["done", "doing"], "no_plan_in_prose": true,
 //!               "tool_output_contains": [{"id": "c1", "text": "…"}],
-//!               "answer_contains": ["…"], "note_contains": [{"path": "…", "text": "…"}] } }
+//!               "answer_contains": ["…"], "note_contains": [{"path": "…", "text": "…"}],
+//!               "skill_events": ["research"], "skill_in_envelope": "research" } }
 //! ```
 //! Writes go through an auto-denying gate, so a fixture that expects a write to land
 //! must set `follow` (the followed note takes its local writes without a dialog) or
@@ -182,6 +183,9 @@ async fn run_fixture(fx: &Value) -> Outcome {
             title: "page".into(),
             markdown: turn["page_markdown"].as_str().unwrap_or("page body").into(),
         });
+        // `skill`: the user chose one in the composer — the same reference the chip sends
+        let refs: Vec<vemry_agent::ContextRef> =
+            turn["skill"].as_str().map(|s| vemry_agent::ContextRef::Skill { path: s.into() }).into_iter().collect();
         runner
             .run(
                 &provider,
@@ -189,7 +193,7 @@ async fn run_fixture(fx: &Value) -> Outcome {
                 &mut history,
                 Some(turn["user"].as_str().expect("user").into()),
                 page,
-                vec![],
+                refs,
                 None,
                 &emit,
                 &AtomicBool::new(false),
@@ -209,7 +213,7 @@ async fn run_fixture(fx: &Value) -> Outcome {
     let vault_dir = dir;
     let vault_guard = vault.lock().unwrap();
     let v = vault_guard.as_ref().unwrap();
-    check(fx, v, &events, &answers, &sources, &jsonl);
+    check(fx, v, &events, &answers, &sources, &jsonl, &history);
     if let Some(checks) = fx["expect"]["note_contains"].as_array() {
         for c in checks {
             let path = c["path"].as_str().unwrap();
@@ -238,7 +242,15 @@ fn fail(name: &str, what: &str) -> ! {
     panic!("[{name}] {what}")
 }
 
-fn check(fx: &Value, vault: &Vault, events: &[AgentEvent], answers: &[String], sources: &[vemry_agent::Source], jsonl: &str) {
+fn check(
+    fx: &Value,
+    vault: &Vault,
+    events: &[AgentEvent],
+    answers: &[String],
+    sources: &[vemry_agent::Source],
+    jsonl: &str,
+    history: &[vemry_agent::types::ChatMessage],
+) {
     let name = fx["name"].as_str().unwrap_or("?");
     let ex = &fx["expect"];
     let fail = |what: &str| -> ! { fail(name, what) };
@@ -326,6 +338,48 @@ fn check(fx: &Value, vault: &Vault, events: &[AgentEvent], answers: &[String], s
             if !all.contains(n) {
                 fail(&format!("answers lack {n:?}"));
             }
+        }
+    }
+    // The skills that came into effect, in order — attached by the user or read by the
+    // model — as the events and the ledger both say
+    if let Some(names) = ex["skill_events"].as_array() {
+        let want: Vec<&str> = names.iter().filter_map(|n| n.as_str()).collect();
+        let got: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::SkillActivated { name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        if got != want {
+            fail(&format!("skill events {got:?}, expected {want:?}"));
+        }
+        for n in &want {
+            if !jsonl.contains(&format!(r#""kind":"skill","name":"{n}""#)) && !jsonl.contains(&format!(r#""name":"{n}""#)) {
+                fail(&format!("the ledger has no skill line for {n}"));
+            }
+        }
+    }
+    // An attached skill's text rides in the user envelope of the last turn (so the plan
+    // can come from it, and no compaction of tool results can take it away)
+    if let Some(name) = ex["skill_in_envelope"].as_str() {
+        let Some(user) = history.iter().rev().find(|m| m.role == "user").and_then(|m| m.text()) else {
+            fail("no user envelope in the history")
+        };
+        let open = format!("<skill-context path=\"{name}\">");
+        if !user.contains(&open) || !user.contains("</skill-context>") {
+            fail(&format!("the user envelope carries no skill-context for {name}:\n{user}"));
+        }
+        if !user.contains("## Plan") && !user.contains("# ") {
+            fail("the skill envelope has no body");
+        }
+        let plan_pos = user.find(&open).unwrap();
+        let first_material = ["<note-context", "<selection-context", "<web-page-context", "<block-context", "<folder-context", "<file-context"]
+            .iter()
+            .filter_map(|t| user.find(t))
+            .min();
+        if first_material.is_some_and(|m| m < plan_pos) {
+            fail("the skill envelope must come before the material");
         }
     }
 }

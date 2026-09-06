@@ -87,6 +87,12 @@ pub enum ContextRef {
     /// the query_blocks tool use — not a new read path, the user's table made
     /// citable. `path` is the view's id (`view:agenda`), the audit's spelling.
     View { path: String, label: String, query: serde_json::Value },
+    /// A skill the user chose in the composer (`/research`): `path` is the
+    /// skill's listed name. Its text is injected as the method for this
+    /// message — the "how" beside the other references' "what" — so it is in
+    /// hand before the plan and, living in the user envelope, never compacted
+    /// away with the tool results.
+    Skill { path: String },
 }
 
 /// The kind of a reference. A `ResolvedRef` carries it into envelope assembly
@@ -102,6 +108,7 @@ pub enum RefKind {
     Selection,
     Block,
     View,
+    Skill,
 }
 
 impl RefKind {
@@ -114,6 +121,7 @@ impl RefKind {
             RefKind::Selection => "selection",
             RefKind::Block => "block",
             RefKind::View => "view",
+            RefKind::Skill => "skill",
         }
     }
     /// The envelope tag (always `{as_str()}-context`): assembly, scrub's locator
@@ -128,6 +136,7 @@ impl RefKind {
             RefKind::Selection => "selection-context",
             RefKind::Block => "block-context",
             RefKind::View => "view-context",
+            RefKind::Skill => "skill-context",
         }
     }
     /// The inverse of `as_str()`: used when reading a `StoredRef.kind` string back
@@ -142,6 +151,7 @@ impl RefKind {
             "selection" => RefKind::Selection,
             "block" => RefKind::Block,
             "view" => RefKind::View,
+            "skill" => RefKind::Skill,
             _ => return None,
         })
     }
@@ -157,6 +167,7 @@ impl ContextRef {
             ContextRef::Selection { .. } => RefKind::Selection,
             ContextRef::Block { .. } => RefKind::Block,
             ContextRef::View { .. } => RefKind::View,
+            ContextRef::Skill { .. } => RefKind::Skill,
         }
     }
     pub fn path(&self) -> &str {
@@ -167,7 +178,8 @@ impl ContextRef {
             | ContextRef::Image { path }
             | ContextRef::Selection { path, .. }
             | ContextRef::Block { path, .. }
-            | ContextRef::View { path, .. } => path,
+            | ContextRef::View { path, .. }
+            | ContextRef::Skill { path } => path,
         }
     }
     /// A block reference's handle as the audit names it when the block could not
@@ -232,9 +244,14 @@ pub fn resolve_context_refs(
     image_cache: &mut HashMap<String, Result<String, String>>,
 ) -> (Vec<ResolvedRef>, usize) {
     let mut filtered = 0usize;
-    let out = refs
-        .iter()
-        .take(MAX_CONTEXT_REFS)
+    // The skill goes first — the method before the material — and stands
+    // outside the cap: it is one short text, and cutting it for a ninth note
+    // would drop the very instructions the user chose.
+    let (skills, material): (Vec<&ContextRef>, Vec<&ContextRef>) =
+        refs.iter().partition(|r| matches!(r, ContextRef::Skill { .. }));
+    let out = skills
+        .into_iter()
+        .chain(material.into_iter().take(MAX_CONTEXT_REFS))
         .map(|r| {
             let before = filtered;
             let mut resolved_handle: Option<String> = None;
@@ -258,6 +275,11 @@ pub fn resolve_context_refs(
                     })
                 }
                 ContextRef::View { label, query, .. } => resolve_view(vault, label, query, &mut filtered),
+                // Not a vault read: the skills directory is the agent-visible
+                // exception, and a built-in is not a file at all — the name is
+                // resolved exactly as the read_skill tool resolves it
+                ContextRef::Skill { path } => crate::skills::read_skill(&vault.meta_dir(), path)
+                    .ok_or_else(|| format!("skill not found: {path}")),
             };
             // Whether the reference itself was filtered by the gate: for the
             // non-folder kinds any increase in filtered can only come from this
@@ -784,8 +806,9 @@ pub fn scrub_private_refs(vault: &Vault, messages: &mut [ChatMessage]) {
                 }
                 // image: inflate_images re-gates every turn, so nothing happens here
                 // An image has no envelope; a view's rows already went through the
-                // privacy-filtered query at resolution time and name no single note
-                RefKind::Image | RefKind::View => {}
+                // privacy-filtered query at resolution time and name no single note;
+                // a skill is outside the privacy domain altogether
+                RefKind::Image | RefKind::View | RefKind::Skill => {}
             }
         }
         // Replace back to front: the ranges of the earlier blocks do not drift with

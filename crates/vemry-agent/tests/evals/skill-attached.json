@@ -1,0 +1,25 @@
+{
+  "name": "skill-attached",
+  "vault": {
+    "projects/Gateway.md": "# Gateway\n\n- [ ] write the load test plan 📅 2026-09-01 ^g1\n- [/] review the rate limiter PR ^g2\n"
+  },
+  "turns": [
+    {
+      "user": "今日启动",
+      "skill": "daily-start",
+      "script": [
+        [ { "tool": { "id": "p1", "name": "update_plan", "args": { "items": [ { "text": "查任务", "status": "doing" }, { "text": "读昨日日志", "status": "pending" } ] } } } ],
+        [ { "tool": { "id": "c1", "name": "query_blocks", "args": { "kind": "task", "task_state": "todo", "due_before": "2026-09-06" } } } ],
+        [ { "text": "今天先做压测计划 [[projects/Gateway#^g1]]。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "max_tool_calls": 2,
+    "skill_events": ["daily-start"],
+    "skill_in_envelope": "daily-start",
+    "plan": ["doing", "pending"]
+  }
+}

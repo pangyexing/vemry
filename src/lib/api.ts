@@ -399,6 +399,8 @@ export type AgentEvent =
   | { type: "compacted"; level: number }
   /** truncated: the output was cut off by the length limit (so "continue" can be offered). */
   | { type: "turn_finished"; truncated: boolean }
+  /** A skill is in effect for the turn: attached by the user (`/name`) or read by the model. */
+  | { type: "skill_activated"; name: string }
   | { type: "error"; message: string };
 
 /** A session row in the research panel's list (mirroring vemry_agent::session::SessionMeta). */
@@ -487,6 +489,8 @@ export interface SkillEntry {
   version: number;
   /** An override whose version is behind the built-in it shadows. */
   outdated: boolean;
+  /** The words the `/` picker matches besides the name and the description. */
+  triggers: string[];
 }
 
 export type VaultEvent =
@@ -606,7 +610,11 @@ export type ContextRef =
   /** What a projection view shows right now (the Agenda, the board): Rust re-runs `query`
    *  through the privacy-filtered query API. `path` is the view's id (`view:agenda`), the
    *  audit's spelling; `label` is the chip's wording; `rows` is the count shown. */
-  | { kind: "view"; path: string; label: string; query: BlockQuery; rows?: number };
+  | { kind: "view"; path: string; label: string; query: BlockQuery; rows?: number }
+  /** A skill chosen in the composer (`/research`): `path` is the skill's listed name. Rust
+   *  injects its text as the method for the message — first among the envelopes, outside the
+   *  reference cap, never compacted away — and reports it as skill_activated. */
+  | { kind: "skill"; path: string };
 
 /** The image extensions that can be sent to the model as an image reference (mirroring
  *  `image_mime` in vemry-agent's context.rs; the two change together). Every other

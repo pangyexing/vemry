@@ -26,6 +26,7 @@ use crate::permission::{
 };
 use crate::context::{inflate_images, scrub_private_refs, strip_images};
 use crate::prompt::{build_system_prompt, compose_user_content, PageContext, TurnContext};
+use crate::context::RefKind;
 use crate::provider::ProviderConfig;
 use crate::session::SessionLog;
 use crate::sources::{self, Source};
@@ -117,6 +118,8 @@ pub enum AgentEvent {
     /// truncated: the model's output was cut off by the length limit
     /// (finish_reason=length), and the UI can offer "continue".
     TurnFinished { truncated: bool },
+    /// A skill is in effect for this turn: the user attached it (`/name`) or the model read it.
+    SkillActivated { name: String },
     /// A write landed on disk in this turn (after the vault events): the UI counts
     /// them per turn to offer "undo this turn's writes".
     WriteLanded { turn: Option<String>, tool: String, path: String },
@@ -318,7 +321,7 @@ impl AgentRunner {
             let vault = guard.as_ref().ok_or_else(|| AgentError::Api("no vault open".into()))?;
             let system = match &config.system_prompt {
                 Some(s) => s.clone(),
-                None => build_system_prompt(vault, config.plan_confirm),
+                None => build_system_prompt(vault, config.plan_confirm, config.web_search),
             };
             // The current note is privacy-filtered here (a private note does not even
             // give the model the fact that it is open)
@@ -386,6 +389,11 @@ impl AgentRunner {
                 line["refs"] = json!(audit_refs);
             }
             log.append("user", line);
+            // A skill attached to the message is in effect from the first token
+            for r in resolved_refs.iter().filter(|r| r.kind == RefKind::Skill && r.body.is_ok()) {
+                log.append("skill", json!({ "name": &r.path, "via": "attached" }));
+                on_event(AgentEvent::SkillActivated { name: r.path.clone() });
+            }
             if refs_filtered > 0 {
                 // The same privacy audit as the read tools: the count only, never which one was filtered
                 log.append("privacy", json!({ "tool": "context_ref", "filtered": refs_filtered }));
@@ -725,6 +733,16 @@ impl AgentRunner {
                     preview(&output, 2000)
                 };
                 log.append("tool_result", json!({ "tool": &call.function.name, "ok": ok, "output": audited }));
+                // The model chose a skill by itself: the same ledger line and event as an attached one
+                if ok && call.function.name == "read_skill" {
+                    if let Some(name) = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                        .ok()
+                        .and_then(|a| a.get("name").and_then(|n| n.as_str()).map(String::from))
+                    {
+                        log.append("skill", json!({ "name": &name, "via": "read" }));
+                        on_event(AgentEvent::SkillActivated { name });
+                    }
+                }
                 history.push(ChatMessage::tool_result(call.id.clone(), output));
             }
             // The budget wrap-up hint: appended to the last tool result (producing no

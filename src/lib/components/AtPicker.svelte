@@ -34,6 +34,7 @@
   import { blockLabel, isAnchorableHit } from "$lib/editor/blockref";
   import { blockHandle } from "$lib/stores/agent.svelte";
   import type { BlockHit } from "$lib/api";
+  import { composerOverlayRect, type OverlayRect } from "./overlaypos";
 
   let {
     query,
@@ -45,15 +46,7 @@
     onClose,
   }: {
     query: string;
-    /** The composer's textarea: the candidate layer measures the viewport rect of the
-     *  .composer it sits in and positions itself fixed — absolute would be clipped away
-     *  entirely by the overlay container's overflow:hidden (while idle the overlay is only as
-     *  tall as the composer, with no room above inside the container), and fixed is clipped by
-     *  nothing.
-     *  The precondition: no transform or filter on the ancestor chain (either would make that
-     *  ancestor the containing block of a fixed element, shifting the coordinates and putting
-     *  it back inside the overflow clipping) — so no host container of a conversation surface
-     *  may position with translate or the like. */
+    /** The composer's textarea: the layer positions itself from the .composer it sits in (see overlaypos.ts for the precondition). */
     anchor: HTMLElement | null;
     /** The editor's current selection (the source of the `@ current selection` candidate).
      *  It is passed down by AgentChat — the "the main window reads the editor / the chat
@@ -69,18 +62,9 @@
     onClose: () => void;
   } = $props();
 
-  let pos = $state<{ left: number; width: number; bottom: number; maxH: number } | null>(null);
+  let pos = $state<OverlayRect | null>(null);
   function measure() {
-    const box = anchor?.closest(".composer");
-    if (!(box instanceof HTMLElement)) return;
-    const r = box.getBoundingClientRect();
-    pos = {
-      left: r.left + 12, // aligned with the composer's padding (12)
-      width: Math.max(220, r.width - 24),
-      bottom: window.innerHeight - r.top + 4,
-      // With less than 40vh of room above, it caps at what is really left so the candidate layer does not push out of the viewport
-      maxH: Math.max(120, Math.min(window.innerHeight * 0.4, r.top - 12)),
-    };
+    pos = composerOverlayRect(anchor);
   }
   $effect(() => {
     void query; // remeasured whenever the filter text changes: auto-growing moves the composer's top edge
@@ -394,107 +378,3 @@
   </div>
 </div>
 
-<style>
-  .at-picker {
-    position: fixed; /* the coordinates are computed by the script from .composer's viewport rect */
-    z-index: 95; /* above the overlay (91), below the command palette (100) and the permission dialog (200) */
-    background: var(--bg-panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: var(--shadow);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .at-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    flex-shrink: 0;
-    padding: 6px 10px 5px;
-    border-bottom: 1px solid var(--border);
-    font-size: 10px;
-    color: var(--fg-faint);
-    letter-spacing: 0.04em;
-    -webkit-user-select: none;
-    user-select: none;
-    min-width: 0;
-  }
-  .at-head > span:first-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .at-keys {
-    flex-shrink: 0;
-    font-family: var(--font-mono);
-    letter-spacing: 0;
-  }
-  .at-list {
-    overflow-y: auto;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    min-height: 0;
-  }
-  .at-empty {
-    font-size: var(--fs-xs);
-    color: var(--fg-faint);
-    padding: 8px;
-  }
-  .at-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    text-align: left;
-    padding: 5px 8px;
-    border-radius: 6px;
-    min-width: 0;
-  }
-  .at-row.sel {
-    background: var(--accent-soft);
-  }
-  .at-icon {
-    flex-shrink: 0;
-    display: flex;
-    color: var(--fg-muted);
-  }
-  .at-plus {
-    justify-content: center;
-    font-size: 15px;
-    line-height: 1;
-    color: var(--fg-muted);
-  }
-  .at-icon.page {
-    color: var(--accent);
-  }
-  .at-title {
-    flex-shrink: 1;
-    min-width: 0;
-    font-size: var(--fs-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .at-sub {
-    flex: 1;
-    min-width: 0;
-    font-size: 11px;
-    color: var(--fg-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .at-title.heading {
-    font-weight: 600;
-  }
-  .at-sub.tag {
-    flex: none;
-    margin-left: auto;
-    font-size: 10px;
-    color: var(--accent);
-  }
-</style>

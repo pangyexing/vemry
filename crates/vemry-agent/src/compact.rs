@@ -40,6 +40,12 @@ pub fn compact_tool_results(history: &mut [ChatMessage]) -> usize {
         }
         let call_id = history[i].tool_call_id.clone().unwrap_or_default();
         let (name, arg) = describe_call(&history[..i], &call_id);
+        // A skill's text is the method for the whole task and is needed most at its
+        // last step (the landing); a few thousand characters kept is cheaper than a
+        // note written in the wrong shape
+        if name == "read_skill" {
+            continue;
+        }
         let handle = format!(
             "{COMPACTED_MARK} earlier {name}{arg} result removed to save context — call the tool again if you need it)"
         );
@@ -95,7 +101,8 @@ Output the summary itself and nothing else. It must keep:
 2. the conclusions established, each with its source (a URL or a note path);
 3. the paths that were tried and failed or were rejected;
 4. what is unfinished, how far the reasoning got, and what comes next;
-5. the user's explicit instructions, corrections and preferences.
+5. the user's explicit instructions, corrections and preferences;
+6. the skill (method) in effect, by name, and the steps of its plan not yet done.
 You may drop: the conversation verbatim, full tool output, intermediate steps. \
 Keep the summary under 500 words.";
 
@@ -267,6 +274,21 @@ mod tests {
 
         // Idempotent: compacting again processes nothing already compacted and saves nothing new
         assert_eq!(compact_tool_results(&mut history), 0);
+    }
+
+    #[test]
+    fn a_read_skill_result_is_never_compacted() {
+        let big = "x".repeat(COMPACT_MIN_CHARS + 1);
+        let mut history = vec![ChatMessage::user("q")];
+        history.extend(turn("s1", "read_skill", r#"{"name":"research"}"#, &big));
+        for i in 0..PROTECT_RECENT + 2 {
+            history.extend(turn(&format!("c{i}"), "read_note", r#"{"path":"a.md"}"#, &big));
+        }
+        assert!(compact_tool_results(&mut history) > 0, "the notes were compacted");
+        let skill = history.iter().find(|m| m.tool_call_id.as_deref() == Some("s1")).unwrap();
+        assert_eq!(skill.text().unwrap(), big, "the skill body stays whole");
+        let first_note = history.iter().find(|m| m.tool_call_id.as_deref() == Some("c0")).unwrap();
+        assert!(first_note.text().unwrap().starts_with(COMPACTED_MARK));
     }
 
     #[test]

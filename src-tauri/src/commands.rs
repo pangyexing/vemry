@@ -1263,15 +1263,15 @@ async fn run_agent_turn(
             Some(s) => (s.system.clone(), s.web_search, s.plan_confirm),
             None => {
                 let plan = settings.plan_confirm;
+                // Web search goes through the DeepSeek Responses API (server-side
+                // web_search, which only a DeepSeek endpoint knows); everything else
+                // stays on Chat Completions. The prompt says which, so a skill need not guess
+                let web = settings.web_search_active();
                 let system = {
                     let guard = state.vault.lock().unwrap();
                     let vault = guard.as_ref().ok_or("no vault open")?;
-                    vemry_agent::prompt::build_system_prompt(vault, plan)
+                    vemry_agent::prompt::build_system_prompt(vault, plan, web)
                 };
-                // Web search goes through the DeepSeek Responses API (server-side
-                // web_search, which only a DeepSeek endpoint knows); everything else
-                // stays on Chat Completions
-                let web = settings.web_search_active();
                 *setup = Some(crate::agent_bridge::SessionSetup {
                     system: system.clone(),
                     web_search: web,
@@ -1725,6 +1725,8 @@ pub struct SkillEntry {
     pub source: &'static str,
     pub version: u64,
     pub outdated: bool,
+    /// The words the `/` picker matches besides the name and the description.
+    pub triggers: Vec<String>,
 }
 
 #[tauri::command]
@@ -1743,6 +1745,7 @@ pub fn skills_list(state: State<'_, AppState>) -> Result<Vec<SkillEntry>, String
             source: s.source.as_str(),
             version: s.version,
             outdated: s.outdated,
+            triggers: s.triggers,
         })
         .collect())
 }

@@ -389,3 +389,78 @@ async fn live_reasoning_effort_probe() {
         }
     }
 }
+
+/// The skill-first rule, which only a real model can be checked against: a research
+/// request in a vault with the built-in skills listed must start with read_skill(research)
+/// — before update_plan, whose steps then come from the skill's Plan section. Web search
+/// stays off and reads are denied, so the turn costs a few tool calls.
+#[tokio::test]
+#[ignore]
+async fn live_research_reads_the_skill_before_planning() {
+    let Some(api_key) = std::env::var("VEMRY_TEST_API_KEY").ok().filter(|k| !k.is_empty()) else {
+        eprintln!("VEMRY_TEST_API_KEY not set — skipping live test");
+        return;
+    };
+    let provider = ProviderConfig {
+        base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
+        model: std::env::var("VEMRY_TEST_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into()),
+        api_key,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("research")).unwrap();
+    std::fs::write(
+        dir.path().join("research/Sleep.md"),
+        "# Sleep\n\nSlow-wave sleep consolidates declarative memory. ^c1\n",
+    )
+    .unwrap();
+    let vault = Arc::new(Mutex::new(Some(Vault::open(dir.path()).unwrap())));
+    let meta_dir = dir.path().join(".vemry");
+    std::fs::create_dir_all(&meta_dir).unwrap();
+    let log = SessionLog::create(&meta_dir).unwrap();
+    let runner = AgentRunner {
+        transport: Arc::new(HttpTransport::new()),
+        gate: Arc::new(vemry_agent::permission::AutoDeny("live test: no writes".into())),
+        plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
+        actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
+        read_gate: Arc::new(vemry_agent::permission::DenyReads),
+        vault: Arc::clone(&vault),
+        sources: Arc::new(Mutex::new(vec![])),
+        journal: Arc::new(Mutex::new(vec![])),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let ev = events.clone();
+    let emit = move |e: AgentEvent| ev.lock().unwrap().push(e);
+    let mut history = vec![];
+    let result = tokio::time::timeout(
+        Duration::from_secs(240),
+        runner.run(
+            &provider,
+            &RunnerConfig { max_iterations: 12, ..Default::default() },
+            &mut history,
+            Some("帮我系统地调研一下睡眠和记忆巩固的关系，写成一篇综述".into()),
+            None,
+            vec![],
+            None,
+            &emit,
+            &AtomicBool::new(false),
+            &log,
+        ),
+    )
+    .await
+    .expect("the turn should finish within the timeout");
+    let _ = result; // a denied write at the end is fine: the order of the first calls is the point
+    let tools: Vec<String> = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::ToolCallStarted { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    eprintln!("tool order: {tools:?}");
+    let skill_at = tools.iter().position(|t| t == "read_skill").expect("read_skill was never called");
+    let plan_at = tools.iter().position(|t| t == "update_plan" || t == "propose_plan");
+    assert!(plan_at.is_none_or(|p| skill_at < p), "the skill must be read before the plan: {tools:?}");
+    assert!(events.lock().unwrap().iter().any(|e| matches!(e, AgentEvent::SkillActivated { name } if name == "research")));
+}

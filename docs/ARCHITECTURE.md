@@ -694,10 +694,28 @@ override hides the built-in behind it too — the row the user switched off is t
 skill. Every switch, copy and new skill drops the prompt snapshot, so it applies from
 the next turn; a file's text is read live.
 
-VEMRY.md is the resident constitution; skills load on demand: `build_system_prompt`
-injects a `## Skills` summary section (names and descriptions only) and the model
-calls the `read_skill` tool for the full text when it wants it (read-level, truncated
-at 30k characters). `read_skill` matches a name exactly against the already-scanned
+VEMRY.md is the resident constitution; skills load on demand, by two paths. The model's:
+`build_system_prompt` injects a `## Skills` summary section (names and descriptions
+only, with the rule that a matching skill is read **before the plan** — the plan rules
+say the same, and the skill's Plan section is then the list) and the model calls the
+`read_skill` tool for the full text (read-level, truncated at 30k characters). The
+user's: `/` in the composer opens the skill picker (the enabled skills, matched on
+name, description and the frontmatter `triggers`), and the chosen skill becomes a chip
+— a `ContextRef::Skill { path: name }`, riding the same pipeline as every other
+reference (the audit's `refs`, the window handoff, edit-and-resend) — whose text Rust
+injects into the turn's user envelope as `<skill-context path="name">` with an intro
+that says it is the method to follow, first among the envelopes and outside the
+reference cap. A message with a skill chip and nothing typed goes out as `/name`: a
+routine is a whole request by itself. Both paths write a `skill` line to the ledger
+(`via: attached` / `via: read`) and raise `SkillActivated`, which the status strip
+shows as "by name" for the rest of the turn. Two things keep the method in hand until
+the task ends: the first-level compaction never turns a `read_skill` result into a
+handle (an attached skill's text sits in the user envelope, which compaction does not
+touch at all), and the second-level summary is told to keep the skill in effect and the
+steps of its plan not yet done. The system prompt also states whether web search is
+available in the session (RunnerConfig.web_search is fixed per session, so the sentence
+sits in the cached prefix), which is the one fact about the tool table a skill cannot
+know by itself. `read_skill` matches a name exactly against the already-scanned
 list — the vault's file first, then the built-in — and never concatenates caller
 input into a path, so it is immune to traversal by construction. A frontmatter serde
 cannot parse (an unquoted description with a colon in it is the usual slip) falls

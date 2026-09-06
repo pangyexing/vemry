@@ -84,6 +84,10 @@ struct SkillFrontmatter {
     /// `version:` — an integer the built-ins carry so a customised copy can be
     /// told apart from the built-in it was copied from. 0 when absent.
     version: u64,
+    /// `triggers:` — the words a user would type for this skill, in any
+    /// language; the composer's `/` picker matches them besides the name and
+    /// the description. A YAML list, or one comma-separated string.
+    triggers: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -99,6 +103,7 @@ pub struct BuiltinSkill {
     pub name: String,
     pub description: String,
     pub version: u64,
+    pub triggers: Vec<String>,
     /// The whole file — what "customise" copies into the vault.
     pub text: &'static str,
     /// The instructions alone (frontmatter stripped) — what `read_skill` returns.
@@ -119,18 +124,26 @@ fn parse(raw: &str) -> (SkillFrontmatter, &str) {
         .get("version")
         .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
         .unwrap_or(0);
+    let triggers = match fm.extra.get("triggers") {
+        Some(v) if v.is_sequence() => {
+            v.as_sequence().unwrap().iter().filter_map(|t| t.as_str()).map(|t| t.trim().to_string()).collect()
+        }
+        Some(v) => split_triggers(v.as_str().unwrap_or_default()),
+        None => vec![],
+    };
     let mut skill = SkillFrontmatter {
         name: text("name"),
         description: text("description"),
         disabled: fm.extra.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false),
         version,
+        triggers,
     };
     // A block was there but yielded none of the four keys: the usual cause is
     // YAML the parser refuses as a whole (an unquoted description with a colon
     // in it), which must not cost the skill its description — nor its
     // `disabled: true` its effect. The four keys are plain scalars, so a line
     // scan reads them from the same block.
-    let empty = skill.name.is_none() && skill.description.is_none() && !skill.disabled && skill.version == 0;
+    let empty = skill.name.is_none() && skill.description.is_none() && !skill.disabled && skill.version == 0 && skill.triggers.is_empty();
     if body_offset > 0 && empty {
         skill = scan_lines(&raw[..body_offset]);
     }
@@ -154,10 +167,17 @@ fn scan_lines(head: &str) -> SkillFrontmatter {
             "description" if !value.is_empty() => out.description = Some(value.to_string()),
             "disabled" => out.disabled = value == "true",
             "version" => out.version = value.parse().unwrap_or(0),
+            // a flow list `[a, b]` or a plain comma-separated line
+            "triggers" => out.triggers = split_triggers(value.trim_matches(|c| c == '[' || c == ']')),
             _ => {}
         }
     }
     out
+}
+
+/// A comma-separated trigger list, each word trimmed of space and quotes, empties dropped.
+fn split_triggers(s: &str) -> Vec<String> {
+    s.split(',').map(|t| t.trim().trim_matches(|c| c == '"' || c == '\'').trim().to_string()).filter(|t| !t.is_empty()).collect()
 }
 
 /// The listed name of a skill file: the frontmatter `name`, else the file stem.
@@ -179,6 +199,7 @@ pub fn builtin_skills() -> &'static [BuiltinSkill] {
                     name: name_of(&fm, stem),
                     description: fm.description.unwrap_or_default(),
                     version: fm.version,
+                    triggers: fm.triggers,
                     text,
                     body: body.trim(),
                 }
@@ -249,6 +270,7 @@ pub struct SkillFileEntry {
     /// An override whose `version` is behind the built-in it shadows (a copy
     /// without one counts as 0): the built-in has been updated since the copy.
     pub outdated: bool,
+    pub triggers: Vec<String>,
 }
 
 /// Every skill (including disabled), sorted by name: the vault's files, then
@@ -271,6 +293,7 @@ pub fn list_skills_all(meta_dir: &Path) -> Vec<SkillFileEntry> {
                 source: if shadowed.is_some() { SkillSource::Override } else { SkillSource::Vault },
                 version: s.fm.version,
                 outdated: shadowed.is_some_and(|b| b.version > s.fm.version),
+                triggers: s.fm.triggers.clone(),
             }
         })
         .collect();
@@ -286,6 +309,7 @@ pub fn list_skills_all(meta_dir: &Path) -> Vec<SkillFileEntry> {
             source: SkillSource::Builtin,
             version: b.version,
             outdated: false,
+            triggers: b.triggers.clone(),
         });
     }
     skills.sort_by(|a, b| a.name.cmp(&b.name));
@@ -489,6 +513,18 @@ mod tests {
         // a malformed config switches nothing off
         fs::write(dir.path().join("config.json"), "{not json").unwrap();
         assert!(read_skill(dir.path(), "research").is_some());
+    }
+
+    #[test]
+    fn triggers_read_as_a_list_or_a_line_and_through_the_fallback() {
+        let (fm, _) = parse("---\nname: a\ntriggers: [research, 调研, look into]\n---\nB\n");
+        assert_eq!(fm.triggers, vec!["research", "调研", "look into"]);
+        let (fm, _) = parse("---\nname: a\ntriggers: research, 调研\n---\nB\n");
+        assert_eq!(fm.triggers, vec!["research", "调研"]);
+        // a colon in the description sends the block through the line scan
+        let (fm, _) = parse("---\ndescription: a: b\ntriggers: [\"x y\", z]\n---\nB\n");
+        assert_eq!(fm.description.as_deref(), Some("a: b"));
+        assert_eq!(fm.triggers, vec!["x y", "z"]);
     }
 
     #[test]

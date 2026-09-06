@@ -1,0 +1,24 @@
+{
+  "name": "skill-read",
+  "vault": {
+    "research/Sleep.md": "# Sleep\n\nSlow-wave sleep consolidates declarative memory. ^c1\n"
+  },
+  "turns": [
+    {
+      "user": "帮我调研一下睡眠与记忆",
+      "script": [
+        [ { "tool": { "id": "s1", "name": "read_skill", "args": { "name": "research" } } } ],
+        [ { "tool": { "id": "p1", "name": "update_plan", "args": { "items": [ { "text": "查库", "status": "doing" }, { "text": "分方向搜索", "status": "pending" } ] } } } ],
+        [ { "tool": { "id": "c1", "name": "search_notes", "args": { "query": "睡眠 记忆" } } } ],
+        [ { "text": "库里已有结论：慢波睡眠巩固陈述性记忆 [[research/Sleep#^c1]]。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "skill_events": ["research"],
+    "tool_output_contains": [ { "id": "s1", "text": "# Research method" } ],
+    "plan": ["doing", "pending"]
+  }
+}

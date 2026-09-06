@@ -186,6 +186,9 @@ class AgentStore {
   /** What the stream is delivering right now: reasoning tokens, answer text, or neither (a
    *  tool call in flight, or the gap between them) — the status strip's verb. Live only. */
   phase = $state<"thinking" | "text" | null>(null);
+  /** The skill in effect for the running turn (attached with `/`, or read by the model): the
+   *  status strip names it. Live only — a new turn starts without one. */
+  activeSkill = $state<string | null>(null);
   /** The most recent usage event (the gauge of turns, context size and cache hit rate). */
   usage = $state<TurnUsage | null>(null);
   /** When the running turn started (the strip's clock), and how long the last one took. */
@@ -618,6 +621,7 @@ class AgentStore {
   private resetSessionScoped() {
     this.usage = null;
     this.lastTurnMs = null;
+    this.activeSkill = null;
     this.dismissedNote = null;
     this.dismissedSelection = null;
     this.effortOverride = null;
@@ -938,6 +942,11 @@ class AgentStore {
         if (item?.kind === "user") item.turn = e.turn;
         // A finished plan belongs to the task that is over; an unfinished one stays
         if (this.plan && planReconciled(this.plan)) this.plan = null;
+        this.activeSkill = null;
+        break;
+      }
+      case "skill_activated": {
+        this.activeSkill = e.name;
         break;
       }
       case "plan_updated": {

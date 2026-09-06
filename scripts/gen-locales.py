@@ -938,6 +938,13 @@ add("atPicker.", {
     "extracting": ("Extracting…", "抽取中…"),
 })
 
+# ---------------------------------------------------------------- the composer's / picker (skills)
+add("skillPicker.", {
+    "heading": ("Choose a method", "选择方法"),
+    "headingWithQuery": ("Choose a method: {query}", "选择方法:{query}"),
+    "empty": ("No such skill — Enter sends the text as-is", "没有这个 skill——回车按原文发送"),
+})
+
 # ---------------------------------------------------------------- reader (reading projection)
 add("reader.", {
     "image": ("image", "图片"),
@@ -1102,12 +1109,6 @@ add("chat.", {
     "forked": ("Forked into a new session (the original stays in the list)", "已分叉出新会话(原会话保留在列表里)"),
     "continueWord": ("continue", "继续"),
     "clipped": ("Clipped → {path}", "已剪藏 → {path}"),
-    "starter1": ("Go through my recent notes and find a theme worth digging into",
-                 "梳理我最近的笔记,找出值得深入的主题"),
-    "starter2": ("Research a topic online and write a survey with citations",
-                 "联网调研一个话题,给出带引用的综述"),
-    "starter3": ("Around the current note, find related notes and outside material",
-                 "围绕当前笔记,找相关笔记与外部资料"),
     "placeholder1": ("Ask a question or give a task…", "提问或下达任务…"),
     "placeholder2": ("@ picks a note, folder, selection or web page as context",
                      "@ 挑笔记、文件夹、选区或网页作上下文"),
@@ -1182,10 +1183,6 @@ add("chat.", {
     "unfollowed": ("Stopped following", "已取消跟随"),
     "resumeResearch": ("This note came from an AI session", "这篇笔记来自一次 AI 会话"),
     "resumeButton": ("Resume that session", "继续这项研究"),
-    "starter4": ("Start my day: what is overdue, due today and in progress", "今日启动:过期、今天到期与进行中的任务"),
-    "starter5": ("Turn these meeting notes into action items", "把这份会议记录整理成行动项"),
-    "starter6": ("Plan the next iteration from the backlog", "从 backlog 规划下一轮迭代"),
-    "starter7": ("Make flashcards from this note and quiz me", "把这篇笔记做成卡片,然后考我"),
     "explainPrompt": ("Explain the selected passage: what it says, one example, and where it stops applying.",
                       "解释选中的这段:说了什么、举一个例子、以及它在什么情况下不成立。"),
     "noSelectionToExplain": ("Select a passage in the editor first", "先在编辑器里选中一段文字"),
@@ -1210,6 +1207,11 @@ add("chat.", {
     "undone": ("Undone {n} writes{skipped}", "已撤销 {n} 项{skipped}"),
     "undoneSkipped": (", {n} skipped (edited since)", ",{n} 项已被编辑过跳过"),
     "viewTag": ("view", "视图"),
+    "skillTag": ("method", "方法"),
+    "skillTitle": ("This message follows the {name} skill", "本条消息按 {name} 方法处理"),
+    "statusSkill": ("by {name}", "按 {name}"),
+    "skillPlaceholder": ("What should {name} work on? Enter alone runs it as is", "要按 {name} 处理什么?直接回车也可以"),
+    "welcomeSkills": ("Or start from a method (type / in the box at any time):", "或从一个方法开始(输入框里随时可键入 /):"),
     "readTitle": ("Pages to read", "要读的网页"),
     "readWaiting": ("Your click is the fetch", "点一下才会抓取"),
     "readOpen": ("Read {n} pages", "读取 {n} 页"),
