@@ -19,7 +19,12 @@
   interface Item {
     id: string;
     title: string;
+    /** Inline after the title, in muted text: a description, a path, an address. It fills
+     *  the rest of the row and is truncated to it; the row's tooltip carries it in full. */
     hint?: string;
+    /** A second line under the title. Only search's snippet uses it: the text is the reason
+     *  the row exists, so it gets a line of its own rather than the tail of the title's. */
+    detail?: string;
     /** The shortcut, right-aligned on the same line as the title. It is its own field rather
      *  than sharing one with hint: a command with both a shortcut and a description would
      *  necessarily lose one of them in a single slot (the old `hotkey ?? description` lost the
@@ -193,7 +198,12 @@
       // is scripts.infos, so depending on it explicitly lets an open palette see added and
       // removed script commands immediately
       void scripts.infos;
-      const cmds = fuzzyFilter(allCommands(), query, (c: Command) => `${commandTitle(c)} ${commandDescription(c) ?? ""} ${c.id}`);
+      // The command that opens the palette is left out: in the one place it would be visible it is a no-op
+      const cmds = fuzzyFilter(
+        allCommands().filter((c) => c.id !== "command-palette"),
+        query,
+        (c: Command) => `${commandTitle(c)} ${commandDescription(c) ?? ""} ${c.id}`,
+      );
       // An empty query keeps the registry's group order and marks the group headers; with a query it flattens by fuzzy score and does not group
       const grouped = !query.trim();
       return cmds.map((c, i) => {
@@ -324,7 +334,7 @@
       return searchHits.map((h, i) => ({
         id: `${h.note}:${i}`,
         title: h.title,
-        hint: h.snippet,
+        detail: h.snippet,
         run: () => vault.openNote(h.note),
       }));
     }
@@ -362,11 +372,12 @@
             hint: last.title || prettyUrl(last.url),
           });
         }
+        // A page with no title is shown by its address, and then the address is not repeated as the hint
         browser.bookmarks.slice(0, 8).forEach((b, i) => {
           list.push({
             id: `bm:${b.url}`,
             title: b.title || prettyUrl(b.url),
-            hint: prettyUrl(b.url),
+            hint: b.title ? prettyUrl(b.url) : undefined,
             groupLabel: i === 0 ? t("palette.bookmarks") : undefined,
             url: b.url,
             action: unstar(b.url),
@@ -378,7 +389,7 @@
           list.push({
             id: `h:${h.url}`,
             title: h.title || prettyUrl(h.url),
-            hint: prettyUrl(h.url),
+            hint: h.title ? prettyUrl(h.url) : undefined,
             groupLabel: i === 0 ? t("palette.recent") : undefined,
             url: h.url,
             action: removeHistory(h.url),
@@ -396,7 +407,7 @@
         list.push({
           id: `${c.starred ? "bm" : "h"}:${c.url}`,
           title: c.starred ? `★ ${c.title || c.pretty}` : c.title || c.pretty,
-          hint: c.pretty,
+          hint: c.title ? c.pretty : undefined,
           url: c.url,
           action: c.starred ? unstar(c.url) : removeHistory(c.url),
         });
@@ -501,12 +512,14 @@
       // Esc in the second stage means "back to choosing a note" rather than closing the palette
       if (pickStage) exitPickStage();
       else close();
-    } else if (e.key === "Tab" && mode === "pick-note" && !pickStage) {
-      const p = items[selected]?.pick;
-      if (p) {
-        e.preventDefault();
-        enterPickStage(p);
-      }
+    } else if (e.key === "Tab") {
+      // The palette is modal and its list is driven by ↑↓, so Tab never walks the rows (they
+      // sit outside the tab order too) — it used to land the focus ring on the first row while
+      // the highlight stayed elsewhere. In pick-note's first stage it is the way into the
+      // section stage
+      e.preventDefault();
+      const p = mode === "pick-note" && !pickStage && !e.shiftKey ? items[selected]?.pick : undefined;
+      if (p) enterPickStage(p);
     } else if (e.key === "Backspace" && pickStage && query === "") {
       e.preventDefault();
       exitPickStage();
@@ -561,20 +574,24 @@
             <li class:selected={i === selected}>
               <button
                 class="main"
+                tabindex="-1"
+                title={item.hint}
                 onclick={() => void submit()}
                 onmouseenter={() => (selected = i)}
               >
                 <span class="line">
                   <span class="title">{item.title}</span>
+                  {#if item.hint}<span class="hint">{item.hint}</span>{/if}
                   {#if item.key}<kbd class="key">{item.key}</kbd>{/if}
                 </span>
-                {#if item.hint}<span class="hint">{item.hint}</span>{/if}
+                {#if item.detail}<span class="detail">{item.detail}</span>{/if}
               </button>
               {#if item.pick}
                 {@const p = item.pick}
                 <!-- The mouse equivalent of the keyboard's Tab: clicking the row clips the whole note, and clicking here enters the second stage to pick a section -->
                 <button
                   class="drill"
+                  tabindex="-1"
                   onclick={() => enterPickStage(p)}
                   onmouseenter={() => (selected = i)}
                   aria-label={t("palette.pickHeadingLabel", { title: p.title })}
@@ -585,7 +602,7 @@
               {#if item.action}
                 {@const a = item.action}
                 <!-- The row's secondary action (url mode's "unbookmark"): it does not close the palette, and the list refreshes with the mirror -->
-                <button class="drill" onclick={a.run} onmouseenter={() => (selected = i)}>
+                <button class="drill" tabindex="-1" onclick={a.run} onmouseenter={() => (selected = i)}>
                   {a.label}
                 </button>
               {/if}
@@ -619,7 +636,7 @@
     z-index: 100;
   }
   .palette {
-    width: min(560px, 90vw);
+    width: min(640px, 90vw);
     max-height: 60vh;
     background: var(--bg-panel);
     border: 1px solid var(--border);
@@ -695,7 +712,7 @@
     flex: 1;
     min-width: 0;
     text-align: left;
-    padding: 7px 10px;
+    padding: 6px 10px;
     border-radius: 6px;
   }
   li button.drill {
@@ -716,11 +733,13 @@
     color: var(--accent);
     background: var(--bg-hover);
   }
-  /* The title and the shortcut on one line: the shortcut sits at the end of the row and the
-     title fills the rest. The shortcut used to take a second line of its own, which made every
-     command two rows tall and fitted only seven on a screen — while a shortcut is something one
-     cares about after reading the title, so the end of the row saves more vertical space than
-     the next line */
+  /* One line per row: the title, then the hint in muted text filling the rest of the row,
+     then the shortcut at the end. The hint used to take a second line of its own, which made
+     a row with one twice as tall as a row without — the list read as two kinds of rows and
+     fitted nine commands on a screen — while both the hint and the shortcut are read after
+     the title, so the tail of the same line is where they belong. The title keeps its full
+     width and the hint gives way (flex-basis 0): a hint that does not fit is truncated, and
+     the row's tooltip carries it in full */
   .line {
     display: flex;
     align-items: baseline;
@@ -732,6 +751,15 @@
     font-size: var(--fs-md);
     /* Truncated to one line: a long title (from the history or the notes) wrapping would make the row heights uneven and fit far fewer on a screen */
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hint {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -761,7 +789,7 @@
     color: var(--danger);
     background: var(--bg-hover);
   }
-  .hint {
+  .detail {
     font-size: var(--fs-xs);
     color: var(--fg-muted);
     overflow: hidden;
@@ -778,11 +806,15 @@
   }
   li.group-head {
     display: block;
-    padding: 8px 10px 3px;
+    padding: 10px 10px 3px;
     font-size: var(--fs-xs);
     color: var(--fg-faint);
     letter-spacing: 0.08em;
     -webkit-user-select: none;
     user-select: none;
+  }
+  /* The first header sits right under the input's rule and needs no room above it */
+  li.group-head:first-child {
+    padding-top: 4px;
   }
 </style>
