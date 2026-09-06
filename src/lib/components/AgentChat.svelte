@@ -15,7 +15,7 @@
   import { POSITIONAL_RE, TRANSIENT_CITE_RE, blocksOf, findBlock, materializeCitations, parseRefTarget } from "$lib/citation";
   import AtPicker, { linesLabel } from "./AtPicker.svelte";
   import SkillPicker from "./SkillPicker.svelte";
-  import { groupSkills, skillDesc, skillTitle } from "$lib/skills";
+  import { groupSkills, skillAskByName, skillDesc, skillTitle, skillTitleByName } from "$lib/skills";
   import RefIcon, { type RefIconKind } from "./RefIcon.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
   import { tick } from "svelte";
@@ -396,7 +396,7 @@
   const gateWaiting = $derived(!!(agent.pendingPlan || agent.pendingRead || agent.pendingActions || agent.pendingPermission));
   const runStatus = $derived.by(() => {
     if (!agent.running) return "";
-    const by = agent.activeSkill ? `${t("chat.statusSkill", { name: agent.activeSkill })} · ` : "";
+    const by = agent.activeSkill ? `${t("chat.statusSkill", { name: skillTitleByName(agent.activeSkill) })} · ` : "";
     return by + runVerb();
   });
   const runVerb = () => {
@@ -1031,8 +1031,12 @@
       .then((s) => (welcomeSkills = s.filter((x) => !x.disabled)))
       .catch(() => (welcomeSkills = []));
   });
+  /** A welcome chip toggles: the chosen method reads as pressed, and clicking it again takes it
+   *  off the row (the same as its ✕) — so a slip of the mouse costs one more click, not a hunt
+   *  for the chip in the composer. */
   function useSkill(name: string) {
-    pushRef({ kind: "skill", path: name });
+    if (draftSkill === name) agent.contextDraft = agent.contextDraft.filter((d) => d.kind !== "skill");
+    else pushRef({ kind: "skill", path: name });
     composerEl?.focus();
   }
 
@@ -1050,8 +1054,11 @@
     t("chat.placeholder4"),
   ]);
   const PH_INTERVAL = 4000;
-  /** The skill chip on the row, if any: the placeholder then asks what it should work on. */
+  /** The skill chip on the row, if any: the placeholder then asks for what that method takes. */
   const draftSkill = $derived(agent.contextDraft.find((d) => d.kind === "skill")?.path ?? null);
+  const skillAsk = $derived(
+    draftSkill ? (skillAskByName(draftSkill) ?? t("chat.skillPlaceholder", { name: skillTitleByName(draftSkill) })) : "",
+  );
   let phIdx = $state(0);
   $effect(() => {
     if (agent.draft !== "" || agent.running) {
@@ -1220,7 +1227,7 @@
   function refLabel(d: DraftRef): string {
     if (d.kind === "page") return d.page.title || d.page.url;
     if (d.kind === "view") return d.label;
-    if (d.kind === "skill") return `/${d.path}`;
+    if (d.kind === "skill") return skillTitleByName(d.path);
     if (d.kind === "block") return baseOf(d.path);
     const name = baseOf(d.path);
     return d.kind === "folder" ? `${name}/` : name;
@@ -1229,7 +1236,7 @@
   function refTitle(d: DraftRef): string {
     if (d.kind === "page") return d.page.url;
     if (d.kind === "view") return t("chat.viewTitle", { view: d.label, n: d.rows ?? 0 });
-    if (d.kind === "skill") return t("chat.skillTitle", { name: d.path });
+    if (d.kind === "skill") return `${t("chat.skillTitle", { name: skillTitleByName(d.path) })}\n/${d.path}`;
     // The image chip's permanent hint: no table of model capabilities is attempted (it cannot be judged reliably), and a text-only model will error on one
     if (d.kind === "image") return t("chat.needsMultimodal", { path: d.path });
     if (d.kind === "block") return `${d.path} ¶${blockHandle(d.local_id)}${d.label ? `\n\n${d.label}` : ""}`;
@@ -1668,7 +1675,7 @@
               <span class="welcome-group-label">{g.label}</span>
               <div class="welcome-examples">
                 {#each g.skills as s (s.name)}
-                  <button class="example" title={`/${s.name} — ${skillDesc(s)}`} onclick={() => useSkill(s.name)}>{skillTitle(s)}</button>
+                  <button class="example" class:on={draftSkill === s.name} aria-pressed={draftSkill === s.name} title={`/${s.name} — ${skillDesc(s)}`} onclick={() => useSkill(s.name)}>{skillTitle(s)}</button>
                 {/each}
               </div>
             {/each}
@@ -1734,8 +1741,8 @@
               {#if vault.privatePaths.has(r.path)}
                 <span class="user-page" title={t("chat.privateRefHint")}><PrivacyIcon size={12} /> {t("chat.privateRef")}</span>
               {:else}
-                <span class="user-page" title={r.path}
-                  ><RefIcon kind={r.kind} size={12} /> {r.kind === "skill" ? `/${r.path}` : r.path}{r.lines ? ` ${linesLabel({ from_line: r.lines[0], to_line: r.lines[1] })}` : ""}{r.block ? ` ¶${r.block}` : ""}</span
+                <span class="user-page" title={r.kind === "skill" ? `/${r.path}` : r.path}
+                  ><RefIcon kind={r.kind} size={12} /> {r.kind === "skill" ? skillTitleByName(r.path) : r.path}{r.lines ? ` ${linesLabel({ from_line: r.lines[0], to_line: r.lines[1] })}` : ""}{r.block ? ` ¶${r.block}` : ""}</span
                 >
               {/if}
             {/each}
@@ -2105,7 +2112,7 @@
           {#if agent.running}
             <span>{t("chat.runningQueueHint")}</span>
           {:else if draftSkill}
-            <span>{t("chat.skillPlaceholder", { name: draftSkill })}</span>
+            <span>{skillAsk}</span>
           {:else}
             {#key phIdx}<span class="ph-item">{PH_HINTS[phIdx]}</span>{/key}
           {/if}
@@ -2172,7 +2179,7 @@
         title={modeInfo.title}
         aria-label={modeInfo.aria}
         onclick={() => submit(false)}
-        disabled={!agent.draft.trim()}
+        disabled={!agent.draft.trim() && !draftSkill}
       >
         {#if mode === "url"}
           <!-- A URL-shaped draft: ↵ opens the page in the browser, and the button says so -->
@@ -2309,6 +2316,13 @@
     color: var(--accent);
     border-color: var(--accent);
     background: var(--bg-hover);
+  }
+  /* the method on the row: the same accent as its hover, filled — the click has visibly landed
+     where the eye was, before it goes looking for the chip in the composer */
+  .example.on {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
   .faint {
     color: var(--fg-faint);

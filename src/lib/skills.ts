@@ -26,6 +26,21 @@ export function skillTitle(s: SkillEntry): string {
   return catalogued(s, "title") ?? s.name;
 }
 
+/** A skill known by name alone — a chip, the status strip, a sent turn's reference: the
+ *  catalog's title when the name is a built-in's (an override keeps it, the name is the
+ *  built-in's), else the name itself. */
+export function skillTitleByName(name: string): string {
+  const key = `skill.${name}.title`;
+  return hasKey(key) ? t(key) : name;
+}
+
+/** What the composer asks once the skill is on the row: the catalog's line for that method
+ *  (a topic, a note to @, or nothing but Enter); null for a vault's own skill, which has none. */
+export function skillAskByName(name: string): string | null {
+  const key = `skill.${name}.ask`;
+  return hasKey(key) ? t(key) : null;
+}
+
 /** The one-line description: the author's own for a vault skill or a customised copy that has one, else the catalog's. */
 export function skillDesc(s: SkillEntry): string {
   if (s.source !== "builtin" && s.description) return s.description;
