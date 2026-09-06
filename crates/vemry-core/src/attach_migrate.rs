@@ -10,9 +10,7 @@
 //! split or attributed automatically, so they stay put and land in the report.
 //! Better to leave a bucket alone than to move it to the wrong place.
 
-use crate::parser::{is_fence_close, parse_fence_open};
 use serde::Serialize;
-use std::borrow::Cow;
 
 #[derive(Debug, Default, Serialize)]
 pub struct MigrationReport {
@@ -91,9 +89,8 @@ pub fn encode_target(rel: &str) -> String {
 /// (wikilinks, never encoded); code fences are skipped.
 /// A bare-filename `![[img.png]]` is left alone: it resolves by shortest path,
 /// the file name has not changed, so it still resolves after the move. None =
-/// nothing changed. The fence state machine reuses the parser's
-/// `parse_fence_open`/`is_fence_close` — the migrator and the indexer must give
-/// the same answer to "where is the code".
+/// nothing changed. The walk is `relink::replace_outside_fences`, shared with the
+/// note and file move planners.
 pub fn rewrite_links(content: &str, old_bucket: &str, new_bucket: &str) -> Option<String> {
     let pairs = [
         (format!("]({old_bucket}/"), format!("]({new_bucket}/")),
@@ -101,38 +98,8 @@ pub fn rewrite_links(content: &str, old_bucket: &str, new_bucket: &str) -> Optio
         (format!("[[{old_bucket}/"), format!("[[{new_bucket}/")),
         (format!("<{old_bucket}/"), format!("<{new_bucket}/")),
     ];
-    let mut out = String::with_capacity(content.len());
-    let mut changed = false;
-    let mut fence: Option<(char, usize)> = None;
-    for line in content.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if let Some((ch, len)) = fence {
-            if is_fence_close(trimmed, ch, len) {
-                fence = None;
-            }
-            out.push_str(line);
-            continue;
-        }
-        if let Some((ch, len, _)) = parse_fence_open(trimmed) {
-            fence = Some((ch, len));
-            out.push_str(line);
-            continue;
-        }
-        // A line with no match is borrowed as-is instead of allocated per line
-        let mut cur = Cow::Borrowed(line);
-        for (old, new) in &pairs {
-            if cur.contains(old.as_str()) {
-                cur = Cow::Owned(cur.replace(old.as_str(), new.as_str()));
-                changed = true;
-            }
-        }
-        out.push_str(&cur);
-    }
-    if changed {
-        Some(out)
-    } else {
-        None
-    }
+    let (out, count) = crate::relink::replace_outside_fences(content, &pairs);
+    (count > 0).then_some(out)
 }
 
 #[cfg(test)]

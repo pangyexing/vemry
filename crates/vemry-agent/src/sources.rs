@@ -134,16 +134,23 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
     hits.sort_by_key(|(at, _)| *at);
     let mut out: Vec<Citation> = Vec::new();
     for (_, c) in hits {
-        match out.iter_mut().find(|o| o.url == c.url) {
-            Some(prev) => {
-                if prev.title.is_empty() && !c.title.is_empty() {
-                    prev.title = c.title;
-                }
-            }
-            None => out.push(c),
-        }
+        push_citation(&mut out, c);
     }
     out
+}
+
+/// Add one citation to a turn's list: deduped by URL, first appearance keeps the
+/// position, first non-empty title wins. The numbering rule — the superscripts the
+/// answer renders follow this order — so every collector goes through it.
+pub fn push_citation(out: &mut Vec<Citation>, c: Citation) {
+    match out.iter_mut().find(|o| o.url == c.url) {
+        Some(prev) => {
+            if prev.title.is_empty() && !c.title.is_empty() {
+                prev.title = c.title;
+            }
+        }
+        None => out.push(c),
+    }
 }
 
 /// Merge one turn's citations into the table; returns the entries that are new to

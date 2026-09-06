@@ -27,8 +27,8 @@ pub use client::{ChatTransport, HttpTransport};
 pub use context::ContextRef;
 pub use responses::ResponsesTransport;
 pub use permission::{
-    ActionItem, ActionsDecision, ActionsGate, ActionsRequest, FetchedPage, PermissionDecision, PermissionGate, PlanDecision,
-    PlanGate, PlanRequest, ReadDecision, ReadGate, ReadRequest, WriteGrants, WriteRequest,
+    ActionsDecision, ActionsGate, ActionsRequest, FetchedPage, PermissionDecision, PermissionGate, PlanDecision, PlanGate,
+    PlanRequest, ReadDecision, ReadGate, ReadRequest, WriteGrants, WriteRequest,
 };
 pub use prompt::{PageContext, TurnContext, PAGE_CONTEXT_MAX_CHARS};
 pub use provider::ProviderConfig;
@@ -36,7 +36,6 @@ pub use runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};
 pub use session::Follow;
 pub use sources::Source;
 pub use undo::{UndoReport, WriteRecord};
-pub use tools::{is_local_write, PlanItem, PlanStatus};
 
 #[derive(thiserror::Error, Debug)]
 pub enum AgentError {

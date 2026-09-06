@@ -1,7 +1,7 @@
 // Session JSONL parsing for the Agent-review (replay) view. One line per
 // audit event, written by vemry-agent's SessionLog (runner.rs).
 
-import { t } from "$lib/i18n/i18n.svelte";
+import { hasKey, t } from "$lib/i18n/i18n.svelte";
 import { isImeKeydown } from "$lib/ime";
 import type { ActionItem, PlanItem, RefTag, SourceRecord } from "$lib/api";
 
@@ -152,14 +152,17 @@ export function toolLabel(name: string): string {
  *  through the markup. */
 export function planDecisionLabel(decision: string): string {
   const key = `planDecision.${decision}`;
-  const s = t(key as never);
-  return s === key ? decision : s;
+  return hasKey(key) ? t(key) : decision;
 }
 
 /** Tools that carry their own card projection: the conversation timeline no longer
  *  pushes their raw JSON tool line (the plan card is propose_plan's projection). The
  *  live view and the replay share this one verdict. */
 export const CARD_TOOLS = new Set(["propose_plan", "update_plan", "propose_actions", "open_for_reading"]);
+
+/** A plan step's status glyph. The one drawing, shared by the sticky card, the
+ *  transcript's plan cards and the replay view. */
+export const PLAN_GLYPH: Record<string, string> = { pending: "☐", doing: "◉", done: "☑", skipped: "⊘" };
 
 /** Whether a plan is settled: nothing pending or in progress — a finished plan leaves the sticky card on the next question. */
 export function planReconciled(items: PlanItem[]): boolean {
@@ -168,6 +171,5 @@ export function planReconciled(items: PlanItem[]): boolean {
 
 export function decisionLabel(decision: string): string {
   const key = `decision.${decision}`;
-  const s = t(key as never);
-  return s === key ? decision : s;
+  return hasKey(key) ? t(key) : decision;
 }

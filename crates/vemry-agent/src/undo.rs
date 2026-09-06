@@ -17,7 +17,6 @@ use crate::permission::RewriteText;
 #[derive(Clone, Debug)]
 pub struct WriteRecord {
     pub turn: Option<String>,
-    pub tool: String,
     /// The note (or file) written; for a move, the source path.
     pub path: String,
     /// The text before the write (None = the write created the note).
@@ -37,8 +36,6 @@ pub const JOURNAL_MAX: usize = 200;
 pub struct UndoReport {
     pub reverted: usize,
     pub skipped: usize,
-    /// The paths that were skipped (shown to the user, never to the model).
-    pub skipped_paths: Vec<String>,
 }
 
 /// Undo every record of `turn`, newest first; the records are removed from the
@@ -58,36 +55,30 @@ pub fn undo_turn(vault: &mut Vault, journal: &mut Vec<WriteRecord>, turn: &str) 
 }
 
 fn undo_one(vault: &mut Vault, rec: &WriteRecord, report: &mut UndoReport) {
-    let skip = |report: &mut UndoReport, path: &str| {
-        report.skipped += 1;
-        report.skipped_paths.push(path.to_string());
-    };
+    let skip = |report: &mut UndoReport| report.skipped += 1;
     if let Some(to) = &rec.to {
         // A move: back only when the destination is still there and the source is free
         let root = vault.root().to_path_buf();
         if root.join(to).exists() && !root.join(&rec.path).exists() && vault.rename_path(to, &rec.path).is_ok() {
             report.reverted += 1;
         } else {
-            skip(report, to);
+            skip(report);
         }
         for r in &rec.rewrites {
-            let Ok(id) = vault.note_id(&r.path) else {
-                skip(report, &r.path);
-                continue;
-            };
-            match vault.read_note(&id) {
-                Ok(cur) if cur == r.new && vault.write_note(&id, &r.old).is_ok() => report.reverted += 1,
-                _ => skip(report, &r.path),
+            if r.apply(vault, true) {
+                report.reverted += 1;
+            } else {
+                skip(report);
             }
         }
         return;
     }
     let Ok(id) = vault.note_id(&rec.path) else {
-        skip(report, &rec.path);
+        skip(report);
         return;
     };
     let Some(new) = &rec.new else {
-        skip(report, &rec.path);
+        skip(report);
         return;
     };
     match (vault.read_note(&id), &rec.old) {
@@ -95,7 +86,7 @@ fn undo_one(vault: &mut Vault, rec: &WriteRecord, report: &mut UndoReport) {
             if vault.write_note(&id, old).is_ok() {
                 report.reverted += 1;
             } else {
-                skip(report, &rec.path);
+                skip(report);
             }
         }
         // The write created the note: it goes to the trash (recoverable), never deleted outright
@@ -103,10 +94,10 @@ fn undo_one(vault: &mut Vault, rec: &WriteRecord, report: &mut UndoReport) {
             if vault.delete_path(id.as_str()).is_ok() {
                 report.reverted += 1;
             } else {
-                skip(report, &rec.path);
+                skip(report);
             }
         }
-        _ => skip(report, &rec.path),
+        _ => skip(report),
     }
 }
 
@@ -139,16 +130,16 @@ mod tests {
         let mut journal = vec![];
         // an edit, a creation, a move with a rewrite, all in turn t1; one edit in t2
         vault.write_note(&NoteId::new("A.md"), "one\ntwo\n").unwrap();
-        record(&mut journal, WriteRecord { turn: Some("t1".into()), tool: "append_note".into(), path: "A.md".into(), old: Some("one\n".into()), new: Some("one\ntwo\n".into()), to: None, rewrites: vec![] });
+        record(&mut journal, WriteRecord { turn: Some("t1".into()), path: "A.md".into(), old: Some("one\n".into()), new: Some("one\ntwo\n".into()), to: None, rewrites: vec![] });
         vault.write_note(&NoteId::new("New.md"), "fresh\n").unwrap();
-        record(&mut journal, WriteRecord { turn: Some("t1".into()), tool: "write_note".into(), path: "New.md".into(), old: None, new: Some("fresh\n".into()), to: None, rewrites: vec![] });
+        record(&mut journal, WriteRecord { turn: Some("t1".into()), path: "New.md".into(), old: None, new: Some("fresh\n".into()), to: None, rewrites: vec![] });
         vault.rename_path("A.md", "moved/A.md").unwrap();
         vault.write_note(&NoteId::new("Ref.md"), "see [[moved/A]]\n").unwrap();
         record(&mut journal, WriteRecord {
-            turn: Some("t1".into()), tool: "move_note".into(), path: "A.md".into(), old: None, new: None, to: Some("moved/A.md".into()),
+            turn: Some("t1".into()), path: "A.md".into(), old: None, new: None, to: Some("moved/A.md".into()),
             rewrites: vec![RewriteText { path: "Ref.md".into(), old: "see [[A]]\n".into(), new: "see [[moved/A]]\n".into() }],
         });
-        record(&mut journal, WriteRecord { turn: Some("t2".into()), tool: "edit_note".into(), path: "Ref.md".into(), old: Some("x".into()), new: Some("y".into()), to: None, rewrites: vec![] });
+        record(&mut journal, WriteRecord { turn: Some("t2".into()), path: "Ref.md".into(), old: Some("x".into()), new: Some("y".into()), to: None, rewrites: vec![] });
         let r = undo_turn(&mut vault, &mut journal, "t1");
         assert_eq!((r.reverted, r.skipped), (4, 0), "{r:?}");
         assert_eq!(std::fs::read_to_string(dir.path().join("A.md")).unwrap(), "one\n");

@@ -173,7 +173,7 @@
           <button class="note-link" onclick={openCurrent}>{c.hit.note_title}</button>
           {#if c.due === null}<span class="tag">{t("reviewView.newCard")}</span>{/if}
         </div>
-        <article class="card" class:flipped>
+        <article class="card">
           <p class="front">{c.front}</p>
           {#if flipped}
             <hr />

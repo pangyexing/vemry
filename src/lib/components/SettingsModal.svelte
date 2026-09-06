@@ -7,7 +7,7 @@
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { api, EFFORT_OPTIONS, type LangSetting, type LinkOpenMode, type SkillEntry, type TypeExample } from "$lib/api";
   import { scaffold } from "$lib/scaffold";
-  import { skillDesc } from "$lib/skills";
+  import { skillDesc, skillSourceLabel } from "$lib/skills";
   import { setLanguage, t } from "$lib/i18n/i18n.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
@@ -152,10 +152,6 @@
     }
   }
 
-  /** The skill rows' badge: which layer the row is, in words. */
-  function sourceLabel(s: SkillEntry): string {
-    return t(s.source === "builtin" ? "settings.skillBuiltin" : s.source === "override" ? "settings.skillOverride" : "settings.skillCustom");
-  }
   /** Opening a skill file in the editor closes the dialog: the editor is behind it. */
   async function openSkill(file: string) {
     open = false;
@@ -703,7 +699,7 @@
                         <input type="checkbox" checked={!s.disabled} onchange={() => toggleSkill(s.name, s.disabled)} />
                         <span class="script-name">{s.name}</span>
                       </label>
-                      <span class="source-badge" class:custom={s.source !== "builtin"}>{sourceLabel(s)}</span>
+                      <span class="source-badge" class:custom={s.source !== "builtin"}>{skillSourceLabel(s)}</span>
                       {#if s.outdated}
                         <span class="source-badge outdated" title={t("settings.skillOutdatedHint")}>{t("settings.skillOutdated")}</span>
                       {/if}

@@ -2,15 +2,14 @@
 // preview, the `> [!` completion list, and the read-only renderers (embeds, the
 // reading projection, chat), so a `[!tip]` looks the same wherever it appears.
 
-import { t, type MessageKey } from "$lib/i18n/i18n.svelte";
+import { hasKey, t } from "$lib/i18n/i18n.svelte";
 
 /** The head's title when the author wrote none: the type's name in the UI language (a
  *  `[!warning]` reads 警告 under a Chinese UI); a type the catalog does not know shows
  *  its own name. The file keeps only the type — nothing is written back. */
 export function calloutDefaultTitle(type: string): string {
-  const key = `callout.${type.toLowerCase()}` as MessageKey;
-  const s = t(key);
-  return s === key ? type : s;
+  const key = `callout.${type.toLowerCase()}`;
+  return hasKey(key) ? t(key) : type;
 }
 
 /** The tint group of each callout type. */

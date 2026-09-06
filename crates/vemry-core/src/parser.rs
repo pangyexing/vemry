@@ -685,6 +685,21 @@ fn block_content_start(line: &str) -> usize {
     }
 }
 
+/// A frontmatter file's lines and the index of its closing line, `None` when it has
+/// none. The boundary is `extract_frontmatter`'s, which owns the rule: the opener is
+/// `---`, the closer `---` or YAML's `...`. Reading a `...` close as ordinary text
+/// would prepend a second frontmatter block ahead of the file's own.
+fn frontmatter_lines(raw: &str) -> (Vec<&str>, Option<usize>) {
+    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
+    let opens = |l: &str| l.trim_end() == "---";
+    let closes = |l: &str| matches!(l.trim_end(), "---" | "...");
+    let close = match lines.first() {
+        Some(first) if opens(first) => lines.iter().skip(1).position(|l| closes(l)).map(|i| i + 1),
+        _ => None,
+    };
+    (lines, close)
+}
+
 /// Set or clear the `disabled` key of a frontmatter file (a block type, a skill),
 /// every other line kept as it is (the file is the user's, comments and order
 /// included) — the one write point for enabling and disabling; how `disabled` is
@@ -696,16 +711,7 @@ fn block_content_start(line: &str) -> usize {
 pub fn set_frontmatter_disabled(raw: &str, disabled: bool) -> String {
     let eol = if raw.contains("\r\n") { "\r\n" } else { "\n" };
     let line = format!("disabled: true{eol}");
-    let mut lines: Vec<&str> = raw.split_inclusive('\n').collect();
-    // The boundary is `extract_frontmatter`'s, which owns the rule: the opener is
-    // `---`, the closer `---` or YAML's `...`. Reading a `...` close as ordinary text would
-    // prepend a second frontmatter block ahead of the file's own.
-    let opens = |l: &str| l.trim_end() == "---";
-    let closes = |l: &str| matches!(l.trim_end(), "---" | "...");
-    let close = match lines.first() {
-        Some(first) if opens(first) => lines.iter().skip(1).position(|l| closes(l)).map(|i| i + 1),
-        _ => None,
-    };
+    let (mut lines, close) = frontmatter_lines(raw);
     let Some(close) = close else {
         return if disabled { format!("---{eol}{line}---{eol}{raw}") } else { raw.to_string() };
     };
@@ -760,8 +766,8 @@ fn yaml_scalar(v: &str) -> String {
 }
 
 /// Set, replace or remove (`None`) one top-level frontmatter key, every other line
-/// kept as it is (the same boundary rule as `set_frontmatter_disabled`: opener
-/// `---`, closer `---` or `...`). A note with no frontmatter gets one when a value
+/// kept as it is (`frontmatter_lines`' boundary rule, shared with
+/// `set_frontmatter_disabled`). A note with no frontmatter gets one when a value
 /// is set; the continuation lines of a list or block value (indented, or `- ` items)
 /// are replaced together with their key. Returns `None` when the key is not one the
 /// agent may write.
@@ -781,13 +787,7 @@ pub fn set_frontmatter_key(raw: &str, key: &str, value: Option<&FrontmatterValue
             out
         }
     });
-    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
-    let opens = |l: &str| l.trim_end() == "---";
-    let closes = |l: &str| matches!(l.trim_end(), "---" | "...");
-    let close = match lines.first() {
-        Some(first) if opens(first) => lines.iter().skip(1).position(|l| closes(l)).map(|i| i + 1),
-        _ => None,
-    };
+    let (lines, close) = frontmatter_lines(raw);
     let Some(close) = close else {
         return Some(match rendered {
             Some(r) => format!("---{eol}{r}---{eol}{raw}"),

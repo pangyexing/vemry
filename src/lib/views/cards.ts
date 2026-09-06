@@ -5,8 +5,10 @@
 // query API, and grading is a user field write on the block's span (the same span-rewrite
 // contract as tasks.ts: read, validate against the indexed content, rewrite exactly the
 // span, false when stale).
-import { api, type BlockHit } from "$lib/api";
-import { setFieldValue, stripFields } from "$lib/fields";
+import type { BlockHit } from "$lib/api";
+import { setFieldValue, stripAnchor, stripFields } from "$lib/fields";
+import { fieldOfLower } from "./queryrows";
+import { editBlockSpan } from "./blockspan";
 import { ymd } from "./tasks";
 
 export type Grade = "again" | "hard" | "good" | "easy";
@@ -33,18 +35,21 @@ export interface Card extends Schedule {
   back: string;
 }
 
-export const DEFAULT_EASE = 2.5;
+const DEFAULT_EASE = 2.5;
 const MIN_EASE = 1.3;
 const MAX_EASE = 3.5;
 /** Ten years: a card graded Easy for long enough stops growing rather than scheduling into a date that is a typo. */
 const MAX_INTERVAL = 3650;
 
-/** A line of a card without its metadata: inline fields, the `#card` tag and a trailing `^id`. */
+/** A line of a card without its metadata: inline fields, the `#card` tag and a trailing
+ *  ` ^id` (through `stripAnchor`, so the question reads exactly as the parser reads the
+ *  line). */
 function clean(line: string): string {
-  return stripFields(line)
-    .replace(/(^|\s)#card(?=\s|$)/gi, "$1")
-    .replace(/(^|\s)\^[A-Za-z0-9-]+\s*$/, "")
-    .trim();
+  return stripAnchor(
+    stripFields(line)
+      .replace(/(^|\s)#card(?=\s|$)/gi, "$1")
+      .trimEnd(),
+  ).trim();
 }
 
 /** The stable identity of a card across a grade: the note plus the question. A span is not
@@ -55,7 +60,7 @@ export function parseCard(hit: BlockHit): Card {
   const lines = hit.block.content.split("\n");
   const front = clean(lines[0] ?? "");
   const back = lines.slice(1).map(clean).filter(Boolean).join("\n");
-  const field = (key: string) => hit.block.fields?.find((f) => f.key.toLowerCase() === key)?.value.trim();
+  const field = (key: string) => fieldOfLower(hit, key)?.trim();
   const due = field("due");
   const interval = Number.parseInt(field("interval") ?? "", 10);
   const ease = Number.parseFloat(field("ease") ?? "");
@@ -154,29 +159,24 @@ function writeSchedule(line: string, s: Schedule): string {
  * query) — the caller requeries and lets the user grade again on fresh data.
  */
 export async function gradeCard(card: Card, grade: Grade, today: string): Promise<Schedule | null> {
-  const { content } = await api.noteRead(card.hit.note);
-  const bytes = new TextEncoder().encode(content);
-  const { start, end } = card.hit.block.span;
-  if (end > bytes.length) return null;
-  const dec = new TextDecoder();
-  const slice = dec.decode(bytes.slice(start, end));
-  if (calloutContent(slice) !== card.hit.block.content) return null;
   const next = schedule(card, grade, today);
-  const lines = slice.split("\n");
-  let at = lines.length - 1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (/\[(?:due|interval|ease|reviews)::/i.test(lines[i])) {
-      at = i;
-      break;
-    }
-  }
-  // A card whose last line is the question itself (no body yet) gets its schedule on a new quoted line
-  if (at === 0 && lines.length === 1) {
-    lines.push(writeSchedule(">", next));
-  } else {
-    lines[at] = writeSchedule(lines[at], next);
-  }
-  const updated = dec.decode(bytes.slice(0, start)) + lines.join("\n") + dec.decode(bytes.slice(end));
-  await api.noteWrite(card.hit.note, updated);
-  return next;
+  const landed = await editBlockSpan(
+    card.hit,
+    (slice) => calloutContent(slice) === card.hit.block.content,
+    (slice) => {
+      const lines = slice.split("\n");
+      let at = lines.length - 1;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (/\[(?:due|interval|ease|reviews)::/i.test(lines[i])) {
+          at = i;
+          break;
+        }
+      }
+      // A card whose last line is the question itself (no body yet) gets its schedule on a new quoted line
+      if (at === 0 && lines.length === 1) lines.push(writeSchedule(">", next));
+      else lines[at] = writeSchedule(lines[at], next);
+      return lines.join("\n");
+    },
+  );
+  return landed ? next : null;
 }

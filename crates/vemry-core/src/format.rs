@@ -16,8 +16,7 @@
 //! blocks (verbatim, body included), frontmatter values, and every character of
 //! prose unless an opt-in says otherwise (`cjk_spacing`, `punctuation`: they change
 //! bytes, so the block hashes behind provenance and change times move — the user
-//! turns them on knowingly). `heading_levels` (no skipped levels) is opt-in too:
-//! the levels may be deliberate.
+//! turns them on knowingly).
 
 use crate::parser::{is_fence_close, parse_fence_open, parse_heading, parse_list_marker};
 
@@ -27,8 +26,6 @@ pub struct FormatOptions {
     pub cjk_spacing: bool,
     /// ASCII `,.;:!?` after a CJK character become their full-width forms.
     pub punctuation: bool,
-    /// A heading may not skip a level below its parent (`##` then `####` → `###`).
-    pub heading_levels: bool,
 }
 
 /// One line's kind, for the blank-line rules.
@@ -139,10 +136,6 @@ fn is_table_row(t: &str) -> bool {
     t.starts_with('|') && t.trim_end().ends_with('|') && t.len() > 1
 }
 
-fn is_rule(t: &str) -> bool {
-    crate::parser::is_thematic_break(t)
-}
-
 /// Width for table padding: CJK and full-width forms count two columns.
 fn display_width(s: &str) -> usize {
     s.chars()
@@ -169,7 +162,6 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
     // Pass 1: classify lines and normalise each one, copying verbatim regions
     let mut items: Vec<(Kind, String)> = Vec::new();
     let mut i = 0;
-    let mut last_heading_level: u8 = 0;
     while i < lines.len() {
         let line = lines[i];
         let trimmed = line.trim_start();
@@ -228,17 +220,12 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
             continue;
         }
         if let Some((level, text)) = parse_heading(trimmed) {
-            let mut level = level;
-            if opts.heading_levels && level > last_heading_level + 1 && last_heading_level > 0 {
-                level = last_heading_level + 1;
-            }
-            last_heading_level = level;
             let text = strip_trailing_ws(&inline(text, opts));
             items.push((Kind::Heading, format!("{} {}", "#".repeat(level as usize), text)));
             i += 1;
             continue;
         }
-        if is_rule(trimmed) {
+        if crate::parser::is_thematic_break(trimmed) {
             items.push((Kind::Rule, trimmed.trim_end().to_string()));
             i += 1;
             continue;
@@ -401,26 +388,12 @@ fn inline(s: &str, opts: &FormatOptions) -> String {
         out.push_str(&t);
     }
     // the anchor: `text  ^id` / `text\t^id` → `text ^id`
-    if let Some(at) = anchor_at(&out) {
+    if let Some(at) = crate::blockid::anchor_start(&out) {
         let (before, anchor) = out.split_at(at);
         let before = before.trim_end_matches([' ', '\t']);
         return format!("{before} {}", anchor.trim_start_matches([' ', '\t']));
     }
     out
-}
-
-/// The start of a trailing ` ^id` (the whitespace before the caret), if any.
-fn anchor_at(s: &str) -> Option<usize> {
-    let caret = s.rfind('^')?;
-    let id = &s[caret + 1..];
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-        return None;
-    }
-    let before = &s[..caret];
-    if !before.ends_with([' ', '\t']) {
-        return None;
-    }
-    Some(before.trim_end_matches([' ', '\t']).len())
 }
 
 struct Segment {
@@ -433,7 +406,6 @@ struct Segment {
 fn split_protected(s: &str) -> Vec<Segment> {
     let mut out = Vec::new();
     let mut cur = String::new();
-    let bytes = s.as_bytes();
     let mut i = 0;
     let flush = |cur: &mut String, out: &mut Vec<Segment>| {
         if !cur.is_empty() {
@@ -468,7 +440,6 @@ fn split_protected(s: &str) -> Vec<Segment> {
                 i += ch.len_utf8();
             }
         }
-        let _ = bytes;
     }
     flush(&mut cur, &mut out);
     out
@@ -685,10 +656,9 @@ mod tests {
     fn opt_ins_change_bytes_only_when_asked() {
         let src = "中文abc和123,好.";
         assert_eq!(fmt(src), "中文abc和123,好.\n");
-        let opts = FormatOptions { cjk_spacing: true, punctuation: true, heading_levels: true };
+        let opts = FormatOptions { cjk_spacing: true, punctuation: true };
         // punctuation turns full-width after a CJK character only (`123,` stays ASCII)
         assert_eq!(format_markdown(src, &opts), "中文 abc 和 123,好。\n");
-        assert_eq!(format_markdown("# a\n#### b\n", &opts), "# a\n\n## b\n");
         // code spans and links are never touched by the opt-ins
         assert_eq!(format_markdown("中文`a中`和[[链接A]]", &opts), "中文`a中`和[[链接A]]\n");
     }

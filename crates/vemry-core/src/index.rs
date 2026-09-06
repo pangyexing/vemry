@@ -280,6 +280,12 @@ impl BlockIndex {
         self.by_path.get(&key).cloned()
     }
 
+    /// Every indexed note's id, in the map's order — the zero-copy entry point for
+    /// a caller that only walks the vault's notes (`summaries()` clones each one).
+    pub fn ids(&self) -> impl Iterator<Item = &NoteId> {
+        self.notes.values().map(|e| &e.summary.id)
+    }
+
     pub fn summaries(&self) -> Vec<NoteSummary> {
         let mut v: Vec<NoteSummary> = self.notes.values().map(|e| e.summary.clone()).collect();
         v.sort_by(|a, b| a.id.cmp(&b.id));
@@ -324,7 +330,12 @@ impl BlockIndex {
     }
 
     pub fn summary(&self, id: &NoteId) -> Option<NoteSummary> {
-        self.notes.get(id).map(|e| e.summary.clone())
+        self.summary_ref(id).cloned()
+    }
+
+    /// `summary` without the clone, for callers reading one field.
+    pub fn summary_ref(&self, id: &NoteId) -> Option<&NoteSummary> {
+        self.notes.get(id).map(|e| &e.summary)
     }
 
     pub fn blocks(&self, id: &NoteId) -> Option<&[Block]> {
@@ -336,6 +347,12 @@ impl BlockIndex {
     pub fn find_block(&self, id: &NoteId, local_id: &str) -> Option<&Block> {
         let blocks = self.blocks(id)?;
         crate::locate::find_block(blocks, local_id).map(|i| &blocks[i])
+    }
+
+    /// A note's outgoing link edges as the index holds them — `links_out` without
+    /// the clone, for a caller that only reads them.
+    pub fn edges(&self, id: &NoteId) -> &[LinkEdge] {
+        self.notes.get(id).map(|e| e.edges.as_slice()).unwrap_or(&[])
     }
 
     pub fn links_out(&self, id: &NoteId) -> Vec<(LinkEdge, ResolvedLink)> {
@@ -353,6 +370,12 @@ impl BlockIndex {
                 .collect(),
             None => vec![],
         }
+    }
+
+    /// Does anything link here? `backlinks_of(..).is_empty()` without building and
+    /// sorting the list to throw it away.
+    pub fn has_backlinks(&self, id: &NoteId) -> bool {
+        self.backlinks.get(id).is_some_and(|s| !s.is_empty())
     }
 
     pub fn backlinks_of(&self, id: &NoteId) -> Vec<NoteId> {

@@ -13,14 +13,14 @@
 //! 3. **Nothing disappears silently.** A unit the outline does not name lands in an
 //!    "unassigned" tail unless the caller listed it as removed.
 //!
-//! Seams between units follow the formatter's rule (format.rs): two items of one
-//! list type touch, everything else is separated by one blank line — so a
-//! restructured note is already in the shape the format-note command would give it.
+//! Seams between units follow the formatter's rule (format.rs): two list items
+//! touch, everything else is separated by one blank line — so a restructured note
+//! is already in the shape the format-note command would give it.
 
 use std::collections::HashMap;
 use std::ops::Range;
 
-use crate::parser::parse_note;
+use crate::parser::{parse_note, ParsedNote};
 use crate::provenance::block_hash;
 use crate::BlockKind;
 
@@ -57,7 +57,11 @@ fn default_level() -> u8 {
 /// section's blocks are units of their own too); a list item or task spans its
 /// subtree, and the nested items inside that subtree are not separate units.
 pub fn units_of(raw: &str) -> Vec<Unit> {
-    let parsed = parse_note(raw);
+    units_from(&parse_note(raw), raw)
+}
+
+/// `units_of` for a caller that already parsed the note (it needs `body_offset` too).
+fn units_from(parsed: &ParsedNote, raw: &str) -> Vec<Unit> {
     let blocks = &parsed.blocks;
     let mut units: Vec<Unit> = Vec::new();
     let mut i = 0;
@@ -84,24 +88,20 @@ pub fn units_of(raw: &str) -> Vec<Unit> {
     units
 }
 
-/// The seam type the editor's rule reads.
-fn seam_kind(kind: &BlockKind) -> &'static str {
-    match kind {
-        BlockKind::ListItem { ordered: true, .. } => "olist",
-        BlockKind::ListItem { .. } | BlockKind::Task { .. } => "ulist",
-        _ => "other",
-    }
+/// A unit the formatter classifies as a list line (`Kind::List`): its marker is
+/// what `parse_list_marker` accepts, ordered or not.
+fn is_list(kind: &BlockKind) -> bool {
+    matches!(kind, BlockKind::ListItem { .. } | BlockKind::Task { .. })
 }
 
-/// "" when `next` may follow `prev` directly (two items of one list), "\n" for a
-/// blank line between (everything else, the formatter's rule).
+/// "" when `next` may follow `prev` directly, "\n" for a blank line between.
+/// The formatter's rule exactly: it packs `(List, List)` tight whatever the two
+/// markers are, and separates everything else.
 fn seam(prev: Option<&BlockKind>, next: &BlockKind) -> &'static str {
-    let Some(p) = prev else { return "" };
-    let (a, b) = (seam_kind(p), seam_kind(next));
-    if (a == "ulist" || a == "olist") && a == b {
-        ""
-    } else {
-        "\n"
+    match prev {
+        Some(p) if is_list(p) && is_list(next) => "",
+        Some(_) => "\n",
+        None => "",
     }
 }
 
@@ -130,6 +130,29 @@ fn join_units(parts: &[(BlockKind, String)]) -> String {
     out
 }
 
+/// Units by handle, each reachable with or without its leading `^`.
+fn handle_index(units: &[Unit]) -> HashMap<String, usize> {
+    let mut by_handle: HashMap<String, usize> = HashMap::new();
+    for (i, u) in units.iter().enumerate() {
+        if !u.handle.is_empty() {
+            by_handle.insert(u.handle.clone(), i);
+            by_handle.insert(u.handle.trim_start_matches('^').to_string(), i);
+        }
+    }
+    by_handle
+}
+
+/// The unit `h` names, or an error naming it. `^id` and `bN` both work, and a
+/// bare id resolves like the `^id` the tools hand back.
+fn lookup_handle(by_handle: &HashMap<String, usize>, h: &str) -> Result<usize, String> {
+    let clean = h.trim();
+    by_handle
+        .get(clean)
+        .or_else(|| by_handle.get(clean.trim_start_matches('^')))
+        .copied()
+        .ok_or_else(|| format!("block not found: {clean}"))
+}
+
 /// The result of a restructure: the note's new text and the handles that were not
 /// named anywhere and landed in the unassigned tail.
 #[derive(Clone, Debug, PartialEq)]
@@ -144,22 +167,9 @@ pub struct Restructured {
 pub fn restructure(raw: &str, outline: &[OutlineSection], removed: &[String]) -> Result<Restructured, String> {
     let parsed = parse_note(raw);
     let front = &raw[..parsed.body_offset];
-    let units = units_of(raw);
-    let mut by_handle: HashMap<String, usize> = HashMap::new();
-    for (i, u) in units.iter().enumerate() {
-        if !u.handle.is_empty() {
-            by_handle.insert(u.handle.clone(), i);
-            by_handle.insert(u.handle.trim_start_matches('^').to_string(), i);
-        }
-    }
-    let lookup = |h: &str| -> Result<usize, String> {
-        let clean = h.trim();
-        by_handle
-            .get(clean)
-            .or_else(|| by_handle.get(clean.trim_start_matches('^')))
-            .copied()
-            .ok_or_else(|| format!("block not found: {clean}"))
-    };
+    let units = units_from(&parsed, raw);
+    let by_handle = handle_index(&units);
+    let lookup = |h: &str| lookup_handle(&by_handle, h);
     let mut used = vec![false; units.len()];
     let mut parts: Vec<(BlockKind, String)> = Vec::new();
     // private blocks with no public unit before them stay at the very top
@@ -170,19 +180,17 @@ pub fn restructure(raw: &str, outline: &[OutlineSection], removed: &[String]) ->
         }
     }
     let mut removed_idx: Vec<usize> = Vec::new();
+    // a removed heading takes nothing with it: its blocks are placed by the outline or land unassigned
     for h in removed {
-        let i = lookup(h)?;
-        if matches!(units[i].kind, BlockKind::Heading { .. }) {
-            // a removed heading takes nothing with it: its blocks are placed by the outline or land unassigned
-        }
-        removed_idx.push(i);
+        removed_idx.push(lookup(h)?);
     }
     for section in outline {
         if let Some(text) = section.heading.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
             // reuse the note's own heading block when one has this text (its id stays), else a fresh line
-            let existing = units.iter().position(|u| {
-                matches!(u.kind, BlockKind::Heading { .. }) && !used[units.iter().position(|x| std::ptr::eq(x, u)).unwrap()] && heading_text(raw, u) == text
-            });
+            let existing = units
+                .iter()
+                .enumerate()
+                .position(|(i, u)| matches!(u.kind, BlockKind::Heading { .. }) && !used[i] && heading_text(raw, u) == text);
             match existing {
                 Some(i) if !removed_idx.contains(&i) => {
                     used[i] = true;
@@ -235,9 +243,11 @@ pub fn restructure(raw: &str, outline: &[OutlineSection], removed: &[String]) ->
     Ok(Restructured { text, unassigned })
 }
 
+/// A heading unit's title as `locate::heading_text` reads it: the line without its
+/// `#`s and without a trailing ` ^id`, so `## Notes ^h1` answers to "Notes".
 fn heading_text(raw: &str, u: &Unit) -> String {
     let line = raw[u.span.clone()].lines().next().unwrap_or("");
-    line.trim_start_matches('#').trim().to_string()
+    crate::blockid::strip_anchor(line.trim_start_matches('#').trim()).to_string()
 }
 
 /// Take `handles` out of `from_raw` (their private tails stay behind, in place) and
@@ -246,19 +256,13 @@ fn heading_text(raw: &str, u: &Unit) -> String {
 pub fn extract_units(from_raw: &str, handles: &[String]) -> Result<(String, String, Vec<String>), String> {
     let parsed = parse_note(from_raw);
     let front = &from_raw[..parsed.body_offset];
-    let units = units_of(from_raw);
-    let mut by_handle: HashMap<String, usize> = HashMap::new();
-    for (i, u) in units.iter().enumerate() {
-        if !u.handle.is_empty() {
-            by_handle.insert(u.handle.clone(), i);
-            by_handle.insert(u.handle.trim_start_matches('^').to_string(), i);
-        }
-    }
+    let units = units_from(&parsed, from_raw);
+    let by_handle = handle_index(&units);
     let mut moving = vec![false; units.len()];
     let mut order: Vec<usize> = Vec::new();
     for h in handles {
         let clean = h.trim();
-        let i = by_handle.get(clean).or_else(|| by_handle.get(clean.trim_start_matches('^'))).copied().ok_or_else(|| format!("block not found: {clean}"))?;
+        let i = lookup_handle(&by_handle, h)?;
         if matches!(units[i].kind, BlockKind::Private) {
             return Err(format!("block not found: {clean}"));
         }

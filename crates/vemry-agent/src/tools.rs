@@ -687,10 +687,11 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             // PDFs read once are searched by their cached text (every term, case-insensitive)
             let terms: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).filter(|t| !t.is_empty()).collect();
             if !terms.is_empty() {
-                for (rel, text) in crate::context::cached_pdf_texts(vault, &mut filtered) {
+                for (rel, txt) in crate::context::cached_pdf_files(vault, &mut filtered) {
                     if lines.len() >= limit {
                         break;
                     }
+                    let Ok(text) = std::fs::read_to_string(&txt) else { continue };
                     let lower = text.to_lowercase();
                     if !terms.iter().all(|t| lower.contains(t.as_str())) {
                         continue;
@@ -849,6 +850,7 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
         }
         "list_files" => {
             let folder = args.get("folder").and_then(|v| v.as_str()).unwrap_or("").trim_matches('/');
+            let prefix = (!folder.is_empty()).then(|| format!("{folder}/"));
             let kind = args.get("kind").and_then(|v| v.as_str());
             let limit = arg_usize(args, "limit", 100).min(LIST_FILES_MAX_LIMIT);
             let mut filtered = 0usize;
@@ -858,7 +860,7 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
                 if rel.to_ascii_lowercase().ends_with(".md") {
                     continue;
                 }
-                if !folder.is_empty() && !rel.starts_with(&format!("{folder}/")) {
+                if prefix.as_ref().is_some_and(|p| !rel.starts_with(p.as_str())) {
                     continue;
                 }
                 let k = file_kind(&rel);
@@ -907,44 +909,28 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             let unresolved: Vec<String> = report
                 .unresolved
                 .iter()
-                .filter(|(id, _, _)| {
-                    let p = vault.is_private(id);
-                    filtered += p as usize;
-                    !p
-                })
+                .filter(|(id, _, _)| visible(vault, &mut filtered, id))
                 .map(|(id, block, target)| format!("[[{}#{block}]] → [[{target}]] unresolved", strip(id)))
                 .collect();
             section("Unresolved links", unresolved, &mut out);
             let orphans: Vec<String> = report
                 .orphans
                 .iter()
-                .filter(|id| {
-                    let p = vault.is_private(id);
-                    filtered += p as usize;
-                    !p
-                })
+                .filter(|id| visible(vault, &mut filtered, id))
                 .map(|id| format!("[[{}]]", strip(id)))
                 .collect();
             section("Orphan notes (no backlinks)", orphans, &mut out);
             let dangling: Vec<String> = report
                 .dangling_supports
                 .iter()
-                .filter(|(id, _, _)| {
-                    let p = vault.is_private(id);
-                    filtered += p as usize;
-                    !p
-                })
+                .filter(|(id, _, _)| visible(vault, &mut filtered, id))
                 .map(|(id, block, target)| format!("[[{}#{block}]] supports:[[{target}]] reaches no claim", strip(id)))
                 .collect();
             section("Dangling supports", dangling, &mut out);
             let anchors: Vec<String> = report
                 .dangling_anchors
                 .iter()
-                .filter(|(id, _, _)| {
-                    let p = vault.is_private(id);
-                    filtered += p as usize;
-                    !p
-                })
+                .filter(|(id, _, _)| visible(vault, &mut filtered, id))
                 .map(|(id, block, target)| format!("[[{}#{block}]] → [[{target}]]: the note exists, the anchor does not", strip(id)))
                 .collect();
             section("Dangling anchors (heading or block gone)", anchors, &mut out);
@@ -1013,20 +999,23 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             let limit = arg_usize(args, "limit", 50).min(RECENT_MAX_LIMIT);
             let mut filtered = 0usize;
             let mut hits: Vec<(u64, String)> = Vec::new();
-            for s in vault.index().summaries() {
-                if let Some(only) = &only_note {
-                    if &s.id != only {
-                        continue;
-                    }
+            let ids: Vec<NoteId> = match &only_note {
+                Some(only) => vec![only.clone()],
+                None => {
+                    let mut v: Vec<NoteId> = vault.index().ids().cloned().collect();
+                    v.sort();
+                    v
                 }
-                if !folder.is_empty() && !s.id.as_str().starts_with(&format!("{folder}/")) {
+            };
+            let prefix = (!folder.is_empty()).then(|| format!("{folder}/"));
+            for id in &ids {
+                if prefix.as_ref().is_some_and(|p| !id.as_str().starts_with(p.as_str())) {
                     continue;
                 }
-                if vault.is_private(&s.id) {
-                    filtered += 1;
+                if !visible(vault, &mut filtered, id) {
                     continue;
                 }
-                let Some(blocks) = vault.index().blocks(&s.id) else { continue };
+                let Some(blocks) = vault.index().blocks(id) else { continue };
                 for b in blocks {
                     if b.modified_ms < since_ms {
                         continue;
@@ -1046,7 +1035,7 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
                     }
                     let day = local_day_of_ms(b.modified_ms);
                     let first: String = b.content.lines().next().unwrap_or("").chars().take(120).collect();
-                    hits.push((b.modified_ms, format!("{}#{}\t{kind_name}\t{day}\t{first}", s.id.as_str().strip_suffix(".md").unwrap_or(s.id.as_str()), b.handle())));
+                    hits.push((b.modified_ms, format!("{}#{}\t{kind_name}\t{day}\t{first}", id.as_str().strip_suffix(".md").unwrap_or(id.as_str()), b.handle())));
                 }
             }
             hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
@@ -1074,6 +1063,50 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
     }
 }
 
+/// Gate order for a path a write may create, shared by write_note and append_note.
+/// Canonicalize case-variant spellings to the indexed id first: the FS folds
+/// "hello.md" onto Hello.md, so the privacy check, the diff baseline and the index
+/// update must all target the real note — not a phantom "create" whose approval
+/// silently overwrites it. Then privacy, which covers creating a NEW file inside a
+/// private folder (the glob rules match paths that do not exist yet); then a path on
+/// disk the index does not hold — a pre-existing symlink (`fs::write` would follow
+/// it, possibly out of the vault) or a file the watcher has not indexed yet, refused
+/// rather than blind-overwritten behind a "create" diff whose baseline reads as
+/// empty; then portability, so an illegal Windows destination goes straight back to
+/// the model with no diff rendered and no dialog raised. Only new paths are checked
+/// — an existing file stays writable whatever it is called.
+fn writable_note_id(vault: &Vault, path: &str) -> Result<(NoteId, bool), ToolError> {
+    let requested = vault.note_id(path).map_err(|e| ToolError::Other(e.to_string()))?;
+    let id = vault.index().canonical_id(&requested).unwrap_or(requested);
+    if vault.is_private(&id) {
+        return Err(ToolError::Privacy(format!("invalid path: {path}")));
+    }
+    let is_new = !vault.index().contains(&id);
+    if is_new {
+        if std::fs::symlink_metadata(vault.abs_path(&id)).is_ok() {
+            return Err(ToolError::Other(format!("invalid path: {path}")));
+        }
+        vault.check_portable_rel(id.as_str()).map_err(|e| ToolError::Other(e.to_string()))?;
+    }
+    Ok((id, is_new))
+}
+
+/// The `anchor` argument append_note and move_blocks share: a heading to land
+/// under, or None for the note's end (the word "end" says that explicitly).
+fn anchor_arg(args: &Value) -> Option<&str> {
+    args.get("anchor").and_then(|v| v.as_str()).map(str::trim).filter(|a| !a.is_empty() && !a.eq_ignore_ascii_case("end"))
+}
+
+/// Where new text lands in `text`, the vault's own rule (insert.rs, shared with
+/// clipping and quick capture): the end of the anchor heading's section, or the
+/// note's content end.
+fn landing_offset(text: &str, anchor: Option<&str>) -> Result<usize, ToolError> {
+    let Some(heading) = anchor else { return Ok(vemry_core::insert::content_end_offset(text)) };
+    let blocks = vemry_core::parser::parse_note(text).blocks;
+    vemry_core::insert::section_insert_offset(&blocks, text, heading)
+        .ok_or_else(|| ToolError::Other(format!("heading not found: {heading} — land under an existing heading, or omit anchor for the end")))
+}
+
 /// Gate order for a note that already exists, shared by edit_note and the source
 /// side of move_note: fold the case onto the indexed id → privacy before
 /// existence → anything outside the index (hidden directories, symlinks) is
@@ -1092,6 +1125,15 @@ fn existing_note_id(vault: &Vault, path: &str) -> Result<NoteId, ToolError> {
 }
 
 /// The block kind as recent_changes and query_blocks name it.
+/// The privacy funnel every agent-visible read path shares with `query_for_agent`:
+/// a private note is dropped from the answer and counted, so the model is told how
+/// much it cannot see without being told what.
+fn visible(vault: &Vault, filtered: &mut usize, id: &NoteId) -> bool {
+    let private = vault.is_private(id);
+    *filtered += private as usize;
+    !private
+}
+
 fn block_kind_name(kind: &vemry_core::BlockKind) -> &'static str {
     use vemry_core::BlockKind::*;
     match kind {
@@ -1171,7 +1213,7 @@ fn block_rewrite_request(request_id: String, name: &str, id: &NoteId, raw: &str,
         return Err(ToolError::Other("this change cannot be applied as written".into()));
     }
     let diff = unified_diff(raw, &new_content, id.as_str());
-    Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] })
+    Ok(WriteRequest::new(request_id, name, id.to_string(), WriteKind::Edit, diff, new_content))
 }
 
 /// A date argument: `null` clears, a `YYYY-MM-DD` sets, anything else is an error
@@ -1215,33 +1257,7 @@ pub fn prepare_write(
         "write_note" => {
             let path = arg_str(args, "path")?;
             let content = arg_str(args, "content")?;
-            let requested = vault.note_id(path).map_err(|e| ToolError::Other(e.to_string()))?;
-            // Canonicalize case-variant spellings to the indexed id: the FS
-            // folds "hello.md" onto Hello.md, so the privacy check, the diff
-            // baseline and the index update must all target the real note —
-            // not a phantom "create" whose approval silently overwrites it.
-            let id = vault.index().canonical_id(&requested).unwrap_or(requested);
-            // covers creating NEW files inside a private folder: the glob
-            // rules match paths that do not exist yet
-            if vault.is_private(&id) {
-                return Err(ToolError::Privacy(format!("invalid path: {path}")));
-            }
-            let is_new = !vault.index().contains(&id);
-            // On disk but not indexed: a pre-existing symlink (fs::write would
-            // follow it, possibly out of the vault) or a file the watcher has
-            // not indexed yet. Refuse rather than blind-overwrite behind a
-            // "create" diff whose baseline would read as empty.
-            if is_new && std::fs::symlink_metadata(vault.abs_path(&id)).is_ok() {
-                return Err(ToolError::Other(format!("invalid path: {path}")));
-            }
-            // Portability before the permission gate: an illegal Windows
-            // destination goes straight back to the model to correct, with no diff
-            // rendered and no dialog raised (move_note's destination takes the same
-            // path). Only new paths are checked — an existing file stays writable
-            // whatever it is called
-            if is_new {
-                vault.check_portable_rel(id.as_str()).map_err(|e| ToolError::Other(e.to_string()))?;
-            }
+            let (id, is_new) = writable_note_id(vault, path)?;
             let old = if is_new { String::new() } else { vault.read_note(&id).unwrap_or_default() };
             // A note holding private blocks cannot be overwritten whole: the model
             // never saw those blocks, so its "full content" would delete them. The
@@ -1256,7 +1272,7 @@ pub fn prepare_write(
             let new_content = if is_new { with_agent_provenance(content, session) } else { content.to_string() };
             let diff = unified_diff(&old, &new_content, id.as_str());
             let kind = if is_new { WriteKind::Create } else { WriteKind::Overwrite };
-            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] })
+            Ok(WriteRequest::new(request_id, name, id.to_string(), kind, diff, new_content))
         }
         "edit_note" => {
             let path = arg_str(args, "path")?;
@@ -1313,19 +1329,7 @@ pub fn prepare_write(
                 return Err(ToolError::Other("this edit leaves the note unchanged".into()));
             }
             let diff = unified_diff(&content, &new_content, id.as_str());
-            Ok(WriteRequest {
-                id: request_id,
-                tool: name.into(),
-                path: id.to_string(),
-                to_path: None,
-                diff,
-                kind: WriteKind::Edit,
-                new_content,
-                rewrites: vec![],
-                rewrite_texts: vec![],
-                block_diff: None,
-                notes: vec![],
-            })
+            Ok(WriteRequest::new(request_id, name, id.to_string(), WriteKind::Edit, diff, new_content))
         }
         "append_note" => {
             let path = arg_str(args, "path")?;
@@ -1333,35 +1337,15 @@ pub fn prepare_write(
             if content.trim().is_empty() {
                 return Err(ToolError::Other("nothing to append: content is empty".into()));
             }
-            let anchor = args.get("anchor").and_then(|v| v.as_str()).map(str::trim).filter(|a| !a.is_empty() && !a.eq_ignore_ascii_case("end"));
-            let requested = vault.note_id(path).map_err(|e| ToolError::Other(e.to_string()))?;
-            let id = vault.index().canonical_id(&requested).unwrap_or(requested);
-            // The same create-side gate as write_note: privacy first, then a path on disk
-            // the index does not hold, then portability
-            if vault.is_private(&id) {
-                return Err(ToolError::Privacy(format!("invalid path: {path}")));
-            }
-            let is_new = !vault.index().contains(&id);
+            let anchor = anchor_arg(args);
+            let (id, is_new) = writable_note_id(vault, path)?;
             if is_new {
-                if std::fs::symlink_metadata(vault.abs_path(&id)).is_ok() {
-                    return Err(ToolError::Other(format!("invalid path: {path}")));
-                }
-                vault.check_portable_rel(id.as_str()).map_err(|e| ToolError::Other(e.to_string()))?;
                 let new_content = with_agent_provenance(&format!("{}\n", content.trim_matches(['\n', '\r'])), session);
                 let diff = unified_diff("", &new_content, id.as_str());
-                return Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Create, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] });
+                return Ok(WriteRequest::new(request_id, name, id.to_string(), WriteKind::Create, diff, new_content));
             }
             let old = vault.read_note(&id).map_err(|e| ToolError::Other(e.to_string()))?;
-            let blocks = vemry_core::parser::parse_note(&old).blocks;
-            // Landing is the vault's own rule (insert.rs, shared with clipping and quick
-            // capture): the end of the heading's section, or the note's content end
-            let offset = match anchor {
-                Some(heading) => vemry_core::insert::section_insert_offset(&blocks, &old, heading).ok_or_else(|| {
-                    ToolError::Other(format!("heading not found: {heading} — append under an existing heading, or omit anchor to append at the end"))
-                })?,
-                None => vemry_core::insert::content_end_offset(&old),
-            };
-            let new_content = vemry_core::insert::insert_at(&old, offset, content);
+            let new_content = vemry_core::insert::insert_at(&old, landing_offset(&old, anchor)?, content);
             if !vemry_core::private_blocks_preserved(&old, &new_content) {
                 return Err(ToolError::Other("this append cannot be applied as written — keep fences balanced in content".into()));
             }
@@ -1369,7 +1353,7 @@ pub fn prepare_write(
                 return Err(ToolError::Other("this append leaves the note unchanged".into()));
             }
             let diff = unified_diff(&old, &new_content, id.as_str());
-            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Append, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] })
+            Ok(WriteRequest::new(request_id, name, id.to_string(), WriteKind::Append, diff, new_content))
         }
         "set_frontmatter" => {
             let path = arg_str(args, "path")?;
@@ -1392,7 +1376,7 @@ pub fn prepare_write(
                 return Err(ToolError::Other("this change leaves the frontmatter unchanged".into()));
             }
             let diff = unified_diff(&old, &new_content, id.as_str());
-            Ok(WriteRequest { id: request_id, tool: name.into(), path: id.to_string(), to_path: None, diff, kind: WriteKind::Edit, new_content, rewrites: vec![], rewrite_texts: vec![], block_diff: None, notes: vec![] })
+            Ok(WriteRequest::new(request_id, name, id.to_string(), WriteKind::Edit, diff, new_content))
         }
         "update_task" => {
             let (id, raw, blocks, i) = locate_block(vault, arg_str(args, "path")?, arg_str(args, "block")?)?;
@@ -1506,19 +1490,7 @@ pub fn prepare_write(
             if !r.unassigned.is_empty() {
                 notes.push(format!("{} block(s) the outline did not name landed under '## Unassigned': {}", r.unassigned.len(), r.unassigned.join(", ")));
             }
-            Ok(WriteRequest {
-                id: request_id,
-                tool: name.into(),
-                path: id.to_string(),
-                to_path: None,
-                diff,
-                kind: WriteKind::Edit,
-                new_content: r.text,
-                rewrites: vec![],
-                rewrite_texts: vec![],
-                block_diff,
-                notes,
-            })
+            Ok(WriteRequest { block_diff, notes, ..WriteRequest::new(request_id, name, id.to_string(), WriteKind::Edit, diff, r.text) })
         }
         "move_blocks" => {
             let from_id = existing_note_id(vault, arg_str(args, "from")?)?;
@@ -1530,7 +1502,7 @@ pub fn prepare_write(
             if handles.is_empty() {
                 return Err(ToolError::Other("move_blocks needs at least one block handle".into()));
             }
-            let anchor = args.get("anchor").and_then(|v| v.as_str()).map(str::trim).filter(|a| !a.is_empty() && !a.eq_ignore_ascii_case("end"));
+            let anchor = anchor_arg(args);
             let leave_link = args.get("leave_link").and_then(|v| v.as_bool()).unwrap_or(false);
             let from_raw = vault.read_note(&from_id).map_err(|e| ToolError::Other(e.to_string()))?;
             let (mut source, moved, ids) = vemry_core::restructure::extract_units(&from_raw, &handles).map_err(ToolError::Other)?;
@@ -1539,13 +1511,7 @@ pub fn prepare_write(
                 None => None,
             };
             let land = |text: &str, payload: &str| -> Result<String, ToolError> {
-                let blocks = vemry_core::parser::parse_note(text).blocks;
-                let offset = match anchor {
-                    Some(h) => vemry_core::insert::section_insert_offset(&blocks, text, h)
-                        .ok_or_else(|| ToolError::Other(format!("heading not found: {h} — land under an existing heading, or omit anchor for the end")))?,
-                    None => vemry_core::insert::content_end_offset(text),
-                };
-                Ok(vemry_core::insert::insert_at(text, offset, payload))
+                Ok(vemry_core::insert::insert_at(text, landing_offset(text, anchor)?, payload))
             };
             let mut rewrites = vec![];
             let mut rewrite_texts = vec![];
@@ -1580,17 +1546,10 @@ pub fn prepare_write(
             let main_diff = unified_diff(&from_raw, &source, from_id.as_str());
             let block_diff = Some(vemry_core::block_diff(&from_raw, &source));
             Ok(WriteRequest {
-                id: request_id,
-                tool: name.into(),
-                path: from_id.to_string(),
-                to_path: None,
-                diff: format!("{main_diff}{diff}"),
-                kind: WriteKind::Edit,
-                new_content: source,
                 rewrites,
                 rewrite_texts,
                 block_diff,
-                notes: vec![],
+                ..WriteRequest::new(request_id, name, from_id.to_string(), WriteKind::Edit, format!("{main_diff}{diff}"), source)
             })
         }
         "move_note" => {
@@ -1623,17 +1582,10 @@ pub fn prepare_write(
             let plan = if rewrite { vault.plan_note_move_links(&from_id, &to_id) } else { vec![] };
             let (diff, rewrites, rewrite_texts) = rewrite_parts(vault, plan);
             Ok(WriteRequest {
-                id: request_id,
-                tool: name.into(),
-                path: from_id.to_string(),
                 to_path: Some(to_id.to_string()),
-                diff,
-                kind: WriteKind::Move,
-                new_content: String::new(),
                 rewrites,
                 rewrite_texts,
-                block_diff: None,
-                notes: vec![],
+                ..WriteRequest::new(request_id, name, from_id.to_string(), WriteKind::Move, diff, String::new())
             })
         }
         "move_file" => {
@@ -1659,17 +1611,10 @@ pub fn prepare_write(
             let plan = vault.plan_file_move_links(from, to);
             let (diff, rewrites, rewrite_texts) = rewrite_parts(vault, plan);
             Ok(WriteRequest {
-                id: request_id,
-                tool: name.into(),
-                path: from.to_string(),
                 to_path: Some(to.to_string()),
-                diff,
-                kind: WriteKind::Move,
-                new_content: String::new(),
                 rewrites,
                 rewrite_texts,
-                block_diff: None,
-                notes: vec![],
+                ..WriteRequest::new(request_id, name, from.to_string(), WriteKind::Move, diff, String::new())
             })
         }
         _ => Err(ToolError::Other(format!("unknown write tool: {name}"))),
@@ -1795,19 +1740,10 @@ fn rewrite_parts(vault: &Vault, plan: Vec<vemry_core::Relink>) -> (String, Vec<R
 fn apply_rewrites(vault: &mut Vault, texts: &[RewriteText]) -> (usize, usize) {
     let (mut done, mut skipped) = (0, 0);
     for r in texts {
-        let Ok(id) = vault.note_id(&r.path) else {
+        if r.apply(vault, false) {
+            done += 1;
+        } else {
             skipped += 1;
-            continue;
-        };
-        match vault.read_note(&id) {
-            Ok(cur) if cur == r.old => {
-                if vault.write_note(&id, &r.new).is_ok() {
-                    done += 1;
-                } else {
-                    skipped += 1;
-                }
-            }
-            _ => skipped += 1,
         }
     }
     (done, skipped)

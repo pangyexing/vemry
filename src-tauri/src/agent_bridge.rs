@@ -67,7 +67,7 @@ async fn park<D: Cancellable>(pending: &Pending<D>, id: &str) -> D {
 }
 
 /// Handing a decision back: take the pending entry out and send it to the await.
-fn resolve<D>(pending: &Pending<D>, what: &str, request_id: &str, decision: D) -> Result<(), String> {
+pub fn resolve<D>(pending: &Pending<D>, what: &str, request_id: &str, decision: D) -> Result<(), String> {
     let tx = pending
         .lock()
         .unwrap()
@@ -173,22 +173,27 @@ impl AgentState {
         self.read_auto_sources_arc.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// The session-scoped consents back from a reopened session's jsonl (the standing
-    /// read consent and the session write grants): what reset_session_scope cleared for
-    /// the session being left, this restores for the one being entered.
-    pub fn restore_session_scope(&self, meta_dir: &std::path::Path, id: &str) {
-        let scope = vemry_agent::session::read_session_scope(meta_dir, id);
-        self.read_auto_sources_arc.store(scope.read_auto, std::sync::atomic::Ordering::Relaxed);
-        *self.session_grant.lock().unwrap() = scope.grants;
+    /// Everything scoped to one session, dropped: the source table, the followed note
+    /// and the undo journal. `reset_session_scope` clears the consents beside it —
+    /// together they are what a change of session identity drops. Every place that
+    /// sets `current_session` to None calls it.
+    pub fn clear_session_data(&self) {
+        self.sources.lock().unwrap().clear();
+        *self.follow.lock().unwrap() = None;
+        self.journal.lock().unwrap().clear();
     }
 
-    /// Point the source table at a session: rebuilt from its jsonl (None = a new
-    /// session, empty). Every place that sets `current_session` calls it.
-    pub fn load_sources(&self, meta_dir: &std::path::Path, id: Option<&str>) {
-        *self.sources.lock().unwrap() =
-            id.map(|id| vemry_agent::session::read_session_sources(meta_dir, id)).unwrap_or_default();
-        *self.follow.lock().unwrap() = id.and_then(|id| vemry_agent::session::read_session_follow(meta_dir, id));
+    /// Point the session-scoped state at an existing session, from one read of its
+    /// jsonl: the source table, the followed note, and the standing read consent and
+    /// write grants that `reset_session_scope` just cleared for the session being
+    /// left. Every place that sets `current_session` to an id calls it.
+    pub fn load_session(&self, meta_dir: &std::path::Path, id: &str) {
+        let st = vemry_agent::session::read_session_state(meta_dir, id);
+        *self.sources.lock().unwrap() = st.sources;
+        *self.follow.lock().unwrap() = st.follow;
         self.journal.lock().unwrap().clear();
+        self.read_auto_sources_arc.store(st.scope.read_auto, std::sync::atomic::Ordering::Relaxed);
+        *self.session_grant.lock().unwrap() = st.scope.grants;
     }
 
     /// A change to the privacy zones invalidates the prompt snapshot alone: the
@@ -252,18 +257,6 @@ impl PlanGate for ChannelPlanGate {
     }
 }
 
-pub fn resolve_permission(
-    pending: &Pending<PermissionDecision>,
-    request_id: &str,
-    decision: PermissionDecision,
-) -> Result<(), String> {
-    resolve(pending, "permission", request_id, decision)
-}
-
-pub fn resolve_plan(pending: &Pending<PlanDecision>, request_id: &str, decision: PlanDecision) -> Result<(), String> {
-    resolve(pending, "plan", request_id, decision)
-}
-
 /// The channel implementation of the actions gate: the decision comes back through
 /// `agent_actions_respond`.
 pub struct ChannelActionsGate {
@@ -275,14 +268,6 @@ impl ActionsGate for ChannelActionsGate {
     async fn request(&self, req: &ActionsRequest) -> ActionsDecision {
         park(&self.pending, &req.id).await
     }
-}
-
-pub fn resolve_actions(pending: &Pending<ActionsDecision>, request_id: &str, decision: ActionsDecision) -> Result<(), String> {
-    resolve(pending, "actions", request_id, decision)
-}
-
-pub fn resolve_read(pending: &Pending<ReadAnswer>, request_id: &str, answer: ReadAnswer) -> Result<(), String> {
-    resolve(pending, "read", request_id, answer)
 }
 
 /// The channel implementation of the read gate: the user's answer comes back through

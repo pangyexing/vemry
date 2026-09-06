@@ -122,7 +122,7 @@ pub enum AgentEvent {
     SkillActivated { name: String },
     /// A write landed on disk in this turn (after the vault events): the UI counts
     /// them per turn to offer "undo this turn's writes".
-    WriteLanded { turn: Option<String>, tool: String, path: String },
+    WriteLanded { turn: Option<String> },
     /// A write tool landed on disk. The vault's own watcher swallows the change as
     /// a self-write (the same suppression that keeps a user's save from echoing), so
     /// the glue layer broadcasts these as vault events — the open note reloads, the
@@ -428,7 +428,7 @@ impl AgentRunner {
         // page (read back off the envelope, so a regenerate sees it too)
         // …plus every page the read gate fetches during the turn (added as they come)
         let web: Mutex<TurnWeb> = Mutex::new(TurnWeb {
-            exempt: history.get(turn_start).and_then(|m| m.text()).map(page_context_urls).unwrap_or_default(),
+            exempt: history.get(turn_start).and_then(|m| m.text()).map(crate::context::page_context_urls).unwrap_or_default(),
             read: vec![],
         });
 
@@ -988,11 +988,9 @@ impl AgentRunner {
         let vault = guard.as_mut().ok_or("no vault open")?;
         // What the write will mean to the index, judged before it lands (created or
         // modified; a move removes one path and adds another)
-        // A file move is not a note event (the glue layer's IndexReady at the end of the turn refreshes the tree)
-        let events: Vec<vemry_core::VaultEvent> = if write_req.tool == "move_file" {
-            vec![]
-        } else {
-            match (&write_req.to_path, vault.note_id(&write_req.path)) {
+        let events: Vec<vemry_core::VaultEvent> = match (&write_req.to_path, vault.note_id(&write_req.path)) {
+            // A file move is not a note event (the glue layer's IndexReady at the end of the turn refreshes the tree)
+            _ if write_req.tool == "move_file" => vec![],
             (Some(to), Ok(from)) => match vault.note_id(to) {
                 Ok(to_id) => vec![
                     vemry_core::VaultEvent::NoteRemoved { id: from },
@@ -1006,7 +1004,6 @@ impl AgentRunner {
                 vemry_core::VaultEvent::NoteAdded { id }
             }],
             (_, Err(_)) => vec![],
-            }
         };
         // What the write replaces, for the journal (a move records its path pair and rewrites)
         let previous = if write_req.to_path.is_some() { None } else { undo::previous_text(vault, &write_req.path) };
@@ -1015,7 +1012,6 @@ impl AgentRunner {
             &mut self.journal.lock().unwrap(),
             WriteRecord {
                 turn: turn.map(String::from),
-                tool: name.to_string(),
                 path: write_req.path.clone(),
                 old: previous,
                 new: if write_req.to_path.is_some() {
@@ -1031,7 +1027,7 @@ impl AgentRunner {
         if !events.is_empty() {
             on_event(AgentEvent::VaultChanged { events });
         }
-        on_event(AgentEvent::WriteLanded { turn: turn.map(String::from), tool: name.to_string(), path: write_req.path.clone() });
+        on_event(AgentEvent::WriteLanded { turn: turn.map(String::from) });
         Ok(text)
     }
 
@@ -1222,25 +1218,17 @@ impl AgentRunner {
         log: &SessionLog,
     ) {
         let mut cites: Vec<sources::Citation> = Vec::new();
-        let mut push = |c: sources::Citation| match cites.iter_mut().find(|x| x.url == c.url) {
-            Some(prev) => {
-                if prev.title.is_empty() && !c.title.is_empty() {
-                    prev.title = c.title;
-                }
-            }
-            None => cites.push(c),
-        };
         for r in web_results.iter().filter(|r| !r.url.is_empty()) {
-            push(sources::Citation { title: r.title.clone(), url: r.url.clone() });
+            sources::push_citation(&mut cites, sources::Citation { title: r.title.clone(), url: r.url.clone() });
         }
         // The pages the read gate fetched come with their titles, ahead of the answer's
         // citations (which may name the same URL with no title)
         for c in &web.read {
-            push(c.clone());
+            sources::push_citation(&mut cites, c.clone());
         }
         for text in turn.iter().filter(|m| m.role == "assistant").filter_map(|m| m.text()) {
             for c in sources::extract_citations(text) {
-                push(c);
+                sources::push_citation(&mut cites, c);
             }
         }
         if cites.is_empty() {
@@ -1269,25 +1257,6 @@ struct TurnWeb {
 /// The confirmed plan as the first update: every step pending.
 fn pending_items(items: &[String]) -> Vec<PlanItem> {
     items.iter().map(|t| PlanItem { text: t.clone(), status: PlanStatus::Pending }).collect()
-}
-
-/// The URL of the web page attached to a turn, read back off its envelope
-/// (`<web-page-context source="…"`): assembled by compose_user_message with
-/// fence_attr applied, which never touches a URL's characters.
-fn page_context_urls(envelope: &str) -> HashSet<String> {
-    let mut out = HashSet::new();
-    let marker = "<web-page-context source=\"";
-    let mut pos = 0;
-    while let Some(at) = envelope[pos..].find(marker) {
-        let start = pos + at + marker.len();
-        if let Some(end) = envelope[start..].find('"') {
-            out.insert(envelope[start..start + end].to_string());
-            pos = start + end;
-        } else {
-            break;
-        }
-    }
-    out
 }
 
 fn decision_label(d: &PermissionDecision) -> &'static str {
@@ -1390,22 +1359,7 @@ mod tests {
         }
     }
 
-    fn text_chunk(t: &str) -> StreamChunk {
-        StreamChunk {
-            choices: vec![StreamChoice {
-                delta: Delta { content: Some(t.into()), ..Default::default() },
-                finish_reason: None,
-            }],
-            ..Default::default()
-        }
-    }
-
-    fn finish_chunk(reason: &str) -> StreamChunk {
-        StreamChunk {
-            choices: vec![StreamChoice { delta: Delta::default(), finish_reason: Some(reason.into()) }],
-            ..Default::default()
-        }
-    }
+    use crate::testing::{finish_chunk, text_chunk};
 
     fn tool_call_chunks(id: &str, name: &str, args: &str) -> Vec<StreamChunk> {
         // split args across two deltas to exercise accumulation

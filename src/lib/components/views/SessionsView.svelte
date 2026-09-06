@@ -15,6 +15,7 @@
     hhmmss,
     parseSession,
     planDecisionLabel,
+    PLAN_GLYPH,
     renameKeydown,
     toolLabel,
     type SessionEntry,
@@ -384,7 +385,7 @@
               </div>
               {#each e.items as p, j (j)}
                 <div class="ws-link" class:faint={p.status === "skipped"}>
-                  <span class="ws-n">{p.status === "done" ? "☑" : p.status === "doing" ? "◉" : p.status === "skipped" ? "⊘" : "☐"}</span>
+                  <span class="ws-n">{PLAN_GLYPH[p.status] ?? "☐"}</span>
                   <span class="ws-title">{p.text}</span>
                 </div>
               {/each}

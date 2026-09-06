@@ -133,6 +133,27 @@ function findSourcesIn(items: TimelineItem[], from: number) {
   return undefined;
 }
 
+/** The last card of `kind` carrying `id`, scanning backwards to `from`. The turn
+ *  boundary rule lives here with findSourcesIn: on replay `from` is the turn's start,
+ *  so a card id repeated in a later turn cannot reach back into an earlier one; live
+ *  the timeline is the current session's and the newest match is the right one.
+ *  `ok` narrows further (replay only settles a card that has no decision yet). */
+function findCard<K extends TimelineItem["kind"]>(
+  items: TimelineItem[],
+  kind: K,
+  id: string,
+  from = 0,
+  ok?: (card: Extract<TimelineItem, { kind: K }>) => boolean,
+): Extract<TimelineItem, { kind: K }> | undefined {
+  for (let i = items.length - 1; i >= from; i--) {
+    const t = items[i];
+    if (t.kind !== kind) continue;
+    const card = t as Extract<TimelineItem, { kind: K }>;
+    if ((card as { id?: string }).id === id && (!ok || ok(card))) return card;
+  }
+  return undefined;
+}
+
 /** A reference at send time → the tag the timeline and the audit log share (a selection keeps its line range alone and the body is dropped). */
 function refTag(r: ContextRef): RefTag {
   if (r.kind === "selection") return { kind: r.kind, path: r.path, lines: [r.from_line, r.to_line] };
@@ -379,10 +400,7 @@ class AgentStore {
       this.draft = "";
       this.contextDraft = [];
       this.queuedText = null;
-      this.pendingPermission = null;
-      this.pendingPlan = null;
-      this.pendingActions = null;
-      this.pendingRead = null;
+      this.clearPending();
     }
     // created=false: the window was already open and was only focused, so the handoff
     // was not delivered — the draft and the references stay in the main window's store
@@ -413,10 +431,7 @@ class AgentStore {
     // running turn first (so the gate was already refused by the fallback), and a pending
     // item in the handback is the after-image of that cancellation racing the packaging —
     // answering it would only error
-    this.pendingPermission = null;
-    this.pendingPlan = null;
-    this.pendingActions = null;
-    this.pendingRead = null;
+    this.clearPending();
     await this.loadCurrent();
   }
 
@@ -575,10 +590,7 @@ class AgentStore {
       this.phase = null;
       if (this.turnStartedAt != null) this.lastTurnMs = Date.now() - this.turnStartedAt;
       this.turnStartedAt = null;
-      this.pendingPermission = null;
-      this.pendingPlan = null;
-      this.pendingActions = null;
-      this.pendingRead = null;
+      this.clearPending();
       this.activity++;
       void this.refreshSessions();
     }
@@ -593,17 +605,8 @@ class AgentStore {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
-    this.timeline = [];
-    this.plan = null;
-    this.follow = null;
-    this.sourceTable = [];
-    this.writesByTurn = {};
-    this.undoneTurns = {};
-    this.thinking = "";
-    this.pendingPermission = null;
-    this.pendingPlan = null;
-    this.pendingActions = null;
-    this.pendingRead = null;
+    this.clearSessionState();
+    this.clearPending();
     this.sessionId = null;
     this.sessions = [];
     this.usage = null;
@@ -613,6 +616,31 @@ class AgentStore {
     this.contextDraft = []; // the old vault's paths do not cross into another vault
     this.resetSessionScoped();
     void this.refreshSessions();
+  }
+
+  /** Every gate's pending request dropped. At most one can be open — the runner awaits
+   *  each tool call in turn — and every path that ends a turn, or hands one to the other
+   *  window, drops all four together. */
+  private clearPending() {
+    this.pendingPermission = null;
+    this.pendingPlan = null;
+    this.pendingActions = null;
+    this.pendingRead = null;
+  }
+
+  /** The state that belongs to one session's transcript: the timeline and everything
+   *  rebuilt from the jsonl beside it. Cleared when the session changes identity (a new
+   *  one, the current one deleted, a vault switch). `selectSession` does not call it —
+   *  `rebuildTimeline` has just refilled these — but calls `resetSessionScoped()`, which
+   *  clears the view-level state instead. */
+  private clearSessionState() {
+    this.timeline = [];
+    this.plan = null;
+    this.follow = null;
+    this.sourceTable = [];
+    this.writesByTurn = {};
+    this.undoneTurns = {};
+    this.thinking = "";
   }
 
   /** Resetting the session-scoped state: shared by a vault switch, a create and a switch.
@@ -642,13 +670,7 @@ class AgentStore {
   async newSession() {
     if (this.running) return;
     await api.agentSessionNew();
-    this.timeline = [];
-    this.plan = null;
-    this.follow = null;
-    this.sourceTable = [];
-    this.writesByTurn = {};
-    this.undoneTurns = {};
-    this.thinking = "";
+    this.clearSessionState();
     this.sessionId = null;
     this.resetSessionScoped();
   }
@@ -680,10 +702,7 @@ class AgentStore {
     if (this.running) throw new Error(t("vaultStore.cannotDeleteWhileRunning"));
     await api.agentSessionDelete(id);
     if (id === this.sessionId) {
-      this.timeline = [];
-      this.plan = null;
-      this.follow = null;
-      this.sourceTable = [];
+      this.clearSessionState();
       this.sessionId = null;
     }
     await this.refreshSessions();
@@ -803,22 +822,16 @@ class AgentStore {
           break;
         }
         case "read_decision": {
-          for (let i = items.length - 1; i >= turnStart; i--) {
-            const item = items[i];
-            if (item.kind === "read" && item.id === e.id && item.decision === undefined) {
-              item.decision = e.decision === "pages" ? { kind: "pages", urls: e.urls ?? [], failed: e.failed ?? [], auto: !!e.auto } : { kind: "deny", reason: e.reason ?? "" };
-              break;
-            }
+          const card = findCard(items, "read", e.id, turnStart, (c) => c.decision === undefined);
+          if (card) {
+            card.decision = e.decision === "pages" ? { kind: "pages", urls: e.urls ?? [], failed: e.failed ?? [], auto: !!e.auto } : { kind: "deny", reason: e.reason ?? "" };
           }
           break;
         }
         case "actions_decision": {
-          for (let i = items.length - 1; i >= turnStart; i--) {
-            const item = items[i];
-            if (item.kind === "actions" && item.id === e.id && item.decision === undefined) {
-              item.decision = e.decision === "approve" ? { kind: "approve", items: e.items ?? [] } : { kind: "reject", reason: e.reason ?? "" };
-              break;
-            }
+          const card = findCard(items, "actions", e.id, turnStart, (c) => c.decision === undefined);
+          if (card) {
+            card.decision = e.decision === "approve" ? { kind: "approve", items: e.items ?? [] } : { kind: "reject", reason: e.reason ?? "" };
           }
           break;
         }
@@ -982,15 +995,12 @@ class AgentStore {
         break;
       }
       case "tool_call_finished": {
-        const item = [...this.timeline].reverse().find((t) => t.kind === "tool" && t.id === e.id);
-        if (item && item.kind === "tool") {
+        const item = findCard(this.timeline, "tool", e.id);
+        if (item) {
           item.ok = e.ok;
           item.output = e.output;
         }
-        this.pendingPermission = null;
-        this.pendingPlan = null; // defensive: it is already null once the user has answered
-        this.pendingActions = null;
-        this.pendingRead = null;
+        this.clearPending(); // defensive: the answered gate is already null
         break;
       }
       case "permission_request": {
@@ -1014,8 +1024,8 @@ class AgentStore {
         break;
       }
       case "read_decided": {
-        const card = [...this.timeline].reverse().find((t) => t.kind === "read" && t.id === e.id);
-        if (card && card.kind === "read") {
+        const card = findCard(this.timeline, "read", e.id);
+        if (card) {
           card.fetching = false;
           card.decision = { kind: "pages", urls: e.urls, failed: e.failed, auto: e.auto };
         }
@@ -1198,8 +1208,8 @@ class AgentStore {
     const req = this.pendingPlan;
     if (!req) return;
     this.pendingPlan = null;
-    const card = [...this.timeline].reverse().find((t) => t.kind === "plan" && t.id === req.id);
-    if (card && card.kind === "plan") card.decision = decision;
+    const card = findCard(this.timeline, "plan", req.id);
+    if (card) card.decision = decision;
     try {
       await api.agentPlanRespond(req.id, decision);
       this.activity++; // a plan decision enters the session log too
@@ -1213,8 +1223,8 @@ class AgentStore {
     const req = this.pendingActions;
     if (!req) return;
     this.pendingActions = null;
-    const card = [...this.timeline].reverse().find((t) => t.kind === "actions" && t.id === req.id);
-    if (card && card.kind === "actions") card.decision = decision;
+    const card = findCard(this.timeline, "actions", req.id);
+    if (card) card.decision = decision;
     try {
       await api.agentActionsRespond(req.id, decision);
       this.activity++;
@@ -1229,8 +1239,8 @@ class AgentStore {
     const req = this.pendingRead;
     if (!req) return;
     this.pendingRead = null;
-    const card = [...this.timeline].reverse().find((t) => t.kind === "read" && t.id === req.id);
-    if (card && card.kind === "read") {
+    const card = findCard(this.timeline, "read", req.id);
+    if (card) {
       // An allow starts the fetch: the outcome (with the pages that failed) comes back as read_decided
       if (answer.kind === "allow") card.fetching = true;
       else card.decision = { kind: "deny", reason: answer.reason };

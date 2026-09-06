@@ -30,7 +30,6 @@ pub mod watcher;
 pub mod weburl;
 
 pub use attach_migrate::MigrationReport;
-pub use audit::AuditReport;
 pub use block::{Block, BlockKind, Field, TaskState, WikiLink};
 pub use blockid::{plan_block_id, BlockIdInsert, BlockIdPlan, BlockSelector, PlanTarget};
 pub use event::VaultEvent;
@@ -48,13 +47,13 @@ pub use provenance::{
 pub use relink::Relink;
 pub use restructure::{block_diff, BlockDiff, OutlineSection};
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
-pub use parser::{is_writable_frontmatter_key, set_frontmatter_disabled, set_frontmatter_key, FrontmatterValue};
+pub use parser::{set_frontmatter_disabled, set_frontmatter_key, FrontmatterValue};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
 pub use types::{
     list_block_types, parse_block_type, type_skeleton, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE,
     TYPES_SUBDIR,
 };
-pub use weburl::{normalize_url, CLIPS_DIR};
+pub use weburl::normalize_url;
 pub use vault::{is_meta_id, sanitize_filename, BacklinkEntry, InsertLanded, RefHit, RefResolution, RefTarget, Vault};
 
 #[derive(thiserror::Error, Debug)]

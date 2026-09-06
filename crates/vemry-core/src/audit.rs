@@ -1,8 +1,9 @@
 //! The vault's link health, read off the index: unresolved wikilinks, orphan notes
 //! (nothing links to them), evidence whose `supports::` points at no claim, and
-//! clips of the same page. Pure reads, no disk beyond what the index already
-//! holds; the agent's `audit_links` tool filters private notes out of the report
-//! before the model sees it.
+//! clips of the same page. Everything but the anchor checks is read off the index;
+//! `[[note#heading]]` / `[[note#^id]]` go through `resolve_ref`, which reads the
+//! target note. The agent's `audit_links` tool filters private notes out of the
+//! report before the model sees it.
 
 use std::collections::HashMap;
 
@@ -28,25 +29,25 @@ impl Vault {
     /// The link health of the vault, or of one folder (the notes under it as sources;
     /// orphans are judged against the whole vault's backlinks).
     pub fn audit_links(&self, folder: Option<&str>) -> AuditReport {
-        let folder = folder.map(|f| f.trim_matches('/')).filter(|f| !f.is_empty());
-        let in_scope = |id: &NoteId| match folder {
-            Some(f) => id.as_str().starts_with(&format!("{f}/")),
+        let prefix = folder.map(|f| f.trim_matches('/')).filter(|f| !f.is_empty()).map(|f| format!("{f}/"));
+        let in_scope = |id: &NoteId| match &prefix {
+            Some(p) => id.as_str().starts_with(p.as_str()),
             None => true,
         };
         let mut report = AuditReport::default();
         let mut by_source: HashMap<String, Vec<NoteId>> = HashMap::new();
-        let mut ids: Vec<NoteId> = self.index().summaries().into_iter().map(|s| s.id).collect();
+        let mut ids: Vec<NoteId> = self.index().ids().cloned().collect();
         ids.sort();
         for id in &ids {
             if !in_scope(id) {
                 continue;
             }
-            for (edge, _) in self.index().links_out(id) {
+            for edge in self.index().edges(id) {
                 if edge.resolved.is_none() && !edge.raw_target.is_empty() {
                     report.unresolved.push((id.clone(), edge.from_block.clone(), edge.raw_target.clone()));
                 }
             }
-            if self.index().backlinks_of(id).is_empty() && id.as_str() != "VEMRY.md" {
+            if !self.index().has_backlinks(id) && id.as_str() != "VEMRY.md" {
                 report.orphans.push(id.clone());
             }
             if let Some(blocks) = self.index().blocks(id) {

@@ -258,8 +258,9 @@ Grant scope (v0.7): "allow for this session" lives in
 `RunnerConfig.session_allow` (a shared `WriteGrants`: the `all` flag plus a list
 of path prefixes) and survives across turns; leaving a session clears it and
 reopening one restores it from the jsonl's `permission` lines (decided
-allow_session / allow_scope — `session::read_session_scope`, applied by
-`agent_session_select` and a fork), so coming back to a session, or restarting,
+allow_session / allow_scope — `session::read_session_state`, one read of the
+jsonl that also carries the source table and the followed note, applied by
+`AgentState::load_session` from `agent_session_select` and a fork), so coming back to a session, or restarting,
 does not ask again for what the session was already granted. It used to be a local in `run()`, which
 meant the button said "session" while the grant actually lasted one turn. The
 scoped form (the dropdown on the same button) grants a prefix instead of

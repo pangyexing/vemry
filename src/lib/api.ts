@@ -334,7 +334,6 @@ export interface BlockDiff {
 export interface UndoReport {
   reverted: number;
   skipped: number;
-  skipped_paths: string[];
 }
 
 export interface WebSearchResult {
@@ -384,7 +383,7 @@ export type AgentEvent =
   /** The read gate's outcome after the fetch: the pages read, the ones that failed, and whether the standing consent answered it. */
   | { type: "read_decided"; id: string; urls: string[]; failed: string[]; auto: boolean }
   /** A write landed in this turn: the UI counts them per turn to offer "undo this turn's writes". */
-  | { type: "write_landed"; turn: string | null; tool: string; path: string }
+  | { type: "write_landed"; turn: string | null }
   /** The web sources this turn cited, settled by Rust at the end of the turn with their verification (authoritative for the turn's source card). */
   | { type: "sources_updated"; turn: string | null; items: SourceRecord[] }
   | { type: "web_searching" }

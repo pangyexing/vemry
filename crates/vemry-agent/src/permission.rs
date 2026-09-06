@@ -57,6 +57,27 @@ pub struct WriteRequest {
     pub notes: Vec<String>,
 }
 
+impl WriteRequest {
+    /// A write with no move destination, no link rewrites, no block diff and no
+    /// extra result lines — the shape most write tools raise. The four that carry
+    /// more (the two moves, the two block-level rewrites) set those fields after.
+    pub fn new(id: String, tool: &str, path: String, kind: WriteKind, diff: String, new_content: String) -> Self {
+        Self {
+            id,
+            tool: tool.to_string(),
+            path,
+            to_path: None,
+            diff,
+            kind,
+            new_content,
+            rewrites: vec![],
+            rewrite_texts: vec![],
+            block_diff: None,
+            notes: vec![],
+        }
+    }
+}
+
 /// One note a move rewrites links in, as the dialog shows it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RewriteSummary {
@@ -71,6 +92,18 @@ pub struct RewriteText {
     pub path: String,
     pub old: String,
     pub new: String,
+}
+
+impl RewriteText {
+    /// Land this rewrite, or leave the note alone. The note takes the new text only
+    /// while it still holds the old one — a note edited since the plan was made is
+    /// never overwritten. `revert` swaps the two (undo's direction, same rule).
+    /// Returns whether it landed.
+    pub fn apply(&self, vault: &mut vemry_core::Vault, revert: bool) -> bool {
+        let (expect, land) = if revert { (&self.new, &self.old) } else { (&self.old, &self.new) };
+        let Ok(id) = vault.note_id(&self.path) else { return false };
+        matches!(vault.read_note(&id), Ok(cur) if cur == *expect) && vault.write_note(&id, land).is_ok()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

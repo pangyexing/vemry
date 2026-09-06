@@ -29,7 +29,7 @@
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import { executeCommand } from "$lib/commands/registry";
   import { t } from "$lib/i18n/i18n.svelte";
-  import { toolLabel } from "$lib/views/session";
+  import { PLAN_GLYPH, toolLabel } from "$lib/views/session";
   import {
     domainOf,
     extractCitations,
@@ -373,7 +373,6 @@
   }
   /** The sticky plan card's glyph per step state (the store holds the list; the model
    *  keeps it current through update_plan, and nothing is parsed out of the prose). */
-  const PLAN_GLYPH: Record<string, string> = { pending: "☐", doing: "◉", done: "☑", skipped: "⊘" };
   const planSettled = $derived(agent.plan ? agent.plan.filter((p) => p.status === "done" || p.status === "skipped").length : 0);
   /** The step the folded sticky card names: the one in progress, else the next pending one. */
   const planHeadStep = $derived(
@@ -385,7 +384,9 @@
   /** The tool families behind the status strip's verb; anything else shows its own label. */
   const READ_TOOLS = new Set(["read_note", "read_block", "read_file", "read_skill", "open_for_reading"]);
   const LOOKUP_TOOLS = new Set(["list_notes", "list_files", "query_blocks", "get_links", "clips_lookup", "list_sources", "recent_changes", "aggregate_blocks", "audit_links"]);
-  const WRITE_TOOLS = new Set(["write_note", "edit_note", "move_note", "move_file", "update_task", "set_block_field", "restructure_note", "move_blocks"]);
+  // Every name tools.rs::is_write_tool answers for: a write missing here shows its raw
+  // identifier in the status strip instead of "Writing …"
+  const WRITE_TOOLS = new Set(["write_note", "edit_note", "move_note", "move_file", "append_note", "set_frontmatter", "update_task", "set_block_field", "restructure_note", "move_blocks"]);
   /** What the agent is doing right now, in words: a gate waiting on the user first, then the
    *  tool in flight (its verb and key argument), a web search, the answer streaming, and
    *  thinking otherwise. It reads this turn's tail — a tool in flight is always its last
@@ -1615,11 +1616,16 @@
       >→{clipTarget.name ?? t("chat.pinWord")}</button>
     </div>
   {/if}
+  <!-- The panel's disclosure caret: three collapsing heads (the sticky plan card, a decided
+       plan card, a source card) turn the same drawing, each rotated by its own `.open` class. -->
+  {#snippet caret()}
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  {/snippet}
   {#if agent.plan}
     <div class="plan-card">
       <button class="plan-head" title={t(planOpen ? "chat.planCollapseHint" : "chat.planExpandHint")} onclick={() => (planOpen = !planOpen)}>
         <span class="plan-caret" class:open={planOpen} aria-hidden="true">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          {@render caret()}
         </span>
         <span class="plan-head-count">{t("chat.planProgress", { done: planSettled, total: agent.plan.length })}</span>
         <!-- Folded (the default), the head names the step in progress or the next one: progress
@@ -1904,7 +1910,7 @@
                  carries the live list from here on, and the list as it was decided is a click away -->
             <button class="plan-inline-head plan-inline-toggle" title={t(planFolded ? "chat.planExpandHint" : "chat.planCollapseHint")} onclick={() => (expandedPlans[i] = planFolded)}>
               <span class="plan-caret" class:open={!planFolded} aria-hidden="true">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                {@render caret()}
               </span>
               <span class="plan-inline-title">{t("chat.planTitle")}</span>
               <span class="plan-inline-badge" class:bad={item.decision.kind === "reject"}>{planBadge(item.decision)}</span>
@@ -1976,7 +1982,7 @@
                 onclick={() => (expandedSources[i] = !expandedSources[i])}
               >
                 <span class="sources-caret" class:open={!collapsed} aria-hidden="true">
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  {@render caret()}
                 </span>
                 {headText}
               </button>

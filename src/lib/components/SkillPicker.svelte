@@ -10,7 +10,7 @@
   import { isImeKeydown } from "$lib/ime";
   import RefIcon from "./RefIcon.svelte";
   import { composerOverlayRect, type OverlayRect } from "./overlaypos";
-  import { skillDesc, skillTitle } from "$lib/skills";
+  import { skillDesc, skillSourceLabel, skillTitle } from "$lib/skills";
 
   let {
     query,
@@ -115,7 +115,7 @@
         <span class="at-icon"><RefIcon kind="skill" size={14} /></span>
         <span class="at-title">/{s.name}</span>
         <span class="at-sub">{skillTitle(s) !== s.name ? `${skillTitle(s)} · ` : ""}{skillDesc(s)}</span>
-        {#if s.source !== "builtin"}<span class="at-sub tag">{t("settings.skillCustom")}</span>{/if}
+        {#if s.source !== "builtin"}<span class="at-sub tag">{skillSourceLabel(s)}</span>{/if}
       </button>
     {/each}
   </div>

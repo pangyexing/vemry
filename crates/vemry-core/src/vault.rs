@@ -1254,12 +1254,13 @@ impl Vault {
     /// spelling the filesystem folds onto a `private: true` note must not
     /// slip past (the glob half is already case-insensitive by construction).
     pub fn is_private(&self, id: &NoteId) -> bool {
-        self.privacy.matches_rel(id.as_str(), false)
-            || self
-                .index
-                .canonical_id(id)
-                .and_then(|cid| self.index.summary(&cid))
-                .is_some_and(|s| s.private)
+        if self.privacy.matches_rel(id.as_str(), false) {
+            return true;
+        }
+        match self.index.canonical_id(id) {
+            Some(cid) => self.index.summary_ref(&cid).is_some_and(|s| s.private),
+            None => false,
+        }
     }
 
     /// Privacy check for an arbitrary vault-relative path (any file type or

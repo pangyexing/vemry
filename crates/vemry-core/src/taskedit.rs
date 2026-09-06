@@ -47,25 +47,9 @@ pub fn is_date_token(s: &str) -> bool {
     matches!((y, m, d), (Some(y), Some(m), Some(d)) if chrono::NaiveDate::from_ymd_opt(y, m, d).is_some())
 }
 
-/// The trailing ` ^id` anchor of a line, as the parser accepts it: its start
-/// offset (the space included), or None.
-fn anchor_start(line: &str) -> Option<usize> {
-    let trimmed = line.trim_end_matches([' ', '\t']);
-    let caret = trimmed.rfind('^')?;
-    let id = &trimmed[caret + 1..];
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-        return None;
-    }
-    let before = &trimmed[..caret];
-    if !before.ends_with([' ', '\t']) {
-        return None;
-    }
-    Some(before.trim_end_matches([' ', '\t']).len())
-}
-
 /// Append `piece` (with its own leading space) to a line before any trailing anchor.
 fn append_before_anchor(line: &str, piece: &str) -> String {
-    match anchor_start(line) {
+    match crate::blockid::anchor_start(line) {
         Some(at) => format!("{}{piece}{}", line[..at].trim_end_matches([' ', '\t']), &line[at..]),
         None => format!("{}{piece}", line.trim_end_matches([' ', '\t'])),
     }

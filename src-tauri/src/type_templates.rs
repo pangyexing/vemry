@@ -9,24 +9,43 @@
 //! constraint 3 in CLAUDE.md). The files themselves live in
 //! examples/demo-vault/.vemry/types, so the demo vault and the catalogue cannot drift.
 
-/// One installable example block type: the file name under `.vemry/types/`, the
-/// `name` the frontmatter carries, and the whole file.
+use std::sync::OnceLock;
+
+/// The example files, in the order Settings offers them: the product-document blocks
+/// and the flashcard.
+const TYPE_FILES: &[(&str, &str)] = &[
+    ("requirement.md", include_str!("../../examples/demo-vault/.vemry/types/requirement.md")),
+    ("decision.md", include_str!("../../examples/demo-vault/.vemry/types/decision.md")),
+    ("question.md", include_str!("../../examples/demo-vault/.vemry/types/question.md")),
+    ("hypothesis.md", include_str!("../../examples/demo-vault/.vemry/types/hypothesis.md")),
+    ("card.md", include_str!("../../examples/demo-vault/.vemry/types/card.md")),
+];
+
+/// One installable example block type: the file name under `.vemry/types/`, the whole
+/// file, and the `name` and `description` read out of its own frontmatter by the type
+/// loader's own parser — so Settings can never describe a type differently from what
+/// the model is given.
 pub struct ExampleType {
     pub file: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
     pub body: &'static str,
 }
 
-/// The example block types Settings offers: the product-document blocks and the flashcard.
-pub const TYPE_EXAMPLES: &[ExampleType] = &[
-    ExampleType { file: "requirement.md", name: "requirement", description: "One product requirement, with its priority, status and owner on the line", body: include_str!("../../examples/demo-vault/.vemry/types/requirement.md") },
-    ExampleType { file: "decision.md", name: "decision", description: "A product decision — indexed as a claim, so evidence supports it and the Claims view shows which decisions have none", body: include_str!("../../examples/demo-vault/.vemry/types/decision.md") },
-    ExampleType { file: "question.md", name: "question", description: "An open question in a spec or a research note, with who owns the answer", body: include_str!("../../examples/demo-vault/.vemry/types/question.md") },
-    ExampleType { file: "hypothesis.md", name: "hypothesis", description: "A hypothesis behind a change — the metric, the expected result, and a review date; the review shows up in the Agenda when it is due", body: include_str!("../../examples/demo-vault/.vemry/types/hypothesis.md") },
-    ExampleType { file: "card.md", name: "card", description: "A flashcard — the first line is the question, the body is the answer; the Review view shows it when it is due and writes the grade back onto the line", body: include_str!("../../examples/demo-vault/.vemry/types/card.md") },
-];
+/// The example block types Settings offers, parsed once.
+pub fn type_examples() -> &'static [ExampleType] {
+    static ALL: OnceLock<Vec<ExampleType>> = OnceLock::new();
+    ALL.get_or_init(|| {
+        TYPE_FILES
+            .iter()
+            .map(|(file, body)| {
+                let t = vemry_core::parse_block_type(file, body);
+                ExampleType { file, name: t.name, description: t.description, body }
+            })
+            .collect()
+    })
+}
 
 pub fn example_type(name: &str) -> Option<&'static ExampleType> {
-    TYPE_EXAMPLES.iter().find(|e| e.name == name)
+    type_examples().iter().find(|e| e.name == name)
 }

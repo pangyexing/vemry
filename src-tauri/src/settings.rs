@@ -145,7 +145,7 @@ impl Settings {
     /// The formatter's opt-ins as configured (the on/off switches are read where the
     /// formatter is called: agent writes, clips, the editor command).
     pub fn format_options(&self) -> vemry_core::FormatOptions {
-        vemry_core::FormatOptions { cjk_spacing: self.format_cjk_spacing, punctuation: self.format_punctuation, heading_levels: false }
+        vemry_core::FormatOptions { cjk_spacing: self.format_cjk_spacing, punctuation: self.format_punctuation }
     }
 }
 

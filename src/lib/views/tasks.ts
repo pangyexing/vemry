@@ -3,6 +3,7 @@ import { t, tn } from "$lib/i18n/i18n.svelte";
 import { setFieldValue, stripAnchor, stripFields } from "$lib/fields";
 import { api, type BlockHit } from "$lib/api";
 import { byNote } from "$lib/views/queryrows";
+import { editBlockSpan, readBlockSpan } from "$lib/views/blockspan";
 import { plainText } from "$lib/markdown";
 import type { MenuEntry } from "$lib/stores/contextMenu.svelte";
 
@@ -17,40 +18,23 @@ export const TASK_LINE_RE = /^\s*(?:[-*+]|\d{1,9}[.)])\s+\[[ xX/]\]/;
  *  a `[ /xX]`-only regex leaves `- [-] x` style tasks with a dead checkbox. */
 const CHECKBOX_RE = /^(\s*[-*+]\s+)\[(.)\](?=\s|$)/;
 
-/** Read and validate one task block's span slice (the stale-span guard shared by
- *  editing and deleting).
- *  Spans are the Rust parser's UTF-8 byte offsets, so slicing has to go through
- *  TextEncoder/Decoder and never through UTF-16 string indices. null = stale (the note
- *  changed after the query) and the caller requeries. */
-async function readTaskSpan(hit: BlockHit): Promise<{ bytes: Uint8Array; slice: string } | null> {
-  const { content } = await api.noteRead(hit.note);
-  const bytes = new TextEncoder().encode(content);
-  const { start, end } = hit.block.span;
-  if (end > bytes.length) return null;
-  const slice = new TextDecoder().decode(bytes.slice(start, end));
+/** The stale-span guard for a task slice: it still starts with a checkbox, and its body
+ *  still is the content the query indexed. A stale span may have shifted wholesale onto
+ *  another task line (text of the same length was inserted before it), so the shape
+ *  alone is not enough. */
+const isTaskSlice = (hit: BlockHit) => (slice: string) => {
   const m = slice.match(CHECKBOX_RE);
-  if (!m) return null;
-  // A stale span may have shifted wholesale onto another task line (text of the same
-  // length was inserted before it): the shape alone is not enough, and the body has to
-  // match the block's content at query time before a rewrite is allowed
-  if (slice.slice(m[0].length).trim() !== hit.block.content) return null;
-  return { bytes, slice };
-}
+  return !!m && slice.slice(m[0].length).trim() === hit.block.content;
+};
+
+const readTaskSpan = (hit: BlockHit) => readBlockSpan(hit, isTaskSlice(hit));
 
 /**
  * Rewrite exactly a task's block span with `edit(slice)`.
  * Returns false when the span is stale (the note changed since the query);
  * the caller should requery and let the user retry on fresh data.
  */
-async function editTaskSpan(hit: BlockHit, edit: (slice: string) => string): Promise<boolean> {
-  const r = await readTaskSpan(hit);
-  if (!r) return false;
-  const { start, end } = hit.block.span;
-  const dec = new TextDecoder();
-  const updated = dec.decode(r.bytes.slice(0, start)) + edit(r.slice) + dec.decode(r.bytes.slice(end));
-  await api.noteWrite(hit.note, updated);
-  return true;
-}
+const editTaskSpan = (hit: BlockHit, edit: (slice: string) => string) => editBlockSpan(hit, isTaskSlice(hit), edit);
 
 /** Delete one task block from disk (the whole span: a multi-line task's sub-content
  *  goes with it).

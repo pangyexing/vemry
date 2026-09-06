@@ -213,16 +213,23 @@ pub fn builtin_skill(name: &str) -> Option<&'static BuiltinSkill> {
     builtin_skills().iter().find(|b| b.name == name)
 }
 
+/// The stored `skills_disabled` value decoded: the names in it, in the order the
+/// file has them. The one reader of that shape — the prompt side (through the config
+/// file, below) and the Settings toggle (through `vault_config_get`) must not
+/// interpret it independently.
+pub fn disabled_names(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|d| d.as_array())
+        .map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect())
+        .unwrap_or_default()
+}
+
 /// The names in the vault config's `skills_disabled` list. Read here rather than
 /// handed in: the prompt assembly and the `read_skill` tool both need it, and a
 /// missing or unreadable config means nothing is switched off.
 fn disabled_builtins(meta_dir: &Path) -> HashSet<String> {
-    fs::read_to_string(meta_dir.join("config.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get(DISABLED_BUILTINS_KEY).and_then(|d| d.as_array().cloned()))
-        .map(|names| names.iter().filter_map(|n| n.as_str().map(str::to_string)).collect())
-        .unwrap_or_default()
+    let cfg = fs::read_to_string(meta_dir.join("config.json")).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    disabled_names(cfg.as_ref().and_then(|v| v.get(DISABLED_BUILTINS_KEY))).into_iter().collect()
 }
 
 /// One skill file of the vault, as scanned.

@@ -139,21 +139,24 @@ impl RefKind {
             RefKind::Skill => "skill-context",
         }
     }
+    /// Every kind, so `parse` stays the inverse of `as_str()` by construction and a
+    /// new variant is one edit instead of three.
+    pub const ALL: [RefKind; 8] = [
+        RefKind::Note,
+        RefKind::Folder,
+        RefKind::File,
+        RefKind::Image,
+        RefKind::Selection,
+        RefKind::Block,
+        RefKind::View,
+        RefKind::Skill,
+    ];
+
     /// The inverse of `as_str()`: used when reading a `StoredRef.kind` string back
     /// out of the sidecar. An unrecognised kind (older or newer) returns None and
     /// the caller decides what to do with it.
     pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "note" => RefKind::Note,
-            "folder" => RefKind::Folder,
-            "file" => RefKind::File,
-            "image" => RefKind::Image,
-            "selection" => RefKind::Selection,
-            "block" => RefKind::Block,
-            "view" => RefKind::View,
-            "skill" => RefKind::Skill,
-            _ => return None,
-        })
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -517,10 +520,12 @@ pub(crate) fn read_pdf_text(vault: &Vault, path: &str, rel: &str) -> Result<Stri
 /// text, `<key>.path` = the vault-relative path it came from).
 pub const PDF_CACHE_SUBDIR: &str = "cache/pdf";
 
-/// The cached PDF texts: (vault-relative path, text), private ones filtered out and
-/// counted. A PDF appears here once it has been read (attached with @, or through
-/// read_file); until then search does not see it — the inventory is list_files.
-pub fn cached_pdf_texts(vault: &Vault, filtered: &mut usize) -> Vec<(String, String)> {
+/// The cached PDF extractions: (vault-relative path, the cached text file), private
+/// ones filtered out and counted. The text itself stays on disk — a caller that
+/// stops early (search, once its window is full) never pays to read it. A PDF
+/// appears here once it has been read (attached with @, or through read_file);
+/// until then search does not see it — the inventory is list_files.
+pub fn cached_pdf_files(vault: &Vault, filtered: &mut usize) -> Vec<(String, std::path::PathBuf)> {
     let dir = vault.meta_dir().join(PDF_CACHE_SUBDIR);
     let Ok(rd) = std::fs::read_dir(&dir) else { return vec![] };
     let mut out = Vec::new();
@@ -539,9 +544,9 @@ pub fn cached_pdf_texts(vault: &Vault, filtered: &mut usize) -> Vec<(String, Str
             *filtered += 1;
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(p.with_extension("txt")) else { continue };
-        if !text.trim().is_empty() {
-            out.push((rel, text));
+        let txt = p.with_extension("txt");
+        if txt.is_file() {
+            out.push((rel, txt));
         }
     }
     out.sort();
@@ -877,20 +882,42 @@ fn scan_blocks(text: &str) -> Vec<EnvBlock> {
         let close = format!("</{tag}>");
         let Some(end_rel) = text[start..].find(&close) else { break };
         let end = start + end_rel + close.len();
-        let attr = match kind {
-            Some(_) => {
-                let a = start + open.len();
-                match text[a..end].find('"') {
-                    Some(q) => text[a..a + q].to_string(),
-                    None => String::new(),
-                }
+        // A context block's attribute is the `path="…"` the opener already consumed;
+        // a web page block's is its `source="…"`, the first attribute prompt::page_envelope
+        // writes. Only `Some(kind)` blocks become scrub candidates, so filling this in
+        // for the web block changes nothing there — it is what page_context_urls reads.
+        let attr = {
+            let (from, quoted) = match kind {
+                Some(_) => (start + open.len(), true),
+                None => match text[start..end].find("source=\"") {
+                    Some(a) => (start + a + "source=\"".len(), true),
+                    None => (0, false),
+                },
+            };
+            match quoted.then(|| text[from..end].find('"')).flatten() {
+                Some(q) => text[from..from + q].to_string(),
+                None => String::new(),
             }
-            None => String::new(),
         };
         blocks.push(EnvBlock { kind, attr, start, end });
         from = end;
     }
     blocks
+}
+
+/// The URLs of the web pages attached to a turn, read back off its envelope
+/// (`<web-page-context source="…"`, assembled by compose_user_message with
+/// fence_attr applied, which never touches a URL's characters). Structured by
+/// `scan_blocks`, so an open tag sitting inside another envelope's body — a note
+/// holding a pasted agent conversation, of which only the closer is neutralised —
+/// is skipped instead of being read as a real attachment: a URL taken from one
+/// would be marked verified in the source table without the user ever opening it.
+pub fn page_context_urls(envelope: &str) -> std::collections::HashSet<String> {
+    scan_blocks(envelope)
+        .into_iter()
+        .filter(|b| b.kind.is_none() && !b.attr.is_empty())
+        .map(|b| b.attr)
+        .collect()
 }
 
 /// Line-level re-gating of a folder envelope: the frozen body is list_notes's
@@ -1364,10 +1391,10 @@ mod tests {
         let texts = std::fs::read_dir(&cache).unwrap().filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "txt")).count();
         assert_eq!(texts, 1, "one PDF read, one cached text");
         let mut filtered = 0;
-        let cached = cached_pdf_texts(&vault, &mut filtered);
+        let cached = cached_pdf_files(&vault, &mut filtered);
         assert_eq!(cached.len(), 1);
         assert_eq!(cached[0].0, "paper.PDF");
-        assert!(cached[0].1.contains("Hello PDF attachment"));
+        assert!(std::fs::read_to_string(&cached[0].1).unwrap().contains("Hello PDF attachment"));
         let out = crate::tools::execute_read_tool(&vault, "search_notes", &json!({"query": "hello attachment"})).unwrap();
         assert!(out.text.contains("paper.PDF:1:") && out.text.contains("(PDF; read_file for the text)"), "{}", out.text);
         let out = crate::tools::execute_read_tool(&vault, "read_file", &json!({"path": "paper.PDF"})).unwrap();

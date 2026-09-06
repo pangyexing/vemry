@@ -9,12 +9,19 @@ import type { SkillEntry } from "$lib/api";
 /** The scenes the welcome groups the built-ins by, in the order they are shown; the names
  *  inside a scene are in the order of use, not alphabetical. A vault's own skills form the
  *  last group. */
-export const SKILL_GROUPS: { id: "research" | "daily" | "product" | "tidy"; names: string[] }[] = [
+const SKILL_GROUPS: { id: "research" | "daily" | "product" | "tidy"; names: string[] }[] = [
   { id: "research", names: ["research", "tutor"] },
   { id: "daily", names: ["daily-start", "daily-close", "weekly-report", "meeting-actions"] },
   { id: "product", names: ["prd", "feedback-triage", "decision-log", "iteration-plan", "retro", "brief"] },
   { id: "tidy", names: ["tidy", "tidy-note"] },
 ];
+
+/** Which layer a row is, as the UI names it: a built-in, a vault's own skill, or a
+ *  customised copy shadowing a built-in. Settings and the `/` picker must agree —
+ *  "override" is exactly the distinction the customise/restore buttons act on. */
+export function skillSourceLabel(s: SkillEntry): string {
+  return t(s.source === "builtin" ? "settings.skillBuiltin" : s.source === "override" ? "settings.skillOverride" : "settings.skillCustom");
+}
 
 function catalogued(s: SkillEntry, part: "title" | "desc"): string | null {
   const key = `skill.${s.name}.${part}`;

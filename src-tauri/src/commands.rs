@@ -17,7 +17,7 @@ use vemry_core::{
     BacklinkEntry, BlockHit, BlockIdPlan, BlockProvenance, BlockQuery, BlockSelector, GraphData, InsertLanded, InsertOrigin, MigrationReport, NoteSummary, ProvenanceEntry, RefResolution, RevertPlan, SearchHit, Vault, VaultEvent,
 };
 
-use crate::agent_bridge::{resolve_permission, ChannelGate};
+use crate::agent_bridge::{resolve, ChannelGate};
 use crate::settings::{self, Settings};
 use crate::AppState;
 
@@ -1227,9 +1227,7 @@ async fn run_agent_turn(
             history.clear();
             *state.agent.current_session.lock().unwrap() = None;
             state.agent.reset_session_scope();
-            state.agent.sources.lock().unwrap().clear();
-            *state.agent.follow.lock().unwrap() = None;
-            state.agent.journal.lock().unwrap().clear();
+            state.agent.clear_session_data();
             *owner = Some(root);
         }
     }
@@ -1399,11 +1397,8 @@ pub fn agent_history_truncate(state: State<'_, AppState>) -> Result<(), String> 
     let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
     if let Some(id) = state.agent.current_session.lock().unwrap().as_deref() {
         write_history(&meta_dir, id, &history);
-        if let Ok(log) = SessionLog::open(&meta_dir, id) {
-            log.append("edit_resend", json!({}));
-        }
     }
-    Ok(())
+    append_session_line(&state, "edit_resend", json!({}))
 }
 
 /// The result of a fork: the new session id, plus whether the fork point had
@@ -1444,9 +1439,21 @@ pub fn agent_session_fork(
     *history = forked;
     *state.agent.current_session.lock().unwrap() = Some(log.id.clone());
     state.agent.reset_session_scope();
-    state.agent.restore_session_scope(&meta_dir, &log.id); // the copied prefix carries the consents given before the cut
-    state.agent.load_sources(&meta_dir, Some(&log.id));
+    state.agent.load_session(&meta_dir, &log.id); // the copied prefix carries the consents given before the cut
     Ok(ForkResult { id: log.id, summarized_context })
+}
+
+/// Append one line to the current session's ledger. "No session yet" is not an
+/// error anywhere this is used: a line about a session that has not been created
+/// has nowhere to go, and neither has one about a session file that will not open.
+fn append_session_line(state: &State<'_, AppState>, kind: &str, payload: serde_json::Value) -> Result<(), String> {
+    let meta_dir = with_vault(state, |v| Ok(v.meta_dir()))?;
+    if let Some(id) = state.agent.current_session.lock().unwrap().as_deref() {
+        if let Ok(log) = SessionLog::open(&meta_dir, id) {
+            log.append(kind, payload);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1458,7 +1465,7 @@ pub fn agent_permission_respond(
     if matches!(decision, PermissionDecision::AllowAlways) {
         persist_allow_always(&state);
     }
-    resolve_permission(&state.agent.pending.writes, &request_id, decision)
+    resolve(&state.agent.pending.writes, "permission", &request_id, decision)
 }
 
 /// Handing a plan-gate decision back (propose_plan): resolve the matching oneshot, and the loop continues within the same turn.
@@ -1468,7 +1475,7 @@ pub fn agent_plan_respond(
     request_id: String,
     decision: vemry_agent::PlanDecision,
 ) -> Result<(), String> {
-    crate::agent_bridge::resolve_plan(&state.agent.pending.plans, &request_id, decision)
+    resolve(&state.agent.pending.plans, "plan", &request_id, decision)
 }
 
 /// Undo every write one turn landed (see vemry_agent::undo): notes get their previous
@@ -1487,12 +1494,7 @@ pub fn agent_undo_turn(app: AppHandle, state: State<'_, AppState>, turn: String)
         let mut journal = state.agent.journal.lock().unwrap();
         vemry_agent::undo::undo_turn(vault, &mut journal, &turn)
     };
-    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
-    if let Some(id) = state.agent.current_session.lock().unwrap().as_deref() {
-        if let Ok(log) = SessionLog::open(&meta_dir, id) {
-            log.append("undo", json!({ "turn": &turn, "reverted": report.reverted, "skipped": report.skipped }));
-        }
-    }
+    append_session_line(&state, "undo", json!({ "turn": &turn, "reverted": report.reverted, "skipped": report.skipped }))?;
     broadcast(&app, &VaultEvent::IndexReady {
         note_count: state.vault.lock().unwrap().as_ref().map(|v| v.index().note_count()).unwrap_or(0),
     });
@@ -1508,7 +1510,7 @@ pub fn agent_read_respond(
     request_id: String,
     answer: crate::agent_bridge::ReadAnswer,
 ) -> Result<(), String> {
-    crate::agent_bridge::resolve_read(&state.agent.pending.reads, &request_id, answer)
+    resolve(&state.agent.pending.reads, "read", &request_id, answer)
 }
 
 /// Handing an action-list decision back (propose_actions): resolve the matching oneshot, and the loop continues within the same turn.
@@ -1518,7 +1520,7 @@ pub fn agent_actions_respond(
     request_id: String,
     decision: vemry_agent::ActionsDecision,
 ) -> Result<(), String> {
-    crate::agent_bridge::resolve_actions(&state.agent.pending.actions, &request_id, decision)
+    resolve(&state.agent.pending.actions, "actions", &request_id, decision)
 }
 
 /// Follow a note (or stop, with path=None): the session keeps its findings there and
@@ -1539,13 +1541,7 @@ pub fn agent_follow_set(state: State<'_, AppState>, path: Option<String>, auto: 
         }
     }
     *state.agent.follow.lock().unwrap() = path.clone().map(|p| vemry_agent::Follow { path: p, auto });
-    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
-    if let Some(id) = state.agent.current_session.lock().unwrap().as_deref() {
-        if let Ok(log) = SessionLog::open(&meta_dir, id) {
-            log.append("follow", json!({ "path": path, "auto": auto }));
-        }
-    }
-    Ok(())
+    append_session_line(&state, "follow", json!({ "path": path, "auto": auto }))
 }
 
 #[tauri::command]
@@ -1574,9 +1570,7 @@ pub fn agent_session_new(state: State<'_, AppState>) -> Result<(), String> {
     history.clear();
     *state.agent.current_session.lock().unwrap() = None;
     state.agent.reset_session_scope();
-    state.agent.sources.lock().unwrap().clear();
-            *state.agent.follow.lock().unwrap() = None;
-            state.agent.journal.lock().unwrap().clear();
+    state.agent.clear_session_data();
     Ok(())
 }
 
@@ -1601,9 +1595,8 @@ pub fn agent_session_select(state: State<'_, AppState>, id: String) -> Result<St
         state.agent.history.try_lock().map_err(|_| crate::i18n::t(crate::i18n::current(), "ipc.runningNoSwitch"))?;
     *history = read_history(&meta_dir, &id).unwrap_or_default();
     *state.agent.history_vault.lock().unwrap() = Some(root);
-    state.agent.load_sources(&meta_dir, Some(&id));
     state.agent.reset_session_scope();
-    state.agent.restore_session_scope(&meta_dir, &id);
+    state.agent.load_session(&meta_dir, &id);
     *state.agent.current_session.lock().unwrap() = Some(id);
     Ok(jsonl)
 }
@@ -1628,9 +1621,7 @@ pub fn agent_session_delete(state: State<'_, AppState>, id: String) -> Result<()
         history.clear();
         *state.agent.current_session.lock().unwrap() = None;
         state.agent.reset_session_scope();
-        state.agent.sources.lock().unwrap().clear();
-            *state.agent.follow.lock().unwrap() = None;
-            state.agent.journal.lock().unwrap().clear();
+        state.agent.clear_session_data();
     }
     with_vault(&state, |v| delete_session(&v.meta_dir(), &id))
 }
@@ -1701,9 +1692,9 @@ pub struct TypeExample {
 #[tauri::command]
 pub fn type_examples_list(state: State<'_, AppState>) -> Result<Vec<TypeExample>, String> {
     let dir = with_vault(&state, |v| Ok(v.root().join(vemry_core::vault::TYPES_DIR)))?;
-    Ok(crate::type_templates::TYPE_EXAMPLES
+    Ok(crate::type_templates::type_examples()
         .iter()
-        .map(|e| TypeExample { name: e.name.into(), description: e.description.into(), installed: dir.join(e.file).exists() })
+        .map(|e| TypeExample { name: e.name.clone(), description: e.description.clone(), installed: dir.join(e.file).exists() })
         .collect())
 }
 
@@ -1784,10 +1775,7 @@ pub fn skill_set_enabled(state: State<'_, AppState>, name: String, enabled: bool
     if entry.source == vemry_agent::skills::SkillSource::Builtin {
         let key = vemry_agent::skills::DISABLED_BUILTINS_KEY;
         with_vault(&state, |v| {
-            let mut off: Vec<String> = vault_config_get(v, key)
-                .and_then(|d| d.as_array().cloned())
-                .map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect())
-                .unwrap_or_default();
+            let mut off = vemry_agent::skills::disabled_names(vault_config_get(v, key).as_ref());
             if enabled {
                 off.retain(|n| n != &name);
             } else if !off.contains(&name) {

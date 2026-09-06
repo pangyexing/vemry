@@ -112,13 +112,6 @@ pub fn read_session(meta_dir: &Path, id: &str) -> Option<String> {
     fs::read_to_string(session_path(meta_dir, id)).ok()
 }
 
-/// The session's source table, rebuilt from its audit jsonl (`sources` lines, with
-/// retry / edit_resend markers applied — see `sources::read_sources`). Missing or
-/// unreadable → empty.
-pub fn read_session_sources(meta_dir: &Path, id: &str) -> Vec<crate::sources::Source> {
-    read_session(meta_dir, id).map(|text| crate::sources::read_sources(&text)).unwrap_or_default()
-}
-
 /// The note a session follows (the user's "keep your findings in this note"): the
 /// last `follow` line of the jsonl wins, a `path: null` line ends the follow.
 #[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
@@ -133,23 +126,6 @@ fn default_true() -> bool {
     true
 }
 
-/// The session's follow state, rebuilt from its jsonl (the last `follow` line).
-pub fn read_session_follow(meta_dir: &Path, id: &str) -> Option<Follow> {
-    let text = read_session(meta_dir, id)?;
-    let mut follow: Option<Follow> = None;
-    for line in text.lines().filter(|l| !l.trim().is_empty()) {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        if v["kind"] != "follow" {
-            continue;
-        }
-        follow = match v["path"].as_str() {
-            Some(path) if !path.is_empty() => Some(Follow { path: path.to_string(), auto: v["auto"].as_bool().unwrap_or(true) }),
-            _ => None,
-        };
-    }
-    follow
-}
-
 /// The session-scoped consents a reopened session gets back from its jsonl: the
 /// standing read consent (a `read_auto` line) and the write grants given for the
 /// session (`permission` lines decided allow_session / allow_scope). They used to
@@ -161,19 +137,38 @@ pub struct SessionScope {
     pub grants: crate::permission::WriteGrants,
 }
 
-pub fn read_session_scope(meta_dir: &Path, id: &str) -> SessionScope {
-    let mut scope = SessionScope::default();
-    let Some(text) = read_session(meta_dir, id) else { return scope };
+/// Everything a reopened session gets back from its jsonl: the source table
+/// (`sources` lines with the retry / edit_resend markers applied — see
+/// `sources::read_sources`), the note it follows (the last `follow` line wins, a
+/// `path: null` line ends it) and its session-scoped consents. One read, because a
+/// session switch used to make three of them over a file that reaches a megabyte.
+/// Missing or unreadable → the empty state.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SessionState {
+    pub sources: Vec<crate::sources::Source>,
+    pub follow: Option<Follow>,
+    pub scope: SessionScope,
+}
+
+pub fn read_session_state(meta_dir: &Path, id: &str) -> SessionState {
+    let Some(text) = read_session(meta_dir, id) else { return SessionState::default() };
+    let mut st = SessionState { sources: crate::sources::read_sources(&text), ..Default::default() };
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
         match v["kind"].as_str() {
-            Some("read_auto") => scope.read_auto = true,
+            Some("follow") => {
+                st.follow = match v["path"].as_str() {
+                    Some(path) if !path.is_empty() => Some(Follow { path: path.to_string(), auto: v["auto"].as_bool().unwrap_or(true) }),
+                    _ => None,
+                }
+            }
+            Some("read_auto") => st.scope.read_auto = true,
             Some("permission") => match v["decision"].as_str() {
-                Some("allow_session") => scope.grants.all = true,
+                Some("allow_session") => st.scope.grants.all = true,
                 Some("allow_scope") => {
                     if let Some(p) = v["scope"].as_str().filter(|p| !p.is_empty()) {
-                        if !scope.grants.prefixes.iter().any(|x| x == p) {
-                            scope.grants.prefixes.push(p.to_string());
+                        if !st.scope.grants.prefixes.iter().any(|x| x == p) {
+                            st.scope.grants.prefixes.push(p.to_string());
                         }
                     }
                 }
@@ -182,7 +177,7 @@ pub fn read_session_scope(meta_dir: &Path, id: &str) -> SessionScope {
             _ => {}
         }
     }
-    scope
+    st
 }
 
 fn history_path(meta_dir: &Path, id: &str) -> PathBuf {
@@ -843,15 +838,15 @@ mod tests {
     fn session_scope_is_rebuilt_from_the_jsonl() {
         let dir = tempfile::tempdir().unwrap();
         let log = SessionLog::create(dir.path()).unwrap();
-        assert_eq!(read_session_scope(dir.path(), &log.id), SessionScope::default());
+        assert_eq!(read_session_state(dir.path(), &log.id).scope, SessionScope::default());
         log.append("permission", json!({ "path": "a.md", "decision": "allow" }));
         log.append("permission", json!({ "path": "research/a.md", "decision": "allow_scope", "scope": "research/" }));
         log.append("read_auto", json!({ "id": "r1" }));
         log.append("permission", json!({ "path": "b.md", "decision": "allow_session" }));
-        let scope = read_session_scope(dir.path(), &log.id);
+        let scope = read_session_state(dir.path(), &log.id).scope;
         assert!(scope.read_auto);
         assert!(scope.grants.all);
         assert_eq!(scope.grants.prefixes, vec!["research/".to_string()]);
-        assert_eq!(read_session_scope(dir.path(), "20990101-000000.000"), SessionScope::default(), "a missing session has no scope");
+        assert_eq!(read_session_state(dir.path(), "20990101-000000.000").scope, SessionScope::default(), "a missing session has no scope");
     }
 }

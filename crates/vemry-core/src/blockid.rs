@@ -136,6 +136,25 @@ pub fn strip_anchor(line: &str) -> &str {
     split_anchor(line).0
 }
 
+/// Where a trailing ` ^id` anchor starts: the offset of the whitespace before
+/// the caret, or None when the line does not end in one. Deliberately one notch
+/// more lenient than `split_anchor`, which reads a line the way the parser does:
+/// this also accepts a tab before the caret and trailing whitespace after the id,
+/// so the formatter can repair `text\t^id` into the anchor the parser accepts and
+/// a field lands before it either way.
+pub fn anchor_start(line: &str) -> Option<usize> {
+    let trimmed = line.trim_end_matches([' ', '\t']);
+    let caret = trimmed.rfind('^')?;
+    if !is_valid_block_id(&trimmed[caret + 1..]) {
+        return None;
+    }
+    let before = &trimmed[..caret];
+    if !before.ends_with([' ', '\t']) {
+        return None;
+    }
+    Some(before.trim_end_matches([' ', '\t']).len())
+}
+
 /// A fresh random id not in `taken`. Random rather than content-derived so
 /// two identical paragraphs never collide and an edit never changes an id.
 pub fn mint_block_id(taken: &HashSet<&str>) -> String {

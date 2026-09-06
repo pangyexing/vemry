@@ -41,9 +41,40 @@ impl Vault {
         if !sources.contains(from) {
             sources.push(from.clone());
         }
+        let mut out = self.respell_wikilinks(&sources, |src, l| {
+            if l.target.is_empty() || self.index().resolve_target(&l.target, src).as_ref() != Some(from) {
+                return None;
+            }
+            let mut inner = if l.target.contains('/') || !bare_ok { to_path.clone() } else { to_stem.clone() };
+            if let Some(h) = &l.heading {
+                inner.push('#');
+                inner.push_str(h);
+            } else if let Some(id) = &l.block_ref {
+                inner.push_str("#^");
+                inner.push_str(id);
+            }
+            if let Some(a) = &l.alias {
+                inner.push('|');
+                inner.push_str(a);
+            }
+            Some(inner)
+        });
+        // The moved note's own text is keyed by its new path: the caller writes it after the rename
+        let from_path = from.to_string();
+        for r in out.iter_mut().filter(|r| r.path == from_path) {
+            r.path = to.to_string();
+        }
+        out
+    }
+
+    /// The walk both wikilink planners share: read each source note, skip its private
+    /// blocks, ask `respell` what each link should become (None leaves it alone) and
+    /// splice the answers in. A note whose text does not actually change is dropped,
+    /// so `links > 0` always means bytes moved.
+    fn respell_wikilinks(&self, sources: &[NoteId], mut respell: impl FnMut(&NoteId, &crate::WikiLink) -> Option<String>) -> Vec<Relink> {
         let mut out = Vec::new();
         for src in sources {
-            let Ok(raw) = self.read_note(&src) else { continue };
+            let Ok(raw) = self.read_note(src) else { continue };
             let parsed = parse_note(&raw);
             let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
             for b in &parsed.blocks {
@@ -51,28 +82,9 @@ impl Vault {
                     continue;
                 }
                 for l in &b.links {
-                    if l.target.is_empty() {
-                        continue;
+                    if let Some(inner) = respell(src, l) {
+                        edits.push((l.span.clone(), format!("[[{inner}]]")));
                     }
-                    let resolved = self.index().resolve_target(&l.target, &src);
-                    if resolved.as_ref() != Some(from) {
-                        continue;
-                    }
-                    let spelled_as_path = l.target.contains('/');
-                    let target = if spelled_as_path || !bare_ok { to_path.clone() } else { to_stem.clone() };
-                    let mut inner = target;
-                    if let Some(h) = &l.heading {
-                        inner.push('#');
-                        inner.push_str(h);
-                    } else if let Some(id) = &l.block_ref {
-                        inner.push_str("#^");
-                        inner.push_str(id);
-                    }
-                    if let Some(a) = &l.alias {
-                        inner.push('|');
-                        inner.push_str(a);
-                    }
-                    edits.push((l.span.clone(), format!("[[{inner}]]")));
                 }
             }
             if edits.is_empty() {
@@ -91,9 +103,7 @@ impl Vault {
             }
             new.push_str(&raw[pos..]);
             if new != raw {
-                // The moved note's own text is keyed by its new path: the caller writes it after the rename
-                let path = if &src == from { to.to_string() } else { src.to_string() };
-                out.push(Relink { path, links: edits.len(), old: raw, new });
+                out.push(Relink { path: src.to_string(), links: edits.len(), old: raw, new });
             }
         }
         out
@@ -116,49 +126,24 @@ impl Vault {
                 sources.push(extra.clone());
             }
         }
-        let mut out = Vec::new();
-        for src in sources {
-            let Ok(raw) = self.read_note(&src) else { continue };
-            let parsed = parse_note(&raw);
-            let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
-            for b in &parsed.blocks {
-                if matches!(b.kind, crate::BlockKind::Private) {
-                    continue;
-                }
-                for l in &b.links {
-                    let Some(id) = &l.block_ref else { continue };
-                    if !ids.iter().any(|x| x == id) {
-                        continue;
-                    }
-                    // an empty note part inside the source note means "this note"
-                    let resolved = if l.target.is_empty() { Some(src.clone()) } else { self.index().resolve_target(&l.target, &src) };
-                    if resolved.as_ref() != Some(from) {
-                        continue;
-                    }
-                    let target = if l.target.contains('/') || !bare_ok { to_path.clone() } else { to_stem.clone() };
-                    let mut inner = format!("{target}#^{id}");
-                    if let Some(a) = &l.alias {
-                        inner.push('|');
-                        inner.push_str(a);
-                    }
-                    edits.push((l.span.clone(), format!("[[{inner}]]")));
-                }
+        self.respell_wikilinks(&sources, |src, l| {
+            let id = l.block_ref.as_ref()?;
+            if !ids.iter().any(|x| x == id) {
+                return None;
             }
-            if edits.is_empty() {
-                continue;
+            // an empty note part inside the source note means "this note"
+            let resolved = if l.target.is_empty() { Some(src.clone()) } else { self.index().resolve_target(&l.target, src) };
+            if resolved.as_ref() != Some(from) {
+                return None;
             }
-            edits.sort_by_key(|(r, _)| r.start);
-            let mut new = String::with_capacity(raw.len());
-            let mut pos = 0;
-            for (r, rep) in &edits {
-                new.push_str(&raw[pos..r.start]);
-                new.push_str(rep);
-                pos = r.end;
+            let target = if l.target.contains('/') || !bare_ok { to_path.clone() } else { to_stem.clone() };
+            let mut inner = format!("{target}#^{id}");
+            if let Some(a) = &l.alias {
+                inner.push('|');
+                inner.push_str(a);
             }
-            new.push_str(&raw[pos..]);
-            out.push(Relink { path: src.to_string(), links: edits.len(), old: raw, new });
-        }
-        out
+            Some(inner)
+        })
     }
 
     /// The notes whose references to a non-note file must change when it moves from
@@ -199,8 +184,11 @@ impl Vault {
 }
 
 /// Literal substitutions applied to every line outside code fences; returns the
-/// new text and how many replacements were made.
-fn replace_outside_fences(content: &str, pairs: &[(String, String)]) -> (String, usize) {
+/// new text and how many replacements were made. The one fence state machine the
+/// link rewriters share (the attachment migrator's bucket rename is the other
+/// caller) — it reuses the parser's `parse_fence_open`/`is_fence_close`, so the
+/// rewriters and the indexer give the same answer to "where is the code".
+pub(crate) fn replace_outside_fences(content: &str, pairs: &[(String, String)]) -> (String, usize) {
     let mut out = String::with_capacity(content.len());
     let mut count = 0;
     let mut fence: Option<(char, usize)> = None;
@@ -218,11 +206,12 @@ fn replace_outside_fences(content: &str, pairs: &[(String, String)]) -> (String,
             out.push_str(line);
             continue;
         }
-        let mut cur = line.to_string();
+        // A line with no match is borrowed as-is instead of allocated per line
+        let mut cur = std::borrow::Cow::Borrowed(line);
         for (old, new) in pairs {
             let n = cur.matches(old.as_str()).count();
             if n > 0 {
-                cur = cur.replace(old.as_str(), new.as_str());
+                cur = std::borrow::Cow::Owned(cur.replace(old.as_str(), new.as_str()));
                 count += n;
             }
         }
