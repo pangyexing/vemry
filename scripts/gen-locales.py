@@ -1218,13 +1218,16 @@ add("chat.", {
     "readDeclined": ("Declined", "已拒绝"),
     "readDone": ("Read {n} ✓", "已读 {n} 页 ✓"),
     "readNone": ("Nothing read", "没有读取"),
-    "readAutoSources": ("From now on, open pages already in this session's sources without asking", "本会话来源里的链接以后不再询问"),
+    "readAutoSources": ("Read without asking for the rest of this session", "本会话不再询问,自动读取"),
     "viewTitle": ("What the {view} shows right now goes in as context ({n} rows)", "{view} 此刻显示的内容作为上下文({n} 行)"),
     "planStatusSkipped": ("skipped", "已跳过"),
     "welcomeTitle": ("Research panel", "研究面板"),
     "welcomeBody": ("Ask, and the AI searches your notes (and the web) and answers with citations. "
                     "Click a citation to read the article; clip what is worth keeping back into the "
                     "vault, and the next answer uses it.",
+    "readDoneAuto": ("Read {n} ✓ · without asking", "已自动读取 {n} 页 ✓"),
+    "readAutoRunning": ("Reading without asking…", "自动读取中…"),
+    "readFetching": ("Reading…", "读取中…"),
                     "提问,AI 检索你的笔记(与网络)后给出带引用的回答;点击引用读正文,值得留的剪藏回知识库,下次回答会直接用上。"),
     "welcomeHint": ("Type a URL to open the built-in browser ({key} works too); start with # to record a "
                     "convention in VEMRY.md; every write shows you a diff first.",

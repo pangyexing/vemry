@@ -375,8 +375,10 @@ export type AgentEvent =
   | { type: "plan_updated"; items: PlanItem[] }
   /** propose_actions is suspended awaiting the user's review of the list (the actions gate). */
   | { type: "actions_request"; request: ActionsRequest }
-  /** open_for_reading is suspended awaiting the user's click on the URLs (the read gate). */
+  /** open_for_reading is suspended awaiting the user's click on the URLs (the read gate), or fetching under the standing consent (request.auto). */
   | { type: "read_request"; request: ReadRequest }
+  /** The read gate's outcome after the fetch: the pages read, the ones that failed, and whether the standing consent answered it. */
+  | { type: "read_decided"; id: string; urls: string[]; failed: string[]; auto: boolean }
   /** A write landed in this turn: the UI counts them per turn to offer "undo this turn's writes". */
   | { type: "write_landed"; turn: string | null; tool: string; path: string }
   /** The web sources this turn cited, settled by Rust at the end of the turn with their verification (authoritative for the turn's source card). */
@@ -460,6 +462,8 @@ export interface ReadRequest {
   urls: string[];
 }
 export type ReadAnswer = { kind: "allow"; urls: string[]; auto_sources: boolean } | { kind: "deny"; reason: string };
+  /** The session's standing consent answers it: the card lists the URLs without buttons while they are fetched. */
+  auto?: boolean;
 
 /** A row of the example-skills catalogue in Settings (mirroring commands.rs::SkillExample). */
 export interface SkillExample {

@@ -249,14 +249,19 @@ pub struct FetchedPage {
 }
 
 /// The read gate (open_for_reading): the agent's autonomous network capability
-/// stays at zero — it can only *propose* URLs, and each fetch is the user's click
-/// (or the session's standing consent for URLs already in its source table). The
-/// gate's implementation fetches the pages the user allowed and hands them back;
-/// the runner wraps them in the untrusted web-content envelope.
+/// stays at zero — it can only *propose* URLs, and each fetch is the user's click,
+/// until the user gives the session's standing consent (the card's checkbox), after
+/// which the gate fetches what is proposed and the card only reports it. The gate's
+/// implementation fetches the pages allowed and hands them back; the runner wraps
+/// them in the untrusted web-content envelope.
 #[derive(Clone, Debug, Serialize)]
 pub struct ReadRequest {
     pub id: String,
     pub urls: Vec<String>,
+    /// The standing consent answers this request: the card lists the URLs without
+    /// its buttons, and the gate fetches them without waiting.
+    #[serde(default)]
+    pub auto: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -274,6 +279,11 @@ pub enum ReadDecision {
 
 #[async_trait]
 pub trait ReadGate: Send + Sync {
+    /// Whether the standing consent answers this request (asked before the card is
+    /// raised, so the card can say so). The default has no standing consent.
+    fn standing(&self, _req: &ReadRequest) -> bool {
+        false
+    }
     async fn request(&self, req: &ReadRequest) -> ReadDecision;
 }
 

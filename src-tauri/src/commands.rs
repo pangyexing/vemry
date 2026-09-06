@@ -1304,7 +1304,6 @@ async fn run_agent_turn(
         read_gate: Arc::new(crate::agent_bridge::ChannelReadGate {
             app: app.clone(),
             pending: Arc::clone(&state.agent.pending.reads),
-            sources: Arc::clone(&state.agent.sources),
             auto_sources: Arc::clone(&state.agent.read_auto_sources_arc),
         }),
         vault: Arc::clone(&state.vault),
@@ -1436,6 +1435,7 @@ pub fn agent_session_fork(
     *history = forked;
     *state.agent.current_session.lock().unwrap() = Some(log.id.clone());
     state.agent.reset_session_scope();
+    state.agent.restore_session_scope(&meta_dir, &log.id); // the copied prefix carries the consents given before the cut
     state.agent.load_sources(&meta_dir, Some(&log.id));
     Ok(ForkResult { id: log.id, summarized_context })
 }
@@ -1593,8 +1593,9 @@ pub fn agent_session_select(state: State<'_, AppState>, id: String) -> Result<St
     *history = read_history(&meta_dir, &id).unwrap_or_default();
     *state.agent.history_vault.lock().unwrap() = Some(root);
     state.agent.load_sources(&meta_dir, Some(&id));
-    *state.agent.current_session.lock().unwrap() = Some(id);
     state.agent.reset_session_scope();
+    state.agent.restore_session_scope(&meta_dir, &id);
+    *state.agent.current_session.lock().unwrap() = Some(id);
     Ok(jsonl)
 }
 

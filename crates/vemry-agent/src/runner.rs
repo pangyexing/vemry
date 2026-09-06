@@ -83,8 +83,13 @@ pub enum AgentEvent {
     /// actions gate, of the same family as the plan gate).
     ActionsRequest { request: ActionsRequest },
     /// open_for_reading is suspended awaiting the user's click on the URLs (the read
-    /// gate: the agent proposes, the user fetches).
+    /// gate: the agent proposes, the user fetches), or — `request.auto` — the
+    /// session's standing consent is fetching them and the card only reports.
     ReadRequest { request: ReadRequest },
+    /// The read gate's outcome: the pages read, the ones that failed to load, and
+    /// whether the standing consent answered it. Raised after the fetch, which the
+    /// answer the user clicked knows nothing about — the card's badge comes from here.
+    ReadDecided { id: String, urls: Vec<String>, failed: Vec<String>, auto: bool },
     /// The web sources this turn cited, settled against the session's table at the
     /// end of the turn (each with its verification); the audit jsonl has the same
     /// line, so a replay shows the same card.
@@ -414,8 +419,10 @@ impl AgentRunner {
         // URLs the user handed over this turn are verified on their own: the attached
         // page (read back off the envelope, so a regenerate sees it too)
         // …plus every page the read gate fetches during the turn (added as they come)
-        let exempt: Mutex<HashSet<String>> =
-            Mutex::new(history.get(turn_start).and_then(|m| m.text()).map(page_context_urls).unwrap_or_default());
+        let web: Mutex<TurnWeb> = Mutex::new(TurnWeb {
+            exempt: history.get(turn_start).and_then(|m| m.text()).map(page_context_urls).unwrap_or_default(),
+            read: vec![],
+        });
 
         let mut grants = if config.write_policy == WritePolicy::Allow {
             WriteGrants { all: true, prefixes: vec![] }
@@ -653,7 +660,7 @@ impl AgentRunner {
                     turn_id.as_deref(),
                     searched.load(Ordering::Relaxed),
                     &web_results.lock().unwrap(),
-                    &exempt.lock().unwrap(),
+                    &web.lock().unwrap(),
                     on_event,
                     log,
                 );
@@ -691,7 +698,7 @@ impl AgentRunner {
                 }
                 let follow = follow_note.as_deref().filter(|_| config.follow_auto);
                 let result = self
-                    .execute_tool(call, &mut grants, &config.session_allow, follow, turn_id.as_deref(), config.format.as_ref(), &exempt, &mut plan_rejected, on_event, log)
+                    .execute_tool(call, &mut grants, &config.session_allow, follow, turn_id.as_deref(), config.format.as_ref(), &web, &mut plan_rejected, on_event, log)
                     .await;
                 let (ok, output) = match result {
                     Ok(o) => (true, o),
@@ -826,7 +833,7 @@ impl AgentRunner {
         follow: Option<&str>,
         turn: Option<&str>,
         config_format: Option<&vemry_core::FormatOptions>,
-        exempt: &Mutex<HashSet<String>>,
+        web: &Mutex<TurnWeb>,
         plan_rejected: &mut bool,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
@@ -855,7 +862,7 @@ impl AgentRunner {
             return match name {
                 "propose_plan" => self.execute_plan(call, &args, plan_rejected, on_event, log).await,
                 "propose_actions" => self.execute_actions(call, &args, on_event, log).await,
-                "open_for_reading" => self.execute_read(call, &args, exempt, on_event, log).await,
+                "open_for_reading" => self.execute_read(call, &args, web, on_event, log).await,
                 "update_plan" => self.execute_plan_update(&args, on_event, log),
                 _ => Ok(sources::format_sources(&self.sources.lock().unwrap())),
             };
@@ -1108,18 +1115,26 @@ impl AgentRunner {
         &self,
         call: &ToolCall,
         args: &Value,
-        exempt: &Mutex<HashSet<String>>,
+        web: &Mutex<TurnWeb>,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
     ) -> std::result::Result<String, String> {
         let urls = parse_read_urls(args)?;
         log.append("read", json!({ "id": &call.id, "urls": &urls }));
-        let request = ReadRequest { id: call.id.clone(), urls };
+        let mut request = ReadRequest { id: call.id.clone(), urls, auto: false };
+        request.auto = self.read_gate.standing(&request);
         on_event(AgentEvent::ReadRequest { request: request.clone() });
-        match self.read_gate.request(&request).await {
+        let decision = self.read_gate.request(&request).await;
+        // The standing consent given on this card is a fact of the session: its own line,
+        // so a reopened session (or a restart) keeps it rather than asking again
+        if !request.auto && self.read_gate.standing(&request) {
+            log.append("read_auto", json!({ "id": &request.id }));
+        }
+        match decision {
             ReadDecision::Pages { pages, failed } => {
-                let read: Vec<&str> = pages.iter().map(|p| p.url.as_str()).collect();
-                log.append("read_decision", json!({ "id": &request.id, "decision": "pages", "urls": &read, "failed": &failed }));
+                let read: Vec<String> = pages.iter().map(|p| p.url.clone()).collect();
+                log.append("read_decision", json!({ "id": &request.id, "decision": "pages", "urls": &read, "failed": &failed, "auto": request.auto }));
+                on_event(AgentEvent::ReadDecided { id: request.id.clone(), urls: read, failed: failed.clone(), auto: request.auto });
                 if pages.is_empty() {
                     return Ok(if failed.is_empty() {
                         "The user allowed none of the pages; do not read them.".into()
@@ -1128,9 +1143,10 @@ impl AgentRunner {
                     });
                 }
                 {
-                    let mut ex = exempt.lock().unwrap();
+                    let mut w = web.lock().unwrap();
                     for p in &pages {
-                        ex.insert(p.url.clone());
+                        w.exempt.insert(p.url.clone());
+                        w.read.push(sources::Citation { title: p.title.clone(), url: p.url.clone() });
                     }
                 }
                 let mut out = format!("{} page(s) read (cite each as [title](url)):", pages.len());
@@ -1183,7 +1199,7 @@ impl AgentRunner {
         turn_id: Option<&str>,
         searched: bool,
         web_results: &[WebSearchResult],
-        exempt: &HashSet<String>,
+        web: &TurnWeb,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
     ) {
@@ -1199,6 +1215,11 @@ impl AgentRunner {
         for r in web_results.iter().filter(|r| !r.url.is_empty()) {
             push(sources::Citation { title: r.title.clone(), url: r.url.clone() });
         }
+        // The pages the read gate fetched come with their titles, ahead of the answer's
+        // citations (which may name the same URL with no title)
+        for c in &web.read {
+            push(c.clone());
+        }
         for text in turn.iter().filter(|m| m.role == "assistant").filter_map(|m| m.text()) {
             for c in sources::extract_citations(text) {
                 push(c);
@@ -1209,12 +1230,22 @@ impl AgentRunner {
         }
         let items: Vec<Source> = {
             let mut table = self.sources.lock().unwrap();
-            sources::merge_turn(&mut table, turn_id, &cites, searched, exempt);
+            sources::merge_turn(&mut table, turn_id, &cites, searched, &web.exempt);
             cites.iter().filter_map(|c| table.iter().find(|s| s.url == c.url).cloned()).collect()
         };
         log.append("sources", json!({ "turn": turn_id, "items": &items }));
         on_event(AgentEvent::SourcesUpdated { turn: turn_id.map(String::from), items });
     }
+}
+
+/// What a turn learns about the web on its own: the URLs verified without a search
+/// (the attached page, every page the read gate fetched) and the fetched pages as
+/// citations — a page the agent read joins the session's source table with its title
+/// whether or not the answer cites it, since the deliverable may live in a note.
+#[derive(Default)]
+struct TurnWeb {
+    exempt: HashSet<String>,
+    read: Vec<sources::Citation>,
 }
 
 /// The confirmed plan as the first update: every step pending.
@@ -2347,6 +2378,43 @@ mod tests {
         assert!(hello.contains("world content   \n\n\n* x"), "an edit fragment is not reformatted: {hello}");
         let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
         assert!(jsonl.contains("+- a") && !jsonl.contains("+* a"), "the gate saw the formatted text: {jsonl}");
+    }
+
+    /// A page the read gate fetched joins the session's source table with its title even
+    /// when the answer never cites it (the deliverable may be a note, and list_sources and
+    /// the sources workbench read the table).
+    #[tokio::test]
+    async fn an_uncited_read_page_still_joins_the_source_table() {
+        struct ServePages;
+        #[async_trait]
+        impl ReadGate for ServePages {
+            async fn request(&self, req: &ReadRequest) -> ReadDecision {
+                ReadDecision::Pages {
+                    pages: req.urls.iter().map(|u| crate::permission::FetchedPage { url: u.clone(), title: "Read page".into(), markdown: "the body".into() }).collect(),
+                    failed: vec![],
+                }
+            }
+        }
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("r1", "open_for_reading", r#"{"urls": ["https://a.io/x"]}"#),
+            vec![text_chunk("Written to the note."), finish_chunk("stop")],
+        ]));
+        let r = AgentRunner {
+            transport,
+            gate: Arc::new(AutoDeny("no".into())),
+            plan_gate: Arc::new(crate::permission::AutoApprovePlan),
+            actions_gate: Arc::new(crate::permission::AutoApproveActions),
+            read_gate: Arc::new(ServePages),
+            vault: f.vault.clone(),
+            sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
+        };
+        let mut history = vec![];
+        let (_log, events) = run_plan_turn(&r, &f, &mut history).await;
+        let table = r.sources.lock().unwrap();
+        assert!(table.iter().any(|s| s.url == "https://a.io/x" && s.verified && s.title == "Read page"), "{table:?}");
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::SourcesUpdated { items, .. } if items.iter().any(|s| s.url == "https://a.io/x"))));
     }
 
     /// The read gate: the URLs reach the ledger and the UI, a page-serving gate hands

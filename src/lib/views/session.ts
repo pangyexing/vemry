@@ -46,7 +46,9 @@ export type SessionEntry =
   /** The read gate's request (open_for_reading): the URLs proposed, id = the tool call id. */
   | { kind: "read"; ts: string; id: string; urls: string[] }
   /** The read gate's outcome: pages (urls = what was read, failed = what could not be) or deny (reason). */
-  | { kind: "read_decision"; ts: string; id: string; decision: "pages" | "deny"; urls?: string[]; failed?: string[]; reason?: string }
+  | { kind: "read_decision"; ts: string; id: string; decision: "pages" | "deny"; urls?: string[]; failed?: string[]; reason?: string; auto?: boolean }
+  /** The standing read consent was given on this card: reopening the session restores it (Rust reads this line back). */
+  | { kind: "read_auto"; ts: string; id: string }
   /** "Undo this turn's writes" ran: how many writes were put back and how many skipped (edited since). */
   | { kind: "undo"; ts: string; turn: string; reverted: number; skipped: number }
   /** The session follows a note (path null = stopped); the last line wins. auto: local writes on it pass the gate without a dialog. */

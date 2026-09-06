@@ -150,6 +150,41 @@ pub fn read_session_follow(meta_dir: &Path, id: &str) -> Option<Follow> {
     follow
 }
 
+/// The session-scoped consents a reopened session gets back from its jsonl: the
+/// standing read consent (a `read_auto` line) and the write grants given for the
+/// session (`permission` lines decided allow_session / allow_scope). They used to
+/// live in memory only, so coming back to a session — or restarting — asked all
+/// over again while the buttons still said "this session".
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SessionScope {
+    pub read_auto: bool,
+    pub grants: crate::permission::WriteGrants,
+}
+
+pub fn read_session_scope(meta_dir: &Path, id: &str) -> SessionScope {
+    let mut scope = SessionScope::default();
+    let Some(text) = read_session(meta_dir, id) else { return scope };
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        match v["kind"].as_str() {
+            Some("read_auto") => scope.read_auto = true,
+            Some("permission") => match v["decision"].as_str() {
+                Some("allow_session") => scope.grants.all = true,
+                Some("allow_scope") => {
+                    if let Some(p) = v["scope"].as_str().filter(|p| !p.is_empty()) {
+                        if !scope.grants.prefixes.iter().any(|x| x == p) {
+                            scope.grants.prefixes.push(p.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    scope
+}
+
 fn history_path(meta_dir: &Path, id: &str) -> PathBuf {
     meta_dir.join("sessions").join(format!("{id}.history.json"))
 }
@@ -787,3 +822,21 @@ mod tests {
         assert!(!dir.path().parent().unwrap().join("x.history.json").exists());
     }
 }
+
+    /// The consents a reopened session gets back: the standing read consent and the
+    /// session write grants come from the jsonl, nothing else does.
+    #[test]
+    fn session_scope_is_rebuilt_from_the_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = SessionLog::create(dir.path()).unwrap();
+        assert_eq!(read_session_scope(dir.path(), &log.id), SessionScope::default());
+        log.append("permission", json!({ "path": "a.md", "decision": "allow" }));
+        log.append("permission", json!({ "path": "research/a.md", "decision": "allow_scope", "scope": "research/" }));
+        log.append("read_auto", json!({ "id": "r1" }));
+        log.append("permission", json!({ "path": "b.md", "decision": "allow_session" }));
+        let scope = read_session_scope(dir.path(), &log.id);
+        assert!(scope.read_auto);
+        assert!(scope.grants.all);
+        assert_eq!(scope.grants.prefixes, vec!["research/".to_string()]);
+        assert_eq!(read_session_scope(dir.path(), "20990101-000000.000"), SessionScope::default(), "a missing session has no scope");
+    }

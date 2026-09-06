@@ -256,8 +256,11 @@ the model streams a tool_call(edit_note)
 
 Grant scope (v0.7): "allow for this session" lives in
 `RunnerConfig.session_allow` (a shared `WriteGrants`: the `all` flag plus a list
-of path prefixes) and survives across turns, cleared with the session's lifecycle
-(new, switch, change vault, delete). It used to be a local in `run()`, which
+of path prefixes) and survives across turns; leaving a session clears it and
+reopening one restores it from the jsonl's `permission` lines (decided
+allow_session / allow_scope — `session::read_session_scope`, applied by
+`agent_session_select` and a fork), so coming back to a session, or restarting,
+does not ask again for what the session was already granted. It used to be a local in `run()`, which
 meant the button said "session" while the grant actually lasted one turn. The
 scoped form (the dropdown on the same button) grants a prefix instead of
 everything — the folder the note is in, with its trailing slash, or the note's
@@ -2009,13 +2012,26 @@ checkboxes, and the glue's `ChannelReadGate` fetches the allowed ones through th
 reader window's extraction (`page_read`, the same pipeline a clip uses: no cookies,
 the adblock rules, SSRF-checked images) and hands them back. Each page reaches the
 model in the same untrusted-content envelope an attached page gets
-(`prompt::page_envelope`), its URL joins the turn's verified sources, and the
+(`prompt::page_envelope`), the page joins the session's source table as a verified
+source with its title whether or not the answer cites it (the deliverable may be a
+note, and the table is what `list_sources` and the sources workbench read), and the
 ledger records URLs only — the tool_result line keeps the first line, never a page
-body. The card's checkbox "from now on, open pages already in this session's
-sources without asking" is the session's standing consent (`read_auto_sources`,
-cleared with the session): a URL the search returned or the model cited can then
-be read without a card, a new URL still asks. Declining tells the model to work
-from what it has.
+body. The card's checkbox "from now on this session, read the pages it proposes
+without asking" is the session's standing consent (`read_auto_sources`: cleared
+when a session is left, and rebuilt from the `read_auto` line the runner writes
+when it is given, so a reopened session keeps it): from then on the gate answers itself — `ReadGate::standing` is
+asked before the card is raised, so the card lists the URLs with a "reading without
+asking" badge and no buttons while they are fetched. The consent is not limited to
+URLs already in the source table: the table is settled from citations at the end
+of a turn and the server-side search returns no structured results, so every URL
+proposed mid-turn would count as new and ask again, which made such a limit a
+dead letter. The trade-off is stated rather than hidden: with the consent given, a
+page the agent read could steer it into fetching a URL it composed, and what
+remains is the card listing every URL as it is fetched, the stop button beside it,
+and the consent ending with the session. A fetch's outcome — the pages read and
+the ones that failed to load — comes back as the `read_decided` event, so the
+card's badge reports what happened rather than what was clicked. Declining tells
+the model to work from what it has.
 
 ### Product documents and iterations: blocks and fields, not a system
 

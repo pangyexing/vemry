@@ -496,7 +496,7 @@
     void agent.respondRead({ kind: "deny", reason: t("chat.readDeclined") });
   }
   function readBadge(d: NonNullable<ReadCard["decision"]>): string {
-    if (d.kind === "pages") return d.urls.length ? t("chat.readDone", { n: d.urls.length }) : t("chat.readNone");
+    if (d.kind === "pages") return d.urls.length ? t(d.auto ? "chat.readDoneAuto" : "chat.readDone", { n: d.urls.length }) : t("chat.readNone");
     if (d.reason === "cancelled") return t("chat.actionsCancelled");
     return t("chat.readDeclined");
   }
@@ -1601,7 +1601,9 @@
               {#if pendingRd}
                 <label class="act-keep"><input type="checkbox" bind:checked={readChecks[ui]} /></label>
               {:else}
-                <span class="plan-check">{item.decision?.kind === "pages" && item.decision.urls.includes(u) ? "✓" : item.decision?.kind === "pages" ? "✕" : "·"}</span>
+                <!-- A read page is reported under its final address (a redirect), so the requested URL
+                     is not always in the decision's list: only `failed` marks a miss -->
+                <span class="plan-check">{item.decision?.kind === "pages" ? (item.decision.failed.includes(u) ? "✕" : "✓") : "·"}</span>
               {/if}
               <button class="read-url" title={u} onclick={(e) => openCitation(u, e.metaKey || e.ctrlKey)}>
                 <span class="read-domain">{domainOf(u)}</span><span class="read-path">{u.replace(/^https?:\/\/[^/]+/, "")}</span>
@@ -1722,6 +1724,9 @@
               </div>
             {/if}
           {/if}
+            {:else if item.auto || item.fetching}
+              <!-- The pages are on their way: under the standing consent without a click, or after one -->
+              <span class="plan-inline-badge wait"><span class="pulse"></span> {t(item.auto ? "chat.readAutoRunning" : "chat.readFetching")}</span>
         </div>
       {:else if item.kind === "notice"}
         <div class="notice">{item.text}</div>
@@ -3126,6 +3131,11 @@
     color: var(--fg-muted);
     background: var(--bg-hover);
     border-radius: 6px;
+  .plan-inline-badge .pulse {
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 2px;
+  }
     padding: 3px 8px;
     margin: 8px 10px 0;
     min-width: 0;

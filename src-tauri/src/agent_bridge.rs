@@ -157,9 +157,9 @@ pub struct AgentState {
     /// replaced, so "undo this turn's writes" can put them back. In memory only —
     /// cleared with the session, gone after a restart (the provenance bar remains).
     pub journal: Arc<Mutex<Vec<vemry_agent::WriteRecord>>>,
-    /// The session's standing consent for the read gate: URLs already in the
-    /// session's source table (search results, cited pages) may be fetched without
-    /// a card. Set from the card's checkbox; cleared with the session.
+    /// The session's standing consent for the read gate: the pages the model
+    /// proposes are fetched without the card's buttons (the card still lists them).
+    /// Set from the card's checkbox; cleared with the session.
     pub read_auto_sources_arc: Arc<AtomicBool>,
 }
 
@@ -171,6 +171,15 @@ impl AgentState {
         self.invalidate_prompt_snapshot();
         self.session_grant.lock().unwrap().clear();
         self.read_auto_sources_arc.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The session-scoped consents back from a reopened session's jsonl (the standing
+    /// read consent and the session write grants): what reset_session_scope cleared for
+    /// the session being left, this restores for the one being entered.
+    pub fn restore_session_scope(&self, meta_dir: &std::path::Path, id: &str) {
+        let scope = vemry_agent::session::read_session_scope(meta_dir, id);
+        self.read_auto_sources_arc.store(scope.read_auto, std::sync::atomic::Ordering::Relaxed);
+        *self.session_grant.lock().unwrap() = scope.grants;
     }
 
     /// Point the source table at a session: rebuilt from its jsonl (None = a new
@@ -279,21 +288,23 @@ pub fn resolve_read(pending: &Pending<ReadAnswer>, request_id: &str, answer: Rea
 /// The channel implementation of the read gate: the user's answer comes back through
 /// `agent_read_respond`; then the gate fetches the allowed pages through the reader
 /// window's extraction (`page_read`, the same pipeline a clip uses) and hands them to
-/// the runner. With the session's standing consent, URLs already in the source table
-/// skip the card. Page bodies travel only to the model; the ledger records URLs.
+/// the runner. With the session's standing consent (the card's checkbox, cleared with
+/// the session) every proposed URL is fetched without the card's buttons — the card
+/// still lists them. Page bodies travel only to the model; the ledger records URLs.
 pub struct ChannelReadGate {
     pub app: tauri::AppHandle,
     pub pending: Pending<ReadAnswer>,
-    pub sources: Arc<Mutex<Vec<vemry_agent::Source>>>,
     pub auto_sources: Arc<AtomicBool>,
 }
 
 #[async_trait]
 impl ReadGate for ChannelReadGate {
+    fn standing(&self, _req: &ReadRequest) -> bool {
+        self.auto_sources.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     async fn request(&self, req: &ReadRequest) -> ReadDecision {
-        let auto = self.auto_sources.load(std::sync::atomic::Ordering::Relaxed);
-        let known = |u: &str| self.sources.lock().unwrap().iter().any(|s| s.url == u);
-        let allowed: Vec<String> = if auto && req.urls.iter().all(|u| known(u)) {
+        let allowed: Vec<String> = if req.auto {
             req.urls.clone()
         } else {
             match park(&self.pending, &req.id).await {

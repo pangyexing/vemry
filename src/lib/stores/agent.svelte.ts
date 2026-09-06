@@ -97,7 +97,17 @@ export type TimelineItem =
   | { kind: "actions"; id: string; items: ActionsRequest["items"]; decision?: ActionsDecision }
   /** open_for_reading's card: the proposed URLs; while pendingRead points at it the card
    *  carries checkboxes and the read / decline buttons, afterwards the outcome. */
-  | { kind: "read"; id: string; urls: string[]; decision?: { kind: "pages"; urls: string[]; failed: string[] } | { kind: "deny"; reason: string } }
+  /** A read card: `auto` = the standing consent is fetching (no buttons); `fetching` = the user
+   *  clicked and the pages are on their way; `decision` lands with the read_decided event (or
+   *  the jsonl line), so a failed page shows as such. */
+  | {
+      kind: "read";
+      id: string;
+      urls: string[];
+      auto?: boolean;
+      fetching?: boolean;
+      decision?: { kind: "pages"; urls: string[]; failed: string[]; auto?: boolean } | { kind: "deny"; reason: string };
+    }
   /** A system notice line (a context compaction, a fork and the like), shown quietly. */
   | { kind: "notice"; text: string }
   | { kind: "error"; text: string };
@@ -779,7 +789,7 @@ class AgentStore {
           for (let i = items.length - 1; i >= turnStart; i--) {
             const item = items[i];
             if (item.kind === "read" && item.id === e.id && item.decision === undefined) {
-              item.decision = e.decision === "pages" ? { kind: "pages", urls: e.urls ?? [], failed: e.failed ?? [] } : { kind: "deny", reason: e.reason ?? "" };
+              item.decision = e.decision === "pages" ? { kind: "pages", urls: e.urls ?? [], failed: e.failed ?? [], auto: !!e.auto } : { kind: "deny", reason: e.reason ?? "" };
               break;
             }
           }
@@ -973,8 +983,17 @@ class AgentStore {
         break;
       }
       case "read_request": {
-        this.timeline.push({ kind: "read", id: e.request.id, urls: e.request.urls });
-        this.pendingRead = e.request;
+        // Under the standing consent nothing is pending: the card reports the fetch, and no decision buttons are raised
+        this.timeline.push({ kind: "read", id: e.request.id, urls: e.request.urls, auto: !!e.request.auto });
+        if (!e.request.auto) this.pendingRead = e.request;
+        break;
+      }
+      case "read_decided": {
+        const card = [...this.timeline].reverse().find((t) => t.kind === "read" && t.id === e.id);
+        if (card && card.kind === "read") {
+          card.fetching = false;
+          card.decision = { kind: "pages", urls: e.urls, failed: e.failed, auto: e.auto };
+        }
         break;
       }
       case "write_landed": {
@@ -1183,7 +1202,9 @@ class AgentStore {
     this.pendingRead = null;
     const card = [...this.timeline].reverse().find((t) => t.kind === "read" && t.id === req.id);
     if (card && card.kind === "read") {
-      card.decision = answer.kind === "allow" ? { kind: "pages", urls: answer.urls, failed: [] } : { kind: "deny", reason: answer.reason };
+      // An allow starts the fetch: the outcome (with the pages that failed) comes back as read_decided
+      if (answer.kind === "allow") card.fetching = true;
+      else card.decision = { kind: "deny", reason: answer.reason };
     }
     try {
       await api.agentReadRespond(req.id, answer);
