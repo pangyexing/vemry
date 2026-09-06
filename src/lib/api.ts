@@ -417,6 +417,8 @@ export interface SessionMeta {
 export type PermissionDecision =
   | { kind: "allow" }
   | { kind: "allow_session" }
+  /** Allow, and for the rest of the session stop asking under `prefix` alone (a folder with its trailing slash, or one note's path). */
+  | { kind: "allow_scope"; prefix: string }
   | { kind: "allow_always" }
   | { kind: "deny"; reason: string }
   | { kind: "allow_edited"; content: string };

@@ -541,6 +541,10 @@ add("permission.", {
     "allowSession": ("Allow for this session", "本会话均允许"),
     "allowSessionHint": ("Stop asking for the rest of this session (a new session reviews each write again)",
                          "本次会话内不再询问(新会话恢复逐条审批)"),
+    "scopeHint": ("Allow for this session, only within a folder or this note", "本会话内只放行某个文件夹或这一篇"),
+    "scopeTitle": ("For this session, stop asking within…", "本会话内不再询问的范围…"),
+    "scopeFolder": ("Only {folder}", "仅 {folder}"),
+    "scopeNote": ("Only {name}", "仅这篇:{name}"),
     "allow": ("Allow", "允许"),
     "allowHint": ("Enter works too", "Enter 亦可"),
 })
@@ -790,6 +794,8 @@ add("sessionsView.", {
     "follow": ("Following {path}", "跟随 {path}"),
     "followEnd": ("Stopped following", "取消跟随"),
     "viaFollow": (" · working note", " · 跟随笔记"),
+    "viaScope": (" · scoped grant", " · 范围放行"),
+    "allowScope": ("Allowed for the session under {scope}", "会话内放行 {scope}"),
     "sourcesSettled": ("Sources this turn · {n}", "本轮来源 · {n}"),
     "actions": ("Action items proposed · {n}", "提出行动项 · {n}"),
     "actionsDecision.approve": ("Action items kept · {n}", "行动项已确认 · {n}"),
@@ -845,6 +851,7 @@ add("planDecision.", {
 add("decision.", {
     "allow": ("Allowed", "允许"),
     "allow_session": ("Allowed for the session", "会话内允许"),
+    "allow_scope": ("Allowed for the session, scoped", "会话内范围放行"),
     "allow_always": ("Always allowed", "总是允许"),
     "allow_edited": ("Allowed after editing", "编辑后允许"),
     "deny": ("Denied", "拒绝"),

@@ -243,8 +243,9 @@ the model streams a tool_call(edit_note)
   → the audit log records write_prepared
   → PermissionGate.request() suspends the loop
   → a Tauri Channel pushes PermissionRequest{diff} → the frontend dialog
-  → the user: allow / allow for this session / always allow in this vault /
-    edit then apply / deny (with a reason)
+  → the user: allow / allow for this session (everything, or only this folder,
+    or only this note) / always allow in this vault / edit then apply / deny
+    (with a reason)
   → a oneshot wakes the loop
   → allowed: vault.write_note() (registers self-write suppression → incremental reindex)
     → vault.record_provenance(the blocks the applied bytes added, under the session id) — pending review
@@ -254,10 +255,18 @@ the model streams a tool_call(edit_note)
 ```
 
 Grant scope (v0.7): "allow for this session" lives in
-`RunnerConfig.session_allow` (a shared AtomicBool) and survives across turns,
-cleared with the session's lifecycle (new, switch, change vault, delete). It used
-to be a local in `run()`, which meant the button said "session" while the grant
-actually lasted one turn. "Always allow in this vault" is merged into the
+`RunnerConfig.session_allow` (a shared `WriteGrants`: the `all` flag plus a list
+of path prefixes) and survives across turns, cleared with the session's lifecycle
+(new, switch, change vault, delete). It used to be a local in `run()`, which
+meant the button said "session" while the grant actually lasted one turn. The
+scoped form (the dropdown on the same button) grants a prefix instead of
+everything — the folder the note is in, with its trailing slash, or the note's
+own path — so a tidy-up of one project runs without a dialog per note while a
+write anywhere else still asks; a move is covered only when both of its paths
+are. The ledger records the grant (`decision: allow_scope`, `scope`) and marks
+each write it later covers `via: scope`, the way the working note's local writes
+are marked `via: follow`; the writes stay pending in the editor like every
+standing-grant write. "Always allow in this vault" is merged into the
 `write_policy` key in `.vemry/config.json`, with a clickable revoke badge in
 settings; revoking immediately withdraws the cross-turn grant from a session in
 flight (a boolean already honoured inside the current turn is not retroactive, and

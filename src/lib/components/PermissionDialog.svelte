@@ -2,6 +2,8 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { agent } from "$lib/stores/agent.svelte";
   import { classifyDiff } from "$lib/views/diff";
+  import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
+  import Chevron from "./Chevron.svelte";
 
   let editing = $state(false);
   /** A block-level request (a restructure, a block move) opens on its block diff; this switches to the raw line diff. */
@@ -39,6 +41,24 @@
     return classifyDiff(req.diff);
   });
 
+  /** The scoped variants of "allow for this session", as a dropdown under that button:
+   *  only this note, or only the folder the note is in (for a move, the folder it comes
+   *  from). A scope is a standing grant like the session one, narrowed to a prefix — the
+   *  agent still asks for anything outside it, so a tidy-up of one project can run without
+   *  a dialog per note while the rest of the vault stays reviewed. */
+  function openScopeMenu(e: MouseEvent) {
+    if (!req) return;
+    const path = req.path;
+    const slash = path.lastIndexOf("/");
+    const folder = slash > 0 ? path.slice(0, slash + 1) : null;
+    const name = path.slice(slash + 1);
+    const entries: MenuEntry[] = [{ title: t("permission.scopeTitle") }];
+    if (folder) entries.push({ label: t("permission.scopeFolder", { folder }), action: () => void agent.respond({ kind: "allow_scope", prefix: folder }) });
+    entries.push({ label: t("permission.scopeNote", { name }), action: () => void agent.respond({ kind: "allow_scope", prefix: path }) });
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    contextMenu.openAt(r.left, r.bottom + 4, entries);
+  }
+
   function allow() {
     if (editing && editedContent !== req?.new_content) {
       void agent.respond({ kind: "allow_edited", content: editedContent });
@@ -58,6 +78,16 @@
    *  (CodeMirror) likewise. */
   function onkeydown(e: KeyboardEvent) {
     if (!req) return;
+    // With the scope dropdown open, Esc closes the dropdown alone (the menu's own handler is
+    // beneath this capture and never sees the key); a second Esc denies as before
+    if (contextMenu.pos) {
+      if (e.key === "Escape" || e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === "Escape") contextMenu.close();
+      }
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -141,9 +171,14 @@
           >
             {t("permission.alwaysAllowVault")}
           </button>
-          <button class="btn subtle" onclick={() => agent.respond({ kind: "allow_session" })} title={t("permission.allowSessionHint")}>
-            {t("permission.allowSession")}
-          </button>
+          <span class="split">
+            <button class="btn subtle" onclick={() => agent.respond({ kind: "allow_session" })} title={t("permission.allowSessionHint")}>
+              {t("permission.allowSession")}
+            </button>
+            <button class="btn subtle more" onclick={openScopeMenu} title={t("permission.scopeHint")} aria-label={t("permission.scopeHint")}>
+              <Chevron size={9} />
+            </button>
+          </span>
           <button class="btn primary" bind:this={allowBtn} onclick={allow} title={t("permission.allowHint")}>{t("permission.allow")}</button>
         </footer>
       {/if}
@@ -326,5 +361,23 @@
   }
   .btn.subtle {
     color: var(--fg-muted);
+  }
+  /* "Allow for this session" and its scope dropdown are one split button: the chevron half
+     shares the border and only opens the menu */
+  .split {
+    display: inline-flex;
+  }
+  .split .btn:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .split .more {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: none;
+    padding-left: 6px;
+    padding-right: 6px;
+    display: inline-flex;
+    align-items: center;
   }
 </style>

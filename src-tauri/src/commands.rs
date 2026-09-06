@@ -1103,7 +1103,7 @@ pub fn vault_write_policy_set(state: State<'_, AppState>, policy: String) -> Res
     }
     // A revocation takes effect at once: the cross-turn grant of a running session is withdrawn with it
     if policy == "ask" {
-        state.agent.session_grant.store(false, Ordering::SeqCst);
+        state.agent.session_grant.lock().unwrap().clear();
     }
     with_vault(&state, |v| vault_config_set(v, "write_policy", json!(policy)))
 }

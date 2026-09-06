@@ -22,7 +22,7 @@ use crate::compact;
 use crate::context::{resolve_context_refs, ContextRef};
 use crate::permission::{
     ActionsDecision, ActionsGate, ActionsRequest, PermissionDecision, PermissionGate, PlanDecision, PlanGate, PlanRequest,
-    ReadDecision, ReadGate, ReadRequest, WriteRequest,
+    ReadDecision, ReadGate, ReadRequest, WriteGrants, WriteRequest,
 };
 use crate::context::{inflate_images, scrub_private_refs, strip_images};
 use crate::prompt::{build_system_prompt, compose_user_content, PageContext, TurnContext};
@@ -146,11 +146,11 @@ pub struct RunnerConfig {
     /// stable prefix is the precondition for a KV-cache hit). With None it is
     /// rebuilt every turn (the test path).
     pub system_prompt: Option<String>,
-    /// The cross-turn carrier of "allow writes for this session":
-    /// AllowSession/AllowAlways set it, and the glue layer clears it with the
-    /// session's lifetime. With None the authorisation lives only for the current
+    /// The cross-turn carrier of the session's standing write grants: AllowSession/
+    /// AllowAlways set `all`, AllowScope adds a prefix, and the glue layer clears it
+    /// with the session's lifetime. With None the grants live only for the current
     /// turn (the test path).
-    pub session_allow: Option<Arc<AtomicBool>>,
+    pub session_allow: Option<Arc<Mutex<WriteGrants>>>,
     /// The soft context limit (in prompt tokens): crossing it triggers first-level
     /// compaction, and crossing 1.25× of it when the first level can squeeze out no
     /// more room triggers the second-level summary.
@@ -417,8 +417,11 @@ impl AgentRunner {
         let exempt: Mutex<HashSet<String>> =
             Mutex::new(history.get(turn_start).and_then(|m| m.text()).map(page_context_urls).unwrap_or_default());
 
-        let mut session_allow_writes = config.write_policy == WritePolicy::Allow
-            || config.session_allow.as_ref().is_some_and(|f| f.load(Ordering::Relaxed));
+        let mut grants = if config.write_policy == WritePolicy::Allow {
+            WriteGrants { all: true, prefixes: vec![] }
+        } else {
+            config.session_allow.as_ref().map(|g| g.lock().unwrap().clone()).unwrap_or_default()
+        };
         // stream_options is sent to DeepSeek only (a Zhipu stream carries usage by
         // default, and an unknown parameter risks a 400); the Responses shape
         // ignores the field.
@@ -688,7 +691,7 @@ impl AgentRunner {
                 }
                 let follow = follow_note.as_deref().filter(|_| config.follow_auto);
                 let result = self
-                    .execute_tool(call, &mut session_allow_writes, &config.session_allow, follow, turn_id.as_deref(), config.format.as_ref(), &exempt, &mut plan_rejected, on_event, log)
+                    .execute_tool(call, &mut grants, &config.session_allow, follow, turn_id.as_deref(), config.format.as_ref(), &exempt, &mut plan_rejected, on_event, log)
                     .await;
                 let (ok, output) = match result {
                     Ok(o) => (true, o),
@@ -818,8 +821,8 @@ impl AgentRunner {
     async fn execute_tool(
         &self,
         call: &ToolCall,
-        session_allow_writes: &mut bool,
-        session_flag: &Option<Arc<AtomicBool>>,
+        grants: &mut WriteGrants,
+        session_grants: &Option<Arc<Mutex<WriteGrants>>>,
         follow: Option<&str>,
         turn: Option<&str>,
         config_format: Option<&vemry_core::FormatOptions>,
@@ -900,13 +903,15 @@ impl AgentRunner {
         }
         log.append("write_prepared", prepared);
 
-        // A standing grant answers without a dialog: nobody looked at this diff, so
-        // its blocks stay pending in the editor; a decision made on the dialog is the
-        // review itself (the grant a user issues on it covers the next writes, not this one)
+        // A standing grant (the whole session, or a scope the path falls under) answers
+        // without a dialog: nobody looked at this diff, so its blocks stay pending in the
+        // editor; a decision made on the dialog is the review itself (the grant a user
+        // issues on it covers the next writes, not this one)
         // The followed note takes its local writes without a dialog: the follow is the
         // user's grant for that one note (whole-note overwrites and moves still ask)
-        let via_follow = !*session_allow_writes && follow == Some(write_req.path.as_str()) && is_local_write(name);
-        let automatic = *session_allow_writes || via_follow;
+        let granted = grants.covers(&write_req);
+        let via_follow = !granted && follow == Some(write_req.path.as_str()) && is_local_write(name);
+        let automatic = granted || via_follow;
         let decision = if automatic {
             PermissionDecision::Allow
         } else {
@@ -916,6 +921,11 @@ impl AgentRunner {
         let mut permission = json!({ "path": &write_req.path, "decision": decision_label(&decision) });
         if via_follow {
             permission["via"] = json!("follow");
+        } else if granted && !grants.all {
+            permission["via"] = json!("scope");
+        }
+        if let PermissionDecision::AllowScope { prefix } = &decision {
+            permission["scope"] = json!(prefix);
         }
         // "Edit, then apply": the diff the user actually applied, next to the
         // proposed one in write_prepared — the ledger would otherwise hold the
@@ -931,10 +941,17 @@ impl AgentRunner {
                 return Err(format!("denied by user: {reason}"));
             }
             PermissionDecision::AllowSession | PermissionDecision::AllowAlways => {
-                *session_allow_writes = true;
+                grants.all = true;
                 // Effective across turns: the glue layer holds and clears it with the session's lifetime
-                if let Some(f) = session_flag {
-                    f.store(true, Ordering::Relaxed);
+                if let Some(g) = session_grants {
+                    g.lock().unwrap().all = true;
+                }
+                None
+            }
+            PermissionDecision::AllowScope { prefix } => {
+                grants.add(prefix);
+                if let Some(g) = session_grants {
+                    g.lock().unwrap().add(prefix);
                 }
                 None
             }
@@ -1228,6 +1245,7 @@ fn decision_label(d: &PermissionDecision) -> &'static str {
     match d {
         PermissionDecision::Allow => "allow",
         PermissionDecision::AllowSession => "allow_session",
+        PermissionDecision::AllowScope { .. } => "allow_scope",
         PermissionDecision::AllowAlways => "allow_always",
         PermissionDecision::AllowEdited { .. } => "allow_edited",
         PermissionDecision::Deny { .. } => "deny",
@@ -2431,7 +2449,7 @@ mod tests {
             }
         }
         let f = fixture();
-        let flag = Arc::new(AtomicBool::new(false));
+        let flag = Arc::new(Mutex::new(WriteGrants::default()));
         let config = RunnerConfig { session_allow: Some(flag.clone()), ..Default::default() };
         let transport = Arc::new(MockTransport::new(vec![
             tool_call_chunks("c1", "write_note", r#"{"path": "A.md", "content": "a"}"#),
@@ -2460,11 +2478,74 @@ mod tests {
             .await
             .unwrap();
         }
-        assert!(flag.load(Ordering::Relaxed), "AllowSession must set the shared flag");
+        assert!(flag.lock().unwrap().all, "AllowSession must set the shared grant");
         let events = events.lock().unwrap();
         let perm_count =
             events.iter().filter(|e| matches!(e, AgentEvent::PermissionRequest { .. })).count();
         assert_eq!(perm_count, 1, "second turn must not re-ask");
+    }
+
+    /// AllowScope covers the paths under its prefix alone: a second write under the
+    /// folder lands without a dialog, a write elsewhere asks again — and the scope
+    /// is what the ledger records.
+    #[tokio::test]
+    async fn allow_scope_covers_the_prefix_only() {
+        struct ScopeProjects;
+        #[async_trait]
+        impl PermissionGate for ScopeProjects {
+            async fn request(&self, _req: &WriteRequest) -> PermissionDecision {
+                PermissionDecision::AllowScope { prefix: "projects/".into() }
+            }
+        }
+        let f = fixture();
+        let grants = Arc::new(Mutex::new(WriteGrants::default()));
+        let config = RunnerConfig { session_allow: Some(grants.clone()), ..Default::default() };
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "write_note", r#"{"path": "projects/A.md", "content": "a"}"#),
+            tool_call_chunks("c2", "write_note", r#"{"path": "projects/B.md", "content": "b"}"#),
+            tool_call_chunks("c3", "write_note", r#"{"path": "Other.md", "content": "o"}"#),
+            vec![text_chunk("ok"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport, Arc::new(ScopeProjects));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &config,
+            &mut history,
+            Some("写三篇".into()),
+            None,
+            vec![],
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        let asked: Vec<String> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::PermissionRequest { request } => Some(request.path.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asked, vec!["projects/A.md".to_string(), "Other.md".to_string()], "B.md falls under the grant");
+        assert_eq!(grants.lock().unwrap().prefixes, vec!["projects/".to_string()]);
+        {
+            let guard = f.vault.lock().unwrap();
+            let vault = guard.as_ref().unwrap();
+            for p in ["projects/A.md", "projects/B.md", "Other.md"] {
+                assert!(vault.read_note(&vault.note_id(p).unwrap()).is_ok(), "{p} must be written");
+            }
+        }
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        assert!(jsonl.contains(r#""scope":"projects/""#), "the ledger records the scope");
+        assert!(jsonl.contains(r#""via":"scope""#), "the covered write is marked via scope");
     }
 
     #[tokio::test]

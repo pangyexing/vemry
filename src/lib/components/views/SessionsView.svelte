@@ -299,7 +299,13 @@
             <span class="ts">{hhmmss(e.ts)}</span>
             <div class="write">
               <div class="permission">
-                <span class="badge" class:deny={e.decision === "deny"}>{decisionLabel(e.decision)}{e.via === "follow" ? t("sessionsView.viaFollow") : ""}</span>
+                <span class="badge" class:deny={e.decision === "deny"}
+                  >{e.decision === "allow_scope" && e.scope ? t("sessionsView.allowScope", { scope: e.scope }) : decisionLabel(e.decision)}{e.via === "follow"
+                    ? t("sessionsView.viaFollow")
+                    : e.via === "scope"
+                      ? t("sessionsView.viaScope")
+                      : ""}</span
+                >
                 <span class="path-text">{e.path}</span>
               </div>
               {#if e.applied_diff}

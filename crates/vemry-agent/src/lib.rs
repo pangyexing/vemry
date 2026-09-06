@@ -28,7 +28,7 @@ pub use context::ContextRef;
 pub use responses::ResponsesTransport;
 pub use permission::{
     ActionItem, ActionsDecision, ActionsGate, ActionsRequest, FetchedPage, PermissionDecision, PermissionGate, PlanDecision,
-    PlanGate, PlanRequest, ReadDecision, ReadGate, ReadRequest, WriteRequest,
+    PlanGate, PlanRequest, ReadDecision, ReadGate, ReadRequest, WriteGrants, WriteRequest,
 };
 pub use prompt::{PageContext, TurnContext, PAGE_CONTEXT_MAX_CHARS};
 pub use provider::ProviderConfig;

@@ -138,11 +138,12 @@ pub struct AgentState {
     pub session_meta: Mutex<vemry_agent::session::SessionMetaCache>,
     /// The session-level prompt/web_search/plan_confirm snapshot; it moves with current_session.
     pub session_setup: Mutex<Option<SessionSetup>>,
-    /// The cross-turn carrier of "allow writes for this session" (the runner sets
-    /// it, and it is cleared here with the session).
+    /// The cross-turn carrier of the session's standing write grants — "allow for this
+    /// session", or the scoped grants under a folder or a note (the runner adds to it,
+    /// and it is cleared here with the session).
     /// It used to be a local of run(), where the button said "session" but the grant
     /// really only lived for one turn.
-    pub session_grant: Arc<AtomicBool>,
+    pub session_grant: Arc<Mutex<vemry_agent::WriteGrants>>,
     /// The session's web source table (vemry_agent::sources): the runner settles each
     /// turn's citations into it, `list_sources` reads it, and it is rebuilt from the
     /// session's jsonl wherever the session identity changes — it moves with
@@ -168,7 +169,7 @@ impl AgentState {
     /// may outlive a session.
     pub fn reset_session_scope(&self) {
         self.invalidate_prompt_snapshot();
-        self.session_grant.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.session_grant.lock().unwrap().clear();
         self.read_auto_sources_arc.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -206,7 +207,7 @@ impl Default for AgentState {
             pending: Arc::new(PendingGates::default()),
             session_meta: Mutex::new(Default::default()),
             session_setup: Mutex::new(None),
-            session_grant: Arc::new(AtomicBool::new(false)),
+            session_grant: Arc::new(Mutex::new(vemry_agent::WriteGrants::default())),
             sources: Arc::new(Mutex::new(vec![])),
             follow: Mutex::new(None),
             journal: Arc::new(Mutex::new(vec![])),

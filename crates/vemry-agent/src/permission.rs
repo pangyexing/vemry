@@ -79,11 +79,48 @@ pub enum PermissionDecision {
     Allow,
     /// Allow and stop asking for the rest of this session.
     AllowSession,
+    /// Allow, and stop asking for the rest of this session for writes under
+    /// `prefix` alone — a folder (`projects/x/`, trailing slash) or one note's path.
+    AllowScope { prefix: String },
     /// Allow and persist the policy for this vault.
     AllowAlways,
     Deny { reason: String },
     /// User edited the proposed content before applying (takeover).
     AllowEdited { content: String },
+}
+
+/// The standing write grants of a session — what answers a write request without a
+/// dialog. `all` is "allow for this session"; `prefixes` are the scoped grants (a
+/// folder with its trailing slash, or one note's exact path). A move is covered only
+/// when both of its paths are. The glue layer holds one per session and clears it
+/// with the session; the runner reads it at the start of a turn and adds to it as
+/// the user grants.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WriteGrants {
+    pub all: bool,
+    pub prefixes: Vec<String>,
+}
+
+impl WriteGrants {
+    pub fn covers_path(&self, path: &str) -> bool {
+        self.all || self.prefixes.iter().any(|p| path == p || (p.ends_with('/') && path.starts_with(p.as_str())))
+    }
+
+    pub fn covers(&self, req: &WriteRequest) -> bool {
+        self.covers_path(&req.path) && req.to_path.as_deref().is_none_or(|to| self.covers_path(to))
+    }
+
+    /// Add a scoped grant (a duplicate is not added twice).
+    pub fn add(&mut self, prefix: &str) {
+        if !self.prefixes.iter().any(|p| p == prefix) {
+            self.prefixes.push(prefix.to_string());
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.all = false;
+        self.prefixes.clear();
+    }
 }
 
 #[async_trait]

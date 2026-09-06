@@ -24,7 +24,8 @@ export type SessionEntry =
   /** to: move_note's destination (since v0.9; the lines of every other tool have no such key). */
   | { kind: "write_prepared"; ts: string; tool: string; path: string; diff: string; to?: string }
   /** applied_diff (since v0.9): for "edit, then apply", the diff between the proposed content and what the user actually applied. */
-  | { kind: "permission"; ts: string; path: string; decision: string; applied_diff?: string; via?: string }
+  /** `via`: follow (the working note's local write) or scope (a standing scoped grant covered it); `scope`: the prefix an allow_scope decision granted. */
+  | { kind: "permission"; ts: string; path: string; decision: string; applied_diff?: string; via?: string; scope?: string }
   | { kind: "privacy"; ts: string; tool: string; filtered: number }
   | { kind: "web_search"; ts: string; queries?: string[]; count?: number; links?: { title: string; url: string }[] }
   /** The plan propose_plan raised (id = the tool call id, which the decision line pairs by). */
