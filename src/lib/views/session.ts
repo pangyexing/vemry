@@ -51,6 +51,10 @@ export type SessionEntry =
   | { kind: "read_auto"; ts: string; id: string }
   /** "Undo this turn's writes" ran: how many writes were put back and how many skipped (edited since). */
   | { kind: "undo"; ts: string; turn: string; reverted: number; skipped: number }
+  /** A skill in effect for the turn, written as its text is injected: attached by the user (`/name`) or read by the model (read_skill). */
+  | { kind: "skill"; ts: string; name: string; via: "attached" | "read" }
+  /** The user revoked the session's standing grants (scoped writes, the read consent): a marker Rust reads back, not rendered. */
+  | { kind: "grants_cleared"; ts: string }
   /** The session follows a note (path null = stopped); the last line wins. auto: local writes on it pass the gate without a dialog. */
   | { kind: "follow"; ts: string; path: string | null; auto?: boolean }
   /** The model's step list (update_plan, or the list confirmed at the plan gate); the latest one is the sticky plan card. */

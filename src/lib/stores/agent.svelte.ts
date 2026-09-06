@@ -733,6 +733,7 @@ class AgentStore {
         case "user": {
           finishTurn();
           if (plan && planReconciled(plan)) plan = null; // the same rule as the live turn_started
+          this.activeSkill = null; // likewise: a skill is in effect for one turn
           items.push({
             kind: "user",
             text: e.content,
@@ -844,19 +845,20 @@ class AgentStore {
           break;
         }
         case "plan_decision": {
-          // Search backwards for the plan card with the same id to fill in the decision (the same as filling in a tool_result)
-          for (let i = items.length - 1; i >= turnStart; i--) {
-            const item = items[i];
-            if (item.kind === "plan" && item.id === e.id && item.decision === undefined) {
-              item.decision =
-                e.decision === "approve"
-                  ? { kind: "approve" }
-                  : e.decision === "approve_edited"
-                    ? { kind: "approve_edited", items: e.items ?? [] }
-                    : { kind: "reject", reason: e.reason ?? "" };
-              break;
-            }
+          const card = findCard(items, "plan", e.id, turnStart, (c) => c.decision === undefined);
+          if (card) {
+            card.decision =
+              e.decision === "approve"
+                ? { kind: "approve" }
+                : e.decision === "approve_edited"
+                  ? { kind: "approve_edited", items: e.items ?? [] }
+                  : { kind: "reject", reason: e.reason ?? "" };
           }
+          break;
+        }
+        case "skill": {
+          // The skill in effect, as the live skill_activated event sets it (the user line above cleared it)
+          this.activeSkill = e.name;
           break;
         }
         case "compact": {

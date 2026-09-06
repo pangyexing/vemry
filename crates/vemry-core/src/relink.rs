@@ -32,11 +32,7 @@ impl Vault {
         let to_stem = to.stem().to_string();
         // A bare name resolves through the name table: it is unambiguous only when no
         // other note (the moved one excluded) already answers to the new stem
-        let bare_ok = !self
-            .index()
-            .summaries()
-            .iter()
-            .any(|s| &s.id != from && &s.id != to && s.id.stem().eq_ignore_ascii_case(&to_stem));
+        let bare_ok = !self.index().ids().any(|id| id != from && id != to && id.stem().eq_ignore_ascii_case(&to_stem));
         let mut sources: Vec<NoteId> = self.index().backlinks_of(from);
         if !sources.contains(from) {
             sources.push(from.clone());
@@ -119,7 +115,7 @@ impl Vault {
         }
         let to_path = to.as_str().strip_suffix(".md").unwrap_or(to.as_str()).to_string();
         let to_stem = to.stem().to_string();
-        let bare_ok = !self.index().summaries().iter().any(|s| &s.id != to && s.id.stem().eq_ignore_ascii_case(&to_stem));
+        let bare_ok = !self.index().ids().any(|id| id != to && id.stem().eq_ignore_ascii_case(&to_stem));
         let mut sources: Vec<NoteId> = self.index().backlinks_of(from);
         for extra in [from, to] {
             if !sources.contains(extra) {

@@ -9,6 +9,7 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { toast } from "$lib/stores/toast.svelte";
+import { t } from "$lib/i18n/i18n.svelte";
 
 export type UpdatePhase =
   | "idle"
@@ -24,7 +25,9 @@ class UpdaterStore {
   /** The update dialog is showing. A check the user asked for opens it at once (so the
    *  wait is visible); the silent startup check opens it only on a new version that was
    *  not skipped. Closing it never stops anything — a download sent to the background
-   *  brings the dialog back with its outcome. */
+   *  announces its outcome as a toast, and the dialog comes back through the settings
+   *  page or the check command (never on its own: an Enter typed in the editor must not
+   *  land on a restart button that appeared under the keys). */
   open = $state(false);
   /** The version running now (from tauri.conf, read once at startup). */
   current = $state("");
@@ -139,8 +142,13 @@ class UpdaterStore {
       this.error = String(e);
     }
     // The plugin has no way to abort a download, so "continue in background" only
-    // hides the dialog; the outcome (restart, or the failure) brings it back
-    this.open = true;
+    // hides the dialog; the outcome then arrives as a toast (the dialog itself is
+    // reopened by the user, from the settings page or the check command), while a
+    // dialog left open just moves on to its next phase
+    if (!this.open) {
+      if (this.phase === "ready") toast.push(t("updater.readyBody", { version: this.version }));
+      else toast.push(`${t("updater.installFailedTitle")}: ${this.error}`, "error");
+    }
   }
 
   async restart() {

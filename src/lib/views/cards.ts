@@ -6,6 +6,7 @@
 // contract as tasks.ts: read, validate against the indexed content, rewrite exactly the
 // span, false when stale).
 import type { BlockHit } from "$lib/api";
+import { CALLOUT_HEAD_RE } from "$lib/callout";
 import { setFieldValue, stripAnchor, stripFields } from "$lib/fields";
 import { fieldOfLower } from "./queryrows";
 import { editBlockSpan } from "./blockspan";
@@ -52,9 +53,37 @@ function clean(line: string): string {
   ).trim();
 }
 
-/** The stable identity of a card across a grade: the note plus the question. A span is not
- *  one (writing the schedule lengthens the line and shifts every block below it). */
-export const cardKey = (c: Card) => `${c.hit.note}\n${c.front}`;
+/** The identity of a card within one load: its `^id` anchor when it has one (stable across
+ *  grades), else the note plus the block's byte offset — two cards with the same or an
+ *  empty question stay two cards. An offset key is only good for the hits it was read
+ *  from: a grade rewrites the line and shifts every block below it, so the view reloads
+ *  after each grade and carries its per-card state over by `rekey`. */
+export const cardKey = (c: Card) => (c.hit.block.explicit_id ? `${c.hit.note}\n^${c.hit.block.local_id}` : `${c.hit.note}\n@${c.hit.block.span.start}`);
+
+/** Carry a per-key map over a reload: a key still present keeps its entry; one that vanished
+ *  (an offset key below a rewritten card) moves to the reloaded card with the same note and
+ *  text that no surviving key already names. */
+export function rekey<T>(map: Record<string, T>, before: Card[], after: Card[]): Record<string, T> {
+  const out: Record<string, T> = {};
+  const live = new Set(after.map(cardKey));
+  const moved: [string, T][] = [];
+  for (const [key, v] of Object.entries(map)) {
+    if (live.has(key)) out[key] = v;
+    else moved.push([key, v]);
+  }
+  if (!moved.length) return out;
+  const byKey = new Map(before.map((c) => [cardKey(c), c]));
+  const free = after.filter((c) => !(cardKey(c) in out));
+  for (const [key, v] of moved) {
+    const old = byKey.get(key);
+    if (!old) continue;
+    const i = free.findIndex((c) => c.hit.note === old.hit.note && c.front === old.front && c.back === old.back);
+    if (i < 0) continue;
+    out[cardKey(free[i])] = v;
+    free.splice(i, 1);
+  }
+  return out;
+}
 
 export function parseCard(hit: BlockHit): Card {
   const lines = hit.block.content.split("\n");
@@ -122,9 +151,10 @@ export function schedule(c: Schedule, grade: Grade, today: string): Schedule {
  *  the block's indexed content. null when the slice is not a card callout at all. */
 function calloutContent(slice: string): string | null {
   const lines = slice.split("\n").map((l) => l.replace(/\r$/, ""));
-  const m = /^>\s*\[!([^\]\s]+)\][+-]?(.*)$/.exec(lines[0].trim());
+  const head = lines[0].trim();
+  const m = head.startsWith(">") ? CALLOUT_HEAD_RE.exec(head.slice(1).trimStart()) : null;
   if (!m || m[1].toLowerCase() !== "card") return null;
-  let content = m[2].trim();
+  let content = m[3].trim();
   for (const l of lines.slice(1)) {
     let s = l.trimStart().replace(/^>+/, "");
     if (s.startsWith(" ")) s = s.slice(1);

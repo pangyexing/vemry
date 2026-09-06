@@ -128,8 +128,9 @@ fn default_true() -> bool {
 
 /// The session-scoped consents a reopened session gets back from its jsonl: the
 /// standing read consent (a `read_auto` line) and the write grants given for the
-/// session (`permission` lines decided allow_session / allow_scope). They used to
-/// live in memory only, so coming back to a session — or restarting — asked all
+/// session (`permission` lines decided allow_session / allow_scope, up to the last
+/// `grants_cleared` line — the user revoking them from the settings page). They used
+/// to live in memory only, so coming back to a session — or restarting — asked all
 /// over again while the buttons still said "this session".
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SessionScope {
@@ -163,6 +164,8 @@ pub fn read_session_state(meta_dir: &Path, id: &str) -> SessionState {
                 }
             }
             Some("read_auto") => st.scope.read_auto = true,
+            // The revocation: the grants given before it stay revoked on replay, a later allow line re-arms
+            Some("grants_cleared") => st.scope.grants = Default::default(),
             Some("permission") => match v["decision"].as_str() {
                 Some("allow_session") => st.scope.grants.all = true,
                 Some("allow_scope") => {
@@ -848,5 +851,13 @@ mod tests {
         assert!(scope.grants.all);
         assert_eq!(scope.grants.prefixes, vec!["research/".to_string()]);
         assert_eq!(read_session_state(dir.path(), "20990101-000000.000").scope, SessionScope::default(), "a missing session has no scope");
+        // The revocation holds on replay; the read consent is not a write grant and stays
+        log.append("grants_cleared", json!({}));
+        let scope = read_session_state(dir.path(), &log.id).scope;
+        assert!(!scope.grants.all && scope.grants.prefixes.is_empty(), "{scope:?}");
+        assert!(scope.read_auto);
+        // …and a grant given after it re-arms
+        log.append("permission", json!({ "path": "c.md", "decision": "allow_scope", "scope": "c.md" }));
+        assert_eq!(read_session_state(dir.path(), &log.id).scope.grants.prefixes, vec!["c.md".to_string()]);
     }
 }

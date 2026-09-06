@@ -76,6 +76,16 @@ impl WriteRequest {
             notes: vec![],
         }
     }
+
+    /// Every note the write would touch: the main path, a move's destination, and
+    /// the notes the side writes land in (`rewrite_texts` — a block move's
+    /// destination, the referrers that follow a move). A standing grant covers the
+    /// request only when it covers all of them.
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.path.as_str())
+            .chain(self.to_path.as_deref())
+            .chain(self.rewrite_texts.iter().map(|r| r.path.as_str()))
+    }
 }
 
 /// One note a move rewrites links in, as the dialog shows it.
@@ -124,8 +134,9 @@ pub enum PermissionDecision {
 
 /// The standing write grants of a session — what answers a write request without a
 /// dialog. `all` is "allow for this session"; `prefixes` are the scoped grants (a
-/// folder with its trailing slash, or one note's exact path). A move is covered only
-/// when both of its paths are. The glue layer holds one per session and clears it
+/// folder with its trailing slash, or one note's exact path). A write is covered only
+/// when every note it touches is (`WriteRequest::paths`: a move's two ends, a block
+/// move's destination, the referrers relinked). The glue layer holds one per session and clears it
 /// with the session; the runner reads it at the start of a turn and adds to it as
 /// the user grants.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -140,7 +151,7 @@ impl WriteGrants {
     }
 
     pub fn covers(&self, req: &WriteRequest) -> bool {
-        self.covers_path(&req.path) && req.to_path.as_deref().is_none_or(|to| self.covers_path(to))
+        req.paths().all(|p| self.covers_path(p))
     }
 
     /// Add a scoped grant (a duplicate is not added twice).
@@ -233,7 +244,7 @@ pub struct ActionItem {
     pub source: Option<String>,
     /// Extra fields the card lets the user edit (a scoring's reach / impact /
     /// confidence / effort, say), key → value; written by the model afterwards with
-    /// set_block_field. Kept in the order given.
+    /// set_block_field. Sorted by key (the order the model gave them is not kept).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, String>,
 }
@@ -327,5 +338,28 @@ pub struct DenyReads;
 impl ReadGate for DenyReads {
     async fn request(&self, _req: &ReadRequest) -> ReadDecision {
         ReadDecision::Deny { reason: "no reader available".into() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scoped grant covers a write only when every note it touches is inside the
+    /// scope: the side writes (a block move's destination, a relinked referrer)
+    /// count, not just the main path and a move's destination.
+    #[test]
+    fn scope_grant_covers_every_path_the_write_touches() {
+        let mut grants = WriteGrants::default();
+        grants.add("inbox/");
+        let mut req = WriteRequest::new("r".into(), "move_blocks", "inbox/a.md".into(), WriteKind::Edit, String::new(), String::new());
+        assert!(grants.covers(&req));
+        req.rewrite_texts.push(RewriteText { path: "projects/plan.md".into(), old: "x".into(), new: "y".into() });
+        assert!(!grants.covers(&req), "the destination outside the scope needs a dialog");
+        req.rewrite_texts[0].path = "inbox/b.md".into();
+        assert!(grants.covers(&req));
+        req.to_path = Some("archive/a.md".into());
+        assert!(!grants.covers(&req));
+        assert!(WriteGrants { all: true, prefixes: vec![] }.covers(&req));
     }
 }

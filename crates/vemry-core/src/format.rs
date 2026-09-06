@@ -66,6 +66,24 @@ pub fn format_markdown(text: &str, opts: &FormatOptions) -> String {
     result
 }
 
+/// Format a fragment that lands inside an existing note (an appended section, a
+/// pasted passage): the body rules only. A fragment that happens to open with
+/// `---` is a thematic break or a paragraph, never frontmatter — only a whole
+/// note has one, and `format_markdown` handles that case.
+pub fn format_fragment(text: &str, opts: &FormatOptions) -> String {
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let src = text.replace("\r\n", "\n");
+    let lines: Vec<&str> = src.lines().collect();
+    let mut result = format_body(&lines, opts).trim_end_matches('\n').to_string();
+    if !result.is_empty() {
+        result.push('\n');
+    }
+    if eol == "\r\n" {
+        result = result.replace('\n', "\r\n");
+    }
+    result
+}
+
 /// (the frontmatter block including both fences and its trailing newline, the body)
 fn split_frontmatter(src: &str) -> (Option<&str>, &str) {
     let (_, offset) = crate::parser::extract_frontmatter(src);
@@ -206,10 +224,32 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
                 lower.starts_with("[!private]") || lower.starts_with("[!quote]") || lower.starts_with("[!cite]")
             };
             let mut block = Vec::new();
+            // a fenced code block quoted inside the run is copied verbatim through its
+            // closer (trailing whitespace and bare URLs included), like a fence outside
+            let mut fence: Option<(char, usize)> = None;
             while i < lines.len() && lines[i].trim_start().starts_with('>') {
                 let l = lines[i];
-                block.push(if is_protected { l.to_string() } else { normalise_quote_line(l, opts) });
                 i += 1;
+                if is_protected {
+                    block.push(l.to_string());
+                    continue;
+                }
+                let inner = quote_inner(l);
+                match fence {
+                    Some((ch, len)) => {
+                        block.push(l.to_string());
+                        if is_fence_close(inner, ch, len) {
+                            fence = None;
+                        }
+                    }
+                    None => match parse_fence_open(inner) {
+                        Some((ch, len, _)) => {
+                            fence = Some((ch, len));
+                            block.push(l.to_string());
+                        }
+                        None => block.push(normalise_quote_line(l, opts)),
+                    },
+                }
             }
             items.push((if is_protected { Kind::Verbatim } else { Kind::Quote }, block.join("\n")));
             continue;
@@ -226,7 +266,10 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
             continue;
         }
         if crate::parser::is_thematic_break(trimmed) {
-            items.push((Kind::Rule, trimmed.trim_end().to_string()));
+            // `---` right under a text line is that paragraph's setext underline (a
+            // heading), not a rule: it stays glued to the line above
+            let underline = trimmed.trim_end().chars().all(|c| c == '-') && items.last().is_some_and(|(k, _)| *k == Kind::Text);
+            items.push((if underline { Kind::Text } else { Kind::Rule }, trimmed.trim_end().to_string()));
             i += 1;
             continue;
         }
@@ -259,7 +302,9 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
     // Pass 2: emit with the blank-line rules. Items of one list pack tight whatever
     // the source had between them; two text lines are one paragraph unless the
     // source separated them; a list item's continuation keeps a blank the author put
-    // there (it is a paragraph inside the item); everything else gets exactly one.
+    // there (it is a paragraph inside the item); an unindented text line right under
+    // a list item or a quote line is its lazy continuation and stays glued to it;
+    // everything else gets exactly one.
     let mut out = String::new();
     let mut prev: Option<Kind> = None;
     let mut blank_between = false;
@@ -271,9 +316,15 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
         if let Some(p) = prev {
             let tight = match (p, *kind) {
                 (Kind::List, Kind::List) | (Kind::ListCont, Kind::List) => true,
-                (Kind::List, Kind::ListCont) | (Kind::ListCont, Kind::ListCont) | (Kind::Text, Kind::Text) => !blank_between,
+                (Kind::List | Kind::ListCont | Kind::Quote | Kind::Text, Kind::Text) | (Kind::List | Kind::ListCont, Kind::ListCont) => !blank_between,
                 _ => false,
             };
+            // a hard break's two spaces mean something only when the paragraph goes on
+            // in the next line; at a block boundary they are trailing whitespace
+            let continues = tight && matches!(*kind, Kind::Text | Kind::ListCont);
+            if !continues && p != Kind::Verbatim {
+                out.truncate(out.trim_end_matches(' ').len());
+            }
             out.push('\n');
             if !tight {
                 out.push('\n');
@@ -284,6 +335,9 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
         blank_between = false;
     }
     if !out.is_empty() {
+        if prev != Some(Kind::Verbatim) {
+            out.truncate(out.trim_end_matches(' ').len());
+        }
         out.push('\n');
     }
     out
@@ -337,10 +391,14 @@ fn normalise_list_line(line: &str, opts: &FormatOptions) -> String {
     format!("{indent_s}{marker} {rest}")
 }
 
+/// The text after a quote line's `>` marker and the whitespace that follows it.
+fn quote_inner(line: &str) -> &str {
+    line.trim_start()[1..].trim_start()
+}
+
 fn normalise_quote_line(line: &str, opts: &FormatOptions) -> String {
     let indent = line.len() - line.trim_start().len();
-    let trimmed = &line[indent..];
-    let after = trimmed[1..].trim_start();
+    let after = quote_inner(line);
     // a callout head: lowercase the type
     let after = if let Some(rest) = after.strip_prefix("[!") {
         match rest.find(']') {
@@ -358,11 +416,13 @@ fn normalise_quote_line(line: &str, opts: &FormatOptions) -> String {
     }
 }
 
-/// Trailing whitespace off, except a hard break's exactly two spaces.
+/// Trailing whitespace off; a hard break (two or more trailing spaces after some
+/// text) is kept as exactly two.
 fn strip_trailing_ws(s: &str) -> String {
     let trimmed = s.trim_end_matches([' ', '\t']);
-    if s.len() - trimmed.len() == 2 && s.ends_with("  ") && !trimmed.is_empty() {
-        return s.to_string();
+    let spaces = s.len() - s.trim_end_matches(' ').len();
+    if spaces >= 2 && !trimmed.is_empty() {
+        return format!("{trimmed}  ");
     }
     trimmed.to_string()
 }
@@ -460,7 +520,7 @@ fn wrap_fragment_urls(s: &str) -> String {
         }
         let prev = s[..start].chars().next_back();
         let end = rest.find(|c: char| c.is_whitespace() || !(c.is_ascii_graphic())).unwrap_or(rest.len());
-        let url = rest[..end].trim_end_matches([')', '.', ',', ';', ':', '!', '?', '"', '\'']);
+        let url = trim_url_end(&rest[..end]);
         let bare = !matches!(prev, Some('(' | '[' | '<' | '"' | '\''));
         out.push_str(&s[pos..start]);
         if bare && url.contains('#') {
@@ -474,6 +534,26 @@ fn wrap_fragment_urls(s: &str) -> String {
     }
     out.push_str(&s[pos..]);
     out
+}
+
+/// Trailing punctuation off the end of a bare URL. A `)` stays while the URL still
+/// holds an unmatched `(` — a disambiguation path like `Rust#Foo_(bar)` — and only
+/// the `)` that closes prose around the URL is dropped.
+fn trim_url_end(url: &str) -> &str {
+    let mut end = url.len();
+    while let Some(last) = url[..end].chars().next_back() {
+        if !matches!(last, ')' | '.' | ',' | ';' | ':' | '!' | '?' | '"' | '\'') {
+            break;
+        }
+        if last == ')' {
+            let prefix = &url[..end - 1];
+            if prefix.matches('(').count() > prefix.matches(')').count() {
+                break;
+            }
+        }
+        end -= 1;
+    }
+    &url[..end]
 }
 
 fn is_cjk(c: char) -> bool {
@@ -615,7 +695,7 @@ mod tests {
 
     #[test]
     fn markers_checkbox_callout_anchor_and_fragment_url() {
-        assert_eq!(fmt("#   Heading\n- [X] done  ^k1\n> [!Note] hi\n> body\nsee https://a.io/p#frag now"), "# Heading\n\n- [x] done ^k1\n\n> [!note] hi\n> body\n\nsee <https://a.io/p#frag> now\n");
+        assert_eq!(fmt("#   Heading\n- [X] done  ^k1\n> [!Note] hi\n> body\n\nsee https://a.io/p#frag now"), "# Heading\n\n- [x] done ^k1\n\n> [!note] hi\n> body\n\nsee <https://a.io/p#frag> now\n");
         // `#word` at the start of a line is a tag, not a heading: left alone
         assert_eq!(fmt("#tag line"), "#tag line\n");
         // already wrapped or inside a link: untouched
@@ -661,6 +741,46 @@ mod tests {
         assert_eq!(format_markdown(src, &opts), "中文 abc 和 123,好。\n");
         // code spans and links are never touched by the opt-ins
         assert_eq!(format_markdown("中文`a中`和[[链接A]]", &opts), "中文`a中`和[[链接A]]\n");
+    }
+
+    #[test]
+    fn a_fence_inside_a_quote_is_verbatim() {
+        let src = "> [!tip]\n> ```sh\n> curl https://api.example.com/v1#anchor  \n> ```\n";
+        assert_eq!(fmt(src), src);
+        // the run after the closer is normalised again
+        assert_eq!(fmt("> ```\n> x  \n> ```\n> tail   "), "> ```\n> x  \n> ```\n> tail\n");
+    }
+
+    #[test]
+    fn three_trailing_spaces_are_still_a_hard_break() {
+        assert_eq!(fmt("line one   \nline two"), "line one  \nline two\n");
+        assert_eq!(fmt("- item   \n  cont"), "- item  \n  cont\n");
+        // at the end of a block the spaces are trailing whitespace, not a break
+        assert_eq!(fmt("- item    \n- next"), "- item\n- next\n");
+        assert_eq!(fmt("last line  "), "last line\n");
+        assert_eq!(fmt("# Title  \n\ntext"), "# Title\n\ntext\n");
+        // whitespace alone is never a break
+        assert_eq!(fmt("   \nx"), "x\n");
+    }
+
+    #[test]
+    fn lazy_continuations_and_setext_underlines_stay_glued() {
+        assert_eq!(fmt("- item\nstill the item\n"), "- item\nstill the item\n");
+        assert_eq!(fmt("> quoted\nlazy\n"), "> quoted\nlazy\n");
+        assert_eq!(fmt("Title\n---\n"), "Title\n---\n");
+        assert_eq!(fmt("Title\n===\n"), "Title\n===\n");
+        // a rule after a blank, or one that is not dashes only, is a thematic break
+        assert_eq!(fmt("para\n\n---\n\npara"), "para\n\n---\n\npara\n");
+        assert_eq!(fmt("para\n***\n"), "para\n\n***\n");
+        assert_eq!(fmt("- a\n- b"), "- a\n- b\n");
+        // a blank still separates a list from the paragraph after it
+        assert_eq!(fmt("- a\n\nafter"), "- a\n\nafter\n");
+    }
+
+    #[test]
+    fn a_fragment_url_keeps_its_balanced_parenthesis() {
+        assert_eq!(fmt("see https://en.wikipedia.org/wiki/Rust#Foo_(bar) now"), "see <https://en.wikipedia.org/wiki/Rust#Foo_(bar)> now\n");
+        assert_eq!(fmt("(see https://a.io/p#x)"), "(see <https://a.io/p#x>)\n");
     }
 
     #[test]

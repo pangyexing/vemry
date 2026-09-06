@@ -22,10 +22,18 @@
   } from "$lib/views/session";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
+  import { skillTitleByName } from "$lib/skills";
+  import type { ActionItem } from "$lib/api";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import PrivacyIcon from "../PrivacyIcon.svelte";
 
   let sessions = $state<SessionMeta[]>([]);
+
+  /** One proposed action item on a line, the way the live card prints a decided row. */
+  function actionLine(a: ActionItem): string {
+    const fields = a.fields ? Object.entries(a.fields).map(([k, v]) => ` · ${k} ${v}`).join("") : "";
+    return `${a.text}${a.owner ? ` · ${a.owner}` : ""}${a.due ? ` · ${a.due}` : ""}${fields}${a.target ? ` → ${a.target}` : ""}`;
+  }
   let query = $state("");
   let selected = $state<string | null>(null);
   let entries = $state<SessionEntry[]>([]);
@@ -421,12 +429,90 @@
                     : t("sessionsView.markFork", { from: e.from, turn: e.before_turn + 1 })}
             </div>
           </div>
-        {:else if e.kind === "title"}
-          <!-- A rename's title override line: pure metadata, not rendered in the replay (an explicit branch pins the intent) -->
+        {:else if e.kind === "actions"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="write">
+              <div class="write-head"><span class="tool">{t("sessionsView.actions", { n: e.items.length })}</span></div>
+              {#each e.items as a, j (j)}
+                <div class="ws-link"><span class="ws-n">{j + 1}</span><span class="ws-title">{actionLine(a)}</span></div>
+              {/each}
+            </div>
+          </div>
+        {:else if e.kind === "actions_decision"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="write">
+              <div class="permission">
+                <span class="badge" class:deny={e.decision === "reject"}>
+                  {e.decision === "approve" ? t("sessionsView.actionsDecision.approve", { n: e.items?.length ?? 0 }) : t("sessionsView.actionsDecision.reject")}
+                </span>
+                {#if e.reason}<span class="path-text">{e.reason}</span>{/if}
+              </div>
+              <!-- The kept list as the user edited it (the proposal above is what the model asked for) -->
+              {#each e.items ?? [] as a, j (j)}
+                <div class="ws-link"><span class="ws-n">{j + 1}</span><span class="ws-title">{actionLine(a)}</span></div>
+              {/each}
+            </div>
+          </div>
+        {:else if e.kind === "read"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="write">
+              <div class="write-head"><span class="tool">{t("sessionsView.read", { n: e.urls.length })}</span></div>
+              {#each e.urls as u, j (j)}
+                <div class="ws-link" title={u}><span class="ws-n">{j + 1}</span><span class="ws-title">{u}</span></div>
+              {/each}
+            </div>
+          </div>
+        {:else if e.kind === "read_decision"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="write">
+              <div class="permission">
+                <span class="badge" class:deny={e.decision === "deny"}>
+                  {e.decision === "pages"
+                    ? `${t("sessionsView.readDecision.pages", { n: e.urls?.length ?? 0 })}${e.auto ? t("sessionsView.readAuto") : ""}`
+                    : t("sessionsView.readDecision.deny")}
+                </span>
+                {#if e.reason}<span class="path-text">{e.reason}</span>{/if}
+              </div>
+              {#if e.failed?.length}
+                <span class="faint">{t("sessionsView.readFailed", { n: e.failed.length })}</span>
+                {#each e.failed as u, j (j)}
+                  <div class="ws-link" title={u}><span class="ws-n">✕</span><span class="ws-title">{u}</span></div>
+                {/each}
+              {/if}
+            </div>
+          </div>
+        {:else if e.kind === "read_auto"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="privacy">{t("sessionsView.readAutoOn")}</div>
+          </div>
+        {:else if e.kind === "undo"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="privacy">{t("sessionsView.undo", { n: e.reverted, skipped: e.skipped })}</div>
+          </div>
+        {:else if e.kind === "skill"}
+          <div class="row">
+            <span class="ts">{hhmmss(e.ts)}</span>
+            <div class="privacy">{t("sessionsView.skill", { name: skillTitleByName(e.name) })}{t(e.via === "read" ? "sessionsView.skillRead" : "sessionsView.skillAttached")}</div>
+          </div>
+        {:else if e.kind === "title" || e.kind === "grants_cleared"}
+          <!-- Pure metadata, not rendered in the replay (an explicit branch pins the intent): a
+               rename's title override line; the marker Rust reads back when the session's grants were revoked -->
         {:else if e.kind === "raw"}
           <div class="row">
             <span class="ts"></span>
             <pre class="raw">{e.text}</pre>
+          </div>
+        {:else}
+          <!-- A kind this build does not know (a log written by a newer version): shown as its line rather than dropped -->
+          <div class="row">
+            <span class="ts"></span>
+            <pre class="raw">{JSON.stringify(e)}</pre>
           </div>
         {/if}
       {:else}

@@ -429,7 +429,7 @@ impl AgentRunner {
         // …plus every page the read gate fetches during the turn (added as they come)
         let web: Mutex<TurnWeb> = Mutex::new(TurnWeb {
             exempt: history.get(turn_start).and_then(|m| m.text()).map(crate::context::page_context_urls).unwrap_or_default(),
-            read: vec![],
+            ..Default::default()
         });
 
         let mut grants = if config.write_policy == WritePolicy::Allow {
@@ -445,10 +445,6 @@ impl AgentRunner {
         // the glue layer: config is None unless the endpoint is DeepSeek)
         let (reasoning_effort, thinking) = effort_fields(config.reasoning_effort.as_deref());
 
-        // Whether a web search ran in this turn, and the structured results it returned
-        // (both feed the end-of-turn source settlement; the closure below sets them)
-        let searched = AtomicBool::new(false);
-        let web_results: Mutex<Vec<WebSearchResult>> = Mutex::new(Vec::new());
         let mut iteration = 0usize;
         let mut transient_retries = 0u32;
         let mut overflow_l1_done = false;
@@ -537,25 +533,28 @@ impl AgentRunner {
                 let extra_ref = &mut extra_items;
                 let usage_ref = &mut usage_val;
                 let produced_ref = &mut produced;
-                let searched_ref = &searched;
-                let web_results_ref = &web_results;
+                // The stream and the tool execution never overlap, so the per-chunk
+                // lock on the turn's web state is uncontended
+                let web_ref = &web;
                 let mut on_chunk = move |chunk: crate::types::StreamChunk| -> bool {
                     if cancel.load(Ordering::Relaxed) {
                         return false;
                     }
                     if chunk.web_search_status == Some(WebSearchStatus::Searching) {
-                        searched_ref.store(true, Ordering::Relaxed);
+                        web_ref.lock().unwrap().searched = true;
                         on_event(AgentEvent::WebSearching);
                     }
                     if let Some(queries) = &chunk.web_search_queries {
-                        searched_ref.store(true, Ordering::Relaxed);
+                        web_ref.lock().unwrap().searched = true;
                         log.append("web_search", json!({ "queries": queries }));
                         on_event(AgentEvent::WebSearchQueries { queries: queries.clone() });
                     }
                     if let Some(results) = &chunk.web_search {
                         if !results.is_empty() {
-                            searched_ref.store(true, Ordering::Relaxed);
-                            web_results_ref.lock().unwrap().extend(results.iter().cloned());
+                            let mut w = web_ref.lock().unwrap();
+                            w.searched = true;
+                            w.results.extend(results.iter().cloned());
+                            drop(w);
                             // The session log lives in the vault: only title/link is
                             // recorded, never the full snippet
                             let links: Vec<Value> = results
@@ -663,15 +662,11 @@ impl AgentRunner {
             history.push(assistant);
 
             if tool_calls.is_empty() {
-                self.settle_sources(
-                    &history[turn_start..],
-                    turn_id.as_deref(),
-                    searched.load(Ordering::Relaxed),
-                    &web_results.lock().unwrap(),
-                    &web.lock().unwrap(),
-                    on_event,
-                    log,
-                );
+                // The span is taken afresh: a summary in this turn (do_summary) rebuilt
+                // the history as [summary, envelope, ...], so the index from the head of
+                // the turn no longer points at the envelope (and can lie past the end)
+                let span = compact::last_user_index(history).unwrap_or(0);
+                self.settle_sources(&history[span..], turn_id.as_deref(), &web.lock().unwrap(), on_event, log);
                 on_event(AgentEvent::TurnFinished {
                     truncated: finish_reason.as_deref() == Some("length"),
                 });
@@ -988,7 +983,7 @@ impl AgentRunner {
         let vault = guard.as_mut().ok_or("no vault open")?;
         // What the write will mean to the index, judged before it lands (created or
         // modified; a move removes one path and adds another)
-        let events: Vec<vemry_core::VaultEvent> = match (&write_req.to_path, vault.note_id(&write_req.path)) {
+        let mut events: Vec<vemry_core::VaultEvent> = match (&write_req.to_path, vault.note_id(&write_req.path)) {
             // A file move is not a note event (the glue layer's IndexReady at the end of the turn refreshes the tree)
             _ if write_req.tool == "move_file" => vec![],
             (Some(to), Ok(from)) => match vault.note_id(to) {
@@ -1007,7 +1002,12 @@ impl AgentRunner {
         };
         // What the write replaces, for the journal (a move records its path pair and rewrites)
         let previous = if write_req.to_path.is_some() { None } else { undo::previous_text(vault, &write_req.path) };
-        let text = execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id), !automatic)?;
+        let outcome = execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id), !automatic)?;
+        // The side writes landed too (a block move's destination, the referrers
+        // relinked), and the watcher swallows them as the agent's own: without an
+        // event of their own an open buffer of such a note stays stale and its next
+        // autosave writes the old text back
+        events.extend(outcome.rewritten.into_iter().map(|id| vemry_core::VaultEvent::NoteModified { id }));
         undo::record(
             &mut self.journal.lock().unwrap(),
             WriteRecord {
@@ -1028,7 +1028,7 @@ impl AgentRunner {
             on_event(AgentEvent::VaultChanged { events });
         }
         on_event(AgentEvent::WriteLanded { turn: turn.map(String::from) });
-        Ok(text)
+        Ok(outcome.message)
     }
 
     /// propose_plan: record the plan line → emit the event → suspend awaiting the
@@ -1206,19 +1206,16 @@ impl AgentRunner {
     /// search results) are settled into the session's source table, and the turn's
     /// list — each entry with its verification — goes to the ledger and the UI. A
     /// turn that cites nothing records nothing.
-    #[allow(clippy::too_many_arguments)]
     fn settle_sources(
         &self,
         turn: &[ChatMessage],
         turn_id: Option<&str>,
-        searched: bool,
-        web_results: &[WebSearchResult],
         web: &TurnWeb,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
     ) {
         let mut cites: Vec<sources::Citation> = Vec::new();
-        for r in web_results.iter().filter(|r| !r.url.is_empty()) {
+        for r in web.results.iter().filter(|r| !r.url.is_empty()) {
             sources::push_citation(&mut cites, sources::Citation { title: r.title.clone(), url: r.url.clone() });
         }
         // The pages the read gate fetched come with their titles, ahead of the answer's
@@ -1236,7 +1233,7 @@ impl AgentRunner {
         }
         let items: Vec<Source> = {
             let mut table = self.sources.lock().unwrap();
-            sources::merge_turn(&mut table, turn_id, &cites, searched, &web.exempt);
+            sources::merge_turn(&mut table, turn_id, &cites, web.searched, &web.exempt);
             cites.iter().filter_map(|c| table.iter().find(|s| s.url == c.url).cloned()).collect()
         };
         log.append("sources", json!({ "turn": turn_id, "items": &items }));
@@ -1244,12 +1241,16 @@ impl AgentRunner {
     }
 }
 
-/// What a turn learns about the web on its own: the URLs verified without a search
-/// (the attached page, every page the read gate fetched) and the fetched pages as
-/// citations — a page the agent read joins the session's source table with its title
-/// whether or not the answer cites it, since the deliverable may live in a note.
+/// What a turn learns about the web: whether a web search ran and the structured
+/// results it returned, the URLs verified without a search (the attached page, every
+/// page the read gate fetched) and the fetched pages as citations — a page the agent
+/// read joins the session's source table with its title whether or not the answer
+/// cites it, since the deliverable may live in a note. All of it feeds the
+/// end-of-turn source settlement.
 #[derive(Default)]
 struct TurnWeb {
+    searched: bool,
+    results: Vec<WebSearchResult>,
     exempt: HashSet<String>,
     read: Vec<sources::Citation>,
 }
@@ -1804,6 +1805,43 @@ mod tests {
         let first_tool = history.iter().find(|m| m.role == "tool").unwrap();
         assert!(first_tool.text().unwrap().starts_with(compact::COMPACTED_MARK));
         assert_eq!(history.last().unwrap().text(), Some("压缩后成功"));
+    }
+
+    /// A summary inside the turn rebuilds the history as [summary, envelope, ...]:
+    /// the end-of-turn source settlement must take the turn's span afresh rather
+    /// than index with the position the envelope had at the head of the turn.
+    #[tokio::test]
+    async fn summary_mid_turn_does_not_break_the_settlement_span() {
+        let f = fixture();
+        // A pre-history with nothing to compact at level 1 (no tool results), so the
+        // overflow goes straight to the summary; the envelope lands at index 5
+        let mut history = vec![
+            ChatMessage::user("first question"),
+            ChatMessage::assistant(Some("first answer".into()), None),
+            ChatMessage::user("second question"),
+            ChatMessage::assistant(Some("second answer".into()), None),
+            ChatMessage::user("third question"),
+            ChatMessage::assistant(Some("third answer".into()), None),
+        ];
+        let transport = Arc::new(FailNTransport {
+            remaining: Mutex::new(1),
+            make_err: || AgentError::Status {
+                code: 400,
+                message: "HTTP 400: This model's maximum context length is 131072 tokens".into(),
+            },
+            inner: MockTransport::new(vec![
+                // the summary call, then the retried turn citing a source
+                vec![text_chunk("the summary"), finish_chunk("stop")],
+                vec![text_chunk("see [x](https://x.io/a)"), finish_chunk("stop")],
+            ]),
+        });
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let (result, events) = run_turn(&r, &f, &mut history, "and now?").await;
+        result.unwrap();
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { level: 2 })));
+        // [summary, envelope, assistant]: the settlement found the answer's citation
+        assert_eq!(history.len(), 3, "{history:?}");
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::SourcesUpdated { items, .. } if items.len() == 1 && items[0].url == "https://x.io/a")));
     }
 
     #[tokio::test]

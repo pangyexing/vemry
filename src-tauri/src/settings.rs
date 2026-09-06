@@ -142,10 +142,33 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// The formatter's opt-ins as configured (the on/off switches are read where the
-    /// formatter is called: agent writes, clips, the editor command).
+    /// The formatter's opt-ins as configured. The editor's "format note" command
+    /// uses these directly (it runs at the user's explicit request, with no switch);
+    /// the two automatic producers ask `clip_format` / `agent_format`, which fold
+    /// their on/off switch in.
     pub fn format_options(&self) -> vemry_core::FormatOptions {
         vemry_core::FormatOptions { cjk_spacing: self.format_cjk_spacing, punctuation: self.format_punctuation }
+    }
+
+    /// The formatter for machine-composed clip text (a clipped page, a rich-text
+    /// paste): the options when `format_clips` is on, `None` when it is off.
+    pub fn clip_format(&self) -> Option<vemry_core::FormatOptions> {
+        self.format_clips.then(|| self.format_options())
+    }
+
+    /// The formatter for the agent's writes: the options when `format_agent_writes`
+    /// is on, `None` when it is off.
+    pub fn agent_format(&self) -> Option<vemry_core::FormatOptions> {
+        self.format_agent_writes.then(|| self.format_options())
+    }
+}
+
+/// `raw` run through the formatter when there is one, `raw` itself when the
+/// switch behind it is off — the one spelling of "format if the setting says so".
+pub fn format_or(raw: &str, options: Option<vemry_core::FormatOptions>) -> std::borrow::Cow<'_, str> {
+    match options {
+        Some(o) => std::borrow::Cow::Owned(vemry_core::format_markdown(raw, &o)),
+        None => std::borrow::Cow::Borrowed(raw),
     }
 }
 

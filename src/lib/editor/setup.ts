@@ -153,6 +153,13 @@ export function isFileLikePaste(dt: DataTransfer | null): boolean {
   );
 }
 
+/** Clipboard HTML that is code rather than prose: a `<pre>`, a preformatted white-space
+ *  rule, or a monospace font — the shape code editors put on the clipboard (per-line div
+ *  blocks with non-breaking-space indentation and a colour span per token). Converting
+ *  that to Markdown yields NBSP-indented lines with a blank line between each; the plain
+ *  text is the code itself, so the native paste is the right one. */
+const CODE_HTML_RE = /<pre[\s>]|white-space:\s*pre|font-family:[^;"']*\b(?:mono|courier|consolas|menlo|monaco)/i;
+
 function filePaste(handler?: (files: File[]) => Promise<string | null>, htmlHandler?: (html: string, plain: string) => Promise<string | null>): Extension {
   if (!handler && !htmlHandler) return [];
   return EditorView.domEventHandlers({
@@ -161,16 +168,18 @@ function filePaste(handler?: (files: File[]) => Promise<string | null>, htmlHand
       if (!dt) return false;
       if (!isFileLikePaste(dt)) {
         // Rich text: the HTML fragment is only readable during dispatch, so it is taken here
-        // and converted asynchronously; the plain text is the fallback when nothing converts
+        // and converted asynchronously. The decision to take over the paste has to be made
+        // now, before the conversion: when nothing converts, the plain text is inserted the
+        // way the native paste would have (the same user event, so undo and the input
+        // handlers see a paste)
         const html = dt.getData("text/html");
         const plain = dt.getData("text/plain");
-        if (!htmlHandler || !html || !plain.trim()) return false;
+        if (!htmlHandler || !html || !plain.trim() || CODE_HTML_RE.test(html)) return false;
         event.preventDefault();
         void htmlHandler(html, plain).then((md) => {
           const insert = md ?? plain;
           if (!insert) return;
-          const { from, to } = view.state.selection.main;
-          view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length } });
+          view.dispatch(view.state.replaceSelection(insert), { userEvent: "input.paste", scrollIntoView: true });
         });
         return true;
       }

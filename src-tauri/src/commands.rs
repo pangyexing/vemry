@@ -408,18 +408,16 @@ pub struct Scaffolded {
     pub created: bool,
 }
 
-/// Write `content` to `path` unless a file is already there, creating the parent
-/// directory on demand (a meta directory is created by the write paths, never by
-/// merely opening a vault — see `Vault::meta_dir`). Returns whether it wrote.
-fn write_if_absent(path: &std::path::Path, content: &str) -> Result<bool, String> {
-    if path.exists() {
-        return Ok(false);
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(path, content).map_err(|e| e.to_string())?;
-    Ok(true)
+/// A scaffold's write: the meta file at vault-relative `rel` (`.vemry/types/*.md`,
+/// `.vemry/skills/*.md`) is written unless one is already there. It goes through
+/// `Vault::write_meta_if_absent` — nothing but the vault writes under `.vemry/`, and
+/// the directory is created by that write, never by merely opening a vault (see
+/// `Vault::meta_dir`). Returns whether it wrote.
+fn scaffold_meta(state: &State<'_, AppState>, rel: &str, content: &str) -> Result<bool, String> {
+    with_vault_mut(state, |v| {
+        let id = v.note_id(rel).map_err(crate::i18n::err)?;
+        v.write_meta_if_absent(&id, content).map_err(crate::i18n::err)
+    })
 }
 
 /// Open-or-create for "block type…": the type file for `name`
@@ -437,12 +435,12 @@ pub fn type_create(app: AppHandle, state: State<'_, AppState>, name: String) -> 
     let stem = vemry_core::sanitize_filename(name);
     let content =
         if stem.eq_ignore_ascii_case("book") { vemry_core::BOOK_TYPE_TEMPLATE.to_string() } else { vemry_core::type_skeleton(name) };
-    let dir = with_vault(&state, |v| Ok(v.root().join(vemry_core::vault::TYPES_DIR)))?;
-    let created = write_if_absent(&dir.join(format!("{stem}.md")), &content)?;
+    let rel = format!("{}/{stem}.md", vemry_core::vault::TYPES_DIR);
+    let created = scaffold_meta(&state, &rel, &content)?;
     if created {
         broadcast(&app, &VaultEvent::TypesChanged);
     }
-    Ok(Scaffolded { path: format!("{}/{stem}.md", vemry_core::vault::TYPES_DIR), created })
+    Ok(Scaffolded { path: rel, created })
 }
 
 /// The "block type…" row's disable/enable: the file's `disabled:` line is rewritten
@@ -637,11 +635,7 @@ pub fn html_to_markdown(app: AppHandle, html: String) -> String {
         return String::new();
     }
     let settings: Settings = settings::load(&app);
-    if settings.format_clips {
-        vemry_core::format_markdown(&md, &settings.format_options())
-    } else {
-        md
-    }
+    settings::format_or(&md, settings.clip_format()).into_owned()
 }
 
 #[tauri::command]
@@ -1052,12 +1046,11 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
 }
 
 /// Read the whole object of .vemry/config.json (missing or broken JSON = None).
-/// Reading and writing share this one parse point: write_policy and
+/// Reading and writing share this one parse point — `skills::read_vault_config`,
+/// which the prompt side reads `skills_disabled` through: write_policy and
 /// skills_disabled live in the same file.
 fn vault_config_read(vault: &Vault) -> Option<serde_json::Value> {
-    let dir = vault.meta_dir();
-    let s = std::fs::read_to_string(dir.join("config.json")).ok()?;
-    serde_json::from_str(&s).ok()
+    vemry_agent::skills::read_vault_config(&vault.meta_dir())
 }
 
 /// Read one key from .vemry/config.json.
@@ -1110,9 +1103,13 @@ pub fn vault_write_policy_set(state: State<'_, AppState>, policy: String) -> Res
     if policy != "allow" && policy != "ask" {
         return Err(format!("unknown policy: {policy}"));
     }
-    // A revocation takes effect at once: the cross-turn grant of a running session is withdrawn with it
+    // A revocation takes effect at once: the cross-turn grant of a running session is
+    // withdrawn with it, and the session's ledger gets a `grants_cleared` line so the
+    // replay (a switch-and-back, the Resume button) does not rebuild the grants out
+    // of the earlier allow lines
     if policy == "ask" {
         state.agent.session_grant.lock().unwrap().clear();
+        append_session_line(&state, "grants_cleared", json!({}))?;
     }
     with_vault(&state, |v| vault_config_set(v, "write_policy", json!(policy)))
 }
@@ -1332,7 +1329,7 @@ async fn run_agent_turn(
     let config = RunnerConfig {
         max_iterations: 25,
         write_policy,
-        format: settings.format_agent_writes.then(|| settings.format_options()),
+        format: settings.agent_format(),
         web_search: use_web_search,
         system_prompt: Some(system_snapshot),
         session_allow: Some(Arc::clone(&state.agent.session_grant)),
@@ -1482,7 +1479,10 @@ pub fn agent_plan_respond(
 /// text back when they still hold what the write left, created notes go to the
 /// trash, moves move back, rewrites are restored; anything edited since is skipped.
 /// Refused while the agent runs (the journal is being appended to). An `undo` marker
-/// goes into the jsonl (counts only, never the texts).
+/// goes into the jsonl (counts only, never the texts). Every note put back is
+/// announced with its own vault event: the watcher swallows the undo's writes as the
+/// app's own, and IndexReady alone never reloads an open buffer — which would keep
+/// the agent's text and autosave it straight back.
 #[tauri::command]
 pub fn agent_undo_turn(app: AppHandle, state: State<'_, AppState>, turn: String) -> Result<vemry_agent::UndoReport, String> {
     if state.agent.running.load(Ordering::SeqCst) {
@@ -1495,6 +1495,9 @@ pub fn agent_undo_turn(app: AppHandle, state: State<'_, AppState>, turn: String)
         vemry_agent::undo::undo_turn(vault, &mut journal, &turn)
     };
     append_session_line(&state, "undo", json!({ "turn": &turn, "reverted": report.reverted, "skipped": report.skipped }))?;
+    for change in &report.changes {
+        broadcast(&app, &change.event());
+    }
     broadcast(&app, &VaultEvent::IndexReady {
         note_count: state.vault.lock().unwrap().as_ref().map(|v| v.index().note_count()).unwrap_or(0),
     });
@@ -1529,7 +1532,9 @@ pub fn agent_actions_respond(
 /// (the model is told which note to work in) but asks for every write again. Appended
 /// to the current session's jsonl as a `follow` line (the last one wins on replay); a
 /// session that has not sent yet gets the line when its ledger is created. Allowed
-/// while the agent runs: the next write reads the state at gate time.
+/// while the agent runs, but the running turn keeps the follow it started with (the
+/// runner snapshots it into its config at the head of the turn): a change made
+/// mid-turn applies from the next turn.
 #[tauri::command]
 pub fn agent_follow_set(state: State<'_, AppState>, path: Option<String>, auto: bool) -> Result<(), String> {
     let path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
@@ -1703,12 +1708,12 @@ pub fn type_examples_list(state: State<'_, AppState>) -> Result<Vec<TypeExample>
 #[tauri::command]
 pub fn type_install_example(app: AppHandle, state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
     let example = crate::type_templates::example_type(&name).ok_or_else(|| format!("unknown example type: {name}"))?;
-    let dir = with_vault(&state, |v| Ok(v.root().join(vemry_core::vault::TYPES_DIR)))?;
-    let created = write_if_absent(&dir.join(example.file), example.body)?;
+    let rel = format!("{}/{}", vemry_core::vault::TYPES_DIR, example.file);
+    let created = scaffold_meta(&state, &rel, example.body)?;
     if created {
         broadcast(&app, &VaultEvent::TypesChanged);
     }
-    Ok(Scaffolded { path: format!("{}/{}", vemry_core::vault::TYPES_DIR, example.file), created })
+    Ok(Scaffolded { path: rel, created })
 }
 
 /// One row of the skills list in Settings: the union of the built-ins and the vault's
@@ -1765,9 +1770,10 @@ fn skill_entry(meta_dir: &std::path::Path, name: &str) -> Result<vemry_agent::sk
 }
 
 /// Enable or disable one skill by its listed name. A vault file has the `disabled:`
-/// line of its frontmatter rewritten in place; a built-in has no file, so its name goes
-/// into (or out of) the vault config's `skills_disabled` list. The skill list is part of
-/// the prompt snapshot, so the snapshot is dropped: the switch applies from the next turn.
+/// line of its frontmatter rewritten in place (through `Vault::write_meta`, like an
+/// editor save); a built-in has no file, so its name goes into (or out of) the vault
+/// config's `skills_disabled` list. The skill list is part of the prompt snapshot, so
+/// the snapshot is dropped: the switch applies from the next turn.
 #[tauri::command]
 pub fn skill_set_enabled(state: State<'_, AppState>, name: String, enabled: bool) -> Result<(), String> {
     let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
@@ -1784,9 +1790,11 @@ pub fn skill_set_enabled(state: State<'_, AppState>, name: String, enabled: bool
             vault_config_set(v, key, json!(off))
         })?;
     } else {
-        let path = meta_dir.join(vemry_agent::skills::SKILLS_SUBDIR).join(&entry.file);
-        let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        std::fs::write(&path, vemry_core::set_frontmatter_disabled(&raw, !enabled)).map_err(|e| e.to_string())?;
+        with_vault_mut(&state, |v| {
+            let id = v.note_id(&skill_rel_path(&entry.file)).map_err(crate::i18n::err)?;
+            let raw = v.read_note(&id).map_err(crate::i18n::err)?;
+            v.write_meta(&id, &vemry_core::set_frontmatter_disabled(&raw, !enabled)).map_err(crate::i18n::err)
+        })?;
     }
     state.agent.invalidate_prompt_snapshot();
     Ok(())
@@ -1795,7 +1803,10 @@ pub fn skill_set_enabled(state: State<'_, AppState>, name: String, enabled: bool
 /// A customised copy of a built-in: the built-in's file written into `.vemry/skills/`
 /// (never over one that is there), which shadows the built-in by name from then on
 /// and is the user's to edit. A name the vault already overrides under some other file
-/// name hands that file back instead of creating a second one. The frontend opens it.
+/// name hands that file back instead of creating a second one; a file already under the
+/// built-in's file name that lists as some other skill is an error naming it, not the
+/// copy (a copy needs that file name, and the file there is not this skill). The
+/// frontend opens the result.
 #[tauri::command]
 pub fn skill_customize(state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
     let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
@@ -1805,7 +1816,12 @@ pub fn skill_customize(state: State<'_, AppState>, name: String) -> Result<Scaff
     }
     let builtin = vemry_agent::skills::builtin_skill(&name)
         .ok_or_else(|| crate::i18n::t(crate::i18n::current(), "ipc.skillNotFound"))?;
-    let created = write_if_absent(&meta_dir.join(vemry_agent::skills::SKILLS_SUBDIR).join(builtin.file), builtin.text)?;
+    // The listing resolved the name to the built-in, so no vault file lists under it:
+    // whatever is at the copy's path belongs to another skill.
+    if meta_dir.join(vemry_agent::skills::SKILLS_SUBDIR).join(builtin.file).exists() {
+        return Err(crate::i18n::tf(crate::i18n::current(), "ipc.skillFileTaken", &[("file", builtin.file)]));
+    }
+    let created = scaffold_meta(&state, &skill_rel_path(builtin.file), builtin.text)?;
     state.agent.invalidate_prompt_snapshot();
     Ok(Scaffolded { path: skill_rel_path(builtin.file), created })
 }
@@ -1825,8 +1841,11 @@ pub fn skill_restore(state: State<'_, AppState>, name: String) -> Result<(), Str
 }
 
 /// A new vault skill from the skeleton every built-in follows (`.vemry/skills/<stem>.md`,
-/// the stem sanitised the way a note title is); one already there is left as it is. The
-/// frontend opens it either way.
+/// the stem sanitised the way a note title is). The skeleton lists under `name`, so the
+/// name decides: a built-in's name is refused (an empty copy would shadow it — customising
+/// is how a built-in is changed), a vault skill already listed under it is handed back
+/// from whatever file it lives in, and a file at the skeleton's path that lists as some
+/// other skill is an error naming it. The frontend opens the result.
 #[tauri::command]
 pub fn skill_create(state: State<'_, AppState>, name: String) -> Result<Scaffolded, String> {
     let name = name.trim();
@@ -1836,10 +1855,17 @@ pub fn skill_create(state: State<'_, AppState>, name: String) -> Result<Scaffold
     let stem = vemry_core::sanitize_filename(name);
     let file = format!("{stem}.md");
     let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
-    let created = write_if_absent(
-        &meta_dir.join(vemry_agent::skills::SKILLS_SUBDIR).join(&file),
-        &vemry_agent::skills::skill_skeleton(name),
-    )?;
+    match vemry_agent::skills::list_skills_all(&meta_dir).into_iter().find(|s| s.name == name) {
+        Some(s) if s.source == vemry_agent::skills::SkillSource::Builtin => {
+            return Err(crate::i18n::tf(crate::i18n::current(), "ipc.skillNameBuiltin", &[("name", name)]));
+        }
+        Some(s) => return Ok(Scaffolded { path: skill_rel_path(&s.file), created: false }),
+        None => {}
+    }
+    if meta_dir.join(vemry_agent::skills::SKILLS_SUBDIR).join(&file).exists() {
+        return Err(crate::i18n::tf(crate::i18n::current(), "ipc.skillFileTaken", &[("file", &file)]));
+    }
+    let created = scaffold_meta(&state, &skill_rel_path(&file), &vemry_agent::skills::skill_skeleton(name))?;
     state.agent.invalidate_prompt_snapshot();
     Ok(Scaffolded { path: skill_rel_path(&file), created })
 }

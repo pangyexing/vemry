@@ -33,7 +33,7 @@ pub use attach_migrate::MigrationReport;
 pub use block::{Block, BlockKind, Field, TaskState, WikiLink};
 pub use blockid::{plan_block_id, BlockIdInsert, BlockIdPlan, BlockSelector, PlanTarget};
 pub use event::VaultEvent;
-pub use format::{format_markdown, FormatOptions};
+pub use format::{format_fragment, format_markdown, FormatOptions};
 pub use index::{BlockIndex, GraphData, GraphEdge, GraphNode, NoteSummary, ResolvedLink, FieldStat};
 pub use note::{Frontmatter, Note, NoteId, VemryMeta};
 pub use privacy::{

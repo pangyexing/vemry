@@ -747,8 +747,9 @@ pub fn is_writable_frontmatter_key(key: &str) -> bool {
 /// colon included — `https://x` is a plain scalar, since the colon is not
 /// followed by a space), double-quoted (with `"` and `\\` escaped) when it holds
 /// something YAML would read as structure, a comment or a type — the round trip
-/// through `extract_frontmatter` must give the string back unchanged.
-fn yaml_scalar(v: &str) -> String {
+/// through `extract_frontmatter` must give the string back unchanged. Shared with
+/// the type skeletons, so a type's `name:` follows the same rule.
+pub(crate) fn yaml_scalar(v: &str) -> String {
     let lower = v.to_ascii_lowercase();
     let plain = !v.is_empty()
         && !v.starts_with(['-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`', ' '])

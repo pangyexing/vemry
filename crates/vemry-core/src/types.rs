@@ -15,7 +15,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::note::yaml_text;
-use crate::parser::extract_frontmatter;
+use crate::parser::{extract_frontmatter, yaml_scalar};
 
 /// Types live in `<meta_dir>/types` (i.e. `.vemry/types/`).
 pub const TYPES_SUBDIR: &str = "types";
@@ -98,20 +98,6 @@ pub fn type_skeleton(name: &str) -> String {
         yaml_scalar(name),
         yaml_scalar(&format!("A {name}")),
     )
-}
-
-/// A name as a YAML scalar: plain when it is unmistakably one (letters, digits,
-/// spaces, `-` and `_`, not starting with an indicator), double-quoted otherwise.
-fn yaml_scalar(s: &str) -> String {
-    let plain = !s.is_empty()
-        && s.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-' || c == '_')
-        && !s.starts_with(['-', ' '])
-        && !s.ends_with(' ');
-    if plain {
-        s.to_string()
-    } else {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
-    }
 }
 
 /// The `#tag` derived from a type name: letters, digits, `-` and `_` kept, runs

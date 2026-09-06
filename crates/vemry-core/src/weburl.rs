@@ -16,7 +16,7 @@ pub fn normalize_url(input: &str) -> Result<Url, String> {
     if s.is_empty() {
         return Err("empty address".into());
     }
-    let candidate = if s.contains("://") { s.to_string() } else { format!("https://{s}") };
+    let candidate = if has_scheme(s) { s.to_string() } else { format!("https://{s}") };
     let url = Url::parse(&candidate).map_err(|e| format!("invalid address: {e}"))?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err(format!("unsupported scheme: {}", url.scheme()));
@@ -25,6 +25,15 @@ pub fn normalize_url(input: &str) -> Result<Url, String> {
         return Err("the address has no host".into());
     }
     Ok(url)
+}
+
+/// True when the input starts with a URL scheme (`letter (letter|digit|+|-|.)* ://`).
+/// Anchored at the start: a `://` further in (`example.com/login?next=https://x`)
+/// belongs to a query value, and the address still needs `https://` in front.
+fn has_scheme(s: &str) -> bool {
+    let Some((scheme, _)) = s.split_once("://") else { return false };
+    let mut chars = scheme.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic()) && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
 /// The directory prefix clip notes land in (relative to the vault root); the
@@ -49,6 +58,12 @@ mod tests {
         assert!(normalize_url("file:///etc/passwd").is_err());
         assert!(normalize_url("javascript:alert(1)").is_err());
         assert!(normalize_url("").is_err());
+    }
+
+    #[test]
+    fn a_scheme_counts_only_at_the_start() {
+        assert_eq!(normalize_url("example.com/login?next=https://x").unwrap().to_string(), "https://example.com/login?next=https://x");
+        assert_eq!(normalize_url("HTTP://a.b").unwrap().to_string(), "http://a.b/");
     }
 
     #[test]

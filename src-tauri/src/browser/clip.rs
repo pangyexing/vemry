@@ -395,17 +395,11 @@ pub(crate) fn land_note(
     // of it (the quote callout's body, a citation, stays verbatim by the formatter's
     // own rule)
     let settings: crate::settings::Settings = crate::settings::load(app);
-    let formatted;
-    let content = if settings.format_clips {
-        formatted = vemry_core::format_markdown(content, &settings.format_options());
-        formatted.as_str()
-    } else {
-        content
-    };
+    let content = crate::settings::format_or(content, settings.clip_format());
     let (rel, event) = with_vault_mut(state, |v| {
         let rel = v.dedup_rel(&clip_rel_path(meta));
         let id = v.note_id(&rel).map_err(|e| e.to_string())?;
-        let event = v.write_note(&id, content).map_err(|e| e.to_string())?;
+        let event = v.write_note(&id, &content).map_err(|e| e.to_string())?;
         Ok((id.to_string(), event))
     })?;
     broadcast(app, &event);

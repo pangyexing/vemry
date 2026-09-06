@@ -224,28 +224,52 @@ pub fn disabled_names(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The whole object of `<meta_dir>/config.json` (`.vemry/config.json`); a missing
+/// file or broken JSON is `None`. The one parse point for the vault config: the
+/// prompt side reads `skills_disabled` through it, and the app's read-modify-write
+/// of `write_policy` and the same list goes through it too, so the two never
+/// interpret the file differently.
+pub fn read_vault_config(meta_dir: &Path) -> Option<serde_json::Value> {
+    let s = fs::read_to_string(meta_dir.join("config.json")).ok()?;
+    serde_json::from_str(&s).ok()
+}
+
 /// The names in the vault config's `skills_disabled` list. Read here rather than
 /// handed in: the prompt assembly and the `read_skill` tool both need it, and a
 /// missing or unreadable config means nothing is switched off.
 fn disabled_builtins(meta_dir: &Path) -> HashSet<String> {
-    let cfg = fs::read_to_string(meta_dir.join("config.json")).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let cfg = read_vault_config(meta_dir);
     disabled_names(cfg.as_ref().and_then(|v| v.get(DISABLED_BUILTINS_KEY))).into_iter().collect()
 }
 
-/// One skill file of the vault, as scanned.
+/// One skill file of the vault, as scanned. The file text is kept whole and the
+/// body sliced on demand: the listing wants the frontmatter only, `read_skill`
+/// wants one body — neither pays for a copy of every body.
 struct VaultSkill {
     file: String,
     name: String,
     fm: SkillFrontmatter,
-    body: String,
+    raw: String,
+    /// Where the body starts in `raw` (past the frontmatter).
+    body_start: usize,
+}
+
+impl VaultSkill {
+    /// The instructions alone, frontmatter stripped.
+    fn body(&self) -> &str {
+        self.raw[self.body_start..].trim()
+    }
 }
 
 /// The one directory scan of `.vemry/skills/`: regular `.md` files only — a
 /// symlink here could point into the privacy zone and this is an agent-visible
-/// read path. Unsorted; the callers order what they list.
+/// read path. Ordered by file name, and one file per listed name: when two files
+/// carry the same frontmatter `name`, the first by file name is the skill and the
+/// other is ignored, so the listing, the enable switch and `read_skill` all
+/// resolve a name to the same file.
 fn vault_skills(meta_dir: &Path) -> Vec<VaultSkill> {
     let dir = meta_dir.join(SKILLS_SUBDIR);
-    fs::read_dir(dir)
+    let mut skills: Vec<VaultSkill> = fs::read_dir(dir)
         .map(|rd| {
             rd.filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
@@ -255,12 +279,17 @@ fn vault_skills(meta_dir: &Path) -> Vec<VaultSkill> {
                     let file = e.file_name().to_string_lossy().to_string();
                     let raw = fs::read_to_string(e.path()).ok()?;
                     let (fm, body) = parse(&raw);
+                    let body_start = raw.len() - body.len();
                     let name = name_of(&fm, &stem);
-                    Some(VaultSkill { file, name, fm, body: body.trim().to_string() })
+                    Some(VaultSkill { file, name, fm, raw, body_start })
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    skills.sort_by(|a, b| a.file.cmp(&b.file));
+    let mut seen = HashSet::new();
+    skills.retain(|s| seen.insert(s.name.clone()));
+    skills
 }
 
 /// One skill from the management point of view (disabled ones are listed too).
@@ -343,7 +372,7 @@ pub fn read_skill(meta_dir: &Path, name: &str) -> Option<String> {
             if s.fm.disabled {
                 return None;
             }
-            s.body
+            s.body().to_string()
         }
         None => {
             let b = builtin_skill(name)?;
@@ -522,6 +551,25 @@ mod tests {
         // a malformed config switches nothing off
         fs::write(dir.path().join("config.json"), "{not json").unwrap();
         assert!(read_skill(dir.path(), "research").is_some());
+    }
+
+    #[test]
+    fn two_files_sharing_a_name_resolve_to_the_first_by_file_name_everywhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        fs::write(skills.join("b-copy.md"), "---\nname: routine\ndescription: second\ndisabled: true\n---\nSECOND\n").unwrap();
+        fs::write(skills.join("a-first.md"), "---\nname: routine\ndescription: first\n---\nFIRST\n").unwrap();
+        // one row per name, and it is the file that sorts first
+        let all = list_skills_all(dir.path());
+        let rows: Vec<&SkillFileEntry> = all.iter().filter(|s| s.name == "routine").collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].file, "a-first.md");
+        assert_eq!(rows[0].description, "first");
+        assert!(!rows[0].disabled, "the disabled duplicate does not speak for the name");
+        // the same file answers read_skill
+        assert_eq!(read_skill(dir.path(), "routine").unwrap(), "FIRST");
+        assert_eq!(list_skills(dir.path()).iter().filter(|s| s.name == "routine").count(), 1);
     }
 
     #[test]

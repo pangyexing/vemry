@@ -275,15 +275,16 @@
 
   /** The "format note" command: the whole document through the Markdown formatter, replaced
    *  as one transaction (undo restores it); the cursor keeps its offset, clamped. Returns
-   *  whether anything changed. */
+   *  whether anything changed. A document edited (or swapped) during the round trip is
+   *  left alone: the formatted text belongs to the one that was sent. */
   async function formatDoc(): Promise<boolean> {
-    const v = view;
-    if (!v) return false;
-    const before = v.state.doc.toString();
+    if (!view) return false;
+    const before = view.state.doc.toString();
     const after = await api.formatMarkdown(before);
-    if (after === before) return false;
+    const v = view;
+    if (!v || v.state.doc.toString() !== before || after === before) return false;
     const head = Math.min(v.state.selection.main.head, after.length);
-    v.dispatch({ changes: { from: 0, to: before.length, insert: after }, selection: { anchor: head }, scrollIntoView: true });
+    v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: after }, selection: { anchor: head }, scrollIntoView: true });
     return true;
   }
   vault.formatDoc = formatDoc;

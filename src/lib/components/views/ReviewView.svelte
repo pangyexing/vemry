@@ -6,8 +6,9 @@
   import { askAboutView } from "$lib/askview";
   import { api, type BlockQuery } from "$lib/api";
   import { fuzzyKeep } from "$lib/commands/registry";
-  import { cardKey, GRADES, gradeCard, isDue, parseCard, schedule, type Card, type Grade } from "$lib/views/cards";
+  import { cardKey, GRADES, gradeCard, isDue, parseCard, rekey, schedule, type Card, type Grade } from "$lib/views/cards";
   import { chipDate, localDate } from "$lib/views/tasks";
+  import { byNote } from "$lib/views/queryrows";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
 
@@ -23,13 +24,10 @@
   let today = $state(localDate());
   // With events firing in quick succession an older response may arrive later: only the newest one lands
   let loadSeq = 0;
-  /** Cards graded this session, by their stable key. A grade lands on disk and comes back
-   *  through the index a moment later — until it does, the map is what keeps the graded
-   *  card from reappearing; a card graded Again stays due and is deliberately kept, at the
-   *  end of the queue. */
+  /** Cards graded this round, by key: the count for the progress line, and what holds a
+   *  card graded Again (still due) at the end of the queue instead of letting it come
+   *  straight back. Re-keyed on every load (a grade shifts the offsets below it). */
   let graded = $state<Record<string, Grade>>({});
-  /** Notes written since the last load: a card in one of them may have a stale span. */
-  let dirtyNotes = new Set<string>();
   /** The key of the card whose answer is showing (flipping is per card, so a new card starts face down). */
   let flippedFor = $state<string | null>(null);
   /** Study ahead: with nothing due, the user may go through the cards scheduled for later. */
@@ -40,8 +38,9 @@
     const seq = ++loadSeq;
     const hits = await api.queryBlocks(QUERY);
     if (seq !== loadSeq) return;
-    cards = hits.map(parseCard);
-    dirtyNotes = new Set();
+    const next = hits.map(parseCard);
+    graded = rekey(graded, cards, next);
+    cards = next;
     today = localDate();
   }
 
@@ -54,7 +53,7 @@
   const shown = $derived(fuzzyKeep(cards, query, (c) => `${c.front} ${c.back} ${c.hit.note_title} ${c.hit.note}`));
   const dueCards = $derived(shown.filter((c) => isDue(c, today)));
   /** Overdue first (the oldest due date first), then the never-graded, then by note. */
-  const byDue = (a: Card, b: Card) => (a.due ?? "9999").localeCompare(b.due ?? "9999") || a.hit.note.localeCompare(b.hit.note) || a.hit.block.span.start - b.hit.block.span.start;
+  const byDue = (a: Card, b: Card) => (a.due ?? "9999").localeCompare(b.due ?? "9999") || byNote(a.hit, b.hit);
   const queue = $derived.by(() => {
     const pool = ahead ? shown : dueCards;
     const fresh = pool.filter((c) => !(cardKey(c) in graded)).sort(byDue);
@@ -102,25 +101,20 @@
 
   let grading = false;
   async function grade(g: Grade) {
-    let c = current;
+    const c = current;
     if (!c || grading) return;
     grading = true;
     try {
-      const key = cardKey(c);
-      // A card in a note written this session may carry a stale span: requery first, then find the same card again
-      if (dirtyNotes.has(c.hit.note)) {
-        await load();
-        c = cards.find((x) => cardKey(x) === key) ?? null;
-        if (!c) return;
-      }
       const next = await gradeCard(c, g, today);
       if (!next) {
         toast.push(t("reviewView.stale"), "error");
         await load();
         return;
       }
-      dirtyNotes.add(c.hit.note);
-      graded = { ...graded, [key]: g };
+      graded = { ...graded, [cardKey(c)]: g };
+      // The write reindexed the note before returning: reloading now gives every card its
+      // fresh span (the graded one moves on or, after Again, to the tail of the queue)
+      await load();
     } catch (e) {
       toast.push(String(e), "error");
     } finally {

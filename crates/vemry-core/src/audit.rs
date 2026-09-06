@@ -56,7 +56,7 @@ impl Vault {
                         if l.heading.is_none() && l.block_ref.is_none() {
                             continue;
                         }
-                        let target = l.raw.trim_start_matches("[[").trim_end_matches("]]").split('|').next().unwrap_or("").to_string();
+                        let target = l.ref_target();
                         if matches!(self.resolve_ref(&target, Some(id)), Ok(RefResolution::AnchorMissing { .. })) {
                             report.dangling_anchors.push((id.clone(), b.handle(), target));
                         }

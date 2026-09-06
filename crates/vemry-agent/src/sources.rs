@@ -167,8 +167,10 @@ pub fn merge_turn(
     let mut added = Vec::new();
     for c in cites {
         if let Some(existing) = table.iter_mut().find(|s| s.url == c.url) {
-            // An earlier unverified entry becomes verified once a search confirms it
-            if searched && !existing.verified {
+            // An earlier unverified entry becomes verified once a search confirms it —
+            // or once the user hands the page over (attached, or fetched through the
+            // read gate)
+            if !existing.verified && (searched || exempt.contains(&c.url)) {
                 existing.verified = true;
             }
             if existing.title.is_empty() && !c.title.is_empty() {
@@ -211,8 +213,17 @@ pub fn read_sources(jsonl: &str) -> Vec<Source> {
                         if s.turn.is_none() {
                             s.turn = turn.clone();
                         }
-                        if !table.iter().any(|t| t.url == s.url) {
-                            table.push(s);
+                        // A URL already in the table keeps its turn; the later line's
+                        // verification and title are replayed onto it, as merge_turn
+                        // applied them live
+                        match table.iter_mut().find(|t| t.url == s.url) {
+                            Some(t) => {
+                                t.verified |= s.verified;
+                                if t.title.is_empty() {
+                                    t.title = s.title;
+                                }
+                            }
+                            None => table.push(s),
                         }
                     }
                 }
@@ -287,6 +298,35 @@ mod tests {
         assert!(added.is_empty() && table[0].verified);
         drop_turn(&mut table, "t1");
         assert!(table.is_empty(), "both entries belonged to t1");
+    }
+
+    /// A URL cited unverified earlier is verified once the user hands its page over
+    /// (the read gate fetched it: it is in `exempt`), and the fetched page's title
+    /// fills the entry's empty one.
+    #[test]
+    fn merge_upgrades_an_existing_entry_on_a_read_page() {
+        let mut table = vec![];
+        merge_turn(&mut table, Some("t1"), &extract_citations("https://a.io/p"), false, &HashSet::new());
+        assert!(!table[0].verified && table[0].title.is_empty());
+        let exempt: HashSet<String> = ["https://a.io/p".to_string()].into_iter().collect();
+        let cites = vec![Citation { title: "Page A".into(), url: "https://a.io/p".into() }];
+        let added = merge_turn(&mut table, Some("t2"), &cites, false, &exempt);
+        assert!(added.is_empty());
+        assert_eq!((table[0].verified, table[0].title.as_str(), table[0].turn.as_deref()), (true, "Page A", Some("t1")));
+    }
+
+    /// A repeated URL across two `sources` lines keeps its first turn and takes the
+    /// later line's verification and title, the way the live merge did.
+    #[test]
+    fn read_sources_merges_a_repeated_url() {
+        let jsonl = r#"{"kind":"user","turn":"t1","content":"q"}
+{"kind":"sources","turn":"t1","items":[{"url":"https://a.io","title":"","verified":false}]}
+{"kind":"user","turn":"t2","content":"q2"}
+{"kind":"sources","turn":"t2","items":[{"url":"https://a.io","title":"A","verified":true}]}
+"#;
+        let table = read_sources(jsonl);
+        assert_eq!(table.len(), 1);
+        assert_eq!((table[0].verified, table[0].title.as_str(), table[0].turn.as_deref()), (true, "A", Some("t1")));
     }
 
     #[test]

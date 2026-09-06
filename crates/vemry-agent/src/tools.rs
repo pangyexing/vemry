@@ -170,7 +170,15 @@ pub fn parse_action_items(args: &Value) -> Result<Vec<crate::permission::ActionI
         let fields: std::collections::BTreeMap<String, String> = it
             .get("fields")
             .and_then(|v| v.as_object())
-            .map(|o| o.iter().filter_map(|(k, v)| v.as_str().or(v.as_number().map(|_| "")).map(|_| (k.clone(), if v.is_string() { v.as_str().unwrap().to_string() } else { v.to_string() }))).collect())
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, v)| match v {
+                        Value::String(s) => Some((k.clone(), s.clone())),
+                        Value::Number(n) => Some((k.clone(), n.to_string())),
+                        _ => None,
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         out.push(crate::permission::ActionItem { text: text.to_string(), owner: opt("owner"), due, target: opt("target"), source: opt("source"), fields });
     }
@@ -999,16 +1007,16 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             let limit = arg_usize(args, "limit", 50).min(RECENT_MAX_LIMIT);
             let mut filtered = 0usize;
             let mut hits: Vec<(u64, String)> = Vec::new();
-            let ids: Vec<NoteId> = match &only_note {
-                Some(only) => vec![only.clone()],
+            let ids: Vec<&NoteId> = match &only_note {
+                Some(only) => vec![only],
                 None => {
-                    let mut v: Vec<NoteId> = vault.index().ids().cloned().collect();
+                    let mut v: Vec<&NoteId> = vault.index().ids().collect();
                     v.sort();
                     v
                 }
             };
             let prefix = (!folder.is_empty()).then(|| format!("{folder}/"));
-            for id in &ids {
+            for id in ids {
                 if prefix.as_ref().is_some_and(|p| !id.as_str().starts_with(p.as_str())) {
                     continue;
                 }
@@ -1124,7 +1132,6 @@ fn existing_note_id(vault: &Vault, path: &str) -> Result<NoteId, ToolError> {
     Ok(id)
 }
 
-/// The block kind as recent_changes and query_blocks name it.
 /// The privacy funnel every agent-visible read path shares with `query_for_agent`:
 /// a private note is dropped from the answer and counted, so the model is told how
 /// much it cannot see without being told what.
@@ -1134,6 +1141,7 @@ fn visible(vault: &Vault, filtered: &mut usize, id: &NoteId) -> bool {
     !private
 }
 
+/// The block kind as recent_changes and query_blocks name it.
 fn block_kind_name(kind: &vemry_core::BlockKind) -> &'static str {
     use vemry_core::BlockKind::*;
     match kind {
@@ -1229,11 +1237,11 @@ fn date_arg(args: &Value, key: &str) -> Result<Option<Option<String>>, ToolError
 
 /// Prepare a write tool into a WriteRequest for the permission gate. Nothing
 /// touches disk here. Privacy-zone paths are rejected before any diff is
-/// generated and never reach the permission dialog.
-/// Prepare a write tool into a WriteRequest for the permission gate. `format`
-/// runs the Markdown formatter over the content the model wrote whole — a new
-/// note, an appended section — so what the gate shows is what lands; fragments
-/// (an edit, a task line, a field) are left as written.
+/// generated and never reach the permission dialog. `format` runs the Markdown
+/// formatter over the content the model wrote whole — a new note (with its
+/// frontmatter), an appended section (a fragment: a leading `---` in it is a rule,
+/// never frontmatter) — so what the gate shows is what lands; the rest (an edit, a
+/// task line, a field) is left as written.
 pub fn prepare_write(
     vault: &Vault,
     request_id: String,
@@ -1242,15 +1250,12 @@ pub fn prepare_write(
     session: Option<&str>,
     format: Option<&vemry_core::FormatOptions>,
 ) -> Result<WriteRequest, ToolError> {
-    let formatted_arg = |key: &str| -> Result<Option<String>, ToolError> {
-        let raw = arg_str(args, key)?;
-        Ok(format.map(|o| vemry_core::format_markdown(raw, o)))
-    };
     let mut args = args.clone();
-    if matches!(name, "write_note" | "append_note") {
-        if let Some(f) = formatted_arg("content")? {
-            args["content"] = Value::String(f);
-        }
+    if let Some(opts) = format.filter(|_| matches!(name, "write_note" | "append_note")) {
+        let raw = arg_str(&args, "content")?;
+        let formatted =
+            if name == "write_note" { vemry_core::format_markdown(raw, opts) } else { vemry_core::format_fragment(raw, opts) };
+        args["content"] = Value::String(formatted);
     }
     let args = &args;
     match name {
@@ -1621,6 +1626,16 @@ pub fn prepare_write(
     }
 }
 
+/// What an executed write reports: the model's tool result, and the notes its side
+/// writes landed in (a block move's destination, the referrers that followed a
+/// move) — the runner raises a NoteModified for each, since the vault's watcher
+/// swallows them as the agent's own writes.
+#[derive(Debug)]
+pub struct WriteOutcome {
+    pub message: String,
+    pub rewritten: Vec<NoteId>,
+}
+
 /// Execute an approved WriteRequest (possibly with user-edited content). The
 /// blocks the write adds are recorded in the provenance ledger under
 /// `session` (the audit log's id), pending the user's review.
@@ -1634,7 +1649,14 @@ pub fn execute_write(
     content_override: Option<&str>,
     session: Option<&str>,
     reviewed: bool,
-) -> Result<String, String> {
+) -> Result<WriteOutcome, String> {
+    // The side writes get the same execute-time privacy re-check as the main note
+    // (below): a note they would land in that turned private during the gate await
+    // refuses the whole write before anything lands. Worded like the stale check —
+    // which note it was is not said.
+    if req.rewrite_texts.iter().any(|r| vault.note_id(&r.path).is_ok_and(|id| vault.is_private(&id))) {
+        return Err(format!("{} changed while the write was awaiting review — read it again and retry", req.path));
+    }
     if req.tool == "move_note" || req.tool == "move_file" {
         // AllowEdited means nothing for a move (there is no content to edit), so
         // the override is defensively ignored
@@ -1701,9 +1723,11 @@ pub fn execute_write(
     let mut msg = format!("wrote {id} ({seen} bytes)");
     // A write with side writes (a block move's destination, the links that followed the
     // blocks): landed after the main note, a note changed meanwhile skipped
+    let mut rewritten = vec![];
     if !req.rewrite_texts.is_empty() {
-        let (done, skipped) = apply_rewrites(vault, &req.rewrite_texts);
-        msg.push_str(&format!("; also wrote {done} other note(s)"));
+        let skipped;
+        (rewritten, skipped) = apply_rewrites(vault, &req.rewrite_texts);
+        msg.push_str(&format!("; also wrote {} other note(s)", rewritten.len()));
         if skipped > 0 {
             msg.push_str(&format!(", {skipped} skipped (changed meanwhile)"));
         }
@@ -1712,7 +1736,7 @@ pub fn execute_write(
         msg.push('\n');
         msg.push_str(n);
     }
-    Ok(msg)
+    Ok(WriteOutcome { message: msg, rewritten })
 }
 
 /// A move's link-rewrite plan as the request carries it: private notes are left out
@@ -1736,12 +1760,12 @@ fn rewrite_parts(vault: &Vault, plan: Vec<vemry_core::Relink>) -> (String, Vec<R
 
 /// Land a move's link rewrites after the rename: a note that changed meanwhile is
 /// skipped (its links go stale rather than a stranger's edit being overwritten).
-/// Returns (notes rewritten, notes skipped).
-fn apply_rewrites(vault: &mut Vault, texts: &[RewriteText]) -> (usize, usize) {
-    let (mut done, mut skipped) = (0, 0);
+/// Returns (the notes rewritten, how many were skipped).
+fn apply_rewrites(vault: &mut Vault, texts: &[RewriteText]) -> (Vec<NoteId>, usize) {
+    let (mut done, mut skipped) = (vec![], 0);
     for r in texts {
         if r.apply(vault, false) {
-            done += 1;
+            done.extend(vault.note_id(&r.path));
         } else {
             skipped += 1;
         }
@@ -1753,7 +1777,7 @@ fn apply_rewrites(vault: &mut Vault, texts: &[RewriteText]) -> (usize, usize) {
 /// permission gate is awaited, so both sides are re-checked (the same spirit as
 /// execute_write's TOCTOU re-check); the rename itself goes through
 /// `rename_path`.
-fn execute_move(vault: &mut Vault, req: &WriteRequest) -> Result<String, String> {
+fn execute_move(vault: &mut Vault, req: &WriteRequest) -> Result<WriteOutcome, String> {
     let to_path = req.to_path.as_deref().ok_or("missing move target")?;
     let landed = if req.tool == "move_file" {
         if vault.is_private_rel(&req.path, false) {
@@ -1779,17 +1803,17 @@ fn execute_move(vault: &mut Vault, req: &WriteRequest) -> Result<String, String>
         vault.rename_path(from.as_str(), to.as_str()).map_err(|e| e.to_string())?
     };
     // Rename first, rewrite second: a failed rewrite leaves a stale link, never half a move
-    let (done, skipped) = apply_rewrites(vault, &req.rewrite_texts);
+    let (rewritten, skipped) = apply_rewrites(vault, &req.rewrite_texts);
     let links: usize = req.rewrites.iter().map(|r| r.links).sum();
     let mut msg = format!("moved {} -> {landed}", req.path);
     if !req.rewrite_texts.is_empty() {
-        msg.push_str(&format!(" (rewrote {links} links in {done} notes"));
+        msg.push_str(&format!(" (rewrote {links} links in {} notes", rewritten.len()));
         if skipped > 0 {
             msg.push_str(&format!("; {skipped} notes changed meanwhile and were left as they were"));
         }
         msg.push(')');
     }
-    Ok(msg)
+    Ok(WriteOutcome { message: msg, rewritten })
 }
 
 /// New agent-created notes get provenance frontmatter (origin and the
@@ -1977,6 +2001,12 @@ mod tests {
         let e = prepare_write(&vault, "r5".into(), "append_note", &json!({"path": "secret/Plan.md", "content": "x"}), None, None).unwrap_err();
         assert!(matches!(e, ToolError::Privacy(_)));
         assert!(prepare_write(&vault, "r6".into(), "append_note", &json!({"path": "Log.md", "content": "  "}), None, None).is_err());
+        // The formatter runs over the fragment as a fragment: a leading `---` is a rule,
+        // not frontmatter to be reordered
+        let opts = vemry_core::FormatOptions::default();
+        let req = prepare_write(&vault, "r7".into(), "append_note", &json!({"path": "Log.md", "content": "---\nzeta: 1\nalpha: 2\n---\nbody"}), None, Some(&opts)).unwrap();
+        let (z, a) = (req.new_content.rfind("zeta: 1").unwrap(), req.new_content.rfind("alpha: 2").unwrap());
+        assert!(z < a, "{}", req.new_content);
     }
 
     /// set_frontmatter: a scalar, a list, a removal; reserved and malformed keys are refused; a private note is a miss.
@@ -2074,7 +2104,7 @@ mod tests {
         assert_eq!(req.rewrites[0].path, "Ref.md");
         assert_eq!(req.rewrites[0].links, 2);
         assert!(req.diff.contains("+see [[Hi]] and [[Hi#^x]]"), "{}", req.diff);
-        let msg = execute_write(&mut vault, &req, None, None, true).unwrap();
+        let msg = execute_write(&mut vault, &req, None, None, true).unwrap().message;
         assert!(msg.contains("moved Hello.md -> archive/Hi.md (rewrote 2 links in 1 notes)"), "{msg}");
         assert_eq!(std::fs::read_to_string(vault.root().join("Ref.md")).unwrap(), "see [[Hi]] and [[Hi#^x]]\n");
         assert!(std::fs::read_to_string(vault.root().join("secret/Also.md")).unwrap().contains("[[Hello]]"), "a private note is never rewritten");
@@ -2085,7 +2115,7 @@ mod tests {
         let req = prepare_write(&vault, "f1".into(), "move_file", &json!({"from": "attachments/Hello/shot.png", "to": "assets/shot-1.png"}), None, None).unwrap();
         assert_eq!(req.kind, WriteKind::Move);
         assert_eq!(req.rewrites[0].links, 2, "{:?}", req.rewrites);
-        let msg = execute_write(&mut vault, &req, None, None, true).unwrap();
+        let msg = execute_write(&mut vault, &req, None, None, true).unwrap().message;
         assert!(msg.starts_with("moved attachments/Hello/shot.png -> assets/shot-1.png"), "{msg}");
         assert!(vault.root().join("assets/shot-1.png").exists());
         assert_eq!(std::fs::read_to_string(vault.root().join("Pic.md")).unwrap(), "![[shot-1.png]] and ![](assets/shot-1.png)\n");
@@ -2127,15 +2157,22 @@ mod tests {
         let bd = req.block_diff.as_ref().unwrap();
         assert!(bd.moved >= 1 && bd.added == 3, "{bd:?}"); // two new headings + Unassigned
         assert!(req.notes[0].contains("landed under '## Unassigned': b0, ^t1"), "{:?}", req.notes);
-        let msg = execute_write(&mut vault, &req, None, None, true).unwrap();
+        let msg = execute_write(&mut vault, &req, None, None, true).unwrap().message;
         assert!(msg.contains("Unassigned"), "{msg}");
         assert!(std::fs::read_to_string(vault.root().join("Messy.md")).unwrap().contains("> hush"));
         // a block move into another note under a heading, the vault's link following
         let req = prepare_write(&vault, "m1".into(), "move_blocks", &json!({"from": "Messy.md", "blocks": ["^d1"], "to": "Dogs.md", "anchor": "Notes", "leave_link": true}), None, None).unwrap();
         assert!(req.new_content.contains("→ [[Dogs]]") && !req.new_content.contains("about dogs"), "{}", req.new_content);
         assert_eq!(req.rewrites.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), vec!["Dogs.md", "Ref.md"]);
-        let msg = execute_write(&mut vault, &req, None, None, true).unwrap();
-        assert!(msg.contains("also wrote 2 other note(s)"), "{msg}");
+        // A referrer turning private during the gate await refuses the whole write, before anything lands
+        vault.add_privacy_rule("Ref.md").unwrap();
+        let err = execute_write(&mut vault, &req, None, None, true).unwrap_err();
+        assert!(err.contains("changed while the write was awaiting review"), "{err}");
+        assert!(!std::fs::read_to_string(vault.root().join("Dogs.md")).unwrap().contains("about dogs"));
+        vault.remove_privacy_rule("Ref.md").unwrap();
+        let out = execute_write(&mut vault, &req, None, None, true).unwrap();
+        assert!(out.message.contains("also wrote 2 other note(s)"), "{}", out.message);
+        assert_eq!(out.rewritten, vec![NoteId::new("Dogs.md"), NoteId::new("Ref.md")], "the side writes are reported for the UI's events");
         assert!(std::fs::read_to_string(vault.root().join("Dogs.md")).unwrap().contains("## Notes\n\nexisting\n\nabout dogs ^d1\n"));
         assert_eq!(std::fs::read_to_string(vault.root().join("Ref.md")).unwrap(), "see [[Dogs#^d1]]\n");
         // a private block cannot be moved; a missing anchor is an error
@@ -2769,7 +2806,7 @@ mod tests {
         assert_eq!(err, "invalid path: moved/Hi.md");
         vault.remove_privacy_rule("moved/").unwrap();
         // Allowed: a real rename plus a rebuilt index (AllowEdited's override is ignored)
-        let out = execute_write(&mut vault, &req, Some("IGNORED"), None, false).unwrap();
+        let out = execute_write(&mut vault, &req, Some("IGNORED"), None, false).unwrap().message;
         assert_eq!(out, "moved Hello.md -> moved/Hi.md");
         assert!(!vault.root().join("Hello.md").exists());
         assert!(vault.root().join("moved/Hi.md").exists());

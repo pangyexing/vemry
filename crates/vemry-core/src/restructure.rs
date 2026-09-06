@@ -130,13 +130,24 @@ fn join_units(parts: &[(BlockKind, String)]) -> String {
     out
 }
 
-/// Units by handle, each reachable with or without its leading `^`.
+/// Units by handle, each reachable with or without its leading `^`. An explicit
+/// `^b1` and the parser's implicit `b1` share the bare key; the explicit one owns
+/// it whatever the document order (`locate::find_block`'s precedence), so a bare
+/// id never resolves differently depending on where the blocks sit.
 fn handle_index(units: &[Unit]) -> HashMap<String, usize> {
     let mut by_handle: HashMap<String, usize> = HashMap::new();
     for (i, u) in units.iter().enumerate() {
-        if !u.handle.is_empty() {
-            by_handle.insert(u.handle.clone(), i);
-            by_handle.insert(u.handle.trim_start_matches('^').to_string(), i);
+        if u.handle.is_empty() {
+            continue;
+        }
+        match u.handle.strip_prefix('^') {
+            Some(bare) => {
+                by_handle.insert(u.handle.clone(), i);
+                by_handle.insert(bare.to_string(), i);
+            }
+            None => {
+                by_handle.entry(u.handle.clone()).or_insert(i);
+            }
         }
     }
     by_handle
@@ -282,10 +293,17 @@ pub fn extract_units(from_raw: &str, handles: &[String]) -> Result<(String, Stri
         }
     }
     let moved: Vec<(BlockKind, String)> = order.iter().map(|&i| (units[i].kind.clone(), from_raw[units[i].span.clone()].trim_end().to_string())).collect();
-    let ids: Vec<String> = order
-        .iter()
-        .filter_map(|&i| units[i].handle.strip_prefix('^').map(str::to_string))
-        .collect();
+    // the ids that travel: each moved unit's own, plus those of the nested blocks its
+    // span swallowed (`- parent ^p1` / `  - child ^c1`), so `[[from#^c1]]` is respelled too
+    let mut ids: Vec<String> = Vec::new();
+    for &i in &order {
+        let span = &units[i].span;
+        for b in parsed.blocks.iter().filter(|b| b.explicit_id && span.start <= b.span.start && b.span.start < span.end) {
+            if !ids.contains(&b.local_id) {
+                ids.push(b.local_id.clone());
+            }
+        }
+    }
     let mut source = String::with_capacity(from_raw.len());
     source.push_str(front);
     source.push_str(&join_units(&stay));
@@ -463,6 +481,27 @@ mod tests {
         assert!(source.contains("> [!private]\n> secret one") && !source.contains("intro para"), "{source}");
         assert!(crate::privacy::private_blocks_preserved(SRC, &source));
         assert!(extract_units(SRC, &["b2".into()]).is_err(), "a private block cannot be moved");
+    }
+
+    #[test]
+    fn extract_units_carries_the_ids_of_nested_items() {
+        let src = "- parent ^p1\n  - child ^c1\n  - plain\n- other ^o1\n";
+        let (source, moved, ids) = extract_units(src, &["^p1".into()]).unwrap();
+        assert_eq!(moved, "- parent ^p1\n  - child ^c1\n  - plain");
+        assert_eq!(ids, vec!["p1", "c1"]);
+        assert_eq!(source, "- other ^o1\n");
+    }
+
+    #[test]
+    fn an_explicit_id_owns_the_bare_handle_whatever_the_order() {
+        // implicit b1 (block 1) before explicit ^b1 (block 2), and the other way round
+        let first = "zero\n\none\n\ntwo ^b1\n";
+        let (_, moved, _) = extract_units(first, &["b1".into()]).unwrap();
+        assert_eq!(moved, "two ^b1");
+        let second = "zero ^b1\n\none\n\ntwo\n";
+        let (_, moved, _) = extract_units(second, &["b1".into()]).unwrap();
+        assert_eq!(moved, "zero ^b1");
+        assert_eq!(extract_units(second, &["^b1".into()]).unwrap().1, "zero ^b1");
     }
 
     #[test]

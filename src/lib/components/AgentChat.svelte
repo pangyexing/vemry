@@ -18,7 +18,7 @@
   import { groupSkills, skillAskByName, skillDesc, skillTitle, skillTitleByName } from "$lib/skills";
   import RefIcon, { type RefIconKind } from "./RefIcon.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { hostDispatch } from "$lib/host";
   import { isAgentWindow } from "$lib/window";
   import { vault, baseOf, fileKind, noteBucketOf } from "$lib/stores/vault.svelte";
@@ -503,7 +503,9 @@
       dup: null,
       fields: Object.entries(it.fields ?? {}).map(([key, value]) => ({ key, value })),
     }));
-    void findDuplicates(req.id);
+    // Untracked: the scan reads `actionRows`, which this effect has just replaced with a fresh
+    // array — tracking that read would re-run the effect on its own write, without end.
+    void untrack(() => findDuplicates(req.id));
   });
   /** A task already in the vault with the row's key words: the row is shown as a likely duplicate and unticked. */
   async function findDuplicates(reqId: string) {
@@ -1070,6 +1072,16 @@
     const it = setInterval(() => (phIdx = (phIdx + 1) % PH_HINTS.length), PH_INTERVAL);
     return () => clearInterval(it);
   });
+
+  /** The stop button takes the send button's slot the moment a turn starts (send() clears the
+   *  draft synchronously and runTurn sets running before its first await), so the second click
+   *  of a double-click on ↑ would land on ■ and cancel the turn it just sent. A stop within the
+   *  first moments of a turn is ignored; Enter is unaffected (it never reaches this button). */
+  const STOP_GRACE_MS = 400;
+  function stopTurn() {
+    if (agent.turnStartedAt != null && Date.now() - agent.turnStartedAt < STOP_GRACE_MS) return;
+    agent.cancel();
+  }
 
   async function send() {
     let text = agent.draft.trim();
@@ -2176,7 +2188,7 @@
         <!-- While a turn runs and nothing is typed, the send button is the stop button — always
              in reach, unlike a control at the end of the scrolling timeline; a draft turns it back
              into ↑, which queues -->
-        <button class="send stop" title={t("chat.stopHint")} aria-label={t("chat.stop")} onclick={() => agent.cancel()}>
+        <button class="send stop" title={t("chat.stopHint")} aria-label={t("chat.stop")} onclick={stopTurn}>
           <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /></svg>
         </button>
       {:else}

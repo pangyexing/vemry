@@ -656,6 +656,21 @@ impl Vault {
         self.write_bytes(id, content)
     }
 
+    /// `write_meta` for a scaffold: the file is written only when nothing is there
+    /// yet (the same checks as `write_meta`), and the return says whether it was.
+    /// A file the user already has is left exactly as it is — the scaffold commands
+    /// open it rather than replace it.
+    pub fn write_meta_if_absent(&mut self, id: &NoteId, content: &str) -> Result<bool> {
+        if !is_meta_id(id) {
+            return Err(reject(PathReject::MdNeedsNoteApi, id.as_str()));
+        }
+        if self.abs_path(id).exists() {
+            return Ok(false);
+        }
+        self.write_bytes(id, content)?;
+        Ok(true)
+    }
+
     /// The file write shared by notes and meta files: the parent directory is
     /// created on demand, and a path that does not exist yet must be portable.
     fn write_bytes(&self, id: &NoteId, content: &str) -> Result<()> {
@@ -2361,6 +2376,17 @@ mod tests {
         let note = NoteId::new("projects/Alpha.md");
         assert!(!is_meta_id(&note));
         assert!(vault.write_meta(&note, "x").is_err());
+    }
+
+    #[test]
+    fn write_meta_if_absent_writes_once_and_refuses_notes() {
+        let (_d, mut vault) = fixture_vault();
+        let id = vault.note_id(".vemry/skills/routine.md").unwrap();
+        assert!(vault.write_meta_if_absent(&id, "first").unwrap(), "nothing there: written");
+        assert!(!vault.write_meta_if_absent(&id, "second").unwrap(), "already there: left alone");
+        assert_eq!(vault.read_note(&id).unwrap(), "first");
+        assert!(!vault.index().contains(&id));
+        assert!(vault.write_meta_if_absent(&NoteId::new("projects/Alpha.md"), "x").is_err());
     }
 
     #[test]

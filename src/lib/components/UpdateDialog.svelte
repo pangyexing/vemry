@@ -9,15 +9,28 @@
   const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
   const pct = $derived(updater.total ? Math.min(100, Math.round((updater.progress / updater.total) * 100)) : null);
 
+  let root = $state<HTMLElement | null>(null);
+  /** Opening takes the focus (the overlay blocks the pointer, so the keys must not keep
+   *  going to whatever had it — the editor, the settings modal); the dialog root is the
+   *  focus holder, so Enter means the primary answer until a button is tabbed to. */
+  $effect(() => {
+    if (updater.open) root?.focus();
+  });
+
   /** Capture phase, so an open dialog answers Escape/Enter before the settings modal's
-   *  own Escape (a window listener registered earlier) or the editor sees the key. */
+   *  own Escape (a window listener registered earlier) or the editor sees the key.
+   *  Enter is the primary answer only while the focus is inside the dialog and not on
+   *  a button: a focused Skip / Later keeps its own Enter (the native click), and a key
+   *  typed anywhere else never installs or restarts. */
   function onkeydown(e: KeyboardEvent) {
     if (!updater.open) return;
     if (e.key === "Escape") {
       e.stopPropagation();
-      // During a download this is "continue in background"; the outcome reopens the dialog
+      // During a download this is "continue in background"; the outcome arrives as a toast
       updater.close();
     } else if (e.key === "Enter") {
+      const target = e.target as HTMLElement | null;
+      if (!root || !target || !root.contains(target) || target.tagName === "BUTTON") return;
       const p = updater.phase;
       if (p === "checking" || p === "downloading") return;
       e.preventDefault();
@@ -33,7 +46,7 @@
 
 {#if updater.open}
   <div class="overlay" role="presentation">
-    <div class="dialog" role="dialog" aria-labelledby="update-title">
+    <div class="dialog" role="dialog" aria-labelledby="update-title" tabindex="-1" bind:this={root}>
       <img class="icon" src={icon} alt="" width="56" height="56" draggable="false" />
       <div class="body">
         {#if updater.phase === "checking"}
@@ -112,6 +125,7 @@
     z-index: 200;
   }
   .dialog {
+    outline: none;
     width: min(460px, 90vw);
     background: var(--bg-panel);
     border: 1px solid var(--border);

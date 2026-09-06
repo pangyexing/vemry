@@ -58,6 +58,16 @@ impl WikiLink {
             embed: false,
         }
     }
+
+    /// The target with its anchor and without the alias, as `resolve_ref` reads
+    /// it: `note`, `note#heading` or `note#^id`.
+    pub fn ref_target(&self) -> String {
+        match (&self.heading, &self.block_ref) {
+            (Some(h), _) => format!("{}#{h}", self.target),
+            (None, Some(id)) => format!("{}#^{id}", self.target),
+            (None, None) => self.target.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
