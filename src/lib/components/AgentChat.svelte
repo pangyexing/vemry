@@ -24,7 +24,8 @@
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
-  import { contextMenu } from "$lib/stores/contextMenu.svelte";
+  import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
+  import { executeCommand } from "$lib/commands/registry";
   import { t } from "$lib/i18n/i18n.svelte";
   import { toolLabel } from "$lib/views/session";
   import {
@@ -124,9 +125,20 @@
   /** Whether the user is stuck to the bottom of the timeline — only then does it follow the streaming output, so reading back is not yanked away. */
   let atBottom = $state(true);
   /** Whether the plan card (the task list the assistant recites) is expanded. */
-  let planOpen = $state(true);
+  let planOpen = $state(false);
   /** Whether the thinking stream is expanded into fully selectable text (a narrow, bottom-aligned strip by default). */
   let thinkingOpen = $state(false);
+  /** The collapsed reasoning shows its tail from a sentence boundary rather than from the
+   *  middle of a word (the buffer is a rolling window, so its start is arbitrary). */
+  const thinkingTail = $derived.by(() => {
+    const s = agent.thinking;
+    if (s.length <= 300) return s;
+    const tail = s.slice(-300);
+    const m = /[。！？.!?\n]\s*/.exec(tail);
+    const after = m ? m.index + m[0].length : -1;
+    const from = after > 0 && after < tail.length - 40 ? after : Math.max(0, tail.indexOf(" ") + 1);
+    return tail.slice(from);
+  });
   /** The research methodology skill is installed automatically the first time a conversation surface opens (idempotent per vault). */
   let ensuredSkillFor: string | null = null;
   $effect(() => {
@@ -314,18 +326,24 @@
   function runLabel(row: Extract<TimelineRow, { kind: "run" }>): string {
     const counts = new Map<string, number>();
     for (const it of row.items) counts.set(it.item.name, (counts.get(it.item.name) ?? 0) + 1);
-    return [...counts.entries()].map(([n, c]) => `${toolLabel(n)} ×${c}`).join(" · ");
+    return [...counts.entries()].map(([n, c]) => (c > 1 ? `${toolLabel(n)} ×${c}` : toolLabel(n))).join(" · ");
   }
 
-  /** A tool call's key argument value (a path, a query and so on), for the run's summary. */
+  /** A tool call's key argument value (a path, a query and so on), for the run's summary; a
+   *  list (clips_lookup's urls) shows its first entry and how many more there are. */
   function argValue(args: string): string {
     try {
       const v = JSON.parse(args) as Record<string, unknown>;
-      for (const key of ["path", "query", "name", "note", "text", "folder"]) {
-        if (typeof v[key] === "string" && v[key]) return v[key] as string;
+      for (const key of ["path", "query", "name", "note", "text", "folder", "url", "urls", "paths"]) {
+        const val = v[key];
+        if (typeof val === "string" && val) return val;
+        if (Array.isArray(val) && val.length && typeof val[0] === "string") return val.length > 1 ? `${val[0]} +${val.length - 1}` : val[0];
       }
     } catch {
-      /* a truncated args preview is not valid JSON */
+      // The runner previews args at 300 characters, so a long call is cut mid-JSON: the first
+      // value of a key argument is still readable by regex ("…" marks a list's remainder)
+      const m = /"(?:path|query|name|note|text|folder|url|urls|paths)"\s*:\s*(\[\s*)?"([^"]*)/.exec(args);
+      if (m?.[2]) return m[1] ? `${m[2]} …` : m[2];
     }
     return "";
   }
@@ -343,6 +361,12 @@
     return ` · ${vals.map((v) => (v.length > 18 ? `${v.slice(0, 18)}…` : v)).join(" / ")}${more}`;
   }
 
+  /** A tool row's argument glance: the key value alone (a path, a query, a skill name), with the
+   *  raw JSON left to the hover title; a call without arguments shows nothing rather than `{}`. */
+  function argGlance(args: string): string {
+    return argValue(args) || (/^\s*\{\s*\}\s*$/.test(args) ? "" : args);
+  }
+
   type PlanItem = { done: boolean; text: string };
   /** One line of `- [ ] text` → `{done, text}`; null when it is not a list item. The plan
    *  card's edit box tolerates a checkbox prefix the user typed out of habit. The check
@@ -357,6 +381,53 @@
    *  keeps it current through update_plan, and nothing is parsed out of the prose). */
   const PLAN_GLYPH: Record<string, string> = { pending: "☐", doing: "◉", done: "☑", skipped: "⊘" };
   const planSettled = $derived(agent.plan ? agent.plan.filter((p) => p.status === "done" || p.status === "skipped").length : 0);
+  /** The step the folded sticky card names: the one in progress, else the next pending one. */
+  const planHeadStep = $derived(
+    agent.plan ? (agent.plan.find((p) => p.status === "doing") ?? agent.plan.find((p) => p.status === "pending") ?? null) : null,
+  );
+  /** The transcript's decided plan cards opened by hand (a decided card folds to one line: the sticky card carries the live list). */
+  let expandedPlans = $state<Record<number, boolean>>({});
+
+  /** The tool families behind the status strip's verb; anything else shows its own label. */
+  const READ_TOOLS = new Set(["read_note", "read_block", "read_file", "read_skill", "open_for_reading"]);
+  const LOOKUP_TOOLS = new Set(["list_notes", "list_files", "query_blocks", "get_links", "clips_lookup", "list_sources", "recent_changes", "aggregate_blocks", "audit_links"]);
+  const WRITE_TOOLS = new Set(["write_note", "edit_note", "move_note", "move_file", "update_task", "set_block_field", "restructure_note", "move_blocks"]);
+  /** What the agent is doing right now, in words: a gate waiting on the user first, then the
+   *  tool in flight (its verb and key argument), a web search, the answer streaming, and
+   *  thinking otherwise. It reads this turn's tail — a tool in flight is always its last
+   *  entry, since the model only continues once the result is back. */
+  /** A gate waiting on the user (plan, pages to read, action items, a write): the status names
+   *  it, and the reasoning tail is hidden meanwhile — it was produced before the call and, left
+   *  under the card for minutes, reads as if the model were still talking. */
+  const gateWaiting = $derived(!!(agent.pendingPlan || agent.pendingRead || agent.pendingActions || agent.pendingPermission));
+  const runStatus = $derived.by(() => {
+    if (!agent.running) return "";
+    if (agent.pendingPlan) return t("chat.statusWaitingPlan");
+    if (agent.pendingRead) return t("chat.statusWaitingRead");
+    if (agent.pendingActions) return t("chat.statusWaitingActions");
+    if (agent.pendingPermission) return t("chat.statusWaitingWrite");
+    const tl = agent.timeline;
+    for (let i = tl.length - 1; i >= 0; i--) {
+      const it = tl[i];
+      if (it.kind === "user") break;
+      if (it.kind === "tool") {
+        if (it.ok !== undefined) break;
+        const v = argValue(it.args);
+        const x = v.length > 40 ? `${v.slice(0, 40)}…` : v;
+        if (READ_TOOLS.has(it.name)) return t("chat.statusReading", { x }).trim();
+        if (it.name === "search_notes") return t("chat.statusSearching", { x }).trim();
+        if (LOOKUP_TOOLS.has(it.name)) return t("chat.statusLooking", { x }).trim();
+        if (WRITE_TOOLS.has(it.name)) return t("chat.statusWriting", { x }).trim();
+        return t("chat.statusTool", { tool: toolLabel(it.name), x }).trim();
+      }
+      if (it.kind === "read") {
+        if (!it.decision) return t("chat.statusReadingPages"); // the fetch itself (a gate still waiting was answered above)
+        break;
+      }
+      if (it.kind === "sources" && it.searching) return t("chat.searching");
+    }
+    return t(agent.phase === "text" ? "chat.statusAnswering" : "chat.thinking");
+  });
 
   /** ---- The decision state of the plan gate's (propose_plan) inline card: at most one plan is
    *  pending at a time, so this is one piece of component-level state; a new request resets it on
@@ -506,15 +577,44 @@
     return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
   }
 
-  /** The status line's text, on the same template while running and after finishing (bb0eb0a
-   *  requires the two to match word for word).
-   *  A "step" is one model-tool round trip within a turn (the runner's iteration budget); the
-   *  session list's "N turns" counts the user's questions — two quantities, two words. */
-  const usageText = $derived.by(() => {
+  /** m:ss, h:mm:ss past an hour — the strip's clock. */
+  function fmtDuration(ms: number): string {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${h ? `${h}:` : ""}${h ? String(m).padStart(2, "0") : m}:${String(s % 60).padStart(2, "0")}`;
+  }
+  /** The clock ticks only while a turn runs: started with the run, stopped with it. */
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!agent.running) return;
+    now = Date.now();
+    const it = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(it);
+  });
+  const elapsedText = $derived(agent.running && agent.turnStartedAt != null ? fmtDuration(now - agent.turnStartedAt) : "");
+  /** The iteration budget (a step = one model-tool round trip; the runner asks the model to
+   *  wrap up with five left) is shown only once it is nearly spent — before that the count
+   *  says nothing a user can act on. */
+  const STEPS_LEFT_WARN = 5;
+  const stepsLeftText = $derived.by(() => {
+    const u = agent.usage;
+    if (!agent.running || !u) return "";
+    const left = u.max - u.iteration;
+    return left <= STEPS_LEFT_WARN ? t("chat.stepsLeft", { n: left }) : "";
+  });
+  /** After the turn: how long it took and the context size; the calls, the output and the cache hits are in the hover. */
+  const usageIdleText = $derived.by(() => {
     const u = agent.usage;
     if (!u) return "";
-    const cache = u.prompt > 0 && u.cacheHit > 0 ? t("chat.usageCache", { pct: Math.round((u.cacheHit / u.prompt) * 100) }) : "";
-    return `${t("chat.usageStep", { n: u.iteration, max: u.max, tokens: fmtK(u.prompt) })}${cache}`;
+    const context = t("chat.usageContext", { tokens: fmtK(u.prompt) });
+    return agent.lastTurnMs != null ? t("chat.usageIdle", { t: fmtDuration(agent.lastTurnMs), context }) : context;
+  });
+  const usageIdleHint = $derived.by(() => {
+    const u = agent.usage;
+    if (!u) return "";
+    const cache = u.prompt > 0 ? `${Math.round((u.cacheHit / u.prompt) * 100)}%` : "0%";
+    return t("chat.usageLastTurn", { calls: u.iteration, prompt: u.prompt.toLocaleString(), cache, completion: u.completion.toLocaleString() });
   });
 
   /** On a session change, clear the expansion state keyed by timeline index, so it is not attached to the new timeline at the wrong place. */
@@ -522,6 +622,7 @@
     expandedTools = {};
     expandedToolRuns = {};
     expandedSources = {};
+    expandedPlans = {};
     blockCache.clear();
     atBottom = true;
   }
@@ -1341,20 +1442,37 @@
     const cur = agent.effortOverride ?? prefs.reasoningEffort;
     return `${t("chat.effortLabel", { level: effortName(cur) })}${agent.effortOverride ? t("chat.effortThisSession") : ""}`;
   });
-  function effortMenu(e: MouseEvent) {
-    const check = (v: string | null) => (agent.effortOverride === v ? "✓ " : "");
-    contextMenu.open(e, [
-      { title: t("chat.effortMenuTitle") },
-      { label: `${check(null)}${t("chat.effortFollowGlobal", { level: effortName(prefs.reasoningEffort) })}`, action: () => (agent.effortOverride = null) },
-      { separator: true },
-      ...EFFORT_OPTIONS.map((o) => {
-        const hint = t(`settings.effort.${o.value}Hint`);
-        return {
-          label: `${check(o.value)}${effortName(o.value)}${hint ? `(${hint})` : ""}`,
-          action: () => (agent.effortOverride = o.value),
-        };
-      }),
-    ]);
+  /** The model chip's hover: the model (changed in Settings) and the thinking level; without a model, the level alone. */
+  const modelChipHint = $derived(prefs.model ? t("chat.modelChipHint", { model: prefs.model }) : t("chat.effortHint"));
+  /** The model chip's menu: the model with the way to Settings (the main window's — the
+   *  detached window has no settings dialog to open), then the thinking level's quick switch. */
+  function modelMenu(e: MouseEvent) {
+    const entries: MenuEntry[] = [];
+    if (prefs.model) {
+      entries.push({ title: prefs.model });
+      if (!isAgentWindow) entries.push({ label: t("chat.changeModel"), action: () => void executeCommand("settings-ai") });
+    }
+    if (prefs.reasoningEffortActive) {
+      if (entries.length) entries.push({ separator: true });
+      entries.push(
+        { title: t("chat.effortMenuTitle") },
+        {
+          label: t("chat.effortFollowGlobal", { level: effortName(prefs.reasoningEffort) }),
+          checked: agent.effortOverride === null,
+          action: () => (agent.effortOverride = null),
+        },
+        { separator: true },
+        ...EFFORT_OPTIONS.map((o) => {
+          const hint = t(`settings.effort.${o.value}Hint`);
+          return {
+            label: `${effortName(o.value)}${hint ? `(${hint})` : ""}`,
+            checked: agent.effortOverride === o.value,
+            action: () => (agent.effortOverride = o.value),
+          };
+        }),
+      );
+    }
+    contextMenu.open(e, entries);
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -1433,11 +1551,19 @@
   {/if}
   {#if agent.plan}
     <div class="plan-card">
-      <button class="plan-head" onclick={() => (planOpen = !planOpen)}>
+      <button class="plan-head" title={t(planOpen ? "chat.planCollapseHint" : "chat.planExpandHint")} onclick={() => (planOpen = !planOpen)}>
         <span class="plan-caret" class:open={planOpen} aria-hidden="true">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </span>
-        {t("chat.planProgress", { done: planSettled, total: agent.plan.length })}
+        <span class="plan-head-count">{t("chat.planProgress", { done: planSettled, total: agent.plan.length })}</span>
+        <!-- Folded (the default), the head names the step in progress or the next one: progress
+             and the current activity at a glance, with the whole list one click away rather than
+             taking a third of a narrow panel -->
+        {#if !planOpen && planHeadStep}
+          <span class="plan-head-step" class:doing={planHeadStep.status === "doing"}>
+            <span class="plan-check">{PLAN_GLYPH[planHeadStep.status] ?? "☐"}</span><span class="plan-head-text">{planHeadStep.text}</span>
+          </span>
+        {/if}
       </button>
       {#if planOpen}
         {#each agent.plan as p, pi (pi)}
@@ -1491,13 +1617,15 @@
         {@const pending = last.item.ok === undefined}
         {@const errs = row.items.reduce((n, it) => n + (it.item.ok === false ? 1 : 0), 0)}
         {@const open = !!expandedToolRuns[row.start]}
-        <button class="tool-row" onclick={() => (expandedToolRuns[row.start] = !open)}>
+        <!-- A mixed run's breakdown wraps rather than being cut: in a narrow panel the ledger's
+             one line is not enough for four tool names, and a second line costs less than losing them -->
+        <button class="tool-row" class:wrap={row.mixed} onclick={() => (expandedToolRuns[row.start] = !open)}>
           <span class="tool-status" class:err={errs > 0} class:pending>
             {pending ? "◌" : open ? "▾" : "▸"}
           </span>
           <span class="tool-name">{row.mixed ? t("tool.mixed") : toolLabel(row.name)}</span>
           <span class="tool-args">
-            {row.mixed ? runLabel(row) : `×${row.items.length}`}{errs ? t("chat.toolFailures", { n: errs }) : ""}{runDigest(row)}
+            {row.mixed ? runLabel(row) : `×${row.items.length}`}{errs ? t("chat.toolFailures", { n: errs }) : ""}{row.mixed ? "" : runDigest(row)}
           </span>
         </button>
         {#if open}
@@ -1507,7 +1635,7 @@
                 {it.item.ok === undefined ? "◌" : it.item.ok ? "▸" : "✕"}
               </span>
               {#if row.mixed}<span class="tool-name">{toolLabel(it.item.name)}</span>{/if}
-              <span class="tool-args">{it.item.args}</span>
+              <span class="tool-args" title={it.item.args}>{argGlance(it.item.args)}</span>
             </button>
             {#if expandedTools[it.i] && it.item.output}
               <pre class="tool-output">{it.item.output}</pre>
@@ -1517,7 +1645,7 @@
           <button class="tool-row tool-sub" onclick={() => (expandedToolRuns[row.start] = true)}>
             <span class="tool-status pending">◌</span>
             {#if row.mixed}<span class="tool-name">{toolLabel(last.item.name)}</span>{/if}
-            <span class="tool-args">{last.item.args}</span>
+            <span class="tool-args" title={last.item.args}>{argGlance(last.item.args)}</span>
           </button>
         {/if}
       {:else}
@@ -1594,6 +1722,9 @@
               <span class="plan-inline-badge" class:bad={item.decision.kind === "deny"}>{readBadge(item.decision)}</span>
             {:else if pendingRd}
               <span class="plan-inline-badge wait">{t("chat.readWaiting")}</span>
+            {:else if item.auto || item.fetching}
+              <!-- The pages are on their way: under the standing consent without a click, or after one -->
+              <span class="plan-inline-badge wait"><span class="pulse"></span> {t(item.auto ? "chat.readAutoRunning" : "chat.readFetching")}</span>
             {/if}
           </div>
           {#each item.urls as u, ui (u)}
@@ -1691,16 +1822,30 @@
              reattach) clears pendingPlan, so no zombie buttons are left behind. -->
         {@const pendingPlan = agent.pendingPlan?.id === item.id}
         {@const shownItems = item.decision?.kind === "approve_edited" ? item.decision.items : item.items}
-        <div class="plan-inline" class:rejected={item.decision?.kind === "reject"}>
-          <div class="plan-inline-head">
-            <span class="plan-inline-title">{t("chat.planTitle")}</span>
-            {#if item.decision}
+        {@const planFolded = !!item.decision && !expandedPlans[i]}
+        <div class="plan-inline" class:rejected={item.decision?.kind === "reject"} class:folded={planFolded}>
+          {#if item.decision}
+            <!-- A decided card folds to one line, the verdict and the step count: the sticky card
+                 carries the live list from here on, and the list as it was decided is a click away -->
+            <button class="plan-inline-head plan-inline-toggle" title={t(planFolded ? "chat.planExpandHint" : "chat.planCollapseHint")} onclick={() => (expandedPlans[i] = planFolded)}>
+              <span class="plan-caret" class:open={!planFolded} aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <span class="plan-inline-title">{t("chat.planTitle")}</span>
               <span class="plan-inline-badge" class:bad={item.decision.kind === "reject"}>{planBadge(item.decision)}</span>
-            {:else if pendingPlan}
-              <span class="plan-inline-badge wait">{t("chat.planWaiting")}</span>
-            {/if}
-          </div>
-          {#if pendingPlan && planEditing}
+              {#if planFolded}<span class="plan-inline-count">· {t("chat.planSteps", { n: shownItems.length })}</span>{/if}
+            </button>
+          {:else}
+            <div class="plan-inline-head">
+              <span class="plan-inline-title">{t("chat.planTitle")}</span>
+              {#if pendingPlan}
+                <span class="plan-inline-badge wait">{t("chat.planWaiting")}</span>
+              {/if}
+            </div>
+          {/if}
+          {#if planFolded}
+            <!-- folded: the head alone -->
+          {:else if pendingPlan && planEditing}
             <!-- svelte-ignore a11y_autofocus -->
             <textarea class="plan-edit" bind:value={planEditText} spellcheck="false" autofocus></textarea>
           {:else}
@@ -1724,9 +1869,6 @@
               </div>
             {/if}
           {/if}
-            {:else if item.auto || item.fetching}
-              <!-- The pages are on their way: under the standing consent without a click, or after one -->
-              <span class="plan-inline-badge wait"><span class="pulse"></span> {t(item.auto ? "chat.readAutoRunning" : "chat.readFetching")}</span>
         </div>
       {:else if item.kind === "notice"}
         <div class="notice">{item.text}</div>
@@ -1736,7 +1878,7 @@
             {item.ok === undefined ? "◌" : item.ok ? "▸" : "✕"}
           </span>
           <span class="tool-name">{toolLabel(item.name)}</span>
-          <span class="tool-args">{item.args}</span>
+          <span class="tool-args" title={item.args}>{argGlance(item.args)}</span>
         </button>
         {#if expandedTools[i] && item.output}
           <pre class="tool-output">{item.output}</pre>
@@ -1808,7 +1950,7 @@
         <button onclick={continueTruncated}>{t("chat.continueGenerating")}</button>
       </div>
     {/if}
-    {#if agent.thinking}
+    {#if agent.thinking && !gateWaiting}
       {#if thinkingOpen}
         <div class="thinking-full">
           <button class="thinking-toggle" onclick={() => (thinkingOpen = false)}>{t("chat.collapseThinking")}</button>
@@ -1821,34 +1963,32 @@
           class:long={agent.thinking.length > 200}
           title={t("chat.expandThinking")}
           onclick={() => (thinkingOpen = true)}
-        ><span>{agent.thinking}</span></div>
+        ><span>{thinkingTail}</span></div>
       {/if}
-    {/if}
-    {#if agent.running}
-      <div class="running-bar">
-        <span class="pulse"></span> {t("chat.thinking")}
-        {#if agent.usage}
-          <span class="usage-inline" title={t("chat.usageHint", { prompt: agent.usage.prompt.toLocaleString(), cache: agent.usage.cacheHit.toLocaleString() })}>
-            {usageText}
-          </span>
-        {/if}
-        <button class="cancel" onclick={() => agent.cancel()}>{t("chat.stop")}</button>
-      </div>
     {/if}
     </div>
   </div>
-  {#if !atBottom}
-    <button class="to-bottom" onclick={scrollToBottom}>
-      {#if agent.running}<span class="pulse"></span>{/if}
-      {t("chat.backToBottom")}
-    </button>
-  {/if}
   </div>
 
   <div class="composer" class:summon={summoning}>
-    {#if agent.usage && !agent.running}
-      <div class="usage-line" title={t("chat.usageLastTurn", { prompt: agent.usage.prompt.toLocaleString(), cache: agent.usage.cacheHit.toLocaleString(), completion: agent.usage.completion.toLocaleString() })}>
-        {usageText}
+    <!-- The status strip: what the run is doing right now (a gate waiting, the tool in flight,
+         the answer streaming), the last turn's usage when idle, and the way back to the bottom
+         after scrolling up. It sits between the timeline and the input rather than floating over
+         the text, and stays for the whole conversation so its coming and going never shifts the
+         text being read -->
+    {#if agent.timeline.length}
+      <div class="status-strip">
+        {#if agent.running}<span class="pulse"></span>{/if}
+        <span class="status-text" title={runStatus}>{runStatus}</span>
+        {#if agent.running}
+          {#if stepsLeftText}<span class="status-warn" title={t("chat.stepsLeftHint")}>{stepsLeftText}</span>{/if}
+          {#if elapsedText}<span class="status-usage" title={t("chat.elapsedHint")}>{elapsedText}</span>{/if}
+        {:else if usageIdleText}
+          <span class="status-usage" title={usageIdleHint}>{usageIdleText}</span>
+        {/if}
+        {#if !atBottom}
+          <button class="to-bottom" onclick={scrollToBottom}>{t("chat.backToBottom")}</button>
+        {/if}
       </div>
     {/if}
     {#if resumeSession && !agent.running}
@@ -1923,14 +2063,19 @@
           <path d="M10 4.5v11M4.5 10h11" />
         </svg>
       </button>
-      {#if prefs.reasoningEffortActive}
-        <button class="tool-btn effort" title={t("chat.effortHint")} onclick={effortMenu}>
+      <!-- The model chip: the model's name and the thinking level together, next to the input
+           where the request is composed, rather than a label crowding the session title out of
+           the header -->
+      {#if prefs.model || prefs.reasoningEffortActive}
+        <button class="tool-btn model" title={modelChipHint} onclick={modelMenu}>
           <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
             <path d="M3.5 6.5h7M14.5 6.5h2M3.5 13.5h2M9.5 13.5h7" />
             <circle cx="12.5" cy="6.5" r="1.8" />
             <circle cx="7.5" cy="13.5" r="1.8" />
           </svg>
-          <span>{effortLabel}</span>
+          {#if prefs.model}<span class="model-name">{prefs.model}</span>{/if}
+          {#if prefs.model && prefs.reasoningEffortActive}<span class="model-sep" aria-hidden="true">·</span>{/if}
+          {#if prefs.reasoningEffortActive}<span class="model-effort">{effortLabel}</span>{/if}
         </button>
       {/if}
       {#if summonHint}
@@ -1941,6 +2086,14 @@
         <!-- A spacer, so the send button on the right hugs the edge -->
         <span class="ctx"></span>
       {/if}
+      {#if agent.running && !agent.draft.trim()}
+        <!-- While a turn runs and nothing is typed, the send button is the stop button — always
+             in reach, unlike a control at the end of the scrolling timeline; a draft turns it back
+             into ↑, which queues -->
+        <button class="send stop" title={t("chat.stopHint")} aria-label={t("chat.stop")} onclick={() => agent.cancel()}>
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /></svg>
+        </button>
+      {:else}
       <button
         class="send"
         title={modeInfo.title}
@@ -1957,6 +2110,7 @@
           </svg>
         {/if}
       </button>
+      {/if}
     </div>
     </div>
   </div>
@@ -1992,24 +2146,42 @@
   /* The timeline in the overlay needs some body: an empty flex container collapses into a strip
      when there is little content, and the second glance after summoning it (the streaming answer
      unfolding) needs a stable perceived height; the cap is left to the overlay container's 72vh */
-  .to-bottom {
-    position: absolute;
-    bottom: 10px;
-    left: 50%;
-    transform: translateX(-50%);
+  /* ---- the status strip (between the timeline and the input; see the markup) ---- */
+  .status-strip {
     display: flex;
     align-items: center;
     gap: 6px;
+    min-height: 18px;
+    padding: 0 2px 4px;
     font-size: var(--fs-xs);
     color: var(--fg-muted);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 4px 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  }
+  .status-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .status-warn {
+    flex-shrink: 0;
+    font-size: 10px;
+    color: var(--warning, #b58900);
+  }
+  .status-usage {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--fg-faint);
+  }
+  .to-bottom {
+    flex-shrink: 0;
+    font-size: var(--fs-xs);
+    color: var(--accent);
+    padding: 0 5px;
+    border-radius: 4px;
   }
   .to-bottom:hover {
-    color: var(--fg);
     background: var(--bg-hover);
   }
   .welcome {
@@ -2259,6 +2431,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .tool-row.wrap .tool-args {
+    white-space: normal;
+  }
   .tool-output {
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
@@ -2290,13 +2465,6 @@
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
     mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
   }
-  .running-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: var(--fs-xs);
-    color: var(--fg-muted);
-  }
   .pulse {
     width: 6px;
     height: 6px;
@@ -2313,11 +2481,6 @@
     .pulse {
       animation: none;
     }
-  }
-  .cancel {
-    margin-left: auto;
-    color: var(--danger);
-    font-size: var(--fs-xs);
   }
   /* ---- the source cards ---- */
   .sources {
@@ -2427,8 +2590,10 @@
     font-size: var(--fs-xs);
     color: var(--fg-faint);
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     padding: 0 6px 2px;
   }
   /* ---- the input area ---- */
@@ -2669,9 +2834,21 @@
     color: var(--accent);
     font-family: inherit;
   }
-  .effort:disabled {
-    opacity: 0.5;
-    cursor: default;
+  .tool-btn.model {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+  .model-name {
+    min-width: 0;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .model-sep {
+    color: var(--fg-faint);
+  }
+  .model-effort {
+    flex-shrink: 0;
   }
   .send {
     display: inline-flex;
@@ -2692,6 +2869,15 @@
     background: transparent;
     color: var(--fg-faint);
     cursor: default;
+  }
+  .send.stop {
+    background: transparent;
+    color: var(--danger);
+    box-shadow: inset 0 0 0 1.5px currentColor;
+  }
+  .send.stop:hover {
+    background: var(--danger);
+    color: #fff;
   }
   /* ---- The plan card: the recited task list pinned at the top of the timeline, progress at a glance ---- */
   .plan-card {
@@ -2715,6 +2901,24 @@
   }
   .plan-head:hover {
     color: var(--fg);
+  }
+  .plan-head-count {
+    flex-shrink: 0;
+  }
+  .plan-head-step {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    font-weight: 400;
+    color: var(--fg);
+  }
+  .plan-head-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .plan-caret {
     display: flex;
@@ -2745,7 +2949,8 @@
   .plan-item.done .plan-check {
     color: var(--accent);
   }
-  .plan-item.doing .plan-check {
+  .plan-item.doing .plan-check,
+  .plan-head-step.doing .plan-check {
     color: var(--accent);
     animation: plan-pulse 1.4s ease-in-out infinite;
   }
@@ -2759,7 +2964,8 @@
     50% { opacity: 0.35; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .plan-item.doing .plan-check { animation: none; }
+    .plan-item.doing .plan-check,
+    .plan-head-step.doing .plan-check { animation: none; }
   }
   .act-row {
     display: flex;
@@ -2854,7 +3060,9 @@
     display: flex;
     align-items: center;
     gap: 4px;
+    min-width: 0;
     font-size: var(--fs-xs);
+    line-height: 1.3;
     color: var(--fg-muted);
   }
   .act-field {
@@ -2895,6 +3103,24 @@
     color: var(--fg-muted);
     padding-bottom: 2px;
   }
+  .plan-inline-toggle {
+    width: 100%;
+    text-align: left;
+    flex-wrap: wrap;
+    padding: 0;
+    border-radius: 4px;
+  }
+  .plan-inline-toggle:hover {
+    color: var(--fg);
+  }
+  .plan-inline.folded {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .plan-inline-count {
+    font-weight: 400;
+    color: var(--fg-faint);
+  }
   .plan-inline-badge {
     font-weight: 400;
     color: var(--accent);
@@ -2904,6 +3130,11 @@
   }
   .plan-inline-badge.wait {
     color: var(--fg-faint);
+  }
+  .plan-inline-badge .pulse {
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 2px;
   }
   .plan-edit {
     width: 100%;
@@ -2934,6 +3165,8 @@
     padding: 4px 10px;
     border-radius: 6px;
     border: 1px solid var(--border);
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .plan-actions .btn:hover {
     background: var(--bg-hover);
@@ -3111,18 +3344,6 @@
     user-select: text;
     margin: 0;
   }
-  .usage-inline {
-    font-size: 10px;
-    font-family: var(--font-mono);
-    color: var(--fg-faint);
-  }
-  .usage-line {
-    font-size: 10px;
-    font-family: var(--font-mono);
-    color: var(--fg-faint);
-    text-align: right;
-    margin-bottom: 4px;
-  }
   .queue-chip {
     display: flex;
     align-items: center;
@@ -3131,11 +3352,6 @@
     color: var(--fg-muted);
     background: var(--bg-hover);
     border-radius: 6px;
-  .plan-inline-badge .pulse {
-    display: inline-block;
-    vertical-align: middle;
-    margin-right: 2px;
-  }
     padding: 3px 8px;
     margin: 8px 10px 0;
     min-width: 0;

@@ -362,6 +362,10 @@ CMD = {
         ("Settings", "设置"),
         ("Model / API key / endpoint", "模型 / API key / 端点"),
     ),
+    "settings-ai": (
+        ("AI settings", "AI 设置"),
+        ("Model / API key / endpoint / thinking depth", "模型 / API key / 端点 / 思考深度"),
+    ),
     "check-updates": (
         ("Check for updates", "检查更新"),
         ("Ask GitHub Releases for a newer version (progress shows in Settings)",
@@ -515,11 +519,11 @@ add("palette.", {
 add("permission.", {
     "title": ("Confirm write", "写入确认"),
     "newFile": ("(new file)", "（新文件）"),
-    "summary.create": ("Create {path}", "创建新笔记 {path}"),
-    "summary.overwrite": ("Overwrite {path}", "覆盖写入 {path}"),
-    "summary.edit": ("Edit {path}", "编辑 {path}"),
-    "summary.move": ("Move {path} → {toPath}", "移动 {path} → {toPath}"),
-    "summary.append": ("Append to {path}", "追加到 {path}"),
+    "summary.create": ("Create a new note", "创建新笔记"),
+    "summary.overwrite": ("Overwrite", "覆盖写入"),
+    "summary.edit": ("Edit", "编辑"),
+    "summary.move": ("Move → {toPath}", "移动 → {toPath}"),
+    "summary.append": ("Append", "追加"),
     "rewrites": ("Rewrites {links} links in {notes} notes", "改写 {notes} 篇里的 {links} 个链接"),
     "blockDiff": ("Blocks · moved {moved} · changed {changed} · added {added} · removed {removed}", "块 · 移动 {moved} · 修改 {changed} · 新增 {added} · 删除 {removed}"),
     "rawDiff": ("Raw diff", "原始 diff"),
@@ -842,10 +846,6 @@ add("tool.", {
     "mixed": ("Tool calls", "工具调用"),
 })
 
-add("planDecision.", {
-    "approve": ("Plan approved", "计划已确认"),
-    "approve_edited": ("Plan approved with edits", "计划修改后确认"),
-    "reject": ("Plan rejected", "计划被否决"),
 # The default title of a callout head written without one (callout.ts::calloutDefaultTitle);
 # the keys are the recognised types, so `callout.<type>` resolves and an unknown type shows its own name.
 add("callout.", {
@@ -862,6 +862,10 @@ add("callout.", {
     "private": ("Private", "私密"),
 })
 
+add("planDecision.", {
+    "approve": ("Plan approved", "计划已确认"),
+    "approve_edited": ("Plan approved with edits", "计划修改后确认"),
+    "reject": ("Plan rejected", "计划被否决"),
 })
 
 add("decision.", {
@@ -1050,7 +1054,6 @@ add("agentPanel.", {
     "backToMainWindow": ("Back to the main window", "回到主窗"),
     "cannotSwitchWhileRunning": ("The agent is running — sessions cannot be switched", "agent 运行中,无法切换会话"),
     "switchSession": ("Switch session", "切换会话"),
-    "currentModel": ("Current model {model} (changeable in Settings)", "当前模型 {model}(设置里可换)"),
     "searchInactive": ("Search inactive", "搜索未生效"),
     "searchInactiveHint": (
         "Web search is on, but this endpoint is not api.deepseek.com, so this session will not search. "
@@ -1067,7 +1070,6 @@ add("agentPanel.", {
                    "resumed, so a follow-up starts from scratch",
                    "升级前的单轮日志:可回看,但模型上下文不可续,追问会从零开始"),
     "legacyDrawer": ("Old records · {n}", "旧记录 · {n} 条"),
-    "turns": ("{n} turns", "{n} 轮"),
     "confirmDelete": ("Confirm delete", "确认删除"),
     "adblockOn": ("Ad blocking active · {n} rules", "去广告已生效 · {n} 条规则"),
     "adblockFailed": ("Ad blocking failed: {error}", "去广告失败: {error}"),
@@ -1091,8 +1093,11 @@ add("chat.", {
     "planApprovedEdited": ("Approved with edits ✓", "已修改并确认 ✓"),
     "planCancelled": ("Cancelled", "已取消"),
     "planRejected": ("Rejected", "已否决"),
-    "usageCache": (" · cache {pct}%", " · 缓存 {pct}%"),
-    "usageStep": ("Step {n}/{max} · context {tokens}", "步 {n}/{max} · 上下文 {tokens}"),
+    "usageContext": ("context {tokens}", "上下文 {tokens}"),
+    "usageIdle": ("{t} · {context}", "用时 {t} · {context}"),
+    "stepsLeft": ("{n} steps left", "还剩 {n} 步"),
+    "stepsLeftHint": ("Model calls left in this turn's budget; the model has been asked to wrap up", "本轮调用预算所剩,模型已被要求收尾"),
+    "elapsedHint": ("Time since this turn started", "本轮已运行的时间"),
     "answerSignature": ("AI research session", "AI 研究会话"),
     "copiedSelection": ("Selected excerpt copied", "已复制选中片段"),
     "copiedAnswer": ("Answer copied as Markdown", "已复制回答 Markdown"),
@@ -1158,6 +1163,9 @@ add("chat.", {
     "effortLabel": ("Thinking · {level}", "思考·{level}"),
     "effortThisSession": (" (this session)", "(本会话)"),
     "effortFollowGlobal": ("Follow the global setting ({level})", "跟随全局({level})"),
+    "modelChipHint": ("Model {model} · thinking depth. Click to adjust (the model itself is changed in Settings)",
+                      "模型 {model} · 思考深度,点击调整(模型本身在设置里更换)"),
+    "changeModel": ("Change model… (Settings)", "更改模型…(设置)"),
     "copySelection": ("Copy the selected excerpt", "复制选中片段"),
     "copy": ("Copy", "复制"),
     "insertAsQuote": ("Insert as a quote block at the cursor in the current note", "作为引用块插入当前笔记光标处"),
@@ -1217,6 +1225,9 @@ add("chat.", {
     "readDecline": ("Decline", "不读"),
     "readDeclined": ("Declined", "已拒绝"),
     "readDone": ("Read {n} ✓", "已读 {n} 页 ✓"),
+    "readDoneAuto": ("Read {n} ✓ · without asking", "已自动读取 {n} 页 ✓"),
+    "readAutoRunning": ("Reading without asking…", "自动读取中…"),
+    "readFetching": ("Reading…", "读取中…"),
     "readNone": ("Nothing read", "没有读取"),
     "readAutoSources": ("Read without asking for the rest of this session", "本会话不再询问,自动读取"),
     "viewTitle": ("What the {view} shows right now goes in as context ({n} rows)", "{view} 此刻显示的内容作为上下文({n} 行)"),
@@ -1225,9 +1236,6 @@ add("chat.", {
     "welcomeBody": ("Ask, and the AI searches your notes (and the web) and answers with citations. "
                     "Click a citation to read the article; clip what is worth keeping back into the "
                     "vault, and the next answer uses it.",
-    "readDoneAuto": ("Read {n} ✓ · without asking", "已自动读取 {n} 页 ✓"),
-    "readAutoRunning": ("Reading without asking…", "自动读取中…"),
-    "readFetching": ("Reading…", "读取中…"),
                     "提问,AI 检索你的笔记(与网络)后给出带引用的回答;点击引用读正文,值得留的剪藏回知识库,下次回答会直接用上。"),
     "welcomeHint": ("Type a URL to open the built-in browser ({key} works too); start with # to record a "
                     "convention in VEMRY.md; every write shows you a diff first.",
@@ -1258,6 +1266,9 @@ add("chat.", {
     "planRestore": ("Restore the list", "还原清单"),
     "planEdit": ("✎ Edit", "✎ 修改"),
     "planApprove": ("✓ Run it", "✓ 确认执行"),
+    "planSteps": ("{n} steps", "{n} 步"),
+    "planExpandHint": ("Show the steps", "展开步骤"),
+    "planCollapseHint": ("Collapse the steps", "收起步骤"),
     "sourcesCount": ("Sources · {n}", "来源 · {n}"),
     "sourcesClipped": (" · {n} clipped", " · 已剪藏 {n}"),
     "searched": ("Searched the web", "已联网搜索"),
@@ -1277,15 +1288,25 @@ add("chat.", {
     "collapseThinking": ("▾ Collapse thinking", "▾ 收起思考"),
     "expandThinking": ("Click to expand the full reasoning (selectable)", "点击展开完整思考(可选中复制)"),
     "thinking": ("Thinking", "思考中"),
-    "usageHint": ("Context {prompt} tokens · cache hits {cache}", "上下文 {prompt} tokens · 缓存命中 {cache}"),
-    "usageLastTurn": ("Last turn: context {prompt} tokens · cache hits {cache} · output {completion}",
-                      "上一轮:上下文 {prompt} tokens · 缓存命中 {cache} · 输出 {completion}"),
+    "usageLastTurn": ("Last turn: {calls} model calls · context {prompt} tokens · cache hits {cache} · output {completion} tokens",
+                      "上一轮:{calls} 次调用 · 上下文 {prompt} tokens · 缓存命中 {cache} · 输出 {completion} tokens"),
     "stop": ("Stop", "停止"),
     "backToBottom": ("↓ Back to the bottom", "↓ 回到底部"),
+    "stopHint": ("Stop this turn", "停止本轮"),
+    "statusWaitingPlan": ("Waiting for your decision on the plan", "等待你确认计划"),
+    "statusWaitingRead": ("Waiting for you to pick the pages to read", "等待你选择要读的网页"),
+    "statusWaitingActions": ("Waiting for your decision on the action items", "等待你确认行动项"),
+    "statusWaitingWrite": ("Waiting for your approval of a write", "等待你批准写入"),
+    "statusReading": ("Reading {x}", "正在读取 {x}"),
+    "statusReadingPages": ("Reading the pages", "正在读取网页"),
+    "statusSearching": ("Searching for {x}", "正在搜索 {x}"),
+    "statusLooking": ("Looking up {x}", "正在查找 {x}"),
+    "statusWriting": ("Writing {x}", "正在写入 {x}"),
+    "statusTool": ("{tool} {x}", "正在{tool} {x}"),
+    "statusAnswering": ("Writing the answer…", "正在撰写回答…"),
     "queued": ("Queued: {text}", "已排队:{text}"),
     "cancelQueued": ("Cancel the queued message", "取消排队消息"),
-    "runningQueueHint": ("Running — type the next one and press Enter to queue it",
-                         "运行中——输入下一条,回车排队…"),
+    "runningQueueHint": ("Running · type the next one, Enter queues it", "运行中 · 输入下一条,回车排队"),
     "composerAria": ("Ask a question or give a task", "提问或下达任务"),
     "addContextHint": ("Add context: a note, folder, selection or web page, or a file from your computer "
                        "(typing @ works too; images and files can be pasted straight in)",

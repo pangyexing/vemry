@@ -408,6 +408,8 @@ export interface SessionMeta {
   title: string;
   /** How many user messages there are. */
   turns: number;
+  /** The note the session produced (the last write the user allowed, else the note it follows); absent when it only answered. */
+  note?: string;
   /** The RFC3339 timestamp of the last audit line; it may be an empty string. */
   last_ts: string;
   /** Having a history sidecar means the model context can be resumed; false ones are the per-turn fragments from before the upgrade. */
@@ -460,10 +462,10 @@ export type ActionsDecision = { kind: "approve"; items: ActionItem[] } | { kind:
 export interface ReadRequest {
   id: string;
   urls: string[];
-}
-export type ReadAnswer = { kind: "allow"; urls: string[]; auto_sources: boolean } | { kind: "deny"; reason: string };
   /** The session's standing consent answers it: the card lists the URLs without buttons while they are fetched. */
   auto?: boolean;
+}
+export type ReadAnswer = { kind: "allow"; urls: string[]; auto_sources: boolean } | { kind: "deny"; reason: string };
 
 /** A row of the example-skills catalogue in Settings (mirroring commands.rs::SkillExample). */
 export interface SkillExample {

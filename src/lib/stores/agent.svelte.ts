@@ -183,8 +183,14 @@ class AgentStore {
   writesByTurn = $state<Record<string, number>>({});
   undoneTurns = $state<Record<string, boolean>>({});
   thinking = $state("");
+  /** What the stream is delivering right now: reasoning tokens, answer text, or neither (a
+   *  tool call in flight, or the gap between them) — the status strip's verb. Live only. */
+  phase = $state<"thinking" | "text" | null>(null);
   /** The most recent usage event (the gauge of turns, context size and cache hit rate). */
   usage = $state<TurnUsage | null>(null);
+  /** When the running turn started (the strip's clock), and how long the last one took. */
+  turnStartedAt = $state<number | null>(null);
+  lastTurnMs = $state<number | null>(null);
   /** The last turn's output was cut off by the length limit (finish_reason=length) — the UI offers "continue". */
   lastTruncated = $state(false);
   /** The current session id; null = a new session awaiting its first send (the same semantics as the Rust side). */
@@ -540,6 +546,8 @@ class AgentStore {
     const epoch = this.epoch;
     this.running = true;
     this.thinking = "";
+    this.phase = null;
+    this.turnStartedAt = Date.now();
     this.lastTruncated = false;
     const channel = new Channel<AgentEvent>();
     channel.onmessage = (e) => {
@@ -561,6 +569,9 @@ class AgentStore {
       if (epoch === this.epoch) this.flushDelta();
       this.running = false;
       this.thinking = "";
+      this.phase = null;
+      if (this.turnStartedAt != null) this.lastTurnMs = Date.now() - this.turnStartedAt;
+      this.turnStartedAt = null;
       this.pendingPermission = null;
       this.pendingPlan = null;
       this.pendingActions = null;
@@ -605,6 +616,8 @@ class AgentStore {
    *  `loadCurrent()` only bumps viewEpoch and does not come through here — reattach has
    *  just applied the handback, which must not be wiped out again. */
   private resetSessionScoped() {
+    this.usage = null;
+    this.lastTurnMs = null;
     this.dismissedNote = null;
     this.dismissedSelection = null;
     this.effortOverride = null;
@@ -937,6 +950,7 @@ class AgentStore {
         break;
       }
       case "thinking": {
+        this.phase = "thinking";
         this.pendingThinking += e.text;
         if (this.flushTimer == null) {
           this.flushTimer = setTimeout(() => this.flushDelta(), 40);
@@ -944,6 +958,7 @@ class AgentStore {
         break;
       }
       case "text_delta": {
+        this.phase = "text";
         this.pendingDelta += e.text;
         if (this.flushTimer == null) {
           this.flushTimer = setTimeout(() => this.flushDelta(), 40);
@@ -951,6 +966,7 @@ class AgentStore {
         break;
       }
       case "tool_call_started": {
+        this.phase = null;
         // A tool that carries its own card projection pushes no raw JSON tool row — the plan card is propose_plan's only projection
         if (CARD_TOOLS.has(e.name)) break;
         this.timeline.push({ kind: "tool", id: e.id, name: e.name, args: e.args });
@@ -1001,6 +1017,7 @@ class AgentStore {
         break;
       }
       case "web_searching": {
+        this.phase = null; // the narration before a search is over: from here it is searching, then thinking again
         // Several searches in one turn share one source card (the same semantics as the
         // replay path's rebuildTimeline, and the end-of-turn fill-in also only honours
         // this turn's last card) — an existing card lights up its pulse, and only without
@@ -1009,12 +1026,14 @@ class AgentStore {
         break;
       }
       case "web_search_queries": {
+        this.phase = null;
         const item = this.lastSources();
         item.queries.push(...e.queries.filter((q) => !item.queries.includes(q)));
         item.searching = false;
         break;
       }
       case "web_search_results": {
+        this.phase = null;
         // Structured results (DeepSeek currently returns none; kept defensively); several batches in one turn are merged and deduplicated
         const item = this.lastSources();
         const known = new Set(item.results.map((r) => r.url));
@@ -1043,6 +1062,7 @@ class AgentStore {
         this.harvestLinksFromAnswer();
         this.settleSources();
         this.thinking = "";
+        this.phase = null;
         this.lastTruncated = e.truncated;
         break;
       }

@@ -1041,6 +1041,7 @@
     },
   });
   registerCommand({ id: "settings", group: "system", run: () => { settingsTab = "general"; settingsOpen = true; } });
+  registerCommand({ id: "settings-ai", group: "system", run: () => { settingsTab = "ai"; settingsOpen = true; } });
   registerCommand({
     id: "check-updates", group: "system",
     run: () => { settingsTab = "updates"; settingsOpen = true; void updater.check(true); },

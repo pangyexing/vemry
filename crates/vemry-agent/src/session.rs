@@ -424,6 +424,11 @@ pub struct SessionMeta {
     /// session's → the derived title is identical, and the list UI tells them
     /// apart by this flag.
     pub forked: bool,
+    /// The note the session produced: the path of the last write the user allowed,
+    /// else the note it follows. None when it only answered. The list shows it —
+    /// what a session made is a better handle on it than how many questions it took.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// A derived session title: the first line, capped at `TITLE_MAX` characters.
@@ -440,6 +445,8 @@ fn parse_meta(meta_dir: &Path, id: &str) -> SessionMeta {
     let mut turns = 0;
     let mut last_ts = String::new();
     let mut forked = false;
+    let mut written: Option<String> = None;
+    let mut follow: Option<String> = None;
     if let Some(text) = read_session(meta_dir, id) {
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             let Ok(obj) = serde_json::from_str::<Value>(line) else { continue };
@@ -459,6 +466,14 @@ fn parse_meta(meta_dir: &Path, id: &str) -> SessionMeta {
             if obj["kind"] == "fork" {
                 forked = true;
             }
+            if obj["kind"] == "permission" && obj["decision"].as_str().is_some_and(|d| d.starts_with("allow")) {
+                if let Some(p) = obj["path"].as_str().filter(|p| !p.is_empty()) {
+                    written = Some(p.to_string());
+                }
+            }
+            if obj["kind"] == "follow" {
+                follow = obj["path"].as_str().filter(|p| !p.is_empty()).map(String::from); // a null path ends the follow
+            }
             if let Some(ts) = obj["ts"].as_str() {
                 last_ts = ts.to_string();
             }
@@ -468,7 +483,7 @@ fn parse_meta(meta_dir: &Path, id: &str) -> SessionMeta {
         title = id.to_string(); // manual title > derived title > the id as a fallback
     }
     let resumable = history_path(meta_dir, id).exists();
-    SessionMeta { id: id.to_string(), title, turns, last_ts, resumable, forked }
+    SessionMeta { id: id.to_string(), title, turns, last_ts, resumable, forked, note: written.or(follow) }
 }
 
 pub fn list_session_meta(meta_dir: &Path) -> Vec<SessionMeta> {
@@ -821,7 +836,6 @@ mod tests {
         write_history(dir.path(), "../x", &[]); // silently refused, nothing written
         assert!(!dir.path().parent().unwrap().join("x.history.json").exists());
     }
-}
 
     /// The consents a reopened session gets back: the standing read consent and the
     /// session write grants come from the jsonl, nothing else does.
@@ -840,3 +854,4 @@ mod tests {
         assert_eq!(scope.grants.prefixes, vec!["research/".to_string()]);
         assert_eq!(read_session_scope(dir.path(), "20990101-000000.000"), SessionScope::default(), "a missing session has no scope");
     }
+}

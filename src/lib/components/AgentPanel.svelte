@@ -7,7 +7,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { api } from "$lib/api";
   import { agent } from "$lib/stores/agent.svelte";
-  import { vault } from "$lib/stores/vault.svelte";
+  import { vault, baseOf } from "$lib/stores/vault.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { isAgentWindow } from "$lib/window";
@@ -131,9 +131,6 @@
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </span>
       </button>
-      {#if prefs.model}
-        <span class="sess-model" title={t("agentPanel.currentModel", { model: prefs.model })}>{prefs.model}</span>
-      {/if}
       {#if agent.sourceTable.length}
         <button class="sess-sources" class:open={sourcesOpen} title={t("agentPanel.sourcesHint")} onclick={toggleSources}>
           {t("agentPanel.sources", { n: agent.sourceTable.length })}
@@ -203,7 +200,9 @@
           {#if s.id === agent.sessionId}<span class="sess-check">✓</span>{/if}
           {#if s.forked}<span class="sess-fork" title={t("sessionsView.forked")}>⑂</span>{/if}
           <span class="sess-t">{displayTitle(s)}</span>
-          <span class="sess-m">{t("agentPanel.turns", { n: s.turns })}{relTime(s.last_ts) ? ` · ${relTime(s.last_ts)}` : ""}</span>
+          <!-- What the session produced (the note it wrote or follows) is a better handle than how many questions it took -->
+          {#if s.note}<span class="sess-note" title={s.note}>→ {baseOf(s.note).replace(/\.md$/, "")}</span>{/if}
+          <span class="sess-m">{relTime(s.last_ts)}</span>
         </button>
         {#if confirmDelete === s.id}
           <button class="sess-del confirm" onclick={() => deleteSession(s.id)}>{t("agentPanel.confirmDelete")}</button>
@@ -416,6 +415,16 @@
     font-family: var(--font-mono);
     color: var(--fg-faint);
   }
+  .sess-note {
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 40%;
+    font-size: 10px;
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .sess-del {
     flex-shrink: 0;
     color: var(--fg-faint);
@@ -450,16 +459,6 @@
   }
   .sess-row.legacy {
     opacity: 0.65;
-  }
-  .sess-model {
-    flex-shrink: 0;
-    font-size: 10px;
-    font-family: var(--font-mono);
-    color: var(--fg-faint);
-    max-width: 110px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   /* The search switch is on but the endpoint does not support it: the one runtime sign of the silent degradation (the same colour as "unverified") */
   .sess-nosearch {
