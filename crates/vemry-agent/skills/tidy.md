@@ -1,32 +1,60 @@
 ---
 name: tidy
-description: "Tidying a folder or the vault: audit first, propose every move and fix as a list the user reviews, then move with links rewritten — nothing is lost"
-version: 1
+description: Tidy a folder or the vault — audit, review every move, links rewritten
+triggers: [tidy, organise, organize, clean up, inbox zero, archive, 整理, 归档, 清理收件箱]
+version: 2
 ---
 
 # Tidy up
 
-When the user asks to tidy, organise or clean up a folder (or the inbox, or the
-whole vault):
+## When
 
-1. Read VEMRY.md's structure and conventions first: the target layout is the
-   user's, not yours. Then `list_notes` and `list_files` for the folder, and
-   `audit_links` for what is broken there (unresolved links, orphans, dangling
-   supports, duplicate clips).
-2. Decide each item's destination by the conventions (a project note into its
-   project folder, a clip that belongs to a topic next to it, an attachment into
-   the note's bucket). When two notes are the same thing, plan a merge: the
-   surviving note gets the other's name as an `aliases:` entry (set_frontmatter)
-   so old links keep resolving, and the other moves to `archive/`.
-3. Call `propose_actions` once with the whole list and wait. Use `text` to say
-   the move in words ("move inbox/压测记录.md → projects/网关/会议/"), `target` for
-   the destination, `source` for the reason (an audit row, the convention).
-   Nothing moves before the user has reviewed the list.
-4. Execute only what came back: `move_note` and `move_file` (links are rewritten
-   in the same write), `set_frontmatter` for aliases and missing keys,
-   `append_note` for a hub note's new entries. One tool call per item.
-5. Reply with what moved where and what was left alone, then run `audit_links`
-   again and report whether the unresolved count went down.
+"Tidy / organise / clean up" a folder, the inbox, or the whole vault. One note's
+insides are tidy-note, not this.
 
-Never delete. Never move into or out of a private folder. A file you cannot
-place goes into the list as "leave it" so the user decides.
+## Plan
+
+1. Read the conventions and audit
+2. Decide every item's destination
+3. Review the list on the card
+4. Move and fix
+5. Audit again and report
+
+## Inputs
+
+- VEMRY.md's structure and conventions first: the target layout is the user's,
+  not yours.
+- list_notes and list_files for the folder; audit_links for what is broken there
+  (unresolved links, orphans, dangling supports, duplicate clips).
+
+## Do
+
+- Each item's destination by the conventions: a project note into its project
+  folder, a clip that belongs to a topic next to it, an attachment into the
+  note's bucket. Two notes that are the same thing: plan a merge — the surviving
+  note gets the other's name as an aliases: entry (set_frontmatter) so old links
+  keep resolving, and the other moves to archive/.
+- propose_actions once with the whole list, then wait: text says the move in
+  words ("move inbox/x.md → projects/y/"), target the destination, source the
+  reason (an audit row, the convention). Nothing moves before the user has
+  reviewed the list.
+- Execute only what came back: move_note and move_file (links are rewritten in
+  the same write), set_frontmatter for aliases and missing keys, append_note for
+  a hub note's new entries. One tool call per item.
+- audit_links again afterwards.
+
+## Landing
+
+The destinations the card returned; archive/ for the merged-away note.
+
+## Shape
+
+The reply: what moved where, what was left alone, and whether the unresolved
+count went down.
+
+## Never
+
+- Delete anything.
+- Move into or out of a private folder.
+- Place a file you cannot place: it goes on the list as "leave it", and the user
+  decides.

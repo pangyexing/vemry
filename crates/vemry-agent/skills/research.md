@@ -1,107 +1,89 @@
 ---
 name: research
-description: The research method — a fixed plan skeleton, the vault before the web, verify and cite every source, and one rule for where the result lands
-version: 1
+description: Look into a topic — the vault first, verified web sources, one note
+triggers: [research, look into, survey, investigate, 调研, 研究, 了解一下, 综述]
+version: 2
 ---
 
 # Research method
 
-Follow this for any "look into / search for / tell me about X" request.
+## When
 
-## Shape of the work
+"Look into / research / tell me about / survey X" — anything wider than one
+question. A question with one clear answer needs none of this: answer it, cite
+it, stop.
 
-1. A question with one clear answer needs no plan: answer it, cite it, stop.
-2. Anything wider follows the standard plan below: call update_plan with it (all
-   pending), then keep it current as you go — doing when you start a step, done
-   when it is finished, skipped (with the reason in its text) when you drop it.
-   Never restate the plan in prose; the UI shows it.
-3. A step is a terse verb phrase in the user's language, at most about 8 words
-   (20 characters in CJK).
+## Plan
 
-## The standard plan
-
-Use these five steps, in this order and in the user's language. Add a step only
+The five steps, verbatim (in the user's language), in this order. Add a step only
 for something they do not cover; merge or skip one only with the reason in its
-text. The same request should produce the same plan.
+text. The same request produces the same plan.
 
-1. Search the vault (notes and clips) for what is already known.
-2. Search the web one direction at a time — 2 to 4 directions, such as what
-   happened, why, how it is valued, what is disputed.
-3. Open the key pages and verify them (open_for_reading, up to 5 URLs per call;
-   at least 3 pages across at least 2 directions before writing).
-4. Write the note, by the landing rule below, in one write_note.
-5. Fill in the frontmatter (`sources:`, `status:`) and list the open questions.
+1. Search the vault
+2. Search the web by direction
+3. Read and verify key pages
+4. Write the note
+5. Fill frontmatter, list open questions
 
-## Where the result lands — a rule, not a choice
+## Inputs
 
-1. The turn context names a working note ("Working note: …", the note the
-   session follows) → the findings go there: append_note adds a section,
-   set_frontmatter records `status:` and `sources:`, edit_note fixes. Those
-   writes on the working note apply without a dialog. A note attached as
-   context (the one the user has open, or an @ reference) is reference
-   material, not the working note.
-2. The user names a note or a folder → there.
-3. Otherwise a new note `research/<topic>.md`, the topic being the question in a
-   few words in the user's language — created once, in one write_note, when the
-   investigation is done. Never append the result to whichever note happens to
-   be open, and never leave a systematic investigation as a chat answer only.
-4. A follow-up on the same topic in the same session updates that note
-   (edit_note / append_note) rather than creating a second one.
-5. Before creating, look for a note on the same topic (search_notes, or
-   list_notes on research/): one that exists is updated in place — its
-   conclusion, claims and sources brought up to date — rather than joined by a
-   near-duplicate under a slightly different name. Only a request for a fresh
-   note gets a new one, named with the date.
+- The working note, when the turn context names one ("Working note: …"): the
+  findings go there. A note attached as context (the open note, an @ reference)
+  is material, not the target.
+- search_notes / query_blocks first — the vault is what the user already knows,
+  and clips/ holds clipped pages, which count too. clips_lookup before citing any
+  URL: a clipped page is cited as its [[wikilink]] and read with read_note.
+- The web only for what the vault lacks or has too old: a search gives titles and
+  snippets; open_for_reading (up to 5 URLs a call) gives the page, which then
+  counts as a verified source.
 
-## Order: the vault first, then the web
+## Do
 
-1. Search the vault first with search_notes / query_blocks — do not go looking
-   for what the user already knows; the clips/ directory holds clipped pages,
-   which count as existing knowledge too.
-2. Before citing a web URL, call clips_lookup: a page that has been clipped is
-   cited as a [[wikilink]] to the local note (and read with read_note), not as a
-   URL.
-3. Only when the vault has nothing, or nothing recent enough, search the web
-   (if web search is enabled in the settings). A search gives titles and
-   snippets; to actually read a page, call open_for_reading — the user approves
-   the URLs on a card (or has let the session read without asking) and each page
-   comes back as text, which then counts as a verified source. Read one
-   direction's pages, write its conclusion down, then move on; do not queue
-   every result.
-4. Stop searching a direction once new results only repeat what has been read.
-5. In a long conversation, call list_sources before citing again so one source
-   does not get two entries; a source marked unverified there was never confirmed
-   by a search — say so, or search to confirm it.
+- Directions: 2 to 4 (what happened, why, how it is valued, what is disputed).
+  Read one direction's pages, write its conclusion down, then move on; do not
+  queue every result, and do not carry whole pages from step to step.
+- Stop a direction once new results only repeat what has been read.
+- At least 3 pages across at least 2 directions before writing.
+- In a long conversation, list_sources before citing again, so one source does
+  not get two entries; a source marked unverified there was never confirmed —
+  say so, or search to confirm it.
+- Every factual claim gets its source right after it: [title](url) for the web,
+  [[note#^id]] for the vault (read_block is enough when a citation is all you
+  need). Quotation and paraphrase are told apart; an inference with no source is
+  marked unverified; when sources disagree, say so rather than pick one.
 
-## Citation discipline
+## Landing
 
-- Every factual claim gets a source right after it: `[title](url)` for the web,
-  `[[note#^id]]` for the vault (read_block is enough when a citation is all you need).
-- A number carries its date (a quarter, a report date); a figure without one is
-  not a fact yet.
-- Distinguish a quotation (verbatim) from a paraphrase (summarised); mark an
-  inference with no source as unverified.
-- When sources disagree, say so rather than silently picking one.
-- Read one direction to its conclusion and write that conclusion down before
-  starting the next; do not carry whole pages from step to step.
+1. The working note → append_note adds the section, set_frontmatter records
+   status: and sources:, edit_note fixes; these writes on the working note apply
+   without a dialog.
+2. A note or folder the user named → there.
+3. Otherwise research/<topic>.md, the topic being the question in a few words in
+   the user's language — one write_note when the investigation is done. First
+   search_notes (or list_notes on research/) for a note on the same topic: one
+   that exists is updated in place, not joined by a near-duplicate under a
+   slightly different name; only a request for a fresh note gets a new one,
+   named with the date.
+4. A follow-up on the same topic in the same session updates that note.
 
-## The note's shape
+## Shape
 
-The same shape every time, so a second investigation of the same kind reads
-like the first:
-
-- Frontmatter: `question:` (the request in one line), `status:` (draft →
-  reviewing → settled), `sources:` (the URLs and [[notes]] the claims rest on).
+- Frontmatter: question: (the request in one line), status: (draft → reviewing
+  → settled), sources: (the URLs and [[notes]] the claims rest on), related:
+  (the [[notes]] it connects to).
 - Body, in this order:
-  1. A `> [!summary] <title>` callout, the title being "Conclusion" in the
-     user's language, with the conclusion in at most five sentences — what is
-     true, what is uncertain, what to watch.
-  2. One `##` section per direction; each claim followed by its source.
-  3. `## Disputed` — where sources disagree, both sides with their sources
-     (omit the section when nothing is disputed).
-  4. `## Open questions` — as `- [ ]` tasks, so they show up in the Agenda.
-- Related vault notes are `[[wikilinks]]` — a `related:` list in the
-  frontmatter and `[[path]]` in the body — never bare paths in prose, so the
-  graph and the backlinks see them.
-- Suggest that a page worth keeping be opened in the built-in browser and
-  clipped into clips/.
+  1. A > [!summary] callout titled "Conclusion" in the user's language: at most
+     five sentences — what is true, what is uncertain, what to watch.
+  2. One ## section per direction; each claim followed by its source.
+  3. ## Disputed — both sides with their sources (omitted when nothing is
+     disputed).
+  4. ## Open questions — as - [ ] tasks, so they show in the Agenda.
+- Related vault notes as [[wikilinks]] in the body and in related:, never bare
+  paths.
+
+## Never
+
+- A number without its date (a quarter, a report date): not a fact yet.
+- Appending the result to whichever note happens to be open, or leaving a
+  systematic investigation as a chat answer only.
+- A bare path where a [[wikilink]] belongs.

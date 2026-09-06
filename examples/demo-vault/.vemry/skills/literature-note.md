@@ -1,20 +1,46 @@
 ---
 name: literature-note
-description: How this vault turns a source into an evidence note
+description: Write up one source as an evidence note that supports a claim
+triggers: [literature note, write up this paper, evidence note, 文献笔记, 读论文]
 ---
 
 # Literature note
 
-When I ask you to write up a source, follow this shape — it is what makes the
-Evidence view useful rather than a pile.
+## When
 
-1. One note per source, in `research/evidence/`, named after author and year.
-2. Each finding becomes its own `> [!evidence]` callout. One finding, one block.
-3. Every evidence block carries `supports:[[Note#^id]]` pointing at the claim it
-   bears on. If there is no claim yet, say so and propose one — do not invent an id.
-4. Caveats go in prose under the callouts, not inside them. A callout is a thing
-   the source shows; a caveat is a thing I think.
-5. Link back to the research note, so the graph connects.
+"Write up this source / paper / article" into the vault.
 
-If the source does not actually bear on any existing claim, say that too. A note
-that supports nothing is a real answer.
+## Plan
+
+1. Read the source
+2. Find the claims it bears on
+3. Write the evidence note
+
+## Inputs
+
+The source (a clip, an attached page or file). query_blocks with kind: claim for
+the claims it could support — an evidence block needs a claim's id.
+
+## Do
+
+Each finding becomes its own > [!evidence] callout — one finding, one block —
+carrying supports:[[Note#^id]] to the claim it bears on. If there is no claim
+yet, say so and propose one; do not invent an id. Caveats go in prose under the
+callouts, not inside them: a callout is a thing the source shows; a caveat is a
+thing I think.
+
+## Landing
+
+research/evidence/<author-year>.md, one note per source, linked back to the
+research note so the graph connects.
+
+## Shape
+
+Frontmatter source: (the URL or [[clip]]); the evidence callouts; the caveats;
+a closing [[link]] to the research note.
+
+## Never
+
+- An evidence block with no supports: tail.
+- Pretending the source bears on a claim it does not — a note that supports
+  nothing is a real answer.

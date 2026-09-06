@@ -252,7 +252,7 @@ pub(crate) const VIEW_INTRO: &str = "The following is what one of the user's pro
 /// The intro line of a skill envelope (the method the user chose with `/`):
 /// unlike every other envelope this one is instructions, not material — the
 /// skill is the user's own file or ships with vemry, trusted like VEMRY.md.
-pub(crate) const SKILL_INTRO: &str = "The following is the method (skill) the user chose for this request. Follow it: the steps under its Plan section are this turn's plan (send them to update_plan in the user's language), its Landing and Shape sections say where and how the result lands, and its Never rules hold throughout. It stays in effect until the task is done; do not read it again with read_skill.";
+pub(crate) const SKILL_INTRO: &str = "The following is the method (skill) the user chose for this request. Follow it: the steps under its Plan section are this turn's plan (send them to update_plan in the user's language; a Plan section that says none means no plan card), its Landing and Shape sections say where and how the result lands, and its Never rules hold throughout. It stays in effect until the task is done; do not read it again with read_skill.";
 
 /// The intro line of a note envelope: assembly and scrub_private_refs's
 /// rebuild (a note that gained a private block) share one copy.

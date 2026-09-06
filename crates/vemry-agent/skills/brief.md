@@ -1,34 +1,58 @@
 ---
 name: brief
-description: Exporting an implementation brief for a coding agent, and filling the record back in when the work returns
-version: 1
+description: An implementation brief for a coding agent, and its summary recorded back
+triggers: [brief, implementation brief, hand off, backfill, coding agent, 简报, 交给编码 agent, 回填]
+version: 2
 ---
 
 # Implementation brief, and the record back
 
+## When
+
 Two directions, both one paste by the user; vemry never runs the coding agent.
+Export: "the brief for this iteration / requirement". Backfill: the user pastes
+the coding agent's summary back.
 
-## Export
+## Plan
 
-When the user asks for the implementation brief of an iteration or a requirement:
+For an export:
+1. Gather the blocks
+2. Write the brief
 
-1. Gather the requirement blocks (`read_block` each), the decisions that bind
-   them, the acceptance criteria and the linked material (clips, meeting blocks).
-2. Write one self-contained text: context in two sentences, the requirements
-   verbatim, the decisions and their reasons, acceptance criteria as a checklist,
-   links spelled as plain URLs or file paths (a coding agent cannot follow
-   `[[wikilinks]]`). No handles, no vault jargon.
-3. Put it in the reply (the user copies it) and, when asked, save it with
-   append_note to `briefs/<name>.md`.
+For a backfill:
+1. Match the summary to the blocks
+2. Review the changes on the card
+3. Record what came back
 
-## Backfill
+## Inputs
 
-When the user pastes the coding agent's summary back:
+- Export: the requirement blocks (read_block each), the decisions that bind
+  them, the acceptance criteria, the linked material (clips, meeting blocks).
+- Backfill: the pasted summary; query_blocks with the iteration field and
+  search_notes for the items it names.
 
-1. Match its items to the iteration's tasks and requirements (`query_blocks` with
-   the iteration field; `search_notes` for the rest).
-2. `propose_actions`: tick these tasks (target = the task's note, source = the
-   summary's sentence), set these requirements to `status:: shipped`, add this
-   decision or change-log line. Write only what came back: `update_task`,
-   `set_block_field`, `append_note` under `## Change log`.
-3. Reply with what was recorded and what in the summary matched nothing.
+## Do
+
+- Export: one self-contained text — context in two sentences, the requirements
+  verbatim, the decisions and their reasons, acceptance criteria as a checklist,
+  links spelled as plain URLs or file paths (a coding agent cannot follow
+  [[wikilinks]]). No handles, no vault jargon.
+- Backfill: propose_actions — tick these tasks (target = the task's note, source
+  = the summary's sentence), set these requirements to status:: shipped, add
+  this decision or change-log line. Write only what came back: update_task,
+  set_block_field, append_note under ## Change log.
+
+## Landing
+
+Export: the reply (the user copies it); briefs/<name>.md with append_note when
+asked. Backfill: the tasks' notes, the PRD, the change log.
+
+## Shape
+
+The reply after a backfill: what was recorded, and what in the summary matched
+nothing.
+
+## Never
+
+- Running or scheduling the coding agent.
+- Recording an item the card did not return.

@@ -469,8 +469,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let skills = dir.path().join("skills");
         fs::create_dir_all(&skills).unwrap();
-        // the file name does not matter, the listed name does
-        fs::write(skills.join("my-research.md"), "---\nname: research\ndescription: mine\nversion: 1\n---\nMY WAY\n").unwrap();
+        // the file name does not matter, the listed name does; the copy carries the
+        // built-in's own version, as a fresh "customise" would
+        let version = builtin_skill("research").unwrap().version;
+        fs::write(skills.join("my-research.md"), format!("---\nname: research\ndescription: mine\nversion: {version}\n---\nMY WAY\n")).unwrap();
         let all = list_skills_all(dir.path());
         let rows: Vec<&SkillFileEntry> = all.iter().filter(|s| s.name == "research").collect();
         assert_eq!(rows.len(), 1, "one row per name");
