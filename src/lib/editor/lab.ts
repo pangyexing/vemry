@@ -13,6 +13,7 @@ import type { BlockEvalResult, LabControl, LabParams, LabSpec, LabView, LabPrese
 import { buildHeatmap, buildStep, buildTable, drawBars, drawLine, drawScatter, fmt, tableTwin, type TipHost, type TipRow } from "$lib/lab/charts";
 import { pinCode } from "$lib/lab/pin";
 import { toast } from "$lib/stores/toast.svelte";
+import { Annotation } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 
 /** What the session needs from the editor: the block's code as it currently stands
@@ -29,6 +30,22 @@ export interface LabHost {
 }
 
 const RERUN_DEBOUNCE_MS = 60;
+
+// ---- the interaction window ----
+// While a pointer is down on a card, and briefly after, the browser may move its own
+// caret to the edge of the widget's non-editable island (a slider, a switch and a
+// select keep their default mousedown — they are dragged and ticked — and WebKit
+// settles its caret beside the island on such a press, before it or after it as it
+// pleases). The editor reads that caret back as a selection on the fence's first or
+// last line, which reveals the code under the reader's hand. runblock's transaction
+// filter drops a selection-only transaction while this window is open; the card's
+// own ✎ reveal carries `cardReveal` and passes.
+let interactingUntil = 0;
+export function labInteracting(): boolean {
+  return Date.now() < interactingUntil;
+}
+/** Carried by the card's ✎: a selection the reader asked for, never dropped. */
+export const cardReveal = Annotation.define<boolean>();
 
 const ICON_PIN =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
@@ -160,6 +177,17 @@ export class LabSession implements TipHost {
       e.stopPropagation();
       if (!(e.target as Element).closest("input, select, textarea, label")) e.preventDefault();
     });
+    this.root.addEventListener(
+      "pointerdown",
+      () => {
+        // a select's native popup can swallow the pointerup: the window closes by itself
+        interactingUntil = Date.now() + 2000;
+        // the caret is placed at the press itself and read back within a few milliseconds:
+        // after the release only that tail is covered, so a click elsewhere right after is not
+        window.addEventListener("pointerup", () => (interactingUntil = Date.now() + 50), { once: true, capture: true });
+      },
+      true,
+    );
     this.buildControls();
     this.buildViews();
     this.setOutput(output, null);

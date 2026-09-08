@@ -17,11 +17,11 @@
 import { t } from "$lib/i18n/i18n.svelte";
 import type { BlockEvalResult, LabParams } from "$lib/api";
 import { blockRoot } from "./blockwidget";
-import { LabSession, type LabHost } from "./lab";
+import { LabSession, type LabHost, cardReveal, labInteracting } from "./lab";
 import { focusEditor } from "./clickguard";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import { type EditorState, type Extension, RangeSet, RangeValue, StateEffect, StateField, type Transaction } from "@codemirror/state";
+import { EditorState, type Extension, RangeSet, RangeValue, StateEffect, StateField, type Transaction } from "@codemirror/state";
 import { fencedCodeAt, fencedCodeText } from "./fenced";
 import { selectionTouches } from "./reveal";
 import { foldRangesOf, insideFold } from "./table";
@@ -192,7 +192,7 @@ function labHost(view: EditorView, host: RunHost): LabHost & { bind: (el: HTMLEl
     reveal: () => {
       const l = located();
       if (!l) return;
-      view.dispatch({ selection: { anchor: l.codeStart } });
+      view.dispatch({ selection: { anchor: l.codeStart }, annotations: cardReveal.of(true) });
       focusEditor(view);
     },
     close: () => {
@@ -444,6 +444,16 @@ export function runBlockExtension(host: RunHost): Extension {
     },
   });
   const labChanged = (tr: Transaction) => tr.effects.some((e) => e.is(setLab) || e.is(clearLab));
+  // The interaction guard: a selection-only transaction while a pointer is (or just
+  // was) down on a card is the browser's caret settling beside the widget, not the
+  // reader's intent — and one that lands on the fence would reveal the code under
+  // their hand. Dropped whole, so the cursor stays where it was too. The ✎ reveal is
+  // annotated and passes; a doc change (a pin) and an effect (a re-run) pass; keyboard
+  // navigation into the fence happens with no pointer down and passes.
+  const guard = EditorState.transactionFilter.of((tr) => {
+    if (tr.docChanged || !tr.selection || tr.effects.length || tr.annotation(cardReveal) || !labInteracting()) return tr;
+    return [];
+  });
   const cards = StateField.define<DecorationSet>({
     create: (state) => buildCards(state, state.field(labs), host),
     update(value, tr) {
@@ -453,5 +463,5 @@ export function runBlockExtension(host: RunHost): Extension {
     },
     provide: (f) => EditorView.decorations.from(f),
   });
-  return [buttons, outputs, labs, cards];
+  return [buttons, outputs, labs, cards, guard];
 }
