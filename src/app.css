@@ -881,6 +881,10 @@ button:focus-visible,
   display: grid;
   gap: 2px;
   align-items: stretch;
+  justify-content: start;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 2px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -909,9 +913,7 @@ button:focus-visible,
   display: flex;
   align-items: center;
   justify-content: center;
-  aspect-ratio: 1.6;
-  max-height: 34px;
-  min-height: 14px;
+  height: 28px;
   min-width: 0;
   border-radius: 3px;
   color: var(--fg);

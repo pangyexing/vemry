@@ -532,7 +532,9 @@ export function buildHeatmap(view: HeatmapView, tip: TipHost): HTMLElement {
   }
   if (min === max) max = min + 1;
   const grid = el("div", "cm-lab-heat");
-  grid.style.gridTemplateColumns = `auto repeat(${cols}, minmax(0, 1fr))`;
+  // cell tracks between 22px and 56px: a 3×3 stays a compact square block rather than
+  // stretching to the figure's width, a 64-wide map scrolls inside its own container
+  grid.style.gridTemplateColumns = `auto repeat(${cols}, minmax(22px, 56px))`;
   const showNumbers = cols <= 12 && rows <= 16;
   const rowLabel = (i: number) => view.rows?.[i] ?? String(i);
   const colLabel = (j: number) => view.cols?.[j] ?? String(j);
