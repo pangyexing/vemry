@@ -1,0 +1,424 @@
+// The lab of a js block, live in the editor: the controls the block declared, the
+// views it drew, and the re-run loop between them. A session begins when the user
+// presses Run on a block that called vemry.lab.* (runblock.ts hands the result
+// here) and ends when the output is cleared or the document closes — while it is
+// on, moving a control re-runs the block with the controls' values as params
+// (through the same one-shot read-only sandbox, under the same fuse) and redraws
+// the views in place. The code is read again at every re-run, so an edit to the
+// block takes effect on the next move. Nothing in this loop writes to the note:
+// the values live in this object, and "Pin" is the one explicit write, rewriting
+// the declared literals through pin.ts.
+import { t } from "$lib/i18n/i18n.svelte";
+import type { BlockEvalResult, LabControl, LabParams, LabSpec, LabView } from "$lib/api";
+import { buildHeatmap, buildStep, buildTable, drawBars, drawLine, drawScatter, fmt, tableTwin, type TipHost, type TipRow } from "$lib/lab/charts";
+import { pinCode } from "$lib/lab/pin";
+import { toast } from "$lib/stores/toast.svelte";
+import type { EditorView } from "@codemirror/view";
+
+/** What the session needs from the editor: the block's code as it currently stands
+ *  (null once the block has left the document), a way to replace it (pin), and the
+ *  sandbox. `range` is the code's span in the document, or null when it cannot be
+ *  replaced as one piece (a fence inside a quote is cut into pieces by the parser). */
+export interface LabHost {
+  locate(): { code: string; range: { from: number; to: number } | null } | null;
+  evalBlock(code: string, params: LabParams | null): Promise<BlockEvalResult>;
+  replaceCode(range: { from: number; to: number }, code: string): void;
+  close(): void;
+}
+
+const RERUN_DEBOUNCE_MS = 60;
+
+const ICON_PIN =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
+const ICON_RERUN =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>';
+const ICON_CLOSE =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+const ICON_TABLE =
+  '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M10 4v16"/></svg>';
+const ICON_CHART =
+  '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-5 4 3 5-7"/></svg>';
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+/** A button inside the widget: mousedown is swallowed so the editor's selection stays
+ *  where it is (a click inside a block widget would otherwise land the cursor by
+ *  coordinates), and the action runs on click. */
+function iconButton(cls: string, icon: string, tip: string, onClick: () => void): HTMLButtonElement {
+  const b = el("button", cls);
+  b.innerHTML = icon;
+  b.dataset.tip = tip;
+  b.title = tip;
+  b.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  b.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onClick();
+  });
+  return b;
+}
+
+/** The initial params: what every control ran with (so the first move sends the whole set). */
+function paramsOf(controls: LabControl[]): LabParams {
+  const p: LabParams = {};
+  for (const c of controls) p[c.name] = c.kind === "matrix" ? c.rows.map((r) => r.slice()) : c.value;
+  return p;
+}
+
+/** The identity of the control set: a re-run that changes it rebuilds the controls, one that keeps it updates nothing the user is holding. */
+const controlKey = (controls: LabControl[]) =>
+  controls.map((c) => `${c.kind}:${c.name}${c.kind === "select" ? `:${c.options.join("|")}` : c.kind === "matrix" ? `:${c.rows.length}x${c.rows[0]?.length ?? 0}` : ""}`).join("\n");
+
+export class LabSession implements TipHost {
+  readonly root: HTMLElement;
+  private readonly controlsEl: HTMLElement;
+  private readonly viewsEl: HTMLElement;
+  private readonly outEl: HTMLElement;
+  private readonly statusEl: HTMLElement;
+  private readonly tipEl: HTMLElement;
+  private params: LabParams;
+  private key: string;
+  private timer = 0;
+  private inflight = false;
+  private queued = false;
+  private observers: ResizeObserver[] = [];
+  private view: EditorView | null = null;
+  private closed = false;
+
+  constructor(
+    private readonly host: LabHost,
+    private spec: LabSpec,
+    output: string,
+  ) {
+    this.params = paramsOf(spec.controls);
+    this.key = controlKey(spec.controls);
+    this.root = el("div", "cm-lab");
+    const head = el("div", "cm-lab-head");
+    const live = el("span", "cm-lab-live");
+    live.appendChild(el("i", "cm-lab-live-dot"));
+    live.appendChild(document.createTextNode(t("runBlock.live")));
+    this.statusEl = el("span", "cm-lab-status");
+    const tools = el("span", "cm-lab-tools");
+    tools.append(
+      iconButton("cm-lab-tool", ICON_PIN, t("runBlock.pin"), () => this.pin()),
+      iconButton("cm-lab-tool", ICON_RERUN, t("runBlock.rerun"), () => this.schedule(0)),
+      iconButton("cm-lab-tool", ICON_CLOSE, t("runBlock.closeLab"), () => this.host.close()),
+    );
+    head.append(live, this.statusEl, tools);
+    this.controlsEl = el("div", "cm-lab-controls");
+    this.viewsEl = el("div", "cm-lab-views");
+    this.outEl = el("pre", "cm-lab-out");
+    this.tipEl = el("div", "cm-lab-tip");
+    this.tipEl.style.display = "none";
+    this.root.append(head, this.controlsEl, this.viewsEl, this.outEl, this.tipEl);
+    this.buildControls();
+    this.buildViews();
+    this.setOutput(output, null);
+  }
+
+  /** Called by the widget when its DOM is placed (the view is needed for re-measuring). */
+  attach(view: EditorView) {
+    this.view = view;
+  }
+
+  destroy() {
+    this.closed = true;
+    clearTimeout(this.timer);
+    for (const o of this.observers) o.disconnect();
+    this.observers = [];
+  }
+
+  // ---- tooltip (TipHost) ----
+
+  show(title: string, rows: TipRow[], clientX: number, clientY: number) {
+    const tip = this.tipEl;
+    tip.replaceChildren();
+    if (title) tip.appendChild(el("div", "cm-lab-tip-title", title));
+    for (const r of rows) {
+      const row = el("div", "cm-lab-tip-row");
+      if (r.slot) row.appendChild(el("i", `cm-lab-key cm-lab-key-line s${r.slot}`));
+      row.appendChild(el("span", "cm-lab-tip-value", r.value));
+      if (r.label) row.appendChild(el("span", "cm-lab-tip-label", r.label));
+      tip.appendChild(row);
+    }
+    tip.style.display = "";
+    const box = this.root.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    const h = tip.offsetHeight;
+    let x = clientX - box.left + 14;
+    let y = clientY - box.top + 14;
+    if (x + w > box.width - 4) x = Math.max(4, clientX - box.left - w - 14);
+    if (y + h > box.height - 4) y = Math.max(4, clientY - box.top - h - 14);
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  }
+
+  hide() {
+    this.tipEl.style.display = "none";
+  }
+
+  // ---- controls ----
+
+  private buildControls() {
+    this.controlsEl.replaceChildren();
+    this.controlsEl.hidden = this.spec.controls.length === 0;
+    for (const c of this.spec.controls) this.controlsEl.appendChild(this.buildControl(c));
+  }
+
+  private setParam(name: string, value: LabParams[string]) {
+    this.params[name] = value;
+    this.schedule(RERUN_DEBOUNCE_MS);
+  }
+
+  private buildControl(c: LabControl): HTMLElement {
+    const box = el("label", `cm-lab-ctl cm-lab-ctl-${c.kind}`);
+    const stop = (e: Event) => e.stopPropagation();
+    box.addEventListener("mousedown", stop);
+    box.addEventListener("keydown", stop);
+    const name = el("span", "cm-lab-ctl-name", c.label ?? c.name);
+    name.title = c.name;
+    switch (c.kind) {
+      case "slider": {
+        const input = el("input");
+        input.type = "range";
+        input.min = String(c.min);
+        input.max = String(c.max);
+        input.step = String(c.step);
+        input.value = String(c.value);
+        const readout = el("span", "cm-lab-ctl-value", fmt(c.value));
+        input.addEventListener("input", () => {
+          const v = Number(input.value);
+          readout.textContent = fmt(v);
+          this.setParam(c.name, v);
+        });
+        box.append(name, input, readout);
+        break;
+      }
+      case "toggle": {
+        const input = el("input");
+        input.type = "checkbox";
+        input.checked = c.value;
+        input.className = "cm-lab-switch";
+        input.addEventListener("change", () => this.setParam(c.name, input.checked));
+        box.append(input, name);
+        break;
+      }
+      case "select": {
+        const select = el("select");
+        for (const o of c.options) {
+          const opt = el("option", undefined, o);
+          opt.value = o;
+          select.appendChild(opt);
+        }
+        select.value = c.value;
+        select.addEventListener("change", () => this.setParam(c.name, select.value));
+        box.append(name, select);
+        break;
+      }
+      case "matrix": {
+        box.classList.add("cm-lab-ctl-wide");
+        const grid = el("div", "cm-lab-matrix");
+        const cols = c.rows[0]?.length ?? 0;
+        grid.style.gridTemplateColumns = `repeat(${cols}, 56px)`;
+        const rows = c.rows.map((r) => r.slice());
+        c.rows.forEach((r, i) =>
+          r.forEach((v, j) => {
+            const cell = el("input");
+            cell.type = "number";
+            cell.value = String(v);
+            if (c.min != null) cell.min = String(c.min);
+            if (c.max != null) cell.max = String(c.max);
+            cell.step = c.step != null ? String(c.step) : "any";
+            cell.addEventListener("input", () => {
+              const n = Number(cell.value);
+              if (!Number.isFinite(n)) return;
+              rows[i][j] = n;
+              this.setParam(c.name, rows.map((row) => row.slice()));
+            });
+            grid.appendChild(cell);
+          }),
+        );
+        box.append(name, grid);
+        break;
+      }
+    }
+    return box;
+  }
+
+  // ---- views ----
+
+  private buildViews() {
+    for (const o of this.observers) o.disconnect();
+    this.observers = [];
+    this.viewsEl.replaceChildren();
+    this.viewsEl.hidden = this.spec.views.length === 0;
+    for (const v of this.spec.views) this.viewsEl.appendChild(this.buildFigure(v));
+    this.view?.requestMeasure();
+  }
+
+  private buildFigure(v: LabView): HTMLElement {
+    const fig = el("figure", `cm-lab-fig cm-lab-fig-${v.kind}`);
+    const head = el("figcaption", "cm-lab-fig-head");
+    head.appendChild(el("span", "cm-lab-fig-title", v.title));
+    const body = el("div", "cm-lab-fig-body");
+    const twin = tableTwin(v);
+    let showTable = false;
+    const draw = () => {
+      body.replaceChildren();
+      if (showTable && twin) {
+        body.appendChild(twin);
+        return;
+      }
+      const width = Math.max(200, Math.floor(body.clientWidth || this.viewsEl.clientWidth || 480) - 2);
+      switch (v.kind) {
+        case "line":
+          body.appendChild(drawLine(v, width, this));
+          break;
+        case "bars":
+          body.appendChild(drawBars(v, width, this));
+          break;
+        case "scatter":
+          body.appendChild(drawScatter(v, width, this));
+          break;
+        case "heatmap":
+          body.appendChild(buildHeatmap(v, this));
+          break;
+        case "table":
+          body.appendChild(buildTable(v));
+          break;
+        case "step":
+          body.appendChild(buildStep(v, { next: t("runBlock.nextStep"), all: t("runBlock.allSteps"), reset: t("runBlock.resetSteps") }));
+          break;
+      }
+    };
+    if (twin) {
+      const toggle = iconButton("cm-lab-fig-toggle", ICON_TABLE, t("runBlock.tableView"), () => {
+        showTable = !showTable;
+        toggle.innerHTML = showTable ? ICON_CHART : ICON_TABLE;
+        toggle.dataset.tip = toggle.title = t(showTable ? "runBlock.chartView" : "runBlock.tableView");
+        draw();
+        this.view?.requestMeasure();
+      });
+      head.appendChild(toggle);
+    }
+    fig.append(head, body);
+    // an axis chart is drawn to the width it has: redrawn as the note's column changes
+    if (v.kind === "line" || v.kind === "bars" || v.kind === "scatter") {
+      let last = -1;
+      const ro = new ResizeObserver(() => {
+        const w = body.clientWidth;
+        if (w > 0 && w !== last) {
+          last = w;
+          draw();
+          this.view?.requestMeasure();
+        }
+      });
+      ro.observe(body);
+      this.observers.push(ro);
+    } else {
+      draw();
+    }
+    return fig;
+  }
+
+  // ---- output & status ----
+
+  private setOutput(output: string, error: string | null) {
+    const text = [output, error ?? ""].filter(Boolean).join("\n");
+    this.outEl.textContent = text;
+    this.outEl.hidden = text === "";
+    this.outEl.classList.toggle("cm-lab-out-err", !!error);
+  }
+
+  private setStatus(text: string, busy: boolean) {
+    this.statusEl.textContent = text;
+    this.root.classList.toggle("busy", busy);
+  }
+
+  // ---- the re-run loop ----
+
+  private schedule(delay: number) {
+    if (this.closed) return;
+    clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => void this.run(), delay);
+  }
+
+  private async run() {
+    if (this.closed) return;
+    if (this.inflight) {
+      this.queued = true;
+      return;
+    }
+    const located = this.host.locate();
+    if (!located) return; // the block has left the document; the widget goes with it
+    this.inflight = true;
+    this.setStatus(t("runBlock.running"), true);
+    try {
+      const r = await this.host.evalBlock(located.code, this.params);
+      if (this.closed) return;
+      this.setOutput(r.output, r.error);
+      if (r.lab) {
+        this.spec = r.lab;
+        const key = controlKey(r.lab.controls);
+        if (key !== this.key) {
+          // the block now declares a different set: rebuild, starting from what it ran with
+          this.key = key;
+          this.params = paramsOf(r.lab.controls);
+          this.buildControls();
+        }
+        this.buildViews();
+      }
+      this.setStatus("", false);
+    } catch (e) {
+      if (!this.closed) {
+        this.setOutput("", String(e));
+        this.setStatus("", false);
+      }
+    } finally {
+      this.inflight = false;
+      this.view?.requestMeasure();
+      if (this.queued) {
+        this.queued = false;
+        this.schedule(0);
+      }
+    }
+  }
+
+  /** Write the current values into the code's literals (pin.ts) — the one write. */
+  private pin() {
+    const located = this.host.locate();
+    if (!located) return;
+    if (!located.range) {
+      toast.push(t("runBlock.pinNoRange"));
+      return;
+    }
+    const controls: LabControl[] = this.spec.controls.map((c) => {
+      const v = this.params[c.name];
+      switch (c.kind) {
+        case "slider":
+          return { ...c, value: typeof v === "number" ? v : c.value };
+        case "toggle":
+          return { ...c, value: typeof v === "boolean" ? v : c.value };
+        case "select":
+          return { ...c, value: typeof v === "string" ? v : c.value };
+        case "matrix":
+          return { ...c, rows: Array.isArray(v) ? (v as number[][]) : c.rows };
+      }
+    });
+    const r = pinCode(located.code, controls);
+    if (!r.pinned.length) {
+      toast.push(t("runBlock.pinNothing"));
+      return;
+    }
+    this.host.replaceCode(located.range, r.code);
+    toast.push(r.skipped.length ? t("runBlock.pinPartial", { names: r.skipped.join(", ") }) : t("runBlock.pinDone"));
+  }
+}

@@ -1996,15 +1996,18 @@ pub fn script_prompt_respond(state: State<'_, AppState>, request_id: String, val
 }
 
 /// Run a note's `js` code block in the one-shot read-only sandbox. Strictly
-/// user-clicked (the run button) — there is no auto-run path.
+/// user-clicked (the run button) — there is no auto-run path. `params` are the
+/// current values of the block's lab controls on a re-run (the user moved a
+/// slider of a block they already ran); `None` on the first run.
 #[tauri::command]
 pub async fn script_eval_block(
     state: State<'_, AppState>,
     code: String,
     current_note: Option<String>,
+    params: Option<serde_json::Value>,
 ) -> Result<vemry_script::BlockEvalResult, String> {
     let host = script_host(&state)?;
-    tokio::task::spawn_blocking(move || host.eval_block(&code, current_note)).await.map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(move || host.eval_block(&code, current_note, params)).await.map_err(|e| e.to_string())
 }
 
 /// Raw rule lines of `.vemry/privacy` — the glob half of the privacy zone

@@ -336,6 +336,85 @@ export interface UndoReport {
   skipped: number;
 }
 
+// ---- the lab of a js block (crates/vemry-script/src/lab.rs is the source of these shapes) ----
+
+/** A control the block declared, with the value the last run used. */
+export type LabControl =
+  | { kind: "slider"; name: string; label: string | null; min: number; max: number; step: number; value: number }
+  | { kind: "toggle"; name: string; label: string | null; value: boolean }
+  | { kind: "select"; name: string; label: string | null; options: string[]; value: string }
+  | { kind: "matrix"; name: string; label: string | null; rows: number[][]; min: number | null; max: number | null; step: number | null };
+
+export interface LineSeries {
+  name: string | null;
+  y: (number | null)[];
+  x: (number | null)[] | null;
+}
+export interface BarSeries {
+  name: string | null;
+  values: (number | null)[];
+}
+export interface PointSeries {
+  name: string | null;
+  points: [number, number][];
+}
+export type LabCell = number | string | null;
+export type StepValue = number | (number | null)[] | (number | null)[][];
+export interface StepItem {
+  label: string;
+  text: string | null;
+  value: StepValue | null;
+}
+
+export type LabView =
+  | {
+      kind: "heatmap";
+      title: string;
+      data: (number | null)[][];
+      rows: string[] | null;
+      cols: string[] | null;
+      min: number | null;
+      max: number | null;
+      digits: number | null;
+      diverging: boolean;
+    }
+  | {
+      kind: "line";
+      title: string;
+      series: LineSeries[];
+      x: (number | null)[] | null;
+      x_label: string | null;
+      y_label: string | null;
+      y_min: number | null;
+      y_max: number | null;
+    }
+  | { kind: "bars"; title: string; labels: string[]; series: BarSeries[]; y_label: string | null; horizontal: boolean }
+  | { kind: "scatter"; title: string; series: PointSeries[]; x_label: string | null; y_label: string | null }
+  | {
+      kind: "table";
+      title: string;
+      columns: string[];
+      rows: LabCell[][];
+      digits: number | null;
+      highlight: { row: number | null; col: number | null } | null;
+    }
+  | { kind: "step"; title: string; steps: StepItem[] };
+
+export interface LabSpec {
+  controls: LabControl[];
+  views: LabView[];
+}
+
+/** The controls' current values, keyed by name, handed back to the block on a re-run. */
+export type LabParams = Record<string, number | boolean | string | number[][]>;
+
+export interface BlockEvalResult {
+  output: string;
+  error: string | null;
+  /** Present when the block called vemry.lab.* and ran without error. */
+  lab: LabSpec | null;
+}
+
 export interface WebSearchResult {
   title: string;
   url: string;
@@ -1054,8 +1133,9 @@ export const api = {
   scriptGrantRevoke: (name: string) => invoke<void>("script_grant_revoke", { name }),
   scriptPromptRespond: (requestId: string, value: string | null) =>
     invoke<void>("script_prompt_respond", { requestId, value }),
-  scriptEvalBlock: (code: string, currentNote: string | null) =>
-    invoke<{ output: string; error: string | null }>("script_eval_block", { code, currentNote }),
+  /** Run a note's js block; `params` are the lab controls' current values on a re-run (null on the first run). */
+  scriptEvalBlock: (code: string, currentNote: string | null, params: LabParams | null = null) =>
+    invoke<BlockEvalResult>("script_eval_block", { code, currentNote, params }),
 };
 
 export { Channel };

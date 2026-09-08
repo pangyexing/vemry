@@ -353,6 +353,57 @@ and disappears when the document closes.
 **Never runs by itself**: opening a note is not running it. That button is the only
 entry point in the whole chain, and the AI has no tool that can run code either.
 
+### Lab blocks
+
+A block that calls `vemry.lab.*` is a **lab**: it declares controls, reads their
+values, and draws views. Its output is a live card under the fence — the controls
+it declared and the views it drew — and while that card is open, moving a control
+re-runs the block with the controls' current values (the same sandbox, the same
+fuse, one run per move). Closing the card, or the document, ends it; the next
+visit shows the static code again. Nothing about this loosens the rule above: the
+first run is still the click, and a re-run only ever follows a person's move.
+
+```js
+const { d_k, scale } = vemry.lab.controls({
+  d_k:   { slider: [4, 512], step: 4, value: 64, label: "d_k" },
+  scale: { toggle: true, label: "divide by √d_k" },
+  head:  { select: ["head 1", "head 2"] },
+});
+const Q = vemry.lab.matrix("Q", [[1, 0, 1], [0, 1, 0]]);   // an editable grid
+vemry.lab.heatmap("attention", weights, { rows: tokens, cols: tokens, digits: 2 });
+vemry.lab.line("positional encoding", [{ name: "dim 0", y: pe0 }, { name: "dim 1", y: pe1 }], { xLabel: "position" });
+vemry.lab.bars("BLEU", { base: 27.3, big: 28.4 }, { yLabel: "BLEU" });
+vemry.lab.scatter("params vs BLEU", [[65e6, 27.3], [213e6, 28.4]], { xLabel: "params" });
+vemry.lab.table("ablations", [{ variant: "base", heads: 8, BLEU: 25.8 }], { highlight: { row: 0 } });
+vemry.lab.step("softmax", [{ label: "scores", value: [[2, 0]] }, { label: "divide by $\sqrt{d_k}$", value: [[1, 0]] }]);
+```
+
+- **Controls** (four): `slider: [min, max]` with `step` and `value`; `toggle: true|false`
+  (the value is the default); `select: [options]` with `value`; `matrix(name, rows,
+  { label, min, max, step })`. `controls` returns the current values; `matrix` returns
+  the current grid. The user's moved values come back on the next run, clamped to the
+  declared range (a matrix of a different shape falls back to the declared one).
+- **Views** (six): `heatmap(title, rows, { rows, cols, min, max, digits, diverging })` —
+  one hue light→dark, or two poles around zero when the data is signed; `line(title,
+  series, { x, xLabel, yLabel, yMin, yMax })` where a series is `y[]` or `{ name, y, x }`;
+  `bars(title, data, { yLabel, horizontal })` with data as `{ label: value }`,
+  `[[label, value]]` or `{ labels, series: [{ name, values }] }`; `scatter(title,
+  points | [{ name, points }], { xLabel, yLabel })`; `table(title, rows, { columns,
+  digits, highlight: { row, col } })` with rows as arrays or objects; `step(title,
+  steps)` — a derivation revealed one step at a time, each step `{ label, text, value }`
+  (the text may hold `$…$`; the value is a number, a vector or a grid).
+- Every chart has a table twin (the ⊞ button on its card), every mark a hover
+  readout, and two series or more a legend. Colours are the eight fixed series slots
+  of the theme, in order — the cap is eight series, 64×64 heatmap cells, 2048 points
+  a series, 200 table rows, 64 steps, 12 controls and 8 views; past a cap the block
+  reports the limit instead of drawing.
+- **Pin** (the pushpin on the card) writes the controls' current values back into the
+  code's literals — `value: 64` becomes `value: 128`, the matrix array is rewritten —
+  so the experiment reopens where the reader left it. That is the lab's one write,
+  and it is explicit; moving a control never touches the note.
+
+**Fallback**: an ordinary `js` code block, which is exactly what the note holds.
+
 ## Privacy markers
 
 Four independent entry points. The first three put a whole path in a privacy zone

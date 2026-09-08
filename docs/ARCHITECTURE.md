@@ -655,6 +655,18 @@ skipped rather than replayed, leaving one `schedule_missed` line.
   capability: a grant is persisted against a *script's identity*, and a code block
   has no stable identity (the body can be edited freely, or synced in from
   outside). If it needs to write, it graduates to `.vemry/scripts/`.
+- A block that calls `vemry.lab.*` is a lab (docs/SYNTAX.md, "Lab blocks"): the
+  glue in `bindings.rs` normalises its calls into the canonical spec of
+  `vemry-script/src/lab.rs` (four controls, six views, hard caps), which travels
+  back in `BlockEvalResult.lab`; the editor renders it as a live card (`editor/
+  lab.ts`, the charts in `lib/lab/charts.ts`) and, while the card is open,
+  re-runs the block with the controls' values as `params` on every move — the
+  same one-shot Context, the same fuse, the code read again from the document
+  each time. The lab API exists only in a block Context (the params global the
+  engine sets is what enables it; a script never has it). "Pin" (`lib/lab/pin.ts`)
+  is the lab's one write: it rewrites the declared literals in the fence through
+  an ordinary editor transaction. None of this changes the entry rule — the first
+  run is a click, and a re-run only follows a person's move.
 
 ### Block types (typed blocks on Markdown)
 

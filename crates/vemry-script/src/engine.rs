@@ -19,7 +19,7 @@ use vemry_core::{Vault, VaultEvent};
 use crate::bindings::{self, BindEnv, ExecKind, ScriptMeta};
 use crate::grants::ScriptStates;
 use crate::scheduler::{CronEntry, Due};
-use crate::{audit, BlockEvalResult, Perspective, ScriptInfo, ScriptUiEvent, UiBridge};
+use crate::{audit, lab, BlockEvalResult, Perspective, ScriptInfo, ScriptUiEvent, UiBridge};
 
 /// Workflow dispatch backpressure: more pending (merged) events than this and
 /// new ones are dropped with an error toast — a stuck consumer must not grow
@@ -58,7 +58,7 @@ enum Job {
     RevokeWriteGrant { name: String, reply: Sender<Result<(), String>> },
     RunCommand { script: String, command: String, current_note: Option<String>, reply: Option<Sender<Result<(), String>>> },
     DispatchEvent { event: VaultEvent },
-    EvalBlock { code: String, current_note: Option<String>, reply: Sender<BlockEvalResult> },
+    EvalBlock { code: String, current_note: Option<String>, params: Option<serde_json::Value>, reply: Sender<BlockEvalResult> },
     #[cfg(test)]
     FireSchedulesNow { reply: Sender<()> },
     #[cfg(test)]
@@ -190,18 +190,21 @@ impl ScriptHost {
     }
 
     /// Evaluate a note's `js` code block in a one-shot, read-only context.
-    /// Only ever user-clicked — there is no auto-run path anywhere.
-    pub fn eval_block(&self, code: &str, current_note: Option<String>) -> BlockEvalResult {
+    /// Only ever user-clicked — there is no auto-run path anywhere. `params` are
+    /// the current values of the lab controls the block declared on an earlier
+    /// run (the editor hands them back as the user moves a slider); `None` on
+    /// the first run.
+    pub fn eval_block(&self, code: &str, current_note: Option<String>, params: Option<serde_json::Value>) -> BlockEvalResult {
         let (tx, rx) = mpsc::channel();
         if self
             .tx
-            .send(Job::EvalBlock { code: code.into(), current_note, reply: tx })
+            .send(Job::EvalBlock { code: code.into(), current_note, params, reply: tx })
             .is_err()
         {
-            return BlockEvalResult { output: String::new(), error: Some("script host stopped".into()) };
+            return BlockEvalResult { output: String::new(), error: Some("script host stopped".into()), lab: None };
         }
         rx.recv_timeout(Duration::from_secs(30))
-            .unwrap_or_else(|_| BlockEvalResult { output: String::new(), error: Some("script host busy".into()) })
+            .unwrap_or_else(|_| BlockEvalResult { output: String::new(), error: Some("script host busy".into()), lab: None })
     }
 
     /// Test hook: treat every registered cron entry as due right now.
@@ -340,8 +343,8 @@ impl Worker {
                 }
             }
             Job::DispatchEvent { event } => self.enqueue_event(event),
-            Job::EvalBlock { code, current_note, reply } => {
-                let _ = reply.send(self.eval_block(&code, current_note));
+            Job::EvalBlock { code, current_note, params, reply } => {
+                let _ = reply.send(self.eval_block(&code, current_note, params));
             }
             #[cfg(test)]
             Job::FireSchedulesNow { reply } => {
@@ -513,8 +516,12 @@ impl Worker {
 
     /// One-shot evaluation for a note's `js` block: fresh context, read-only
     /// API (writes refuse, prompt resolves null, registration rejected),
-    /// console captured into the result, context discarded after.
-    fn eval_block(&self, code: &str, current_note: Option<String>) -> BlockEvalResult {
+    /// console captured into the result, context discarded after. The lab
+    /// params go in as a JSON global the glue reads while building `vemry.lab`
+    /// (their presence is what enables the lab API — a script context never
+    /// sets it), and the spec the block built comes back out through
+    /// `__vemry_lab_take` once the code has run.
+    fn eval_block(&self, code: &str, current_note: Option<String>, params: Option<serde_json::Value>) -> BlockEvalResult {
         let meta = Rc::new(RefCell::new(ScriptMeta {
             exec: ExecKind::Block,
             trigger: "block".into(),
@@ -523,8 +530,9 @@ impl Worker {
         }));
         let context = match Context::full(&self.runtime) {
             Ok(c) => c,
-            Err(e) => return BlockEvalResult { output: String::new(), error: Some(format!("context: {e}")) },
+            Err(e) => return BlockEvalResult { output: String::new(), error: Some(format!("context: {e}")), lab: None },
         };
+        let params_json = params.unwrap_or_else(|| serde_json::json!({})).to_string();
         let env = BindEnv {
             vault: Arc::clone(&self.vault),
             root: self.current_root(),
@@ -537,7 +545,8 @@ impl Worker {
             bridge: Arc::clone(&self.bridge),
             deadline: Arc::clone(&self.deadline),
         };
-        let result: Result<Option<String>, String> = context.with(|ctx| {
+        let result: Result<(Option<String>, Option<String>), String> = context.with(|ctx| {
+            ctx.globals().set("__vemry_lab_params", params_json).map_err(|e| format!("bindings: {e}"))?;
             bindings::install(&ctx, env).map_err(|e| format!("bindings: {e}"))?;
             let (result, timed_out) = self.with_deadline(self.config.block_timeout, || {
                 let value = ctx
@@ -557,23 +566,31 @@ impl Worker {
                     .map_err(|e| e.to_string())?;
                 repr.call::<_, Option<String>>((value,)).catch(&ctx).map_err(|e| e.to_string())
             });
-            result.map_err(|e| {
+            let repr = result.map_err(|e| {
                 if timed_out {
                     format!("the code block timed out (>{:?}): {e}", self.config.block_timeout)
                 } else {
                     e
                 }
-            })
+            })?;
+            // The lab the block built, as JSON (null when it never called vemry.lab)
+            let take: Function = ctx.globals().get("__vemry_lab_take").catch(&ctx).map_err(|e| e.to_string())?;
+            let lab: Option<String> = take.call(()).catch(&ctx).map_err(|e| e.to_string())?;
+            Ok((repr, lab))
         });
         let mut lines = meta.borrow().block_output.clone();
         match result {
-            Ok(repr) => {
+            Ok((repr, lab_json)) => {
                 if let Some(repr) = repr {
                     lines.push(format!("⇒ {repr}"));
                 }
-                BlockEvalResult { output: lines.join("\n"), error: None }
+                match lab_json.as_deref().map(lab::parse) {
+                    None => BlockEvalResult { output: lines.join("\n"), error: None, lab: None },
+                    Some(Ok(spec)) => BlockEvalResult { output: lines.join("\n"), error: None, lab: Some(spec) },
+                    Some(Err(e)) => BlockEvalResult { output: lines.join("\n"), error: Some(e), lab: None },
+                }
             }
-            Err(e) => BlockEvalResult { output: lines.join("\n"), error: Some(e) },
+            Err(e) => BlockEvalResult { output: lines.join("\n"), error: Some(e), lab: None },
         }
     }
 
@@ -1302,14 +1319,15 @@ mod tests {
         let r = host.eval_block(
             r#"const t = vemry.query({ kind: "task" }); console.log("tasks=" + t.length); t.length"#,
             Some("Todo.md".into()),
+            None,
         );
         assert_eq!(r.error, None);
         assert_eq!(r.output, "tasks=1\n⇒ 1");
         // currentNote flows into the one-shot context
-        let r = host.eval_block("vemry.currentNote()", Some("Todo.md".into()));
+        let r = host.eval_block("vemry.currentNote()", Some("Todo.md".into()), None);
         assert_eq!(r.output, "⇒ Todo.md");
         // undefined result → console only, no ⇒ line
-        let r = host.eval_block("console.log('只有输出')", None);
+        let r = host.eval_block("console.log('只有输出')", None, None);
         assert_eq!(r.output, "只有输出");
     }
 
@@ -1318,18 +1336,18 @@ mod tests {
         let (_d, vault) = fixture(&[]);
         let bridge = TestBridge::new(true); // even a granting user can't make blocks write
         let host = spawn_host(&vault, &bridge, false);
-        let r = host.eval_block(r#"vemry.write("X.md", "x")"#, None);
+        let r = host.eval_block(r#"vemry.write("X.md", "x")"#, None, None);
         assert!(r.error.as_deref().unwrap().contains("read-only sandbox"), "got: {:?}", r.error);
         let root = { vault.lock().unwrap().as_ref().unwrap().root().to_path_buf() };
         assert!(!root.join("X.md").exists());
         assert!(bridge.grant_calls.lock().unwrap().is_empty(), "blocks never even ask");
         // append refused the same way; prompt resolves null
-        assert!(host.eval_block(r#"vemry.append("Todo.md", "x")"#, None).error.is_some());
-        assert_eq!(host.eval_block(r#"String(vemry.prompt("q"))"#, None).output, "⇒ null");
+        assert!(host.eval_block(r#"vemry.append("Todo.md", "x")"#, None, None).error.is_some());
+        assert_eq!(host.eval_block(r#"String(vemry.prompt("q"))"#, None, None).output, "⇒ null");
         // timeout fuses without killing the host
-        let r = host.eval_block("while (true) {}", None);
+        let r = host.eval_block("while (true) {}", None, None);
         assert!(r.error.as_deref().unwrap().contains("timed out"));
-        assert_eq!(host.eval_block("1 + 1", None).output, "⇒ 2");
+        assert_eq!(host.eval_block("1 + 1", None, None).output, "⇒ 2");
     }
 
     #[test]
@@ -1351,9 +1369,89 @@ mod tests {
         let root = { vault.lock().unwrap().as_ref().unwrap().root().to_path_buf() };
         assert_eq!(fs::read_to_string(root.join("Async.md")).unwrap(), "done");
         // js blocks flush queued microtasks into their captured output
-        let r = host.eval_block("Promise.resolve(41).then(v => console.log('got:' + (v + 1)))", None);
+        let r = host.eval_block("Promise.resolve(41).then(v => console.log('got:' + (v + 1)))", None, None);
         assert_eq!(r.error, None);
         assert!(r.output.contains("got:42"), "got: {}", r.output);
+    }
+
+    #[test]
+    fn lab_blocks_declare_controls_and_take_params_back() {
+        let (_d, vault) = fixture(&[]);
+        let bridge = TestBridge::new(true);
+        let host = spawn_host(&vault, &bridge, false);
+        let code = r#"
+            const p = vemry.lab.controls({ d_k: { slider: [4, 64], step: 4, value: 16 }, scale: { toggle: true }, head: { select: ["h1", "h2"] } });
+            const Q = vemry.lab.matrix("Q", [[1, 0], [0, 1]]);
+            vemry.lab.heatmap("attention", [[p.d_k, 0], [0, Q[1][1]]], { rows: ["a", "b"], cols: ["a", "b"], digits: 2 });
+            vemry.lab.line("pe", [0, 1, 0]);
+            vemry.lab.bars("bleu", { base: 27.3, big: 28.4 });
+            vemry.lab.table("t", [{ n: 1, s: "x" }, { n: 2 }]);
+            vemry.lab.step("softmax", ["scores", { label: "exp", value: [1, 2] }]);
+            console.log("scale=" + p.scale + " head=" + p.head);
+        "#;
+        // first run: the defaults
+        let r = host.eval_block(code, None, None);
+        assert_eq!(r.error, None, "{:?}", r.output);
+        assert_eq!(r.output, "scale=true head=h1");
+        let spec = r.lab.expect("a lab spec");
+        assert_eq!(spec.controls.len(), 4);
+        assert_eq!(spec.views.len(), 5);
+        match &spec.views[0] {
+            lab::LabView::Heatmap { data, rows, .. } => {
+                assert_eq!(data[0][0], Some(16.0));
+                assert_eq!(rows.as_deref(), Some(&["a".to_string(), "b".to_string()][..]));
+            }
+            other => panic!("{other:?}"),
+        }
+        match &spec.views[3] {
+            lab::LabView::Table { columns, rows, .. } => {
+                assert_eq!(columns, &["n", "s"]);
+                assert_eq!(rows[1], vec![lab::Cell::Number(2.0), lab::Cell::Empty(None)]);
+            }
+            other => panic!("{other:?}"),
+        }
+        // a re-run with the moved controls: the slider clamps to its range, a select
+        // outside its options falls back, a matrix of the wrong shape is ignored
+        let params = serde_json::json!({ "d_k": 1000, "scale": false, "head": "zzz", "Q": [[5]] });
+        let r = host.eval_block(code, None, Some(params));
+        assert_eq!(r.error, None);
+        assert_eq!(r.output, "scale=false head=h1");
+        let spec = r.lab.unwrap();
+        match &spec.controls[0] {
+            lab::LabControl::Slider { value, .. } => assert_eq!(*value, 64.0),
+            other => panic!("{other:?}"),
+        }
+        match &spec.views[0] {
+            lab::LabView::Heatmap { data, .. } => assert_eq!((data[0][0], data[1][1]), (Some(64.0), Some(1.0))),
+            other => panic!("{other:?}"),
+        }
+        let params = serde_json::json!({ "Q": [[2, 0], [0, 3]] });
+        let r = host.eval_block(code, None, Some(params));
+        match &r.lab.unwrap().views[0] {
+            lab::LabView::Heatmap { data, .. } => assert_eq!(data[1][1], Some(3.0)),
+            other => panic!("{other:?}"),
+        }
+        // a block that never touches the lab has none; an over-cap view is an error, not a cut
+        assert!(host.eval_block("1 + 1", None, None).lab.is_none());
+        let r = host.eval_block("vemry.lab.heatmap('h', Array.from({length: 70}, () => [1]))", None, None);
+        assert!(r.error.as_deref().unwrap().contains("the limit is 64"), "{:?}", r.error);
+        assert!(r.lab.is_none());
+        // a bad call shape is a plain error naming the call
+        let r = host.eval_block("vemry.lab.controls({ x: { slider: [5, 1] } })", None, None);
+        assert!(r.error.as_deref().unwrap().contains("`x`.slider"), "{:?}", r.error);
+    }
+
+    #[test]
+    fn lab_api_is_absent_from_script_contexts() {
+        // the lab is enabled by the params global the block path sets; a script's
+        // context never has it, so the API refuses rather than accumulating a spec
+        // nothing would ever read
+        let (_d, vault) = fixture(&[("l", r#"vemry.lab.heatmap("h", [[1]]);"#)]);
+        let bridge = TestBridge::new(false);
+        let host = spawn_host(&vault, &bridge, false);
+        let infos = host.list();
+        let err = info(&infos, "l").last_error.clone().unwrap();
+        assert!(err.contains("only available inside a note's js block"), "{err}");
     }
 
     #[test]

@@ -50,7 +50,7 @@
   import TaskDateMenu from "./views/TaskDateMenu.svelte";
   import FieldValueMenu from "./FieldValueMenu.svelte";
   import { types } from "$lib/stores/types.svelte";
-  import type { FieldStat, RevertPlan } from "$lib/api";
+  import type { FieldStat, LabParams, RevertPlan } from "$lib/api";
   import "katex/dist/katex.min.css";
 
   let container = $state<HTMLDivElement | null>(null);
@@ -1062,7 +1062,7 @@
             openNote: (target: string) => void vault.openNote(target),
           }
         : null,
-      runHost: isNote ? { evalBlock: (code: string) => api.scriptEvalBlock(code, path) } : null,
+      runHost: isNote ? { evalBlock: (code: string, params: LabParams | null) => api.scriptEvalBlock(code, path, params) } : null,
       // After ⌘S writes, a pending timer no longer stands for unsaved edits: keeping it would
       // have the flush write that stale buffer back when an external change triggers a reload,
       // covering the external edit

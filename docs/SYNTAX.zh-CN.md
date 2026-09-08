@@ -225,7 +225,31 @@ YAML 体，查询本身是**八个平铺标量**，全部可选（`field` 可重
 
 **永不自动执行**：打开笔记 ≠ 运行代码；整条链路唯一入口是这个按钮，AI 也没有任何执行代码的工具。
 
-**降级**：普通 `js` 代码块。
+### 实验块
+
+调用了 `vemry.lab.*` 的代码块是一个**实验**：它声明控件、读取控件的值、画出视图。它的输出是围栏下方的一张实时卡片——声明的控件加画出的视图；卡片开着的时候，拖动控件就用控件当前的值重跑这个块（同一个沙箱、同一条熔断、一次拖动一次运行）。关掉卡片或关掉文档，实验结束；下次打开看到的仍是静态代码。上面那条规则一点没松：第一次运行仍然是那一下点击，重跑只会跟在人的动作之后。
+
+```js
+const { d_k, scale } = vemry.lab.controls({
+  d_k:   { slider: [4, 512], step: 4, value: 64, label: "d_k" },
+  scale: { toggle: true, label: "除以 √d_k" },
+  head:  { select: ["head 1", "head 2"] },
+});
+const Q = vemry.lab.matrix("Q", [[1, 0, 1], [0, 1, 0]]);   // 可编辑的数字网格
+vemry.lab.heatmap("attention", weights, { rows: tokens, cols: tokens, digits: 2 });
+vemry.lab.line("位置编码", [{ name: "dim 0", y: pe0 }, { name: "dim 1", y: pe1 }], { xLabel: "position" });
+vemry.lab.bars("BLEU", { base: 27.3, big: 28.4 }, { yLabel: "BLEU" });
+vemry.lab.scatter("参数量 vs BLEU", [[65e6, 27.3], [213e6, 28.4]], { xLabel: "params" });
+vemry.lab.table("消融", [{ variant: "base", heads: 8, BLEU: 25.8 }], { highlight: { row: 0 } });
+vemry.lab.step("softmax", [{ label: "分数", value: [[2, 0]] }, { label: "除以 $\sqrt{d_k}$", value: [[1, 0]] }]);
+```
+
+- **控件**（四种）：`slider: [min, max]` 配 `step` 与 `value`；`toggle: true|false`（这个布尔值就是默认值）；`select: [options]` 配 `value`；`matrix(name, rows, { label, min, max, step })`。`controls` 返回当前值，`matrix` 返回当前网格。用户拖过的值在下一次运行时回来，并被钳在声明的范围内（形状不同的矩阵退回声明的那个）。
+- **视图**（六种）：`heatmap(title, rows, { rows, cols, min, max, digits, diverging })`——单色由浅到深，数据有正有负时以零为中点两极着色；`line(title, series, { x, xLabel, yLabel, yMin, yMax })`，一条序列是 `y[]` 或 `{ name, y, x }`；`bars(title, data, { yLabel, horizontal })`，data 可以是 `{ label: value }`、`[[label, value]]` 或 `{ labels, series: [{ name, values }] }`；`scatter(title, points | [{ name, points }], { xLabel, yLabel })`；`table(title, rows, { columns, digits, highlight: { row, col } })`，行是数组或对象；`step(title, steps)`——逐步展开的推导，每步 `{ label, text, value }`（text 可含 `$…$`；value 是数、向量或网格）。
+- 每张图都有表格孪生（卡片上的 ⊞ 按钮），每个标记都有悬停读数，两条及以上序列必有图例。颜色是主题固定的八个序列槽位，按序使用——上限是 8 条序列、64×64 热图格、每序列 2048 点、200 行表格、64 步、12 个控件、8 个视图；超过上限时块报出限制而不是画出来。
+- **固定**（卡片上的图钉）把控件当前值写回代码里的字面量——`value: 64` 变成 `value: 128`，矩阵数组被重写——实验下次打开就停在读者离开的地方。这是实验唯一的一次写入，而且是显式的；拖动控件永远不碰笔记。
+
+**降级**：普通 `js` 代码块，笔记里放的本来就是它。
 
 ## 隐私标记
 

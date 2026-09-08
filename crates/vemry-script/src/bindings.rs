@@ -449,7 +449,225 @@ const GLUE_JS: &str = r#"
   const cmds = new Map();
   const handlers = new Map();
   const crons = [];
+
+  // ---- vemry.lab: the declarative experiment of a note's js block ----
+  // Enabled only when the engine set __vemry_lab_params before installing the
+  // glue, which it does for block evaluation alone — a script context has no lab.
+  // The block declares controls (and gets their current values back) and draws
+  // views; the editor renders the spec __vemry_lab_take hands out, and re-runs
+  // the block with the moved controls as params. Shapes are normalised here into
+  // the canonical JSON lab.rs types and caps (crates/vemry-script/src/lab.rs).
+  const labRaw = globalThis.__vemry_lab_params;
+  delete globalThis.__vemry_lab_params;
+  const labEnabled = typeof labRaw === "string";
+  let labParams = {};
+  if (labEnabled) {
+    try { labParams = JSON.parse(labRaw); } catch { labParams = {}; }
+    if (!labParams || typeof labParams !== "object" || Array.isArray(labParams)) labParams = {};
+  }
+  const labState = { controls: [], views: [] };
+  let labUsed = false;
+  const labOn = (what) => {
+    if (!labEnabled) throw new Error("lab." + what + " is only available inside a note's js block");
+    labUsed = true;
+  };
+  const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+  const numOrNull = (v) => (isNum(v) ? v : null);
+  const strOr = (v, fallback) => (v == null ? fallback : String(v));
+  const numList = (a, what) => {
+    if (!Array.isArray(a)) throw new Error(what + " must be an array of numbers");
+    return a.map(numOrNull);
+  };
+  const numGrid = (g, what) => {
+    if (!Array.isArray(g) || !g.every(Array.isArray)) throw new Error(what + " must be an array of rows (arrays of numbers)");
+    return g.map((r) => numList(r, what));
+  };
+  const digitsOf = (v) => (isNum(v) ? Math.max(0, Math.min(6, Math.round(v))) : null);
+  const labControls = (spec) => {
+    labOn("controls");
+    if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new Error("lab.controls: pass an object of { name: spec }");
+    const values = {};
+    for (const [name, c] of Object.entries(spec)) {
+      if (!c || typeof c !== "object") throw new Error("lab.controls: `" + name + "` needs a spec object");
+      const label = c.label == null ? null : String(c.label);
+      const given = labParams[name];
+      if (Array.isArray(c.slider)) {
+        const min = Number(c.slider[0]);
+        const max = Number(c.slider[1]);
+        if (!isNum(min) || !isNum(max) || !(max > min)) throw new Error("lab.controls: `" + name + "`.slider must be [min, max] with max > min");
+        const step = isNum(c.step) && c.step > 0 ? c.step : (max - min) / 100;
+        let value = isNum(c.value) ? c.value : min;
+        if (isNum(given)) value = given;
+        value = Math.min(max, Math.max(min, value));
+        labState.controls.push({ kind: "slider", name, label, min, max, step, value });
+        values[name] = value;
+      } else if (typeof c.toggle === "boolean") {
+        const value = typeof given === "boolean" ? given : c.toggle;
+        labState.controls.push({ kind: "toggle", name, label, value });
+        values[name] = value;
+      } else if (Array.isArray(c.select)) {
+        const options = c.select.map(String);
+        if (!options.length) throw new Error("lab.controls: `" + name + "`.select needs at least one option");
+        let value = c.value == null ? options[0] : String(c.value);
+        if (typeof given === "string" && options.includes(given)) value = given;
+        if (!options.includes(value)) value = options[0];
+        labState.controls.push({ kind: "select", name, label, options, value });
+        values[name] = value;
+      } else {
+        throw new Error("lab.controls: `" + name + "` needs slider: [min, max], toggle: true|false, or select: [options]");
+      }
+    }
+    return values;
+  };
+  const labMatrix = (name, rows, opts) => {
+    labOn("matrix");
+    name = String(name);
+    const base = numGrid(rows, "lab.matrix `" + name + "`").map((r) => r.map((v) => v ?? 0));
+    const width = base.length ? base[0].length : 0;
+    if (!width || base.some((r) => r.length !== width)) throw new Error("lab.matrix: `" + name + "` must be a rectangular grid with at least one cell");
+    const given = labParams[name];
+    let value = base;
+    if (
+      Array.isArray(given) &&
+      given.length === base.length &&
+      given.every((r) => Array.isArray(r) && r.length === width && r.every(isNum))
+    )
+      value = given;
+    const o = opts ?? {};
+    labState.controls.push({
+      kind: "matrix",
+      name,
+      label: o.label == null ? null : String(o.label),
+      rows: value,
+      min: numOrNull(o.min),
+      max: numOrNull(o.max),
+      step: isNum(o.step) && o.step > 0 ? o.step : null,
+    });
+    return value.map((r) => r.slice());
+  };
+  const labHeatmap = (title, data, opts) => {
+    labOn("heatmap");
+    const o = opts ?? {};
+    labState.views.push({
+      kind: "heatmap",
+      title: strOr(title, ""),
+      data: numGrid(data, "lab.heatmap data"),
+      rows: Array.isArray(o.rows) ? o.rows.map(String) : null,
+      cols: Array.isArray(o.cols) ? o.cols.map(String) : null,
+      min: numOrNull(o.min),
+      max: numOrNull(o.max),
+      digits: digitsOf(o.digits),
+      diverging: o.diverging === true,
+    });
+  };
+  const seriesOf = (input, what) => {
+    if (Array.isArray(input) && input.every((v) => v == null || typeof v === "number")) return [{ name: null, y: numList(input, what), x: null }];
+    const list = Array.isArray(input) ? input : [input];
+    return list.map((s) => {
+      if (!s || typeof s !== "object" || !Array.isArray(s.y)) throw new Error(what + ": a series is { name, y: [numbers] } (x optional)");
+      return { name: strOr(s.name, null), y: numList(s.y, what), x: Array.isArray(s.x) ? numList(s.x, what) : null };
+    });
+  };
+  const labLine = (title, series, opts) => {
+    labOn("line");
+    const o = opts ?? {};
+    labState.views.push({
+      kind: "line",
+      title: strOr(title, ""),
+      series: seriesOf(series, "lab.line"),
+      x: Array.isArray(o.x) ? numList(o.x, "lab.line x") : null,
+      x_label: strOr(o.xLabel, null),
+      y_label: strOr(o.yLabel, null),
+      y_min: numOrNull(o.yMin),
+      y_max: numOrNull(o.yMax),
+    });
+  };
+  const labBars = (title, data, opts) => {
+    labOn("bars");
+    const o = opts ?? {};
+    let labels;
+    let series;
+    if (Array.isArray(data) && data.every((d) => Array.isArray(d) && d.length === 2)) {
+      labels = data.map((d) => String(d[0]));
+      series = [{ name: null, values: data.map((d) => numOrNull(d[1])) }];
+    } else if (data && typeof data === "object" && Array.isArray(data.labels)) {
+      labels = data.labels.map(String);
+      const list = Array.isArray(data.series) ? data.series : [];
+      series = list.map((s) => ({ name: strOr(s && s.name, null), values: numList(s && s.values, "lab.bars values") }));
+    } else if (data && typeof data === "object" && !Array.isArray(data)) {
+      labels = Object.keys(data);
+      series = [{ name: null, values: labels.map((k) => numOrNull(data[k])) }];
+    } else {
+      throw new Error("lab.bars: pass { label: value }, [[label, value], …] or { labels, series: [{ name, values }] }");
+    }
+    labState.views.push({ kind: "bars", title: strOr(title, ""), labels, series, y_label: strOr(o.yLabel, null), horizontal: o.horizontal === true });
+  };
+  const pointsOf = (p, what) => {
+    if (!Array.isArray(p)) throw new Error(what + ": points are [[x, y], …]");
+    return p.filter((q) => Array.isArray(q) && isNum(q[0]) && isNum(q[1])).map((q) => [q[0], q[1]]);
+  };
+  const labScatter = (title, points, opts) => {
+    labOn("scatter");
+    const o = opts ?? {};
+    let series;
+    if (Array.isArray(points) && points.every(Array.isArray)) series = [{ name: null, points: pointsOf(points, "lab.scatter") }];
+    else {
+      const list = Array.isArray(points) ? points : [points];
+      series = list.map((s) => ({ name: strOr(s && s.name, null), points: pointsOf(s && s.points, "lab.scatter") }));
+    }
+    labState.views.push({ kind: "scatter", title: strOr(title, ""), series, x_label: strOr(o.xLabel, null), y_label: strOr(o.yLabel, null) });
+  };
+  const labTable = (title, rows, opts) => {
+    labOn("table");
+    const o = opts ?? {};
+    if (!Array.isArray(rows)) throw new Error("lab.table: rows are an array of arrays or of objects");
+    let columns;
+    let body;
+    if (rows.every(Array.isArray)) {
+      columns = Array.isArray(o.columns) ? o.columns.map(String) : (rows[0] ?? []).map((_, i) => String(i + 1));
+      body = rows;
+    } else {
+      columns = Array.isArray(o.columns) ? o.columns.map(String) : [...new Set(rows.flatMap((r) => Object.keys(r ?? {})))];
+      body = rows.map((r) => columns.map((c) => (r ?? {})[c]));
+    }
+    const cell = (v) => (v == null ? null : typeof v === "number" ? numOrNull(v) : typeof v === "boolean" ? String(v) : String(v));
+    const h = o.highlight && typeof o.highlight === "object" ? o.highlight : null;
+    labState.views.push({
+      kind: "table",
+      title: strOr(title, ""),
+      columns,
+      rows: body.map((r) => columns.map((_, i) => cell(Array.isArray(r) ? r[i] : r[i]))),
+      digits: digitsOf(o.digits),
+      highlight: h ? { row: isNum(h.row) ? h.row : null, col: isNum(h.col) ? h.col : null } : null,
+    });
+  };
+  const labStep = (title, steps) => {
+    labOn("step");
+    if (!Array.isArray(steps)) throw new Error("lab.step: steps are an array of { label, text, value } (or strings)");
+    const items = steps.map((s, i) => {
+      if (typeof s === "string") return { label: s, text: null, value: null };
+      if (!s || typeof s !== "object") throw new Error("lab.step: step " + (i + 1) + " must be a string or { label, text, value }");
+      let value = null;
+      if (isNum(s.value)) value = s.value;
+      else if (Array.isArray(s.value)) value = s.value.every(Array.isArray) ? numGrid(s.value, "lab.step value") : numList(s.value, "lab.step value");
+      return { label: strOr(s.label, "Step " + (i + 1)), text: strOr(s.text, null), value };
+    });
+    labState.views.push({ kind: "step", title: strOr(title, ""), steps: items });
+  };
+  globalThis.__vemry_lab_take = () => (labUsed ? JSON.stringify(labState) : null);
+  const lab = Object.freeze({
+    controls: labControls,
+    matrix: labMatrix,
+    heatmap: labHeatmap,
+    line: labLine,
+    bars: labBars,
+    scatter: labScatter,
+    table: labTable,
+    step: labStep,
+  });
+
   const vemry = {
+    lab,
     query: (q) => invoke("query", q ?? {}),
     read: (path) => invoke("read", { path: String(path) }),
     list: (folder) => invoke("list", { folder: folder == null ? null : String(folder) }),

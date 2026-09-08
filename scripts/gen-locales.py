@@ -1945,6 +1945,20 @@ add("runBlock.", {
     "running": ("Running…", "运行中…"),
     "noOutput": ("(no output)", "(无输出)"),
     "clearOutput": ("Clear output", "清除输出"),
+    # the lab of a block that called vemry.lab.*: live while its controls re-run it
+    "live": ("Live", "实时"),
+    "pin": ("Pin the values into the code", "把当前参数写回代码"),
+    "pinDone": ("Values written into the code", "参数已写回代码"),
+    "pinPartial": ("Values written; not found as literals in the code: {names}", "参数已写回;代码里找不到字面量的有:{names}"),
+    "pinNothing": ("Nothing to pin: the values are unchanged, or the code does not declare them as literals", "没有可写回的值:参数没变,或代码里不是字面量"),
+    "pinNoRange": ("Pin is not available for a code block inside a quote", "引用块里的代码块不支持写回"),
+    "rerun": ("Run again", "重新运行"),
+    "closeLab": ("Close the lab", "关闭实验"),
+    "tableView": ("Show as a table", "以表格查看"),
+    "chartView": ("Show as a chart", "以图表查看"),
+    "nextStep": ("Next", "下一步"),
+    "allSteps": ("All", "全部"),
+    "resetSteps": ("Reset", "重来"),
 })
 
 # ---------------------------------------------------------------- VEMRY.md prompts (sent to the model)

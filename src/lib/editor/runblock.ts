@@ -4,31 +4,53 @@
 // The output exists only in the editor's state — it never reaches disk and vanishes
 // when the document closes. This button is the only entry point of the whole chain:
 // there is no automatic execution path at all (opening a note is not running code).
+// A block that called vemry.lab.* comes back with a lab spec, and its output widget
+// is a live session (lab.ts): the controls it declared re-run the block while the
+// session is on, still through this sandbox and still only after that first click.
 import { t } from "$lib/i18n/i18n.svelte";
+import type { BlockEvalResult, LabParams } from "$lib/api";
 import { blockRoot } from "./blockwidget";
+import { LabSession } from "./lab";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { type EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
 import { fencedCodeAt, fencedCodeText } from "./fenced";
 
 export interface RunHost {
-  evalBlock(code: string): Promise<{ output: string; error: string | null }>;
+  /** `params` are the lab controls' current values on a re-run; null on the first run. */
+  evalBlock(code: string, params: LabParams | null): Promise<BlockEvalResult>;
 }
 
-const setOutput = StateEffect.define<{ at: number; output: string; error: string | null }>({
+const setOutput = StateEffect.define<{ at: number; output: string; error: string | null; session: LabSession | null }>({
   map: (v, m) => ({ ...v, at: m.mapPos(v.at) }),
 });
 const clearOutput = StateEffect.define<{ at: number }>({
   map: (v, m) => ({ at: m.mapPos(v.at) }),
 });
 
-/** The code of the fenced block the button belongs to, plus the output anchor (the end of the closing fence line) */
-function blockAt(view: EditorView, pos: number): { code: string; endPos: number } | null {
+interface Located {
+  code: string;
+  /** The output anchor: the end of the closing fence line. */
+  endPos: number;
+  /** The code's span, when it is one contiguous piece the pin can replace (a fence
+   *  inside a quote is cut into pieces by the parser and cannot be). */
+  range: { from: number; to: number } | null;
+}
+
+/** The fenced block at pos: its code, the output anchor and the replaceable range. */
+function blockAt(view: EditorView, pos: number): Located | null {
   const n = fencedCodeAt(view.state, pos);
   if (!n) return null;
   const code = fencedCodeText(view.state.doc, n);
   const endPos = view.state.doc.lineAt(Math.min(n.to, view.state.doc.length)).to;
-  return { code, endPos };
+  const pieces = n.getChildren("CodeText");
+  let range: { from: number; to: number } | null = null;
+  if (pieces.length) {
+    const from = pieces[0].from;
+    const to = pieces[pieces.length - 1].to;
+    if (view.state.doc.sliceString(from, to) === code) range = { from, to };
+  }
+  return { code, endPos, range };
 }
 
 class RunWidget extends WidgetType {
@@ -46,7 +68,7 @@ class RunWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       if (btn.disabled) return;
-      let info: { code: string; endPos: number } | null;
+      let info: Located | null;
       try {
         info = blockAt(view, view.posAtDOM(btn));
       } catch {
@@ -69,14 +91,24 @@ class RunWidget extends WidgetType {
         }
       };
       void this.host
-        .evalBlock(info.code)
+        .evalBlock(info.code, null)
         .then((r) => {
           const at = anchor();
-          if (at != null) view.dispatch({ effects: setOutput.of({ at, output: r.output, error: r.error }) });
+          if (at == null) return;
+          // A lab block gets a live session: the host it needs finds the block again
+          // from where the widget sits, so an edited block re-runs as edited and a
+          // deleted one is simply not run
+          let session: LabSession | null = null;
+          if (r.lab) {
+            const h = labHost(view, this.host);
+            session = new LabSession(h, r.lab, r.output);
+            h.bind(session.root);
+          }
+          view.dispatch({ effects: setOutput.of({ at, output: r.output, error: r.error, session }) });
         })
         .catch((e) => {
           const at = anchor();
-          if (at != null) view.dispatch({ effects: setOutput.of({ at, output: "", error: String(e) }) });
+          if (at != null) view.dispatch({ effects: setOutput.of({ at, output: "", error: String(e), session: null }) });
         })
         .finally(() => {
           btn.disabled = false;
@@ -87,20 +119,63 @@ class RunWidget extends WidgetType {
   }
 }
 
+/** The editor side of a lab session. The session's root is the widget's DOM, so its
+ *  position in the document is where the block's closing fence ends — the block is
+ *  found from there at every call, never from a position remembered at click time. */
+function labHost(view: EditorView, host: RunHost) {
+  let root: HTMLElement | null = null;
+  const at = (): number | null => {
+    if (!root) return null;
+    try {
+      return view.posAtDOM(root);
+    } catch {
+      return null;
+    }
+  };
+  const located = (): Located | null => {
+    const pos = at();
+    if (pos == null) return null;
+    // the widget sits at the end of the closing fence line; that line's start is inside the fence node
+    return blockAt(view, view.state.doc.lineAt(pos).from);
+  };
+  return {
+    bind: (el: HTMLElement) => {
+      root = el;
+    },
+    locate: () => {
+      const l = located();
+      return l ? { code: l.code, range: l.range } : null;
+    },
+    evalBlock: (code: string, params: LabParams | null) => host.evalBlock(code, params),
+    replaceCode: (range: { from: number; to: number }, code: string) => {
+      view.dispatch({ changes: { from: range.from, to: range.to, insert: code } });
+    },
+    close: () => {
+      const pos = at();
+      if (pos != null) view.dispatch({ effects: clearOutput.of({ at: pos }) });
+    },
+  };
+}
+
 class OutputWidget extends WidgetType {
   constructor(
     readonly output: string,
     readonly error: string | null,
+    readonly session: LabSession | null,
   ) {
     super();
   }
   eq(other: OutputWidget) {
-    return other.output === this.output && other.error === this.error;
+    return other.output === this.output && other.error === this.error && other.session === this.session;
   }
   ignoreEvent() {
     return true;
   }
   toDOM(view: EditorView) {
+    if (this.session) {
+      this.session.attach(view);
+      return blockRoot(this.session.root);
+    }
     const wrap = document.createElement("div");
     wrap.className = "cm-runblock-out";
     if (this.error) wrap.classList.add("cm-runblock-err");
@@ -122,6 +197,9 @@ class OutputWidget extends WidgetType {
     };
     wrap.appendChild(clear);
     return blockRoot(wrap);
+  }
+  destroy() {
+    this.session?.destroy();
   }
 }
 
@@ -166,7 +244,7 @@ export function runBlockExtension(host: RunHost): Extension {
             filter: () => false,
             add: [
               Decoration.widget({
-                widget: new OutputWidget(e.value.output, e.value.error),
+                widget: new OutputWidget(e.value.output, e.value.error, e.value.session),
                 side: 1,
                 block: true,
               }).range(at),

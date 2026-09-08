@@ -15,6 +15,7 @@ pub mod audit;
 pub mod bindings;
 pub mod engine;
 pub mod grants;
+pub mod lab;
 pub mod scheduler;
 
 use serde::Serialize;
@@ -56,10 +57,15 @@ pub struct ScriptInfo {
 
 /// Outcome of a one-shot `js` code-block evaluation (M4). `output` is the
 /// captured console lines plus a final `⇒ value` line; nothing is persisted.
+/// `lab` is the experiment the block declared through `vemry.lab.*` (controls
+/// and views, see [`lab`]), present only when it called that API and ran without
+/// error; the editor renders it and re-runs the block with the controls' values
+/// as `params` while the user moves them.
 #[derive(Clone, Debug, Serialize)]
 pub struct BlockEvalResult {
     pub output: String,
     pub error: Option<String>,
+    pub lab: Option<lab::LabSpec>,
 }
 
 /// Events the script host pushes to the UI (`script://event` on the Tauri

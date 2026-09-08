@@ -39,6 +39,26 @@
   --co-quote: #78716c;
   --co-claim: #e11d48;
   --co-evidence: #0891b2;
+  /* The lab's chart colours (editor/lab.ts, lab/charts.ts). Eight categorical slots
+     in a fixed order that clears the colour-vision checks on this surface; one hue
+     light→dark for magnitude; two poles around a neutral midpoint for signed values.
+     The dark values are the same hues stepped for the dark surface, not an inversion */
+  --lab-s1: #2a78d6;
+  --lab-s2: #eb6834;
+  --lab-s3: #1baf7a;
+  --lab-s4: #eda100;
+  --lab-s5: #e87ba4;
+  --lab-s6: #008300;
+  --lab-s7: #4a3aa7;
+  --lab-s8: #e34948;
+  --lab-seq-lo: #e6eef9;
+  --lab-seq-hi: #0d366b;
+  --lab-div-neg: #c93a3a;
+  --lab-div-mid: #efeeea;
+  --lab-div-pos: #2a78d6;
+  --lab-heat-ink-hi: #ffffff;
+  --lab-grid: #e1e0d9;
+  --lab-axis: #c3c2b7;
 
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
     "Noto Sans SC", "Microsoft YaHei", sans-serif;
@@ -110,6 +130,22 @@
     --co-claim: #fb7185;
     --co-evidence: #22d3ee;
     --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --lab-s1: #3987e5;
+    --lab-s2: #d95926;
+    --lab-s3: #199e70;
+    --lab-s4: #c98500;
+    --lab-s5: #d55181;
+    --lab-s6: #008300;
+    --lab-s7: #9085e9;
+    --lab-s8: #e66767;
+    --lab-seq-lo: #232a33;
+    --lab-seq-hi: #9ec5f4;
+    --lab-div-neg: #e66767;
+    --lab-div-mid: #383835;
+    --lab-div-pos: #5598e7;
+    --lab-heat-ink-hi: #131312;
+    --lab-grid: #2c2c2a;
+    --lab-axis: #4a4844;
   }
 }
 
@@ -442,6 +478,624 @@ button:focus-visible,
 .cm-runblock-clear:hover {
   color: var(--fg);
   background: var(--bg-hover);
+}
+/* ---- The lab of a js block (editor/lab.ts, lab/charts.ts): the controls it
+   declared, the views it drew, live while the session is on ---- */
+.cm-lab {
+  position: relative;
+  margin: 2px 0 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--fg);
+}
+.cm-lab-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.cm-lab-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.cm-lab-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.cm-lab.busy .cm-lab-live-dot {
+  animation: cm-lab-pulse 0.9s ease-in-out infinite;
+}
+@keyframes cm-lab-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-lab.busy .cm-lab-live-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+.cm-lab-status {
+  flex: 1;
+  font-size: var(--fs-xs);
+  color: var(--fg-faint);
+}
+.cm-lab-tools {
+  display: inline-flex;
+  gap: 4px;
+}
+.cm-lab-tool,
+.cm-lab-fig-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.cm-lab-tool:hover,
+.cm-lab-fig-toggle:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+.cm-lab-tool:focus-visible,
+.cm-lab-fig-toggle:focus-visible,
+.cm-lab-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.cm-lab-tool svg,
+.cm-lab-fig-toggle svg {
+  display: block;
+}
+/* the controls: one row that wraps; a matrix takes a whole row */
+.cm-lab-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 10px 12px 4px;
+}
+.cm-lab-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  cursor: default;
+}
+.cm-lab-ctl-wide {
+  flex-basis: 100%;
+  align-items: flex-start;
+}
+.cm-lab-ctl-name {
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.cm-lab-ctl-value {
+  min-width: 3ch;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.cm-lab-ctl input[type="range"] {
+  width: 140px;
+  accent-color: var(--accent);
+  margin: 0;
+}
+.cm-lab-ctl select {
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+/* the toggle: a switch, not a checkbox */
+.cm-lab-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 30px;
+  height: 17px;
+  margin: 0;
+  border-radius: 9px;
+  background: var(--border-strong);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cm-lab-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+}
+.cm-lab-switch:checked {
+  background: var(--accent);
+}
+.cm-lab-switch:checked::after {
+  transform: translateX(13px);
+}
+.cm-lab-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* the matrix: a grid of number cells with no chrome of their own */
+.cm-lab-matrix {
+  display: inline-grid;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  background: var(--border);
+  border-radius: 5px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.cm-lab-matrix input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--fg);
+  background: var(--bg);
+  border: 0;
+  border-radius: 3px;
+  padding: 3px 4px;
+  -moz-appearance: textfield;
+}
+.cm-lab-matrix input::-webkit-inner-spin-button,
+.cm-lab-matrix input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.cm-lab-matrix input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* the views: figures side by side when the column allows, one per row otherwise */
+.cm-lab-views {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 10px 12px 12px;
+}
+.cm-lab-fig {
+  margin: 0;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px 10px;
+}
+.cm-lab-fig-step,
+.cm-lab-fig-table {
+  grid-column: 1 / -1;
+}
+.cm-lab-fig-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.cm-lab-fig-title {
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-lab-fig-body {
+  min-width: 0;
+}
+.cm-lab-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cm-lab-svg {
+  display: block;
+  max-width: 100%;
+  font-family: var(--font-ui);
+  overflow: visible;
+}
+.cm-lab-empty {
+  color: var(--fg-faint);
+  text-align: center;
+  padding: 18px 0;
+}
+/* chart chrome: hairlines one step off the surface, text in the text tokens */
+.cm-lab-grid line,
+.cm-lab-gridline {
+  stroke: var(--lab-grid);
+  stroke-width: 1;
+}
+.cm-lab-axis {
+  stroke: var(--lab-axis);
+  stroke-width: 1;
+}
+.cm-lab-tick {
+  font-size: 11px;
+  fill: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.cm-lab-axislabel {
+  font-size: 11px;
+  fill: var(--fg-muted);
+}
+.cm-lab-value,
+.cm-lab-endlabel {
+  font-size: 11px;
+  fill: var(--fg);
+}
+.cm-lab-cross {
+  stroke: var(--fg-faint);
+  stroke-width: 1;
+  pointer-events: none;
+}
+.cm-lab-hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+/* marks: thin lines with round joins, dots with a surface ring, bars no thicker than 24px */
+.cm-lab-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.cm-lab-dot {
+  stroke: var(--bg);
+  stroke-width: 2;
+  pointer-events: none;
+}
+.cm-lab-dot.lift {
+  r: 6;
+}
+.cm-lab-bar {
+  stroke: none;
+  transition: opacity 0.1s;
+}
+.cm-lab-bar.lift {
+  opacity: 0.8;
+}
+.cm-lab-line.s1 { stroke: var(--lab-s1); }
+.cm-lab-line.s2 { stroke: var(--lab-s2); }
+.cm-lab-line.s3 { stroke: var(--lab-s3); }
+.cm-lab-line.s4 { stroke: var(--lab-s4); }
+.cm-lab-line.s5 { stroke: var(--lab-s5); }
+.cm-lab-line.s6 { stroke: var(--lab-s6); }
+.cm-lab-line.s7 { stroke: var(--lab-s7); }
+.cm-lab-line.s8 { stroke: var(--lab-s8); }
+.cm-lab-dot.s1, .cm-lab-bar.s1, .cm-lab-key.s1 { fill: var(--lab-s1); --lab-key: var(--lab-s1); }
+.cm-lab-dot.s2, .cm-lab-bar.s2, .cm-lab-key.s2 { fill: var(--lab-s2); --lab-key: var(--lab-s2); }
+.cm-lab-dot.s3, .cm-lab-bar.s3, .cm-lab-key.s3 { fill: var(--lab-s3); --lab-key: var(--lab-s3); }
+.cm-lab-dot.s4, .cm-lab-bar.s4, .cm-lab-key.s4 { fill: var(--lab-s4); --lab-key: var(--lab-s4); }
+.cm-lab-dot.s5, .cm-lab-bar.s5, .cm-lab-key.s5 { fill: var(--lab-s5); --lab-key: var(--lab-s5); }
+.cm-lab-dot.s6, .cm-lab-bar.s6, .cm-lab-key.s6 { fill: var(--lab-s6); --lab-key: var(--lab-s6); }
+.cm-lab-dot.s7, .cm-lab-bar.s7, .cm-lab-key.s7 { fill: var(--lab-s7); --lab-key: var(--lab-s7); }
+.cm-lab-dot.s8, .cm-lab-bar.s8, .cm-lab-key.s8 { fill: var(--lab-s8); --lab-key: var(--lab-s8); }
+/* the legend: a key in the series colour beside a name in the text colour */
+.cm-lab-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+}
+.cm-lab-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cm-lab-key {
+  display: inline-block;
+  background: var(--lab-key);
+  flex: none;
+}
+.cm-lab-key-line {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+}
+.cm-lab-key-rect {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.cm-lab-key-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+/* the tooltip: the value leads, the name follows */
+.cm-lab-tip {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  min-width: 90px;
+  max-width: 260px;
+  padding: 6px 9px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.cm-lab-tip-title {
+  color: var(--fg-muted);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cm-lab-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.cm-lab-tip-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.cm-lab-tip-label {
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the heatmap: one hue light→dark (or two poles around a neutral); the number in the cell when it fits */
+.cm-lab-heat {
+  display: grid;
+  gap: 2px;
+  align-items: stretch;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.cm-lab-heat-corner {
+  min-width: 0;
+}
+.cm-lab-heat-col,
+.cm-lab-heat-row {
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-lab-heat-col {
+  text-align: center;
+  padding-bottom: 2px;
+  min-width: 0;
+}
+.cm-lab-heat-row {
+  align-self: center;
+  padding-right: 6px;
+  max-width: 120px;
+  text-align: right;
+}
+.cm-lab-heat-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1.6;
+  max-height: 34px;
+  min-height: 14px;
+  min-width: 0;
+  border-radius: 3px;
+  color: var(--fg);
+  cursor: crosshair;
+  overflow: hidden;
+  transition: box-shadow 0.08s;
+}
+.cm-lab-heat-cell.ink-hi {
+  color: var(--lab-heat-ink-hi);
+}
+.cm-lab-heat-cell.empty {
+  background: repeating-linear-gradient(45deg, transparent 0 4px, var(--border) 4px 5px);
+}
+.cm-lab-heat-cell:hover {
+  box-shadow: inset 0 0 0 2px var(--fg);
+}
+.cm-lab-scale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.cm-lab-scale-bar {
+  flex: 1;
+  max-width: 180px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--lab-seq-lo), var(--lab-seq-hi));
+}
+.cm-lab-scale-bar.diverging {
+  background: linear-gradient(90deg, var(--lab-div-neg), var(--lab-div-mid), var(--lab-div-pos));
+}
+/* the table (a view of its own, and the twin of every chart) */
+.cm-lab-tablewrap {
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.cm-lab-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.cm-lab-table th,
+.cm-lab-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+.cm-lab-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  color: var(--fg-muted);
+  font-weight: 500;
+}
+.cm-lab-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cm-lab-table tr.hl td,
+.cm-lab-table th.hl,
+.cm-lab-table td.hl {
+  background: var(--accent-soft);
+}
+/* the steps: revealed one at a time, the current one lit */
+.cm-lab-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cm-lab-step {
+  display: flex;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  transition: background 0.12s;
+}
+.cm-lab-step.hidden {
+  display: none;
+}
+.cm-lab-step.current {
+  background: var(--accent-soft);
+}
+.cm-lab-step-n {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+  background: var(--bg-hover);
+}
+.cm-lab-step.current .cm-lab-step-n {
+  color: var(--bg);
+  background: var(--accent);
+}
+.cm-lab-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.cm-lab-step-label {
+  font-weight: 600;
+}
+.cm-lab-step-text {
+  color: var(--fg-muted);
+}
+.cm-lab-step-math .katex {
+  font-size: 1.05em;
+}
+.cm-lab-step-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.cm-lab-mini {
+  display: inline-grid;
+  gap: 2px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.cm-lab-mini span {
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  text-align: right;
+}
+.cm-lab-mini-row {
+  grid-auto-flow: column;
+}
+.cm-lab-step-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.cm-lab-btn {
+  font: inherit;
+  font-size: var(--fs-xs);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.cm-lab-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.cm-lab-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.cm-lab-step-count {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+/* console output under the views; an error in the danger colour */
+.cm-lab-out {
+  margin: 0;
+  padding: 6px 12px 8px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--fg-muted);
+}
+.cm-lab-out-err {
+  color: var(--danger);
 }
 /* The vemry-query block: the live query result replaces the whole fence */
 .cm-queryblock {
