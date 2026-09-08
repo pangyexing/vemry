@@ -65,6 +65,14 @@ A later session on the same paper has a plan of its own: "Check the retelling"
   with `tag: chapter` and `text: "#chapter"` so the chapters and their status
   show live, one row per chapter (a tag alone matches every block of a tagged
   note; the text filter keeps the `#chapter` line itself).
+- Language: everything written for the reader — the hub's sections, the chapter
+  headings below, the explanations, a lab block's caption, the cards, the
+  retelling check — is in the user's language; the English names below are the
+  structure, not the wording (a Chinese reader gets 一句话 / 原文 / 记号 / 试一试 /
+  失效条件 / 问题 / 我的话, and 已知 / 待学 / 章节 on the hub). What is machine-read
+  stays as written here: the `#chapter` tag, the `status::` values (unread,
+  reading, retold, done), the folder and file names, the block ids. The source
+  note stays in the paper's own language: it is a quotation.
 - A chapter note, in this order, every time:
   1. `#chapter [status:: unread]` on its first line — the hub reads it.
   2. `## In one sentence` — the idea, plainly.
