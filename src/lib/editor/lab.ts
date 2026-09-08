@@ -150,6 +150,16 @@ export class LabSession implements TipHost {
     this.tipEl = el("div", "cm-lab-tip");
     this.tipEl.style.display = "none";
     this.root.append(head, this.controlsEl, this.viewsEl, this.outEl, this.tipEl);
+    // A press anywhere on the card that is not on a form control is swallowed. The
+    // browser would otherwise place its caret inside the widget's DOM, and the editor
+    // reads that caret back as a selection touching the fence: one press on empty card
+    // space (which arms reveal), then one on a button, and the code opened under the
+    // reader. A slider, a switch, a select and a number cell keep their default (they
+    // are dragged, ticked and typed in); the icon buttons swallow their own.
+    this.root.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      if (!(e.target as Element).closest("input, select, textarea, label")) e.preventDefault();
+    });
     this.buildControls();
     this.buildViews();
     this.setOutput(output, null);
@@ -280,6 +290,12 @@ export class LabSession implements TipHost {
           const b = el("button", "cm-lab-preset", item.label);
           b.type = "button";
           if (c.value === item.label) b.setAttribute("aria-pressed", "true");
+          // the box above stops the press from reaching the editor; the default (a
+          // caret placed in the widget) still has to be refused here, as iconButton does
+          b.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          });
           b.addEventListener("click", (e) => {
             e.preventDefault();
             this.applyPreset(c, item);
