@@ -82,7 +82,14 @@ const COLLECT_JS: &str = r#"
     S.apply = (id, text) => {
       const it = S.items.get(id);
       if (!it) return;
-      it.out.textContent = text;
+      it.out.textContent = '';
+      // a formula travelled as a placeholder; the page's own rendering of it comes back in its place
+      const parts = text.split(/⟦m(\d+)⟧/);
+      for (let i = 0; i < parts.length; i++) {
+        if (i % 2 === 0) { if (parts[i]) it.out.appendChild(document.createTextNode(parts[i])); continue; }
+        const m = it.math[Number(parts[i])];
+        if (m) { const c = m.cloneNode(true); c.removeAttribute('id'); it.out.appendChild(c); }
+      }
       it.out.style.opacity = '';
       it.out.style.borderLeftStyle = 'solid';
       S.schedule();
@@ -98,18 +105,30 @@ const COLLECT_JS: &str = r#"
       window.__vemryTr = null;
     };
   }
-  const SKIP = 'script,style,noscript,textarea,input,select,button,code,pre,nav,header,footer,aside,figcaption,caption,cite,time,address,sup,table,[contenteditable],[aria-hidden="true"],[role="navigation"],[role="banner"],[role="contentinfo"],[role="doc-bibliography"],[role="doc-footnote"],.references,.reference,.refs,#references,.bibliography,.citation,.byline,.author,[rel="author"],[itemprop="author"],[data-vemry-tr-out]';
+  // Only what the reader can type into is skipped as editable: a read-only editor (contenteditable="false", how a long-form article is rendered) is body text
+  const SKIP = 'script,style,noscript,textarea,input,select,button,code,pre,nav,header,footer,aside,figcaption,caption,cite,time,address,sup,table,[contenteditable=""],[contenteditable="true"],[contenteditable="plaintext-only"],[aria-hidden="true"],[role="navigation"],[role="banner"],[role="contentinfo"],[role="doc-bibliography"],[role="doc-footnote"],.references,.reference,.refs,#references,.bibliography,.citation,.byline,.author,[rel="author"],[itemprop="author"],[data-vemry-tr-out]';
+  // A rendered formula (MathML, KaTeX, MathJax): sent as a placeholder, put back as a clone
+  const MATH = 'math,.mwe-math-element,.katex,.katex-display,mjx-container,.MathJax,.MathJax_Display,.MathJax_Preview';
+  const textOf = (el) => {
+    const maths = [...el.querySelectorAll(MATH)].filter((m) => !m.parentElement || !m.parentElement.closest(MATH));
+    if (!maths.length) return { text: (el.innerText || '').replace(/\s+/g, ' ').trim(), maths: [] };
+    const clone = el.cloneNode(true);
+    const cloned = [...clone.querySelectorAll(MATH)].filter((m) => !m.parentElement || !m.parentElement.closest(MATH));
+    cloned.forEach((m, i) => m.replaceWith(document.createTextNode(' ⟦m' + i + '⟧ ')));
+    for (const hidden of clone.querySelectorAll('[style*="display:none"],[style*="display: none"],[hidden]')) hidden.remove();
+    return { text: (clone.textContent || '').replace(/\s+/g, ' ').trim(), maths };
+  };
   const BLOCK = new Set(['DIV','P','UL','OL','LI','TABLE','SECTION','ARTICLE','HEADER','FOOTER','ASIDE','NAV','BLOCKQUOTE','PRE','H1','H2','H3','H4','H5','H6','FIGURE','FORM','FIELDSET','DL','DD','DT','HR','TR','TD','TH','MAIN','DETAILS','SUMMARY']);
   const TEXTY = new Set(['P','H1','H2','H3','H4','H5','H6','LI','BLOCKQUOTE','DD','DT','DIV','SPAN','SECTION','ARTICLE','SUMMARY','MAIN']);
   const out = [];
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
   for (let el = walker.currentNode; el; el = walker.nextNode()) {
     if (!TEXTY.has(el.tagName) || el.hasAttribute('data-vemry-tr')) continue;
-    if (el.closest(SKIP)) continue;
+    if (el.closest(SKIP) || el.closest(MATH)) continue;
     let hasBlockChild = false;
     for (const c of el.children) { if (BLOCK.has(c.tagName)) { hasBlockChild = true; break; } }
     if (hasBlockChild) continue;
-    const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    const { text, maths } = textOf(el);
     if (text.length < 20 || !/\p{L}{3}/u.test(text)) continue;
     let covered = false;
     for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) { if (p.hasAttribute('data-vemry-tr')) { covered = true; break; } }
@@ -121,11 +140,11 @@ const COLLECT_JS: &str = r#"
     const cs = getComputedStyle(el);
     const o = document.createElement('div');
     o.setAttribute('data-vemry-tr-out', String(id));
-    o.style.cssText = 'all:initial;display:block;position:absolute;left:0;right:0;box-sizing:border-box;padding:0 14px 0 12px;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:3px dotted rgba(127,127,127,.35);opacity:.45;cursor:pointer;color:inherit;font-family:inherit;font-size:' + cs.fontSize + ';font-weight:' + cs.fontWeight + ';line-height:' + cs.lineHeight + ';';
+    o.style.cssText = 'all:initial;display:block;position:absolute;left:0;right:0;box-sizing:border-box;padding:0 14px 0 12px;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:3px dotted rgba(127,127,127,.35);opacity:.45;cursor:pointer;color:inherit;font-family:' + cs.fontFamily + ';font-size:' + cs.fontSize + ';font-weight:' + cs.fontWeight + ';line-height:' + cs.lineHeight + ';';
     o.textContent = '…';
     o.addEventListener('click', () => { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.style.outline = '2px solid rgba(250,204,21,.8)'; setTimeout(() => (el.style.outline = ''), 1200); });
     S.inner.appendChild(o);
-    S.items.set(id, { el, out: o });
+    S.items.set(id, { el, out: o, math: maths });
     out.push({ id, text });
   }
   S.schedule();

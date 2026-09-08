@@ -160,6 +160,7 @@ Rules:\n\
 - Return every segment as <s id=N>…</s> with the same id, in the same order, and nothing else: no preamble, no notes, no summary.\n\
 - Keep the Markdown as it is: emphasis, `> ` quote lines and `[!type]` callout markers, links (translate the label, never the URL), [[wikilinks]] verbatim, inline code and $math$ verbatim, and a table's structure cell for cell with the same number of rows.\n\
 - Keep proper nouns, product names and established technical terms the way the target language's convention has them; on first use, add the source term in parentheses after the translation.\n\
+- A placeholder of the form ⟦m0⟧ stands for a formula: keep every one exactly as written, where it belongs in the sentence.\n\
 - Use the target language's punctuation. Translate the text as it is: never add, drop or reorder content, and never answer a question the text asks.",
         target_name(target)
     );

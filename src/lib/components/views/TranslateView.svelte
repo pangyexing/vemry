@@ -18,14 +18,18 @@
   import PdfPage from "$lib/components/PdfPage.svelte";
   import "katex/dist/katex.min.css";
 
-  /** Below this width two columns are too narrow to read, and the rows interleave. */
+  /** Below this width two columns are too narrow to read, and the rows interleave; a PDF's
+   *  page needs more room than a paragraph of text to be legible. */
   const NARROW_PX = 880;
+  const NARROW_PDF_PX = 1000;
   /** Visibility reports are batched: a scroll fires many intersections in a row. */
   const REPORT_MS = 150;
 
   const doc = $derived(translate.doc);
   let root = $state<HTMLDivElement | null>(null);
-  let narrow = $state(false);
+  let width = $state(0);
+  const isPdf = $derived(doc?.source.kind === "pdf");
+  const narrow = $derived(width > 0 && width < (isPdf ? NARROW_PDF_PX : NARROW_PX));
   /** The layout in effect: the chosen one, unless the pane is too narrow for two columns. */
   const mode = $derived<TranslateMode>(translate.mode === "side" && narrow ? "stack" : translate.mode);
   const total = $derived(translate.toTranslate.length);
@@ -191,7 +195,7 @@
 
   $effect(() => {
     if (!root) return;
-    const ro = new ResizeObserver(([e]) => (narrow = e.contentRect.width < NARROW_PX));
+    const ro = new ResizeObserver(([e]) => (width = e.contentRect.width));
     ro.observe(root);
     return () => ro.disconnect();
   });
@@ -318,7 +322,7 @@
     <div class="state error"><p>{translate.error}</p></div>
   {:else if doc}
     <div class="scroller" bind:this={root}>
-      <div class="rows mode-{mode}">
+      <div class="rows mode-{mode}" class:pdf={isPdf}>
         {#if mode === "side"}
           <div class="cols">
             <div>{t("translate.original")}{#if doc.source.kind === "note"} <span class="hint">· {t("translate.sourceHint")}</span>{:else if doc.source.kind === "pdf"} <span class="hint">· {t("translate.pdfHint")}</span>{/if}</div>
@@ -558,6 +562,11 @@
     grid-template-columns: 1fr 1fr;
     border-bottom: 1px solid var(--border);
   }
+  /* A page wants more width than its translation: the page is small type, the translation is not */
+  .rows.pdf .row,
+  .rows.pdf .cols {
+    grid-template-columns: 3fr 2fr;
+  }
   .mode-stack .row,
   .mode-target .row {
     grid-template-columns: 1fr;
@@ -587,7 +596,7 @@
     background: var(--bg-hover);
     box-shadow: inset 3px 0 0 var(--accent);
   }
-  .row .tr:hover .tools,
+  .row:not(.page) .tr:hover .tools,
   .cell:hover .tools {
     opacity: 1;
   }

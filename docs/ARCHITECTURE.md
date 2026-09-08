@@ -2235,9 +2235,14 @@ the user presses "save as note".
   every 1.5s collects blocks that appeared since (an endless feed; the job's
   segments are growable, `TranslateJob::extend`), and a new document (the
   script's `gen` changes) starts over. Clicking an entry scrolls the page to its
-  block. The chrome hears `BrowserEvent::Translate` (on/off, done/total) and the
-  button shows it; pressing again removes the pane. The translations are cached
-  in memory by URL and language across a close and a reopen, never on disk.
+  block. A rendered formula (MathML, KaTeX, MathJax) travels as a placeholder
+  (`⟦m0⟧`, which the prompt says to keep) and comes back as a clone of the
+  page's own rendering in the translation. Only what the reader can type into
+  counts as editable and is skipped — a read-only editor (`contenteditable="false"`,
+  how a long-form article is rendered) is body text. The chrome hears
+  `BrowserEvent::Translate` (on/off, done/total) and the button shows it;
+  pressing again removes the pane. The translations are cached in memory by URL
+  and language across a close and a reopen, never on disk.
 - **What is not body text.** A caption (`Figure 3:`, `表 1`), a reference entry
   (`[12] …`, a numbered author-year line), everything under a heading named
   References / Bibliography / Acknowledgements, a paper's author and address
@@ -2255,8 +2260,9 @@ the user presses "save as note".
   broken across lines is mended, a bare page number is dropped. The rows are
   **pages**: the page drawn on the left (`PdfPage`, the same pdf.js document the
   preview parsed), its paragraphs as cells on the right, each cell a segment with
-  the same states as a row, **each cell at the height of its paragraph on the
-  page**: `segmentTops` finds where each segment's text starts among pdf.js's text
+  the same states as a row (the page column three fifths wide — the page is small
+  type, its translation is not — and the rows interleave below 1000px rather than
+  880px), **each cell at the height of its paragraph on the page**: `segmentTops` finds where each segment's text starts among pdf.js's text
   items (one text-content read per page), and a cell gets the top margin that
   puts it there, or sits right under the cell above when that one is taller than
   its paragraph — cells never overlap, and the eye crosses the gutter horizontally.
