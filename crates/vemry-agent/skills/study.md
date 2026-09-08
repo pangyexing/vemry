@@ -24,18 +24,23 @@ The first session, verbatim (in the user's language):
 
 A later session on the same paper has a plan of its own: "Check the retelling"
 (one step), "Answer the questions" (one step), or "Add an experiment" (one step).
+Mark each step done with update_plan as it lands — the card is the reader's
+progress bar, not a receipt at the end.
 
 ## Inputs
 
 - The source, in this order: a vault file (read_file — a PDF comes back as text),
   a clipped page (clips_lookup, then read_note), a URL (open_for_reading; for an
   arXiv abstract page ask for its HTML version, `https://arxiv.org/html/<id>`,
-  which keeps the section structure). Read a long paper section by section and
-  write each section down before reading the next: the source note is the memory,
-  not the context.
+  which keeps the section structure). A long page comes back in parts — the
+  result says `part 1 of N` — and the next part is one call away: the same URL
+  with `part: 2`, then 3. Write each part's sections into the source note before
+  asking for the next: the source note is the memory, not the context. Never look
+  for the rest of a page anywhere else (the PDF, a mirror, the browser): it is not
+  there, and every such attempt costs a minute.
 - What the vault already holds: search_notes with the paper's key terms and
-  query_blocks with kind: claim — the known map is built from hits, and a chapter
-  the vault already explains is linked, not rewritten.
+  query_blocks with kind: claim. The known map is the hits, linked — a hit is not
+  read in full; a chapter the vault already explains is linked, not rewritten.
 - What the reader reads it for, asked once at the start when the request does not
   say: understand the idea, reproduce it, write a survey, prepare for an interview,
   review it. The goal orders the chapters and picks the output.
@@ -55,10 +60,14 @@ A later session on the same paper has a plan of its own: "Check the retelling"
 ## Do
 
 - The source note: the paper's own section headings as `##`, one paragraph per
-  block ending in an id (`^s3p2` = section 3, paragraph 2), formulas as `$…$` and
+  block ending in an id — `^s<section digits>p<n>`: `^s3p2` is section 3
+  paragraph 2, `^s321p4` is section 3.2.1 paragraph 4 — formulas as `$…$` and
   `$$…$$`, tables as tables, a figure as one line naming it and its caption.
   Quotation, not paraphrase: this note is what the chapters cite. Frontmatter
-  `title`, `authors`, `year`, `source` (the URL or the file), `genre`.
+  `title`, `authors`, `year`, `source` (the URL or the file), `genre`. The first
+  part is a write_note; every later part is an append_note of its sections. An id
+  that exists is never changed or renumbered (chapters and cards cite it); a
+  paragraph added later gets the next free number of its section.
 - The hub: frontmatter `goal` and `status`; a known list (each item a [[link]] to
   the note that already explains it), a to-learn list, the chapter order for this
   goal (a chapter already known is marked so and skipped), and a query block

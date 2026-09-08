@@ -22,7 +22,7 @@ use crate::compact;
 use crate::context::{resolve_context_refs, ContextRef};
 use crate::permission::{
     ActionsDecision, ActionsGate, ActionsRequest, PermissionDecision, PermissionGate, PlanDecision, PlanGate, PlanRequest,
-    ReadDecision, ReadGate, ReadRequest, WriteGrants, WriteRequest,
+    FetchedPage, ReadDecision, ReadGate, ReadRequest, WriteGrants, WriteRequest,
 };
 use crate::context::{inflate_images, scrub_private_refs, strip_images};
 use crate::prompt::{build_system_prompt, compose_user_content, PageContext, TurnContext};
@@ -33,7 +33,7 @@ use crate::sources::{self, Source};
 use crate::undo::{self, WriteRecord};
 use crate::tools::{
     execute_read_tool, execute_write, format_action_items, is_local_write, is_session_tool, is_write_tool,
-    open_for_reading_def, parse_action_items, parse_plan_items, parse_read_urls, prepare_write, propose_actions_def,
+    open_for_reading_def, parse_action_items, parse_plan_items, parse_read_part, parse_read_urls, prepare_write, propose_actions_def,
     propose_plan_def, tool_defs, PlanItem, PlanStatus, ToolError,
 };
 use crate::types::{
@@ -1134,50 +1134,86 @@ impl AgentRunner {
         log: &SessionLog,
     ) -> std::result::Result<String, String> {
         let urls = parse_read_urls(args)?;
-        log.append("read", json!({ "id": &call.id, "urls": &urls }));
-        let mut request = ReadRequest { id: call.id.clone(), urls, auto: false };
-        request.auto = self.read_gate.standing(&request);
-        on_event(AgentEvent::ReadRequest { request: request.clone() });
-        let decision = self.read_gate.request(&request).await;
-        // The standing consent given on this card is a fact of the session: its own line,
-        // so a reopened session (or a restart) keeps it rather than asking again
-        if !request.auto && self.read_gate.standing(&request) {
-            log.append("read_auto", json!({ "id": &request.id }));
-        }
-        match decision {
-            ReadDecision::Pages { pages, failed } => {
-                let read: Vec<String> = pages.iter().map(|p| p.url.clone()).collect();
-                log.append("read_decision", json!({ "id": &request.id, "decision": "pages", "urls": &read, "failed": &failed, "auto": request.auto }));
-                on_event(AgentEvent::ReadDecided { id: request.id.clone(), urls: read, failed: failed.clone(), auto: request.auto });
-                if pages.is_empty() {
-                    return Ok(if failed.is_empty() {
-                        "The user allowed none of the pages; do not read them.".into()
-                    } else {
-                        format!("None of the pages could be read: {}", failed.join(", "))
-                    });
-                }
-                {
+        let part = parse_read_part(args)?;
+        // A page read earlier this turn is served from the turn's cache — its later
+        // parts included — without a fetch and without the gate: the user allowed the
+        // page, and reading on is what they allowed
+        let to_fetch: Vec<String> = {
+            let w = web.lock().unwrap();
+            urls.into_iter().filter(|u| !w.pages.contains_key(u)).collect()
+        };
+        let mut failed: Vec<String> = Vec::new();
+        if !to_fetch.is_empty() {
+            log.append("read", json!({ "id": &call.id, "urls": &to_fetch }));
+            let mut request = ReadRequest { id: call.id.clone(), urls: to_fetch, auto: false };
+            request.auto = self.read_gate.standing(&request);
+            on_event(AgentEvent::ReadRequest { request: request.clone() });
+            let decision = self.read_gate.request(&request).await;
+            // The standing consent given on this card is a fact of the session: its own line,
+            // so a reopened session (or a restart) keeps it rather than asking again
+            if !request.auto && self.read_gate.standing(&request) {
+                log.append("read_auto", json!({ "id": &request.id }));
+            }
+            match decision {
+                ReadDecision::Pages { pages, failed: f } => {
+                    let read: Vec<String> = pages.iter().map(|p| p.url.clone()).collect();
+                    log.append("read_decision", json!({ "id": &request.id, "decision": "pages", "urls": &read, "failed": &f, "auto": request.auto }));
+                    on_event(AgentEvent::ReadDecided { id: request.id.clone(), urls: read, failed: f.clone(), auto: request.auto });
+                    failed = f;
                     let mut w = web.lock().unwrap();
-                    for p in &pages {
+                    for p in pages {
                         w.exempt.insert(p.url.clone());
                         w.read.push(sources::Citation { title: p.title.clone(), url: p.url.clone() });
+                        // the requested URL may differ from the page's final one (a redirect): both find it
+                        w.pages.insert(p.url.clone(), p.clone());
+                        for u in &request.urls {
+                            if !w.pages.contains_key(u) && w.pages.len() < 64 {
+                                w.pages.insert(u.clone(), p.clone());
+                            }
+                        }
                     }
                 }
-                let mut out = format!("{} page(s) read (cite each as [title](url)):", pages.len());
-                for p in &pages {
-                    out.push_str("\n\n");
-                    out.push_str(&crate::prompt::page_envelope(&p.url, &p.title, &p.markdown, "you asked to read"));
+                ReadDecision::Deny { reason } => {
+                    log.append("read_decision", json!({ "id": &request.id, "decision": "deny", "reason": &reason }));
+                    return Err(format!("The user declined to open these pages: {reason}. Work from what you have, or ask."));
                 }
-                if !failed.is_empty() {
-                    out.push_str(&format!("\n\n(could not be read: {})", failed.join(", ")));
-                }
-                Ok(out)
-            }
-            ReadDecision::Deny { reason } => {
-                log.append("read_decision", json!({ "id": &request.id, "decision": "deny", "reason": &reason }));
-                Err(format!("The user declined to open these pages: {reason}. Work from what you have, or ask."))
             }
         }
+        // Only the pages this call asked for: the cached ones it named, plus what was just fetched
+        let wanted: Vec<FetchedPage> = {
+            let w = web.lock().unwrap();
+            let mut out: Vec<FetchedPage> = Vec::new();
+            for u in args.get("urls").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str()) {
+                if let Some(p) = w.pages.get(u.trim()) {
+                    if !out.iter().any(|x| x.url == p.url) {
+                        out.push(p.clone());
+                    }
+                }
+            }
+            out
+        };
+        if wanted.is_empty() {
+            return Ok(if failed.is_empty() {
+                "The user allowed none of the pages; do not read them.".into()
+            } else {
+                format!("None of the pages could be read: {}", failed.join(", "))
+            });
+        }
+        let mut out = format!("{} page(s) read (cite each as [title](url)):", wanted.len());
+        for p in &wanted {
+            out.push_str("\n\n");
+            match crate::prompt::page_part(&p.markdown, part) {
+                Some((body, total)) => out.push_str(&crate::prompt::page_envelope_part(&p.url, &p.title, &body, part, total, "you asked to read")),
+                None => {
+                    let total = crate::prompt::page_part(&p.markdown, 1).map_or(1, |(_, t)| t);
+                    out.push_str(&format!("({} has only {} part(s); part {} does not exist)", p.url, total, part));
+                }
+            }
+        }
+        if !failed.is_empty() {
+            out.push_str(&format!("\n\n(could not be read: {})", failed.join(", ")));
+        }
+        Ok(out)
     }
 
     /// update_plan: validate → record the `plan_update` line → emit the event → a
@@ -1253,6 +1289,9 @@ struct TurnWeb {
     results: Vec<WebSearchResult>,
     exempt: HashSet<String>,
     read: Vec<sources::Citation>,
+    /// The pages read this turn, whole, by URL: the parts of a long page are served
+    /// from here, so reading on never fetches again nor asks the gate again.
+    pages: HashMap<String, FetchedPage>,
 }
 
 /// The confirmed plan as the first update: every step pending.

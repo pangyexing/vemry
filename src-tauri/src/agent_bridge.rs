@@ -308,7 +308,8 @@ impl ReadGate for ChannelReadGate {
             let state = self.app.state::<crate::AppState>();
             match crate::browser::reader::page_read(self.app.clone(), state, url.clone()).await {
                 Ok(Some(page)) if !page.markdown.trim().is_empty() => {
-                    let markdown: String = page.markdown.chars().take(vemry_agent::PAGE_CONTEXT_MAX_CHARS).collect();
+                    // whole, up to the memory bound: the runner serves it to the model in parts
+                    let markdown: String = page.markdown.chars().take(vemry_agent::READ_PAGE_MAX_CHARS).collect();
                     pages.push(FetchedPage { url: page.url, title: page.title, markdown });
                 }
                 _ => failed.push(url),

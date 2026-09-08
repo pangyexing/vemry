@@ -30,7 +30,7 @@ pub use permission::{
     ActionsDecision, ActionsGate, ActionsRequest, FetchedPage, PermissionDecision, PermissionGate, PlanDecision, PlanGate,
     PlanRequest, ReadDecision, ReadGate, ReadRequest, WriteGrants, WriteRequest,
 };
-pub use prompt::{PageContext, TurnContext, PAGE_CONTEXT_MAX_CHARS};
+pub use prompt::{PageContext, TurnContext, PAGE_CONTEXT_MAX_CHARS, READ_PAGE_MAX_CHARS};
 pub use provider::ProviderConfig;
 pub use runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};
 pub use session::Follow;
