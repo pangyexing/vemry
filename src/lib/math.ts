@@ -87,3 +87,42 @@ export function mathBlockTex(lines: string[]): string {
   parts[last] = end.endsWith("$$") ? end.slice(0, -2) : end;
   return parts.join("\n").trim();
 }
+
+/** The commands a plain-text row can stand in for; anything else keeps its name. */
+const PLAIN_SYMBOLS: Record<string, string> = {
+  cdot: "·", times: "×", sum: "∑", prod: "∏", int: "∫", infty: "∞", le: "≤", ge: "≥", ne: "≠", approx: "≈", pm: "±",
+  to: "→", rightarrow: "→", leftarrow: "←", ldots: "…", cdots: "⋯",
+  alpha: "α", beta: "β", gamma: "γ", delta: "δ", epsilon: "ε", varepsilon: "ε", zeta: "ζ", eta: "η", theta: "θ", lambda: "λ",
+  mu: "μ", nu: "ν", xi: "ξ", pi: "π", rho: "ρ", sigma: "σ", tau: "τ", phi: "φ", varphi: "φ", chi: "χ", psi: "ψ", omega: "ω",
+  Gamma: "Γ", Delta: "Δ", Theta: "Θ", Lambda: "Λ", Pi: "Π", Sigma: "Σ", Phi: "Φ", Psi: "Ψ", Omega: "Ω",
+};
+
+/** A formula as plain text — for a row that cannot typeset (a query result, a card, an
+ *  Agenda line): √ for a root, a/b for a fraction, the symbols above for their commands,
+ *  braces dropped, an unknown command kept by name. `$\sqrt{d_k}$` reads `√d_k`. */
+export function mathPlain(tex: string): string {
+  let s = tex.trim();
+  for (let i = 0; i < 4; i++) {
+    // innermost first, a few passes for nesting
+    s = s
+      .replace(/\\sqrt\s*\{([^{}]*)\}/g, "√$1")
+      .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "$1/$2")
+      .replace(/\\(?:mathrm|mathbf|mathit|mathcal|text|operatorname|boldsymbol)\s*\{([^{}]*)\}/g, "$1");
+  }
+  s = s.replace(/\\(?:left|right|quad|qquad|displaystyle)\b|\\[,;!]/g, " ");
+  s = s.replace(/\\([A-Za-z]+)/g, (_, name: string) => PLAIN_SYMBOLS[name] ?? name);
+  s = s.replace(/[{}]/g, "");
+  return s.replace(/\s+/g, " ").trim();
+}
+
+/** Every formula in `text` replaced by its plain form (the `$` delimiters go with it). */
+export function foldMath(text: string): string {
+  if (!text.includes("$")) return text;
+  let out = "";
+  let at = 0;
+  for (const m of scanInlineMath(text)) {
+    out += text.slice(at, m.start) + mathPlain(m.tex);
+    at = m.end;
+  }
+  return out + text.slice(at);
+}

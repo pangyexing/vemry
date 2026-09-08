@@ -20,7 +20,7 @@
 
 import { t } from "$lib/i18n/i18n.svelte";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { closesMathBlock, DISPLAY_MATH_RE, INLINE_MATH_RE, mathBlockTex, opensMathBlock, renderMathHtml } from "$lib/math";
+import { closesMathBlock, DISPLAY_MATH_RE, foldMath, INLINE_MATH_RE, mathBlockTex, opensMathBlock, renderMathHtml } from "$lib/math";
 import { toast } from "$lib/stores/toast.svelte";
 import { CALLOUT_GROUP, CALLOUT_HEAD_RE, calloutDefaultTitle } from "$lib/callout";
 import { scanFields } from "$lib/fields";
@@ -179,8 +179,40 @@ export function plainText(s: string): string {
     const url = stripTrailingPunct(m);
     return domainOf(url) + m.slice(url.length); // the trailing punctuation that was stripped stays in the text
   });
-  out = out.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1");
+  // Formulas: the plain approximation, never the $ delimiters ($\sqrt{d_k}$ → √d_k)
+  out = foldMath(out);
+  // Inline fields: the chip's wording, `status: reading`, never the `[key:: value]` markup
+  out = foldFields(out);
+  // Embeds and wikilinks: the label the editor shows — the alias, else the note's stem
+  // with › heading or ¶ block; an embed is marked ⧉, as it is inside embedded content
+  out = out.replace(/(!?)\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_, bang: string, target: string, alias?: string) => `${bang ? "⧉ " : ""}${wikiLabel(target.trim(), alias?.trim())}`);
   return plainLabel(out).replace(/\s{2,}/g, " ").trim();
+}
+
+/** `[key:: value]`, `(key:: value)` and `key:: value` as the chip reads them. */
+function foldFields(s: string): string {
+  if (!s.includes("::")) return s;
+  let out = "";
+  let at = 0;
+  for (const m of scanFields(s)) {
+    out += s.slice(at, m.from) + `${m.key}: ${m.value}`;
+    at = m.to;
+  }
+  return out + s.slice(at);
+}
+
+/** The plain label of a wikilink target: the alias when there is one, else the note's
+ *  stem — alone, with `› heading`, or with `¶` for a block. The same shape the editor's
+ *  folded link shows. */
+export function wikiLabel(target: string, alias?: string): string {
+  if (alias) return alias;
+  const hash = target.indexOf("#");
+  const note = hash < 0 ? target : target.slice(0, hash).trim();
+  const frag = hash < 0 ? "" : target.slice(hash + 1).trim();
+  const stem = (note.split("/").pop() ?? note).replace(/\.md$/i, "");
+  if (!frag) return stem || target;
+  if (frag.startsWith("^") || POSITIONAL_RE.test(frag)) return stem ? `${stem} ¶` : "¶";
+  return stem ? `${stem} › ${frag}` : frag;
 }
 
 /** Inline rendering: the opaque fragments (code, links, wikilinks) are cut out into
