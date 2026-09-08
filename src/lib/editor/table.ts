@@ -54,8 +54,11 @@ function splitRow(text: string, lineFrom: number): Cell[] {
 // An inline link is only matched up to "](", and the target is left to closingParen's
 // bracket balancing: [^)]* would stop at the first ) inside the target and leak the
 // rest of the URL into the body text
+// `_…_` emphasis follows CommonMark's rule for underscores: never intraword, so a
+// symbol's subscript (`W_i^Q`, `d_model/h`) stays text — the opener is not preceded
+// and the closer not followed by a letter or digit. `*` has no such rule.
 const INLINE_RE =
-  /`([^`\n]+)`|\*\*([^*\n]+)\*\*|~~([^~\n]+)~~|==([^=\n]+)==|\[\[([^\[\]\n]+)\]\]|\[([^\]\n]+)\]\(|\*([^*\s][^*\n]*)\*|_([^_\s][^_\n]*)_/g;
+  /`([^`\n]+)`|\*\*([^*\n]+)\*\*|~~([^~\n]+)~~|==([^=\n]+)==|\[\[([^\[\]\n]+)\]\]|\[([^\]\n]+)\]\(|\*([^*\s][^*\n]*)\*|(?<![\p{L}\p{N}_])_([^_\s][^_\n]*)_(?![\p{L}\p{N}_])/gu;
 
 /** From the open position after "](", find the balanced ")" and return its index; -1
  *  when it does not balance.

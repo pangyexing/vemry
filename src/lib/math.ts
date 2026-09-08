@@ -62,14 +62,13 @@ export function scanInlineMath(text: string): MathSpan[] {
 
 /** Whether a line opens a multi-line display block: it starts with `$$` (after
  *  indentation) and does not close on the same line. `$$` alone and `$$ a + b` open;
- *  `$$x$$` is a one-line formula. Mirrors the formatter's rule (format.rs), which
- *  leaves such a block verbatim. */
+ *  `$$x$$` is a one-line formula, and so are `$$x$$ ^id` and `$$x$$ (3)` — whatever
+ *  follows the closer (an equation number, the block id) is text, inline's business.
+ *  Mirrors the formatter's rule (format.rs), which leaves a true block verbatim. */
 export function opensMathBlock(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed.startsWith("$$")) return false;
-  const after = trimmed.slice(2);
-  // `$$x$$` and `$$x$$ ^id` close on their own line: one-line formulas, inline's business
-  return after === "" || !CLOSE_RE.test(after);
+  return !trimmed.slice(2).includes("$$");
 }
 
 /** A closing line's tail: `$$`, optionally followed by the block's id (`$$ ^s321p2` —

@@ -610,6 +610,7 @@
     openUrl: (url: string) => openMdLink(url, false),
     openBlockAt: (note: string, byteStart: number, content?: string) => void vault.openBlockAt(note, byteStart, content),
     currentNote: () => docPath,
+    loadAsset,
   };
 
   const host = {

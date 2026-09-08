@@ -201,7 +201,10 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
         // display math: verbatim through the closing $$
         if let Some(after_open) = trimmed.strip_prefix("$$") {
             let mut block = vec![line.to_string()];
-            let closed_same_line = !after_open.is_empty() && after_open.trim_end().ends_with("$$");
+            // `$$x$$`, `$$x$$ ^id` and `$$x$$ (3)` close on the line they open (a
+            // one-line formula, whatever follows the closer); mirrors opensMathBlock
+            // in src/lib/math.ts
+            let closed_same_line = after_open.contains("$$");
             i += 1;
             if !closed_same_line {
                 while i < lines.len() {
@@ -702,6 +705,13 @@ mod tests {
         assert_eq!(fmt("[t](https://a.io/p#x) <https://b.io/#y>"), "[t](https://a.io/p#x) <https://b.io/#y>\n");
         // a hard break's two spaces stay
         assert_eq!(fmt("line one  \nline two"), "line one  \nline two\n");
+    }
+
+    #[test]
+    fn a_one_line_formula_with_a_tail_opens_no_block() {
+        // `$$…$$ (3) ^id`: an equation number after the closer. The line is a one-line
+        // formula, and the paragraph below is formatted rather than swallowed verbatim
+        assert_eq!(fmt("$$a=b$$ (3) ^s1p1\n\nline one \nline two"), "$$a=b$$ (3) ^s1p1\n\nline one\nline two\n");
     }
 
     #[test]

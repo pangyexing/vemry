@@ -33,6 +33,9 @@ export interface EmbedHost {
   openUrl(url: string): void;
   openBlockAt(note: string, byteStart: number, content?: string): void;
   currentNote(): string | null;
+  /** A vault image's path → a loadable URL, the editor's own asset loader; without
+   *  one, the note's images show as their alt. */
+  loadAsset?(target: string): Promise<string | null>;
 }
 
 export const EMBED_RE = new RegExp("!" + WIKI_RE_SOURCE, "g");
@@ -231,6 +234,15 @@ class EmbedWidget extends WidgetType {
           note.textContent = t("embed.recursive");
         } else {
           body.innerHTML = renderNoteMarkdown(prepareSlice(r));
+          // The note's own images (a paper's figure, an embedded diagram): loaded as the
+          // editor's image widget loads them; one that cannot be read leaves a chip
+          for (const img of body.querySelectorAll<HTMLImageElement>("img[data-asset]")) {
+            const target = img.dataset.asset ?? "";
+            void (this.host.loadAsset?.(target) ?? Promise.resolve(null)).then((u) => {
+              if (u) img.src = u;
+              else img.replaceWith(`⧉ ${img.alt || target}`);
+            });
+          }
           note.remove();
         }
       }

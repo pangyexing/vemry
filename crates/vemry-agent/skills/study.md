@@ -92,6 +92,10 @@ progress bar, not a receipt at the end.
 
   (the fence language is `vemry-query`, one key per line; a tag alone matches
   every block of a tagged note, and the text filter keeps the `#chapter` line).
+- Formulas: `$…$` in a sentence, a table cell, a question or a card, `$$…$$` on a
+  line of its own — everywhere, not only in the source note. Bare TeX
+  (`QW_i^Q`) and a Unicode stand-in (`√d_k`, `QKᵀ`) stay text on the page; only
+  `$…$` is typeset.
 - Language: everything written for the reader — the hub's sections, every
   chapter heading, the explanations, a lab block's caption, the cards, the
   retelling check — is in the user's language. The section list below gives each
@@ -102,7 +106,9 @@ progress bar, not a receipt at the end.
   "In my words". What is machine-read stays as written here: the `#chapter` tag,
   the `status::` values (unread, reading, retold, done), the folder and file
   names, the block ids. The source note stays in the paper's own language: it is
-  a quotation.
+  a quotation. Chinese prose takes Chinese punctuation — ，。；：？！（）「」 —
+  and a variable named in a sentence is a formula (`$n$`, `$d_k$`, `$O(n/r)$`);
+  ASCII punctuation belongs to code, formulas and links alone.
 - A chapter note — a `# title` line, then `#chapter [status:: unread]` on the
   next line (the hub reads it), then these sections in this order, every time,
   headed in the user's language:
@@ -161,6 +167,26 @@ progress bar, not a receipt at the end.
   `supports:[[…]]` to the claim it bears on; interview → the cards; review → the
   paper's claims as `> [!claim]` blocks, its evidence as `> [!evidence]`, and a
   threats-to-validity list; understand → nothing beyond the chapters and cards.
+
+## Format
+
+What the page can and cannot render — checked against before every write:
+
+- A formula is `$…$` (a variable in a sentence too: `$n$`, `$d_k$`, `$W_i^Q$`,
+  `$O(n/r)$`); `$$…$$` on a line of its own for a display formula, with an
+  equation number, if any, after the closer. Bare TeX (`d_model`, `QW_i^Q`) and
+  Unicode stand-ins (`√d_k`, `QKᵀ`) stay text, and an underscore outside `$…$`
+  reads as emphasis. A multi-letter subscript takes braces: `$d_{model}$`.
+- Chinese prose takes Chinese punctuation (，。；：？！（）「」); ASCII marks belong to
+  code, formulas and links.
+- A table's rows all have the header's number of cells; a cell holds one line.
+- A list is tight: no blank line between its items.
+- A section that has nothing to say is left out, never left as an empty heading
+  (*in my words* is the exception — the reader fills it).
+- Headings in the reader's language; the `#chapter` line, the `status::` values,
+  the ids and the file names as this skill spells them.
+- A figure is an image line with its id (`![Figure 1: …](url) ^fig1`), never a
+  caption alone; a chapter embeds a figure or a paragraph by that id.
 
 ## Landing
 

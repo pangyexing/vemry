@@ -51,6 +51,10 @@ const ANY_TARGET = String.raw`(?:[^)\s(]|\([^)\s]*\))+?`;
 const MD_LINK = linkRe(false, HTTP_TARGET);
 // An image reference in chat: rendered as a placeholder chip rather than an <img>, and it does not enter the source cards (an image is not a citation source)
 const MD_IMAGE = linkRe(true, HTTP_TARGET);
+// A note's own image, `![alt](clips/assets/x.png)` — a vault-relative path. Only a note
+// embed renders it (renderNoteMarkdown, as an <img> its host loads from the vault);
+// in chat such a line stays text
+const NOTE_IMAGE = linkRe(true, ANY_TARGET);
 // A bare URL: ASCII URL characters only — the URLs a model outputs are in fact
 // percent-encoded ASCII, and opening this up would swallow the CJK sentence that
 // follows; the lookbehind avoids a Markdown link's "(", and trailing punctuation is
@@ -221,7 +225,11 @@ export function wikiLabel(target: string, alias?: string): string {
  *  placeholders first, everything is escaped, bold and italic are applied, and the
  *  fragments are filled back in — which guarantees escaping always precedes any tag
  *  generation. */
-function renderInline(raw: string, cite: (url: string, title: string, standalone: boolean) => string): string {
+function renderInline(
+  raw: string,
+  cite: (url: string, title: string, standalone: boolean) => string,
+  localImage?: (target: string, alt: string) => string,
+): string {
   // A line holding nothing but links and separating punctuation = the model wrote its
   // sources as their own line or list item, and folding it to a bare number would be
   // unreadable — cite is told to keep the title, and the block level then decides
@@ -250,6 +258,9 @@ function renderInline(raw: string, cite: (url: string, title: string, standalone
     s = s.replace(MD_IMAGE, (_, alt: string, url: string) =>
       stash(imageChip(stripTrailingPunct(url), plainLabel(alt) || t("editor.image"))),
     );
+  // What is left with a `![` is a vault path (the http ones are stashed by now)
+  if (localImage && s.includes("!["))
+    s = s.replace(NOTE_IMAGE, (_, alt: string, target: string) => stash(localImage(target, plainLabel(alt) || t("editor.image"))));
   s = s.replace(MD_LINK, (_, title: string, url: string) => stash(cite(stripTrailingPunct(url), title, standalone)));
   s = s.replace(BARE_URL, (m: string) => stash(cite(stripTrailingPunct(m), "", standalone)));
   s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target: string, alias?: string) => stash(wikiAnchor(target.trim(), alias)));
@@ -306,7 +317,10 @@ export function renderNoteMarkdown(text: string): string {
     const label = plainLabel(title) || domainOf(url);
     return `<a class="md-link" data-url="${escapeHtml(url)}" title="${escapeHtml(url)}">${escapeHtml(label)}</a>`;
   };
-  return renderBlocks(text, (line) => renderInline(foldNestedEmbeds(line), plainLink));
+  // The note's own images come out as <img data-asset>, and the embed widget loads
+  // them the way the editor's image widget does (a blob URL from the vault file)
+  const localImage = (target: string, alt: string) => `<img class="md-img" data-asset="${escapeHtml(target)}" alt="${escapeHtml(alt)}">`;
+  return renderBlocks(text, (line) => renderInline(foldNestedEmbeds(line), plainLink, localImage));
 }
 
 /** A wikilink anchor. A plain `[[Note]]` is the link it always was; a target with a
