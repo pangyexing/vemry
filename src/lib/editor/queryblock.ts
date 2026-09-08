@@ -21,6 +21,7 @@ import { fencedCodeText } from "./fenced";
 import { selectionTouches } from "./reveal";
 import { foldRangesOf, insideFold } from "./table";
 import { localDate } from "$lib/views/tasks";
+import { plainText } from "$lib/markdown";
 import { type GroupKey, type SortSpec, groupHits, parseGroup, parseSort, sortHits } from "$lib/views/queryrows";
 
 export interface QueryHost {
@@ -177,7 +178,8 @@ class QueryWidget extends WidgetType {
           row.className = "cm-queryblock-row";
           const text = document.createElement("span");
           text.className = "cm-queryblock-text";
-          text.textContent = truncate(hit.block.content, 120);
+          // the row reads like the editor's folded line: formulas, fields, links and embeds folded, never the markup
+          text.textContent = truncate(plainText(hit.block.content), 120);
           const note = document.createElement("span");
           note.className = "cm-queryblock-note";
           note.textContent = hit.note_title;
