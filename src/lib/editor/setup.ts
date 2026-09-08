@@ -359,6 +359,23 @@ function buildState(opts: EditorOptions): EditorState {
           opts.onSelection?.(main.from, main.to);
         }
       }),
+      emptyViewportGuard,
     ],
   });
 }
+
+/** A viewport that is empty while the document is not: the height map shrank under a
+ *  scroll offset at the note's end (a block widget rebuilt above it measured shorter than
+ *  before — an embed whose figure had not loaded), the browser clamped the offset past
+ *  the document, and with nothing rendered nothing gets measured again — the note stays
+ *  blank until the reader scrolls. Pull the view back onto the document's end: the last
+ *  lines render, and whatever re-enters the viewport is measured on the way. */
+const emptyViewportGuard = EditorView.updateListener.of((update) => {
+  if (!update.viewportChanged) return;
+  const v = update.view;
+  if (v.viewport.from !== v.viewport.to || v.state.doc.length === 0) return;
+  requestAnimationFrame(() => {
+    if (v.viewport.from !== v.viewport.to) return;
+    v.scrollDOM.scrollTop = Math.max(0, v.contentHeight + v.documentTop - v.scrollDOM.clientHeight);
+  });
+});

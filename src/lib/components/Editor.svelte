@@ -20,6 +20,7 @@
   import { queryRefresh } from "$lib/editor/queryblock";
   import { suppressReveal } from "$lib/editor/reveal";
   import { ensureSyntaxTree } from "@codemirror/language";
+  import { fencedCodeAt } from "$lib/editor/fenced";
   import { linkAt } from "$lib/editor/linkat";
   import { vault, fileKind, mimeOf, isMetaPath, metaDocExists } from "$lib/stores/vault.svelte";
   import { agent } from "$lib/stores/agent.svelte";
@@ -930,6 +931,37 @@
     contextMenu.open(e, entries);
   }
 
+  /** After an external change (an agent write landing, an edit in another app) is applied to
+   *  the buffer: bring the changed span into view and put the cursor at its first line, so the
+   *  reader lands where the note changed — the run's ✓ and ⌘Y are then one press away. The
+   *  cursor stays out of a code fence (a bare cursor inside a lab block would unfold its card
+   *  over the reader) and out of a range selection the user is holding.
+   *  This is also what keeps the view from going blank. Measured on the reload with the view
+   *  scrolled to the note's end: the change rebuilds the block widgets above it, the ones not
+   *  yet re-measured fall back to their estimates, the height map shrinks by the difference (an
+   *  embed of 1800px, say), and the viewport, still at the old scroll offset, ends up past the
+   *  document — an empty viewport draws nothing, so nothing is re-measured, and the note stays
+   *  blank until a scroll. Anchoring the view to the changed span pulls it back onto real
+   *  content. */
+  function revealExternalChange(v: EditorView, from: number, to: number) {
+    const doc = v.state.doc;
+    const start = Math.min(from, doc.length);
+    const end = Math.max(start, Math.min(to, doc.length));
+    const line = doc.lineAt(start);
+    const held = !v.state.selection.main.empty;
+    let anchor = line.from;
+    // out of a fence: the card's reveal counts its first line as inside, so the cursor goes
+    // to the line above (a change that starts with a lab block lands just before its card)
+    for (let fence = fencedCodeAt(v.state, anchor); fence && fence.from > 0; fence = fencedCodeAt(v.state, anchor)) {
+      anchor = doc.lineAt(fence.from - 1).from;
+    }
+    v.dispatch({
+      ...(held ? {} : { selection: { anchor } }),
+      effects: EditorView.scrollIntoView(start, { y: "center" }),
+    });
+    if (end > start) flashRange(v, start, end);
+  }
+
   /** Finishing a load: shared by the restore-a-suspended-tab path and the create-a-new-state
    *  path. Adding a store field derived from the editor changes this one place — adding
    *  editorLoc and editorSelStats in this batch would once have meant keeping four sites in
@@ -1069,15 +1101,17 @@
         while (head < max && cur.charCodeAt(head) === next.charCodeAt(head)) head++;
         let tail = 0;
         while (tail < max - head && cur.charCodeAt(cur.length - 1 - tail) === next.charCodeAt(next.length - 1 - tail)) tail++;
+        const insert = next.slice(head, next.length - tail);
         loadingDoc = true;
         try {
           v.dispatch({
-            changes: { from: head, to: cur.length - tail, insert: next.slice(head, next.length - tail) },
+            changes: { from: head, to: cur.length - tail, insert },
             annotations: Transaction.userEvent.of("external"),
           });
         } finally {
           loadingDoc = false;
         }
+        revealExternalChange(v, head, head + insert.length);
       }
       finishLoad(path, docEol, v.state.selection.main.head);
       return;

@@ -235,12 +235,35 @@ class EmbedWidget extends WidgetType {
         } else {
           body.innerHTML = renderNoteMarkdown(prepareSlice(r));
           // The note's own images (a paper's figure, an embedded diagram): loaded as the
-          // editor's image widget loads them; one that cannot be read leaves a chip
-          for (const img of body.querySelectorAll<HTMLImageElement>("img[data-asset]")) {
+          // editor's image widget loads them; one that cannot be read leaves a chip.
+          // Until they have loaded the body keeps the embed's known height: a widget
+          // scrolled back into view is built afresh, and measured before its figure
+          // arrives it is a fraction of its size — the height map shrinks by the
+          // difference, and with the view at the note's end the scroll offset is clamped
+          // past the document, where an empty viewport renders nothing and so never
+          // measures the figure again (the note stays blank until a scroll)
+          const imgs = [...body.querySelectorAll<HTMLImageElement>("img[data-asset]")];
+          const known = heights.get(this.key);
+          if (imgs.length && known) body.style.minHeight = `${Math.max(0, known - 40)}px`;
+          let loading = imgs.length;
+          const settled = () => {
+            if (--loading > 0) return;
+            body.style.minHeight = "";
+            if (!root.isConnected) return;
+            heights.set(this.key, root.offsetHeight);
+            view.requestMeasure();
+          };
+          for (const img of imgs) {
             const target = img.dataset.asset ?? "";
             void (this.host.loadAsset?.(target) ?? Promise.resolve(null)).then((u) => {
-              if (u) img.src = u;
-              else img.replaceWith(`⧉ ${img.alt || target}`);
+              if (u) {
+                img.addEventListener("load", settled, { once: true });
+                img.addEventListener("error", settled, { once: true });
+                img.src = u;
+              } else {
+                img.replaceWith(`⧉ ${img.alt || target}`);
+                settled();
+              }
             });
           }
           note.remove();
@@ -254,6 +277,16 @@ class EmbedWidget extends WidgetType {
       // placeholder, and no isConnected guard here — the element is not attached yet,
       // and a guard at this point would leave the placeholder up for good.
       fill(entry.value);
+      // The cache is what a rebuilt widget estimates its height from before it is measured
+      // (an index bump recreates every embed widget): filled here as well, once the DOM is
+      // attached, or an embed of 1800px estimates 72 and the height map above the viewport
+      // shrinks by the difference — with the view scrolled below it, past the document
+      view.requestMeasure({
+        read: () => (root.isConnected ? root.offsetHeight : 0),
+        write: (h) => {
+          if (h) heights.set(this.key, h);
+        },
+      });
     } else {
       const known = heights.get(this.key);
       if (known) body.style.minHeight = `${Math.max(0, known - 40)}px`;

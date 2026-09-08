@@ -491,8 +491,21 @@ deciding (the run above). The status bar has "✓ This note" and "✕ This note"
 the block menu and the command palette carry both per block. Independently of the ledger, a reload of the open
 note from disk — an agent write landing, an edit in another app — is applied to
 the buffer as one edit rather than a fresh state (`Editor.svelte`'s `loadDoc`):
-the undo stack survives it, the cursor stays, and ⌘Z takes an agent write back
-the moment it lands.
+the undo stack survives it, and ⌘Z takes an agent write back the moment it
+lands. The view then lands on the change: the changed span is scrolled into
+view and the cursor goes to its first line — the line above a lab block, since
+a card's reveal counts its first line as inside — unless the reader holds a
+range selection (`revealExternalChange`). The landing is also what keeps the
+note from going blank. Measured on a chapter with a figure embed: a reload
+with the view at the note's end rebuilt the widgets above it, the embed
+measured a fraction of its height before its figure loaded, the height map
+shrank by the difference, the browser clamped the scroll offset past the
+document, and an empty viewport renders nothing and so never measures again —
+the note stayed blank until a scroll. Two guards close that path for good: an
+embed keeps its last measured height as its body's minimum while its images
+load (`embed.ts`, the `heights` cache, filled on the synchronous fill path
+too), and the editor pulls a viewport that is empty while the document is not
+back onto the document's end (`setup.ts`, `emptyViewportGuard`).
 
 ## Block change times (a cache of observations)
 
