@@ -75,9 +75,32 @@ class TranslateStore {
       }
       this.rows = rows;
       this.doc = doc;
-      this.idle = false;
+      // Everything already in the cache: the job had nothing to send and went idle
+      // before the document arrived here, so that event is not coming
+      this.idle = doc.segments.every((s) => !s.translate || s.private || s.cached != null);
       this.selected = null;
       return true;
+    } catch (e) {
+      this.error = String(e);
+      return false;
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  /** A web page: extracted into the reader's cache first (the same fetch the reading
+   *  projection makes), then opened by its final URL. */
+  async openPage(url: string): Promise<boolean> {
+    this.loading = true;
+    this.error = null;
+    try {
+      const page = await api.pageRead(url);
+      if (!page) return false; // superseded by a newer read
+      if (page.fallback && !page.markdown.trim()) {
+        this.error = t("translate.pageFailed");
+        return false;
+      }
+      return await this.open({ kind: "page", url: page.url });
     } catch (e) {
       this.error = String(e);
       return false;
@@ -152,7 +175,9 @@ class TranslateStore {
 }
 
 function sameSource(a: TranslateSource, b: TranslateSource): boolean {
-  return a.kind === b.kind && a.path === b.path;
+  if (a.kind === "note" && b.kind === "note") return a.path === b.path;
+  if (a.kind === "page" && b.kind === "page") return a.url === b.url;
+  return false;
 }
 
 /** The label of a target language tag: the catalog's name for the ones offered, the tag itself for a custom one. */

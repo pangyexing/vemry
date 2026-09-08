@@ -277,6 +277,14 @@
       await runHostAction(a).catch((e) => toast.push(String(e), "error"));
       return;
     }
+    if (a.kind === "translate-page") {
+      if (!vault.root) {
+        void emitBrowserbarResult({ ok: false, message: t("app.openVaultFirst") }).catch(() => {});
+        return;
+      }
+      await enterTranslation(() => translate.openPage(a.url));
+      return;
+    }
     if (a.kind === "summon-agent") {
       // Summoning the AI from the browser: the detached chat window is opened (or focused) first
       // for immediate feedback, and the current page is then extracted and attached as a page
@@ -1030,24 +1038,46 @@
       else toast.push(t("app.noReaderPageYet"));
     },
   });
-  /** Side-by-side translation of the open note: an overlay over the current view, and the
-   *  same key leaves it. The buffer is flushed first so the note read from disk is current. */
+  /** Enter the translation overlay for a source: the overlay comes up first (its waiting
+   *  state is the feedback), and a refusal (a private note, no key) leaves it again with the
+   *  reason as a toast. */
+  async function enterTranslation(open: () => Promise<boolean>) {
+    vault.enterTranslate();
+    const ok = await open();
+    if (!ok) {
+      const reason = translate.error;
+      vault.exitTranslate();
+      if (reason) toast.push(reason, "error");
+    }
+  }
+  /** Side-by-side translation of what is in front of the reader — the reading projection's
+   *  page, else the open note — as an overlay over the current view; the same key leaves it.
+   *  The buffer is flushed first so the note read from disk is current. */
   registerCommand({
     id: "translate-toggle", hotkey: k("Mod+Shift+T"), descriptionParams: { key: k("Mod+Shift+T") }, group: "view",
     run: async () => {
       if (vault.mainView === "translate") { vault.exitTranslate(); return; }
       if (!vault.root) return;
+      if (vault.mainView === "reading" && reading.current) {
+        const { url } = reading.current;
+        await enterTranslation(() => translate.open({ kind: "page", url }));
+        return;
+      }
       const path = vault.currentPath;
       if (!path) { toast.push(t("translate.noSource")); return; }
       if (vault.currentKind !== "note") { toast.push(t("translate.notANote")); return; }
       await vault.flushEditor?.();
-      vault.enterTranslate();
-      const ok = await translate.open({ kind: "note", path });
-      if (!ok) {
-        const reason = translate.error;
-        vault.exitTranslate();
-        if (reason) toast.push(reason, "error");
-      }
+      await enterTranslation(() => translate.open({ kind: "note", path }));
+    },
+  });
+  /** The browser's current page: extracted through the reader (the same fetch the projection makes) and translated in the main window. */
+  registerCommand({
+    id: "translate-browser-page", group: "research",
+    run: async () => {
+      if (!vault.root) return;
+      const url = browser.current?.url;
+      if (!url) return;
+      await enterTranslation(() => translate.openPage(url));
     },
   });
   // The editor's tabs. On mac ⌘W is dispatched back to close-tab by the native menu's accelerator

@@ -198,7 +198,7 @@
 <div class="view">
   <header>
     {#if doc}
-      <span class="title" title={doc.source.path}>{doc.title}</span>
+      <span class="title" title={doc.source.kind === "note" ? doc.source.path : doc.source.url}>{doc.title}</span>
       <span class="actions">
         <select
           class="chip"
@@ -248,7 +248,7 @@
       <div class="rows mode-{mode}">
         {#if mode === "side"}
           <div class="cols">
-            <div>{t("translate.original")} <span class="hint">· {t("translate.sourceHint")}</span></div>
+            <div>{t("translate.original")}{#if doc.source.kind === "note"} <span class="hint">· {t("translate.sourceHint")}</span>{/if}</div>
             <div>{t("translate.translation")}</div>
           </div>
         {/if}

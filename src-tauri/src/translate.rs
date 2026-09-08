@@ -10,7 +10,6 @@
 //! saves them as a note through the same `note_write` path an ordinary note takes.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -19,6 +18,7 @@ use tauri::{AppHandle, Emitter, State};
 use vemry_agent::translate::{TranslateDoc, TranslateEvent, TranslateJob, TranslationCache};
 use vemry_agent::HttpTransport;
 use vemry_core::{sanitize_filename, Frontmatter, NoteId, SegKind, Segment, VemryMeta};
+use vemry_clip::CLIPS_DIR;
 
 use crate::commands::{broadcast, with_vault, with_vault_mut};
 use crate::{settings, AppState};
@@ -26,12 +26,20 @@ use crate::{settings, AppState};
 /// Where a vault's translation caches live (under `.vemry/`, beside the PDF cache).
 pub const CACHE_SUBDIR: &str = "cache/translate";
 
+/// How many web pages' translations are kept in memory (the reader's page cache
+/// holds as many).
+const WEB_CACHE_CAP: usize = 32;
+
 #[derive(Default)]
 pub struct TranslateState {
     job: Mutex<Option<Arc<TranslateJob>>>,
     next: AtomicU64,
     /// What each job was opened from — the save needs the source back.
     sources: Mutex<HashMap<String, TranslateSource>>,
+    /// A web page's translations, by `url + target`, kept only in memory: the
+    /// projection's content never lands on disk, and neither does its translation.
+    /// Newest last; the oldest is dropped past the cap.
+    web_caches: Mutex<Vec<(String, TranslationCache)>>,
 }
 
 /// What is being translated. The wire shape is the frontend's `TranslateSource`.
@@ -39,6 +47,47 @@ pub struct TranslateState {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TranslateSource {
     Note { path: String },
+    /// A page the reading projection holds (the reader window's cache); the URL is
+    /// the page's final one.
+    Page { url: String },
+}
+
+fn web_cache_key(url: &str, target: &str) -> String {
+    format!("{url}\u{0}{target}")
+}
+
+impl TranslateState {
+    /// Put a page's in-memory cache away for the next opening of the same page.
+    fn park_web_cache(&self, job: &TranslateJob) {
+        let TranslateSource::Page { url } = self.sources.lock().unwrap().get(&job.id).cloned().unwrap_or(TranslateSource::Note { path: String::new() }) else {
+            return;
+        };
+        let Some(cache) = job.take_cache() else { return };
+        if cache.is_empty() {
+            return;
+        }
+        let key = web_cache_key(&url, &job.target);
+        let mut caches = self.web_caches.lock().unwrap();
+        caches.retain(|(k, _)| *k != key);
+        caches.push((key, cache));
+        while caches.len() > WEB_CACHE_CAP {
+            caches.remove(0);
+        }
+    }
+
+    fn take_web_cache(&self, url: &str, target: &str) -> Option<TranslationCache> {
+        let key = web_cache_key(url, target);
+        let mut caches = self.web_caches.lock().unwrap();
+        let at = caches.iter().position(|(k, _)| *k == key)?;
+        Some(caches.remove(at).1)
+    }
+
+    /// Drop the current job: it stops streaming, and a page's cache is parked.
+    fn drop_job(&self, job: &TranslateJob) {
+        job.cancel();
+        self.park_web_cache(job);
+        self.sources.lock().unwrap().remove(&job.id);
+    }
 }
 
 /// One segment as the view renders it: the engine's segment plus the cached
@@ -111,7 +160,23 @@ pub async fn translate_open(
         return Err(t("ipc.noApiKey"));
     }
     let target = target_of(&s);
-    let (doc, cache_dir) = match &source {
+    let (doc, cache) = match &source {
+        TranslateSource::Page { url } => {
+            let (final_url, title, markdown) = state
+                .reader
+                .0
+                .lock()
+                .unwrap()
+                .cached_page(url)
+                .ok_or_else(|| t("translate.pageExpired"))?;
+            let cut = vemry_core::segment_markdown(&markdown);
+            let doc = TranslateDoc { key: vemry_agent::translate::cache_key(&final_url), title, segments: cut.segments };
+            let cache = state
+                .translate
+                .take_web_cache(&final_url, &target)
+                .unwrap_or_else(|| TranslationCache::in_memory(&provider.model));
+            (doc, cache)
+        }
         TranslateSource::Note { path } => with_vault(&state, |v| {
             let id = v.note_id(path).map_err(crate::i18n::err)?;
             // The whole note is in the privacy zone: nothing of it may be sent
@@ -122,13 +187,13 @@ pub async fn translate_open(
             let cut = vemry_core::segment_markdown(&raw);
             let title = cut.frontmatter.title.clone().unwrap_or_else(|| id.stem().to_string());
             let doc = TranslateDoc { key: vemry_agent::translate::cache_key(id.as_str()), title, segments: cut.segments };
-            Ok((doc, Some(v.meta_dir().join(CACHE_SUBDIR))))
+            let cache = TranslationCache::open(&v.meta_dir().join(CACHE_SUBDIR), &doc.key, &target, &provider.model);
+            Ok((doc, cache))
         })?,
     };
     if !doc.segments.iter().any(|seg| seg.translate && !seg.private) {
         return Err(t("translate.nothingToTranslate"));
     }
-    let cache = cache_dir.as_ref().map(|dir: &PathBuf| TranslationCache::open(dir, &doc.key, &target, &provider.model));
     let job_id = format!("t{}", state.translate.next.fetch_add(1, Ordering::Relaxed) + 1);
     let emit_app = app.clone();
     let emit_id = job_id.clone();
@@ -146,14 +211,14 @@ pub async fn translate_open(
         provider.clone(),
         effort,
         Arc::new(HttpTransport::new()),
-        cache,
+        Some(cache),
         on_event,
     );
     let known = job.translations();
     // One job at a time: the previous one stops streaming, its events stop mattering
-    if let Some(old) = state.translate.job.lock().unwrap().replace(Arc::clone(&job)) {
-        old.cancel();
-        state.translate.sources.lock().unwrap().remove(&old.id);
+    let old = state.translate.job.lock().unwrap().replace(Arc::clone(&job));
+    if let Some(old) = old {
+        state.translate.drop_job(&old);
     }
     state.translate.sources.lock().unwrap().insert(job_id.clone(), source.clone());
     // Everything not yet known, in document order; the view moves what it shows to the front
@@ -207,13 +272,25 @@ pub async fn translate_request(state: State<'_, AppState>, job: String, ids: Vec
 
 #[tauri::command]
 pub async fn translate_cancel(state: State<'_, AppState>, job: String) -> Result<(), String> {
-    let mut slot = state.translate.job.lock().unwrap();
-    if let Some(j) = slot.as_ref().filter(|j| j.id == job) {
-        j.cancel();
-        state.translate.sources.lock().unwrap().remove(&j.id);
-        *slot = None;
+    let taken = {
+        let mut slot = state.translate.job.lock().unwrap();
+        match slot.as_ref() {
+            Some(j) if j.id == job => slot.take(),
+            _ => None,
+        }
+    };
+    if let Some(j) = taken {
+        state.translate.drop_job(&j);
     }
     Ok(())
+}
+
+/// How the translation points back at its source: a wikilink by stem, unless the
+/// stem cannot sit inside `[[…]]` (a clip named after a page title with brackets
+/// in it, say), when the path is written as it is.
+fn link_to(id: &NoteId) -> String {
+    let stem = id.stem();
+    if stem.contains(['[', ']', '|', '#']) { id.as_str().to_string() } else { format!("[[{stem}]]") }
 }
 
 /// The name a saved translation carries: the source's title plus the target
@@ -269,7 +346,24 @@ pub async fn translate_save(app: AppHandle, state: State<'_, AppState>, job: Str
     let (folder, of) = match &source {
         TranslateSource::Note { path } => {
             let id = NoteId::new(path);
-            (id.folder().to_string(), format!("[[{}]]", id.stem()))
+            (id.folder().to_string(), link_to(&id))
+        }
+        // A page: the original is clipped first (or the clip it already has is
+        // used), and the translation sits beside it in clips/, linked to it and
+        // carrying the same source URL
+        TranslateSource::Page { url } => {
+            let existing = with_vault(&state, |v| Ok(v.clips_for_urls(std::slice::from_ref(url)).remove(url)))?;
+            let clip = match existing {
+                Some(rel) => rel,
+                None => crate::browser::reader::reading_clip(app.clone(), state.clone(), url.clone())?,
+            };
+            let id = NoteId::new(&clip);
+            let of = link_to(&id);
+            fm.extra.insert("source".into(), url.clone().into());
+            if let Some(domain) = url::Url::parse(url).ok().and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string())) {
+                fm.extra.insert("domain".into(), domain.into());
+            }
+            (CLIPS_DIR.trim_end_matches('/').to_string(), of)
         }
     };
     fm.extra.insert("translation_of".into(), of.into());

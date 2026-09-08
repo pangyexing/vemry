@@ -350,6 +350,10 @@ CMD = {
         ("View: Reader", "视图:阅读投影"),
         ("Return to the most recently opened web page", "回到最近打开的网页阅读投影"),
     ),
+    "translate-browser-page": (
+        ("Translate this web page", "对照翻译这个网页"),
+        ("Extract the browser's current page and read it beside its translation", "抽取浏览器当前页正文,与译文并排对照阅读"),
+    ),
     "translate-toggle": (
         ("Translate side by side", "对照翻译"),
         ("Read the open note beside its translation, one row per block; press again to leave ({key})",
@@ -1072,6 +1076,8 @@ add("reader.", {
                           "在浏览窗打开原页(交互逃生门:登录/评论/图片)"),
     "openInSystemBrowser": ("Open in the system browser", "在系统浏览器打开"),
     "leaveHint": ("Leave Reader and go back (Esc)", "离开投影,回到来处 (Esc)"),
+    "translate": ("Translate", "译"),
+    "translateHint": ("Read this page beside its translation, one row per block ({key})", "把这一页与译文按段并排对照阅读 ({key})"),
     "leave": ("Leave Reader", "离开投影"),
     "extracting": ("Extracting the article from {domain}…", "正在抽取 {domain} 的正文…"),
     "openInBrowserInstead": ("Open in the browser window instead", "改在浏览窗打开"),
@@ -1123,6 +1129,10 @@ add("translate.", {
     "privateNote": ("This note is in a privacy zone and is not sent anywhere, so it cannot be translated",
                     "这篇笔记在隐私区,不会发送到任何地方,因此不能翻译"),
     "nothingToTranslate": ("Nothing here to translate", "没有可翻译的内容"),
+    "pageExpired": ("The page is no longer in the reader's cache — open it in the reader again, then translate",
+                    "这一页已不在阅读投影的缓存里——重新在投影里打开后再翻译"),
+    "pageFailed": ("The page could not be extracted — open it in the reader to see why",
+                   "抓不到这一页的正文——在阅读投影里打开看看原因"),
     "noSource": ("Open a note first, then translate it", "先打开一篇笔记,再对照翻译"),
     "notANote": ("Only a note can be translated for now", "目前只能翻译笔记"),
     "waiting": ("Waiting…", "等待中…"),
@@ -1147,6 +1157,8 @@ add("browserPanel.", {
     "clipMenuHint": ("Other clip targets", "其它剪藏落点"),
     "pickTarget": ("Pick a clip target…", "选落点…"),
     "aiDockedHint": ("Add this page to the conversation as context", "把这一页作为上下文加入对话"),
+    "translate": ("Translate", "译"),
+    "translateHint": ("Extract this page and read it beside its translation in the main window", "抽取这一页正文,在主窗口与译文并排对照阅读"),
 })
 
 # ---------------------------------------------------------------- clip bar strings (reused by the browser panel chrome)

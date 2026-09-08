@@ -25,7 +25,7 @@ pub use vemry_core::{SegKind, Segment};
 
 use crate::client::ChatTransport;
 use crate::provider::ProviderConfig;
-use crate::runner::{effort_fields, light_effort};
+use crate::runner::effort_fields;
 use crate::types::{ChatMessage, ChatRequest};
 use crate::AgentError;
 
@@ -66,7 +66,8 @@ pub enum TranslateEvent {
 /// Holds no source text — the file is a map from hashes to translations.
 #[derive(Debug)]
 pub struct TranslationCache {
-    path: PathBuf,
+    /// None: an in-memory cache (a web page's — projected content never lands on disk).
+    path: Option<PathBuf>,
     model: String,
     entries: HashMap<String, String>,
     dirty: bool,
@@ -98,7 +99,16 @@ impl TranslationCache {
             .and_then(|s| serde_json::from_str::<CacheFile>(&s).ok())
             .map(|f| f.entries)
             .unwrap_or_default();
-        TranslationCache { path, model: model.to_string(), entries, dirty: false }
+        TranslationCache { path: Some(path), model: model.to_string(), entries, dirty: false }
+    }
+
+    /// A cache that is never written to disk: it lives as long as whoever holds it.
+    pub fn in_memory(model: &str) -> Self {
+        TranslationCache { path: None, model: model.to_string(), entries: HashMap::new(), dirty: false }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn get(&self, text: &str) -> Option<&str> {
@@ -111,14 +121,15 @@ impl TranslationCache {
     }
 
     pub fn save(&mut self) -> std::io::Result<()> {
+        let Some(path) = &self.path else { return Ok(()) };
         if !self.dirty {
             return Ok(());
         }
-        if let Some(parent) = self.path.parent() {
+        if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let file = CacheFile { model: self.model.clone(), entries: self.entries.clone() };
-        std::fs::write(&self.path, serde_json::to_string(&file).unwrap_or_default())?;
+        std::fs::write(path, serde_json::to_string(&file).unwrap_or_default())?;
         self.dirty = false;
         Ok(())
     }
@@ -400,6 +411,12 @@ impl TranslateJob {
         self.inner.lock().unwrap().pending.clear();
     }
 
+    /// Take the cache out of the job (an in-memory one, to keep for the next
+    /// opening of the same page); the job goes on without one.
+    pub fn take_cache(&self) -> Option<TranslationCache> {
+        self.cache.lock().unwrap().take()
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
@@ -445,8 +462,10 @@ impl TranslateJob {
 
     async fn run_batch(self: Arc<Self>, ids: Vec<u32>) {
         let segs: Vec<&Segment> = ids.iter().map(|id| &self.doc.segments[*id as usize]).collect();
-        // The light level, as the summary uses: a translation needs no deep thinking
-        let (reasoning_effort, thinking) = effort_fields(light_effort(self.effort.as_deref()));
+        // Thinking off: a translation is transcription, not reasoning, and on a
+        // thinking model the thinking is most of the latency. Sent only where the
+        // level is sent at all (a DeepSeek endpoint); elsewhere nothing is sent
+        let (reasoning_effort, thinking) = effort_fields(self.effort.as_deref().map(|_| "none"));
         let request = ChatRequest {
             model: self.provider.model.clone(),
             messages: vec![

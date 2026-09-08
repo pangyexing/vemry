@@ -256,6 +256,7 @@
           <button class="mini" title={t("reader.clearTargetHint")} onclick={() => clipTarget.clear()}>✕</button>
         {/if}
         <button title={t("reader.addToContextHint")} onclick={attachContext}>{t("reader.addToContext")}</button>
+        <button title={t("reader.translateHint", { key: k("Mod+Shift+T") })} onclick={() => void executeCommand("translate-toggle")}>{t("reader.translate")}</button>
         <button title={t("reader.openInBrowserHint")} onclick={() => openInBrowser(cur.url)}>{t("reader.openInBrowser")}</button>
         <button title={t("reader.openInSystemBrowser")} aria-label={t("reader.openInSystemBrowser")} onclick={() => run(api.urlOpenSystem(cur.url))}>↗</button>
       </span>

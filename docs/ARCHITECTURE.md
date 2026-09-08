@@ -64,7 +64,7 @@ Three constraints follow:
 | `permission.rs` | The `PermissionGate` trait. The write gate is enforced in the Rust layer that owns the ability to write files — the frontend can render the decision and nothing else |
 | `runner.rs` | The agent loop: stream → dispatch on `finish_reason` → execute tools → feed results back → repeat (25 iterations max). Session-level tools are executed here (update_plan publishes a `plan_update` line and a `PlanUpdated` event; the plan gate's approval publishes the confirmed list the same way, so the sticky plan card is a projection of `plan_update` alone), and the end of every turn settles the turn's citations into the source table (`SourcesUpdated` + a `sources` line). A turn id is made unique against the history (a `-n` suffix when two turns land in one millisecond). The `ChatTransport` mock makes every branch testable. v0.7 added three layers of resilience: transient errors (429/5xx/dropped stream) back off and retry as long as nothing was produced; a context overflow first compacts, then summarises, then retries, so a session is no longer written off; usage is reported per iteration to drive the frontend gauge and proactive compaction; a wrap-up hint is injected with five iterations left; `finish_reason=length` reports truncated; `reasoning_content` is kept in history and sent back (the DeepSeek thinking contract); tool results have a 32k backstop; `user_message=None` means regenerate — no user message is appended and the tail of history is replayed |
 | `compact.rs` | v0.7 two-level context compaction, pure logic. Level one replaces older successful tool results with recoverable handles (the note is on disk; calling again fetches it back — ERROR lines are never cleared). Level two has the LLM summarise everything before the current turn, with a hard truncation as the fallback if summarising fails. `is_context_overflow` is the trigger for reactive self-healing |
-| `translate.rs` | Side-by-side translation (see "Side-by-side translation" under the app shell): a `TranslateJob` sends a document's segments in batches of about 2k characters as `<s id=N>…</s>`, `StreamParser` closes each segment the moment its `</s>` arrives (the row fills in while the batch is still streaming), a segment the model leaves out is resent alone once and then reported, and `TranslationCache` files the translations by the hash of each segment's text. The same tool-free single call the summary makes (`tools: None`, the light thinking level), not an agent turn: no session, no tool table, no ledger |
+| `translate.rs` | Side-by-side translation (see "Side-by-side translation" under the app shell): a `TranslateJob` sends a document's segments in batches of about 2k characters as `<s id=N>…</s>`, `StreamParser` closes each segment the moment its `</s>` arrives (the row fills in while the batch is still streaming), a segment the model leaves out is resent alone once and then reported, and `TranslationCache` files the translations by the hash of each segment's text. The same tool-free single call the summary makes (`tools: None`, thinking off), not an agent turn: no session, no tool table, no ledger |
 | `session.rs` | The `.vemry/sessions/*.jsonl` audit log: every user message, model output, tool call, diff and permission decision. It is the data source for the v0.2 session-replay view. v0.8 added a title override row (manual rename; the last one wins, and a fork inherits it). v0.7 added retry/edit_resend/compact/fork marker rows (the audit is immutable; the presentation layer folds on the markers) and `fork_session` — a research-tree fork that copies the audit prefix. The fork point is located by turn id: the runner stamps one `turn` id into the audit's user row, the model-history envelope and the `TurnStarted` event at the top of each turn, because timeline, audit and sidecar each counting user ordinals independently falls out of step after a compaction synthesises a message or an edit-and-resend leaves a stale row. Older sessions with no ids fall back to ordinal counting |
 | `prompt.rs` | The system prompt is fixed rules + VEMRY.md (8k cap; over that it truncates and points at indexing it) + a Skills summary (name — description) + a vault overview. v0.7: **frozen as a session-level snapshot** — the glue layer takes it once per session and reuses it, because rebuilding between turns guarantees a provider prefix-cache miss, and DeepSeek's hit/miss price difference is roughly 30×. Volatile information (the date, the current note) rides the turn-context tail in `compose_user_message` instead |
 | `skills.rs` | Instruction-level skills: the built-in playbooks (`crates/vemry-agent/skills/*.md`, compiled in, parsed once per process) and the vault's `.vemry/skills/*.md` in one listing by name — a vault file shadows the built-in of the same name; frontmatter `name`/`description`/`disabled`/`version` — and the implementation of the `read_skill` tool. See "Skills (instruction-level)". The glue layer's `type_templates.rs` holds the example block types Settings can install (never overwriting a file that is there) |
@@ -2181,7 +2181,7 @@ the user presses "save as note".
   the same on either side.
 - **The engine is not the agent.** `vemry_agent::translate::TranslateJob` makes the
   same tool-free single call the summary makes, through the same transport, with
-  the light thinking level; batches of about 2k characters go out as
+  thinking off; batches of about 2k characters go out as
   `<s id=N>…</s>` and come back the same way, so alignment is by id and a segment
   the model drops is resent alone once and then reported as failed (the provider's
   message as-is). `StreamParser` closes a segment the moment its `</s>` arrives,
@@ -2210,7 +2210,26 @@ the user presses "save as note".
   "[[source]]"`, `lang`, `translator` (the model) and `vemry.origin: translation`,
   formatted like a clip, through the same `write_note` an ordinary note takes — the
   user's action, no gate.
-- **Entry points.** ⌘⇧T (`translate-toggle`, the same key leaves), the View menu,
+- **A web page.** The reading projection's page is a source too (`TranslateSource::Page`):
+  the segments are cut from the Markdown the reader window's cache holds (the same
+  text the projection renders; a page that has left the 32-page cache says so and
+  asks to be reopened), the overlay comes up over the projection and Esc lands back
+  on it. The browser panel's "translate" button extracts the current tab through
+  the same `page_read` the projection uses and then opens the overlay in the main
+  window (the detached bar relays `translate-page`). A page's translations are
+  **never written to disk** — the projection's content is not, and neither is its
+  translation: the cache is an in-memory `TranslationCache` parked in
+  `TranslateState.web_caches` (32 pages, like the reader's) when the overlay
+  closes and taken back when the same page and language open again. Saving clips
+  the original first (or reuses the clip the page already has) and files the
+  translation beside it in `clips/`, with the same `source:` and `domain:` and
+  `translation_of` pointing at the clip.
+- **Thinking off.** A translation is transcription, not reasoning: on a thinking
+  model the thinking is most of the latency (measured on a 2.4k-character page:
+  51s at the light level, 6s with thinking disabled), so the request disables it
+  where the level is sent at all (a DeepSeek endpoint) and sends nothing elsewhere.
+- **Entry points.** ⌘⇧T (`translate-toggle`, the same key leaves; over the reading
+  projection it translates the page, else the open note), the View menu,
   the editor's context menu, and a "translate" chip in the status bar that appears
   when the open note reads as written in another script than the target language's
   (`langdetect.ts`: a ratio of CJK to Latin letters over 300 letters, computed

@@ -165,6 +165,13 @@
   /** Docked: the page joins the research panel's conversation as context (the panel is brought
    *  out). Bar: the floating chat window is summoned with the page attached (relayed; the main
    *  window opens the window first and extracts the page after). */
+  /** Side-by-side translation of the current page, in the main window (the bar relays; docked it is a command). */
+  function translatePage() {
+    if (!url) return;
+    if (inBar) void relay({ kind: "translate-page", url }, true);
+    else void executeCommand("translate-browser-page");
+  }
+
   async function ai() {
     if (!cur) return;
     if (inBar) {
@@ -590,6 +597,7 @@
         </button>
       {/if}
       <button class="act" title={inBar ? t("clipBar.summonAgentHint") : t("browserPanel.aiDockedHint")} onclick={() => void ai()} disabled={!cur || isBlank || agent.grabbingPage}>AI</button>
+      <button class="act" title={t("browserPanel.translateHint")} onclick={() => void translatePage()} disabled={!cur || isBlank}>{t("browserPanel.translate")}</button>
       <span class="clipgroup">
         <button
           class="act primary"

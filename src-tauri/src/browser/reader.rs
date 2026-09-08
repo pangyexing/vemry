@@ -126,6 +126,12 @@ impl ReaderInner {
     fn cache_get(&self, url: &str) -> Option<&CachedPage> {
         self.cache.iter().find(|c| c.url == url || c.requested == url)
     }
+
+    /// The projected page for `url`, if it is still cached: its final URL, its
+    /// title and its Markdown (what side-by-side translation cuts into segments).
+    pub(crate) fn cached_page(&self, url: &str) -> Option<(String, String, String)> {
+        self.cache_get(url).map(|c| (c.url.clone(), c.title.clone(), c.page.markdown.clone()))
+    }
 }
 
 /// The payload of `reading://event`: Rust only sends signals, and the projection is state in the main window's frontend.

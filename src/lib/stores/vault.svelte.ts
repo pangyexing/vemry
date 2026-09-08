@@ -459,10 +459,11 @@ class VaultStore {
    *  overwrites mainView underneath it — closes the job. Registered by App. */
   onTranslateExit: (() => void) | null = null;
 
-  /** Show the side-by-side translation over the current view. */
+  /** Show the side-by-side translation over the current view — the reading projection
+   *  included: it stays entered underneath (its page and its own origin untouched), and
+   *  leaving the translation lands back on it. */
   enterTranslate() {
     if (this.mainView === "translate") return;
-    if (this.mainView === "reading") this.exitReading();
     this.translateOrigin = this.mainView;
     this.mainView = "translate";
   }
@@ -474,7 +475,7 @@ class VaultStore {
     const origin = this.translateOrigin ?? "editor";
     const t = this.tabs.find((t) => t.id === this.activeTabId);
     const backed = t ? viewOfTab(t.path) : null;
-    this.mainView = origin === "editor" || origin === backed ? origin : "editor";
+    this.mainView = origin === "editor" || origin === "reading" || origin === backed ? origin : "editor";
     this.translateOrigin = null;
     this.onTranslateExit?.();
   }
@@ -510,8 +511,8 @@ class VaultStore {
   revealActiveTab() {
     const t = this.tabs.find((t) => t.id === this.activeTabId);
     const view = t ? viewOfTab(t.path) : null;
-    if (this.mainView === "reading") this.exitReading();
     if (this.mainView === "translate") this.exitTranslate();
+    if (this.mainView === "reading") this.exitReading();
     this.mainView = view ?? "editor";
   }
 
@@ -1388,8 +1389,8 @@ class VaultStore {
         // mainView having come apart): pressing the rail or ⌘P again says "show me this" —
         // the same lining-up as revealActiveTab, with the reading projection going through
         // exitReading first to get its timeline lined up
-        if (this.mainView === "reading") this.exitReading();
         if (this.mainView === "translate") this.exitTranslate();
+        if (this.mainView === "reading") this.exitReading();
         this.mainView = view;
       }
       return;

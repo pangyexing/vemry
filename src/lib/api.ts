@@ -685,7 +685,9 @@ export type BrowserbarAction =
    *  page is attached afterwards through attach-page; it does not go through
    *  focus-agent — that branch would pull the user back to the main window's panel,
    *  while summoning from the detached browser always wants the floating chat window). */
-  | { kind: "summon-agent"; label: string };
+  | { kind: "summon-agent"; label: string }
+  /** Translate the current page side by side in the main window (the page is extracted there). */
+  | { kind: "translate-page"; url: string };
 /** The clip receipt from the main window back to the bar (emitTo'd to
  *  browserbar://result): a toast in the main window is invisible to the bar's user, so
  *  the receipt flashes on the bar itself. */
@@ -821,7 +823,7 @@ export interface ReadPage {
 
 // ---- side-by-side translation (src-tauri/src/translate.rs) ----
 /** What is being translated. */
-export type TranslateSource = { kind: "note"; path: string };
+export type TranslateSource = { kind: "note"; path: string } | { kind: "page"; url: string };
 /** A segment's kind (vemry_core::segment::SegKind). */
 export type SegKind =
   | { type: "heading"; level: number }
