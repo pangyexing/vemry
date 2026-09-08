@@ -65,11 +65,14 @@ progress bar, not a receipt at the end.
 - The source note: the paper's own section headings as `##`, one paragraph per
   block ending in an id — `^s<section digits>p<n>`: `^s3p2` is section 3
   paragraph 2, `^s321p4` is section 3.2.1 paragraph 4 — formulas as `$…$` and
-  `$$…$$`, tables as tables, a figure as its image line `![Figure N: caption](url)`
-  with the URL exactly as the page gave it, followed by the caption's own line
-  (the app saves the pictures into the vault once the note lands — the figures
-  are part of the paper, and an architecture diagram is often the one thing a
-  reader remembers).
+  `$$…$$`, tables as tables, a figure as its image line
+  `![Figure N: caption](url) ^figN` (`^fig2l` and `^fig2r` for a figure's two
+  halves) with the URL exactly as the page gave it, followed by the caption's
+  own line. The figures are part of the paper — an architecture diagram is often
+  the one thing a reader remembers — and the id lets a chapter embed one. The id
+  goes on the line as it is written: once the note lands, the app saves the
+  pictures into the vault and rewrites the line's URL to the local file, so an
+  edit_note against the remembered text no longer matches.
   Quotation, not paraphrase: this note is what the chapters cite. Frontmatter
   `title`, `authors`, `year`, `source` (the URL or the file), `genre`. The first
   part is a write_note; every later part is an append_note of its sections. The
@@ -108,8 +111,8 @@ progress bar, not a receipt at the end.
      `![[papers/<slug>/source#^s3p2]]`. Never a chapter without one.
   3. *notation* — only when the chapter introduces symbols: a two-column table,
      symbol and meaning, in the paper's own notation.
-  4. *try it* — only when the idea is numeric and the reader asked for an
-     experiment (or the goal is reproduce): a lab block, see below.
+  4. *try it* — a lab block, see below, in the chapters that carry one; the
+     other chapters leave this section out (never an empty heading).
   5. *where it stops holding* — the condition the idea depends on, in one or two
      sentences.
   6. *question* — one question the reader should be able to answer after the
@@ -126,13 +129,21 @@ progress bar, not a receipt at the end.
   effect), and which symbol it confused — each point citing the block. The cards
   come from these gaps alone, one per gap, in the tutor's shape; a retelling with
   no gap gets no card.
-- A lab block: a ` ```js ` fence calling `vemry.lab.*`, written only when the
-  reader asks for an experiment or a chapter's `## Try it` calls for one. The
-  reader sees a card, never the code, so the block opens with one `//` line
-  saying what the experiment shows (the card's caption). The parameters the
-  reader will want to move are the controls; the block computes the example on
-  a tiny instance (three tokens, a 2×2, ten points) so the numbers can be read;
-  every view has a title that says what it shows. The API:
+- A lab block: a ` ```js ` fence calling `vemry.lab.*`. Which chapters get one
+  follows the goal: understand — two or three in the first session, in the
+  chapters that carry the core mechanism; reproduce — every chapter whose idea
+  is numeric; survey, interview, review — none unless asked. The test for a
+  chapter is that its idea is itself a computation the reader can watch: a
+  formula with a parameter to move, an algorithm run on three tokens. A problem
+  statement, a results table, a limits chapter has nothing to compute and gets
+  none. The reader sees a card, never the code, so the block opens with one
+  `//` line saying what the experiment shows (the card's caption). The
+  parameters the reader will want to move are the controls — at most three —
+  and the block draws at most two views; it computes the example on a tiny
+  instance (three tokens, a 2×2, ten points) so the numbers can be read, and
+  every view has a title that says what it shows. Nobody runs the block before
+  the reader clicks Run, so it stays small and plain enough to be right the
+  first time. The API:
   - controls: `const p = vemry.lab.controls({ name: { slider: [min, max], step, value, label }, flag: { toggle: true }, pick: { select: ["a", "b"] } })`
     returns `{ name, flag, pick }`; `const Q = vemry.lab.matrix("Q", [[1, 0], [0, 1]])`
     returns the current grid.
@@ -162,15 +173,16 @@ append_note. A study of the same paper later updates these notes in place
 ## Shape
 
 The reply after the first session: the chapter list with the order chosen and why,
-which items were already known (with their links), and the one thing to read
-first. After a retelling check: the three lists (right, missing, turned around),
+which items were already known (with their links), which chapters carry an
+experiment, and the one thing to read first. After a retelling check: the three lists (right, missing, turned around),
 each item with its citation, then how many cards were made.
 
 ## Never
 
 - A chapter without an embedded source block, or a source note that paraphrases.
 - Cards made from the paper instead of from the reader's gaps.
-- A lab block nobody asked for, or one whose result is narrated in the note.
+- A lab block on a chapter with nothing to compute, or one whose result is
+  narrated in the note.
 - Reading the whole paper into the context at once: section by section, written
   down as it goes.
 - A retelling check that grades without citing the block it checked against.

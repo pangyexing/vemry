@@ -646,7 +646,8 @@ pub fn extract_page(html: &str, url: &str) -> Result<ExtractedPage, ClipError> {
     }
 
     // Main path: dom_smoothie (a Readability port) extracts the body
-    let article = dom_smoothie::Readability::new(html, Some(url), None)
+    let html = &unclass_tables(html);
+    let article = dom_smoothie::Readability::new(html.as_str(), Some(url), None)
         .ok()
         .and_then(|mut r| r.parse().ok());
     if let Some(article) = article {
@@ -672,6 +673,73 @@ pub fn extract_page(html: &str, url: &str) -> Result<ExtractedPage, ClipError> {
         return Err(ClipError::EmptyPage);
     }
     Ok(ExtractedPage { markdown: soften_escapes(md), title: String::new(), byline: None, fallback: true })
+}
+
+/// The `class` attribute dropped from every `<table>` start tag. Readability removes any
+/// element whose class or id says one of its "unlikely candidate" words (header, footer,
+/// menu, comment…) — a rule for page chrome that a data table's class can trip by
+/// accident: arXiv's HTML marks a table whose header row it inferred
+/// `ltx_guessed_headers`, and Table 1 of a paper vanished with all its rows while its
+/// caption stayed. A table's class carries nothing the extraction needs (classes are not
+/// kept in the output; a layout table is still told apart by its shape), so the tag is
+/// handed to Readability without it. The tag is scanned as text — a start tag holds no
+/// markup — and everything else is copied through untouched.
+fn unclass_tables(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(at) = table_tag_at(rest) {
+        let (before, tag_on) = rest.split_at(at);
+        out.push_str(before);
+        let end = tag_on.find('>').map_or(tag_on.len(), |e| e + 1);
+        let (tag, tail) = tag_on.split_at(end);
+        out.push_str(&strip_class_attr(tag));
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The offset of the next `<table` start tag (any case; `<tablet>` is not one).
+fn table_tag_at(s: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(rel) = s[from..].find('<') {
+        let i = from + rel;
+        if let Some(name) = s.get(i + 1..i + 6) {
+            if name.eq_ignore_ascii_case("table") {
+                let next = s.as_bytes().get(i + 6);
+                if next.is_none_or(|b| b.is_ascii_whitespace() || matches!(b, b'>' | b'/')) {
+                    return Some(i);
+                }
+            }
+        }
+        from = i + 1;
+    }
+    None
+}
+
+/// One start tag with its `class` attribute(s) removed: quoted (either quote) or bare
+/// values, the attribute name in any case.
+fn strip_class_attr(tag: &str) -> String {
+    let mut out = String::with_capacity(tag.len());
+    let mut rest = tag;
+    loop {
+        let lower = rest.to_ascii_lowercase();
+        let Some(at) = lower.find("class=").filter(|&at| at > 0 && lower.as_bytes()[at - 1].is_ascii_whitespace()) else {
+            out.push_str(rest);
+            return out;
+        };
+        out.push_str(rest[..at].trim_end());
+        let value = &rest[at + "class=".len()..];
+        let skip = match value.as_bytes().first() {
+            Some(&q @ (b'"' | b'\'')) => value[1..].find(q as char).map_or(value.len(), |e| e + 2),
+            _ => value.find(|c: char| c.is_ascii_whitespace() || c == '>').unwrap_or(value.len()),
+        };
+        let after = &value[skip..];
+        if !after.starts_with('>') && !after.starts_with("/>") && !after.is_empty() {
+            out.push(' ');
+        }
+        rest = after;
+    }
 }
 
 /// A selection's DOM fragment → Markdown: the same htmd configuration as the
@@ -1065,6 +1133,22 @@ fn domain_of(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn table_class_is_dropped_before_readability() {
+        assert_eq!(
+            unclass_tables(r#"<p class="a">x</p><TABLE id="t" class="ltx_tabular ltx_guessed_headers"><tr><td class="c">1</td></tr></TABLE><table class='x'/><tablet class="k">"#),
+            r#"<p class="a">x</p><TABLE id="t"><tr><td class="c">1</td></tr></TABLE><table/><tablet class="k">"#
+        );
+        // a data table whose class says "header" survives the extraction with its rows
+        let para = "<p>Recurrent neural networks, long short-term memory and gated recurrent neural networks in particular, have been firmly established as state of the art approaches in sequence modeling and transduction problems such as language modeling and machine translation.</p>".repeat(8);
+        let html = format!(
+            "<html><body><article><h1>T</h1>{para}<figure><table class=\"ltx_tabular ltx_guessed_headers\"><thead><tr><th>Layer Type</th><th>Complexity</th></tr></thead><tbody><tr><td>Self-Attention</td><td>n2d</td></tr><tr><td>Recurrent</td><td>nd2</td></tr></tbody></table><figcaption>Table 1: caption</figcaption></figure>{para}</article></body></html>"
+        );
+        let page = extract_page(&html, "https://example.com/paper").unwrap();
+        assert!(!page.fallback);
+        assert!(page.markdown.contains("| Self-Attention | n2d |"), "{}", page.markdown);
+    }
     use chrono::TimeZone;
     use vemry_core::parser::parse_note;
 
