@@ -24,6 +24,18 @@ import type { EditorState, Text } from "@codemirror/state";
 // already uses
 type SyntaxNode = ReturnType<ReturnType<typeof syntaxTree>["resolveInner"]>;
 
+/** Whether pos falls inside code (inline code, a fence, an indented code block). Every
+ *  decorator that must not fold inside code (live preview, the formula widgets,
+ *  mdlink's ⌘click, the completions) asks this one, so "what counts as code" has a
+ *  single answer. Lives here rather than in livepreview.ts so editor/math.ts can ask
+ *  without importing the module that imports it. */
+export function inCode(state: EditorState, pos: number): boolean {
+  const tree = syntaxTree(state);
+  for (let n: SyntaxNode | null = tree.resolveInner(pos, 1); n; n = n.parent)
+    if (n.name === "InlineCode" || n.name === "FencedCode" || n.name === "CodeBlock") return true;
+  return false;
+}
+
 /** The length of the quote marker or indentation at the start of a line — fence
  *  content begins after it. The anchor retry and livepreview's closing-fence-line
  *  check share this one "a line may begin with `> `" rule. */

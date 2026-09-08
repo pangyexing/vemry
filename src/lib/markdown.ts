@@ -20,7 +20,7 @@
 
 import { t } from "$lib/i18n/i18n.svelte";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import katex from "katex";
+import { closesMathBlock, DISPLAY_MATH_RE, INLINE_MATH_RE, mathBlockTex, opensMathBlock, renderMathHtml } from "$lib/math";
 import { toast } from "$lib/stores/toast.svelte";
 import { CALLOUT_GROUP, CALLOUT_HEAD_RE, calloutDefaultTitle } from "$lib/callout";
 import { scanFields } from "$lib/fields";
@@ -203,10 +203,8 @@ function renderInline(raw: string, cite: (url: string, title: string, standalone
   // Formulas before images and links (the same pair of rules as renderReadingInline):
   // a $E=mc^2$ the model wrote used to be plain text in chat — KaTeX renders it
   // locally, with trust:false
-  s = s.replace(/\$\$([^$\n]+?)\$\$/g, (_, tex: string) => stash(renderMathHtml(tex, true)));
-  s = s.replace(/\$(?![\s$])((?:\\.|[^$\n\\])+?)\$(?!\d)/g, (m, tex: string) =>
-    /\s$/.test(tex) ? m : stash(renderMathHtml(tex, false)),
-  );
+  s = s.replace(DISPLAY_MATH_RE, (_, tex: string) => stash(renderMathHtml(tex, true)));
+  s = s.replace(INLINE_MATH_RE, (m, tex: string) => (/\s$/.test(tex) ? m : stash(renderMathHtml(tex, false))));
   // Images are cut out before links, or MD_LINK would eat [alt](url) and leave a lone
   // "!"; the includes gate is the same idea as in extractCitations — a line with no
   // image should not go through the image regex
@@ -516,6 +514,14 @@ function renderBlockList(
       );
     code = null;
   };
+  /** The lines of a display formula whose `$$` fences sit on their own lines (the
+   *  editor renders the same block as one widget, editor/math.ts); the one-line
+   *  `$$…$$` form is inline's business. */
+  let math: string[] | null = null;
+  const emitMath = () => {
+    if (math) out.push(`<div class="md-math">${renderMathHtml(mathBlockTex(math), true)}</div>`);
+    math = null;
+  };
 
   for (const line of text.split("\n")) {
     const fence = FENCE_RE.exec(line);
@@ -528,6 +534,16 @@ function renderBlockList(
       flushAll();
       code = [];
       codeFence = fence[1].length;
+      continue;
+    }
+    if (math) {
+      math.push(line);
+      if (closesMathBlock(line)) emitMath();
+      continue;
+    }
+    if (opensMathBlock(line)) {
+      flushAll();
+      math = [line];
       continue;
     }
     if (/^\s*\|.*\|\s*$/.test(line)) {
@@ -583,6 +599,7 @@ function renderBlockList(
   }
   flushAll();
   emitCode(); // while streaming, the fence may not be closed yet, so it is rendered as code
+  emitMath(); // likewise an unclosed display block renders what it holds
   if (state) state.citeZone = citeZone;
   return out;
 }
@@ -614,23 +631,6 @@ export function imageChip(url: string, label: string): string {
   return `<a class="md-img" data-url="${escapeHtml(url)}" title="${escapeHtml(tip)}">⧉ ${escapeHtml(label)}</a>`;
 }
 
-/** LaTeX → KaTeX HTML. The hand-written renderer's only third-party HTML injection
- *  point: called on recognised formula fragments alone, with trust:false forbidding
- *  dangerous commands such as \href; a syntax error renders as the source in red
- *  (throwOnError:false) rather than throwing and taking the whole document down. */
-function renderMathHtml(tex: string, display: boolean): string {
-  try {
-    return katex.renderToString(tex.trim(), {
-      displayMode: display,
-      throwOnError: false,
-      trust: false,
-      output: "html",
-    });
-  } catch {
-    return `<code>${escapeHtml(tex)}</code>`;
-  }
-}
-
 // Reading mode's links and images: from the same builder as chat's MD_LINK/MD_IMAGE
 // (linkRe), differing only in that the target is not limited to absolute http(s)
 const READ_LINK = linkRe(false, ANY_TARGET);
@@ -654,10 +654,8 @@ function renderReadingInline(raw: string, base: string): string {
   // touched by the later rules. Block level ($$) comes first; inline requires
   // non-whitespace at both ends and no digit after the closing $ — a dollar amount in
   // the body is not a formula
-  s = s.replace(/\$\$([^$\n]+?)\$\$/g, (_, tex: string) => stash(renderMathHtml(tex, true)));
-  s = s.replace(/\$(?![\s$])((?:\\.|[^$\n\\])+?)\$(?!\d)/g, (m, tex: string) =>
-    /\s$/.test(tex) ? m : stash(renderMathHtml(tex, false)),
-  );
+  s = s.replace(DISPLAY_MATH_RE, (_, tex: string) => stash(renderMathHtml(tex, true)));
+  s = s.replace(INLINE_MATH_RE, (m, tex: string) => (/\s$/.test(tex) ? m : stash(renderMathHtml(tex, false))));
   s = s.replace(READ_IMAGE, (_, alt: string, href: string) => {
     const label = unescapeMd(alt).trim() || t("editor.image");
     // A data: image embedded in the page is rendered directly — it makes no network request anyway, so it needs no proxy

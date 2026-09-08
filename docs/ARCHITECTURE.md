@@ -166,7 +166,9 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   block anchors and wikilink suffix badges). `table.ts` renders GFM tables (a
   StateField maintained incrementally, see below). `queryblock.ts` is the
   `vemry-query` block (v0.3, see "Programmability"). `runblock.ts` is the `js`
-  block's run button and output (v0.3). `wikilink.ts` / `mdlink.ts` /
+  block's run button and output (v0.3). `math.ts` typesets `$…$` and `$$` blocks
+  with KaTeX (the grammar is `$lib/math.ts`, shared with the projection renderer so
+  an embed and the editor agree on what is a formula). `wikilink.ts` / `mdlink.ts` /
   `clickopen.ts` handle decoration, completion and click-to-follow — in the
   rendered state a plain single click opens (setting `click_opens_links`, on by
   default; ⌘click is promoted to "open the other way", and ⌘↩ opens the link at the

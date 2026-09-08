@@ -22,7 +22,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import { type EditorState, type Extension, RangeSetBuilder, StateField } from "@codemirror/state";
-import { contentStart, fencedCodeAt, fencedCodeText } from "./fenced";
+import { contentStart, fencedCodeAt, fencedCodeText, inCode } from "./fenced";
 import { revealArmed, revealRanges, selectionReveals, selectionTouches } from "./reveal";
 import { tableField } from "./table";
 import { LINK_RE as WIKI_RE } from "./wikilink";
@@ -33,6 +33,8 @@ import { blockRoot } from "./blockwidget";
 import { focusEditor } from "./clickguard";
 import { openImageLightbox } from "$lib/lightbox";
 import { copyText } from "$lib/copytext";
+import { scanInlineMath } from "$lib/math";
+import { MathWidget, mathBlockField, mathBlocks } from "./math";
 
 /** An image target inside the vault → a displayable URL (a blob); http(s) does not go through it */
 export type AssetLoader = (target: string) => Promise<string | null>;
@@ -42,14 +44,8 @@ export type AssetLoader = (target: string) => Promise<string | null>;
  *  (the editor makes no network request just to copy) */
 export type ImageCopier = (target: string) => Promise<boolean>;
 
-/** Whether pos falls inside code (inline code, a fence, an indented code block).
- *  mdlink's ⌘click uses this same one, so "what counts as code" has a single answer. */
-export function inCode(state: EditorState, pos: number): boolean {
-  const tree = syntaxTree(state);
-  for (let n: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(pos, 1); n; n = n.parent)
-    if (n.name === "InlineCode" || n.name === "FencedCode" || n.name === "CodeBlock") return true;
-  return false;
-}
+// inCode lives in fenced.ts (editor/math.ts needs it without a cycle); the importers here keep their path
+export { inCode };
 const TAG_RE = /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
 // The character class mirrors Rust's block-id rule (blockid.rs::is_valid_block_id): a badge must never claim an id the parser rejects
 const ANCHOR_RE = /[ \t]\^([A-Za-z0-9-]+)$/gm;
@@ -284,6 +280,8 @@ class FieldChipWidget extends WidgetType {
 }
 
 const fieldSrcDeco = Decoration.mark({ class: "cm-lp-field-src" });
+/** A formula's source while the cursor is on it: monospace and muted, like a revealed field */
+const mathSrcDeco = Decoration.mark({ class: "cm-lp-math-src" });
 
 /* The copy button is always an icon (stacked squares), with the words demoted to a
    hover tip (data-tip → CSS ::after); after a click it briefly swaps to a result icon
@@ -894,6 +892,31 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
       hide(end - 2, end);
     }
 
+    // Formulas: `$…$` and the one-line `$$…$$` fold into typeset widgets (math.ts). The
+    // lines of a multi-line display block are mathBlockField's and are skipped here —
+    // its `$$` fences would otherwise read as inline delimiters once the block is
+    // revealed
+    if (text.includes("$")) {
+      const blocks = text.includes("$$") ? mathBlocks(state) : [];
+      for (let pos = range.from; pos <= range.to; ) {
+        const line = doc.lineAt(pos);
+        if (line.text.includes("$") && !blocks.some((b) => line.from >= b.from && line.to <= b.to)) {
+          for (const f of scanInlineMath(line.text)) {
+            const start = line.from + f.start;
+            const end = line.from + f.end;
+            if (isCode(start)) continue;
+            if (revealedEl(start, end)) {
+              marks.push({ from: start, to: end, deco: mathSrcDeco });
+              continue;
+            }
+            hides.push({ from: start, to: end, deco: Decoration.replace({ widget: new MathWidget(f.tex, f.display) }) });
+          }
+        }
+        if (line.to >= range.to) break;
+        pos = line.to + 1;
+      }
+    }
+
     // #tag chips (the cursor's line keeps the styling too; only decorations are added and no character is hidden)
     TAG_RE.lastIndex = 0;
     while ((m = TAG_RE.exec(text))) {
@@ -1085,5 +1108,5 @@ export function livePreview(opts: LivePreviewOptions = {}): Extension {
   // revealArmed is registered here (rather than in setup.ts): every consumer of the
   // reveal predicates (livepreview/table/queryblock/frontmatter/clickopen) lives in
   // note mode alone, and note mode always carries livePreview()
-  return [revealArmed, livePreviewPlugin(opts), compositionRelease, frontmatterField, tableField, emptyFieldCloser(opts.onFieldChip)];
+  return [revealArmed, livePreviewPlugin(opts), compositionRelease, frontmatterField, tableField, mathBlockField, emptyFieldCloser(opts.onFieldChip)];
 }

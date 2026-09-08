@@ -270,6 +270,26 @@ paired-delimiter extension modelled on `@lezer/markdown`'s own strikethrough.
 
 **Fallback**: the literal `==highlighted text==`, which is readable.
 
+## Math
+
+| Syntax | Meaning |
+|---|---|
+| `$E = mc^2$` | an inline formula |
+| `$$\sum_i a_i$$` | a display formula on one line |
+| `$$` … `$$` on their own lines | a display block; the formula may span lines |
+
+Formulas are typeset locally with KaTeX (`trust: false`, so `\href` and the like are
+refused; a syntax error shows the source in red rather than breaking the note). The
+editor shows the typeset form and reveals the source when the cursor lands on it — an
+inline formula by element, a display block as a whole; embeds, the reading projection
+and the chat panel typeset the same grammar (`src/lib/math.ts` is the one definition).
+
+An inline `$` is a formula only with non-whitespace at both ends and no digit after the
+closing `$`: `$5 and $10` is money, not maths. A `$` inside code is code. A display
+block whose `$$` opener has no closer within 80 lines is left as text.
+
+**Fallback**: the literal `$…$`, which most renderers either typeset or show as written.
+
 ## Block types
 
 `.vemry/types/<name>.md` declares a kind of block you write often: frontmatter

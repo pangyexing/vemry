@@ -1,0 +1,89 @@
+// The one grammar of a formula, shared by the editor's live preview (editor/math.ts)
+// and the hand-written renderer (markdown.ts, which the embeds, the reading
+// projection and the chat panel all draw with): `$…$` inline, `$$…$$` display on
+// one line, and a display block whose `$$` fences sit on their own lines. The two
+// consumers must agree on what is a formula, or a `$` folds in the editor and shows
+// as text in an embed of the same note (docs/SYNTAX.md, "Math").
+import katex from "katex";
+
+/** LaTeX → KaTeX HTML. The renderer's only third-party HTML injection point: called
+ *  on recognised formula fragments alone, with trust:false forbidding dangerous
+ *  commands such as \href; a syntax error renders as the source in red
+ *  (throwOnError:false) rather than throwing and taking the whole document down. */
+export function renderMathHtml(tex: string, display: boolean): string {
+  try {
+    return katex.renderToString(tex.trim(), {
+      displayMode: display,
+      throwOnError: false,
+      trust: false,
+      output: "html",
+    });
+  } catch {
+    return `<code>${tex.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code>`;
+  }
+}
+
+/** A single-line display formula, `$$…$$` with the content on the same line. */
+export const DISPLAY_MATH_RE = /\$\$([^$\n]+?)\$\$/g;
+/** An inline formula: non-whitespace at both ends and no digit after the closing `$`
+ *  — a dollar amount in the body is not a formula. A backslash escapes the next
+ *  character inside, so `\$` never closes. */
+export const INLINE_MATH_RE = /\$(?![\s$])((?:\\.|[^$\n\\])+?)\$(?!\d)/g;
+
+export interface MathSpan {
+  /** Offsets into the scanned text, the `$` delimiters included. */
+  start: number;
+  end: number;
+  tex: string;
+  display: boolean;
+}
+
+/** The formulas of one line of text, display ones first (their `$$` must not be read
+ *  as two inline delimiters), in document order. `$…$` whose content ends in
+ *  whitespace is left as text, the same rule the renderer applies. */
+export function scanInlineMath(text: string): MathSpan[] {
+  if (!text.includes("$")) return [];
+  const out: MathSpan[] = [];
+  const taken: [number, number][] = [];
+  const free = (s: number, e: number) => taken.every(([a, b]) => e <= a || s >= b);
+  DISPLAY_MATH_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = DISPLAY_MATH_RE.exec(text))) {
+    out.push({ start: m.index, end: m.index + m[0].length, tex: m[1], display: true });
+    taken.push([m.index, m.index + m[0].length]);
+  }
+  INLINE_MATH_RE.lastIndex = 0;
+  while ((m = INLINE_MATH_RE.exec(text))) {
+    if (/\s$/.test(m[1]) || !free(m.index, m.index + m[0].length)) continue;
+    out.push({ start: m.index, end: m.index + m[0].length, tex: m[1], display: false });
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/** Whether a line opens a multi-line display block: it starts with `$$` (after
+ *  indentation) and does not close on the same line. `$$` alone and `$$ a + b` open;
+ *  `$$x$$` is a one-line formula. Mirrors the formatter's rule (format.rs), which
+ *  leaves such a block verbatim. */
+export function opensMathBlock(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("$$")) return false;
+  const after = trimmed.slice(2);
+  return after === "" || !after.trimEnd().endsWith("$$");
+}
+
+/** Whether a line closes a multi-line display block: it ends with `$$`. */
+export function closesMathBlock(line: string): boolean {
+  return line.trim().endsWith("$$");
+}
+
+/** The formula inside a multi-line block: the `$$` fences stripped from the first and
+ *  last lines, the lines between kept as written. */
+export function mathBlockTex(lines: string[]): string {
+  if (!lines.length) return "";
+  const parts = lines.slice();
+  parts[0] = parts[0].trim().slice(2);
+  const last = parts.length - 1;
+  const end = parts[last].trimEnd();
+  parts[last] = end.endsWith("$$") ? end.slice(0, -2) : end;
+  return parts.join("\n").trim();
+}

@@ -654,6 +654,39 @@ button:focus-visible,
 .cm-lp-field-src {
   color: var(--fg-muted);
 }
+/* Formulas (editor/math.ts): `$…$` folds into typeset KaTeX on the line, a `$$` block
+   into a card; a click lands the cursor on the source. The source, while the cursor is
+   on it, is monospace and muted like a revealed field */
+.cm-lp-math {
+  cursor: text;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.cm-lp-math:hover,
+.cm-lp-mathblock:hover {
+  background: var(--bg-hover);
+}
+.cm-lp-math-display .katex-display,
+.cm-lp-mathblock .katex-display,
+.md-math .katex-display {
+  margin: 0.4em 0;
+}
+.cm-lp-math-src {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--fg-muted);
+}
+.cm-lp-mathblock {
+  margin: 2px 0;
+  padding: 4px 12px;
+  border-radius: var(--radius);
+  cursor: text;
+  overflow-x: auto;
+}
+.md-math {
+  overflow-x: auto;
+  margin: 0.3em 0;
+}
 /* An empty field (`[key:: ]`, the placeholder a block type leaves): an outlined slot with a
    faint "empty" for the value, filled by a click on the chip */
 .cm-lp-field-empty {
