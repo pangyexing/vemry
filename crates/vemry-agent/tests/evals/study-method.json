@@ -1,0 +1,38 @@
+{
+  "name": "study-method",
+  "vault": {
+    "research/Attention.md": "# Attention\n\n> [!claim] Attention lets a decoder look at every encoder state instead of one summary vector ^att\n"
+  },
+  "pages": {
+    "https://arxiv.org/html/1706.03762": "# Attention Is All You Need\n\n## 1 Introduction\n\nRecurrent models compute hidden states sequentially, which precludes parallelization within a training example.\n\n## 3.2.1 Scaled Dot-Product Attention\n\nWe compute the dot products of the query with all keys, divide each by sqrt(d_k), and apply a softmax function to obtain the weights on the values.\n\nFor large values of d_k, the dot products grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients.\n"
+  },
+  "allow_writes": true,
+  "turns": [
+    {
+      "user": "精读这篇 https://arxiv.org/abs/1706.03762 ,我想懂它的思想",
+      "script": [
+        [ { "tool": { "id": "s1", "name": "read_skill", "args": { "name": "study" } } } ],
+        [ { "tool": { "id": "p1", "name": "update_plan", "args": { "items": [ { "text": "导入原文", "status": "doing" }, { "text": "已知与待学", "status": "pending" }, { "text": "写章节", "status": "pending" }, { "text": "卡片与枢纽", "status": "pending" } ] } } } ],
+        [ { "tool": { "id": "r1", "name": "open_for_reading", "args": { "urls": ["https://arxiv.org/html/1706.03762"] } } } ],
+        [ { "tool": { "id": "w1", "name": "write_note", "args": { "path": "papers/vaswani-2017/source.md", "content": "---\ntitle: Attention Is All You Need\nauthors: Vaswani et al.\nyear: 2017\nsource: https://arxiv.org/html/1706.03762\ngenre: method\n---\n\n# Attention Is All You Need\n\n## 1 Introduction\n\nRecurrent models compute hidden states sequentially, which precludes parallelization within a training example. ^s1p1\n\n## 3.2.1 Scaled Dot-Product Attention\n\nWe compute the dot products of the query with all keys, divide each by $\\sqrt{d_k}$, and apply a softmax function to obtain the weights on the values. ^s3p1\n\nFor large values of $d_k$, the dot products grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients. ^s3p2\n" } } } ],
+        [ { "tool": { "id": "q1", "name": "search_notes", "args": { "query": "attention decoder encoder" } } } ],
+        [ { "tool": { "id": "w2", "name": "write_note", "args": { "path": "papers/vaswani-2017/chapters/01 Scaled dot-product attention.md", "content": "# Scaled dot-product attention\n#chapter [status:: unread]\n\n## In one sentence\n\nEvery query scores every key by a dot product, the scores are shrunk by $\\sqrt{d_k}$ so the softmax stays soft, and the weights mix the values.\n\n## From the paper\n\n![[papers/vaswani-2017/source#^s3p1]]\n\n![[papers/vaswani-2017/source#^s3p2]]\n\n## Notation\n\n| symbol | meaning |\n|---|---|\n| $d_k$ | the width of a query or key vector |\n\n## Where it stops holding\n\nThe $\\sqrt{d_k}$ argument assumes the components of $q$ and $k$ are independent with unit variance; with a learned scale the constant matters less.\n\n## Question\n\nWhat happens to the gradient of the softmax when $d_k$ grows and the scores are not scaled?\n\n## In my words\n\n" } } } ],
+        [ { "tool": { "id": "w3", "name": "write_note", "args": { "path": "papers/vaswani-2017/Attention Is All You Need.md", "content": "---\ntitle: Attention Is All You Need\ngoal: understand\nstatus: reading\n---\n\n# Attention Is All You Need\n\nSource: [[papers/vaswani-2017/source]]\n\n## Known\n\n- Attention over every encoder state — [[research/Attention#^att]]\n\n## To learn\n\n- Why the scores are divided by $\\sqrt{d_k}$\n\n## Chapters\n\n```vemry-query\ntag: chapter\n```\n" } } } ],
+        [ { "text": "原文已切块存到 [[papers/vaswani-2017/source]]。库里已有「注意力看全部编码器状态」这条 [[research/Attention#^att]],这章跳过;先读 [[papers/vaswani-2017/chapters/01 Scaled dot-product attention]],它嵌入了 [[papers/vaswani-2017/source#^s3p2]] 讲缩放的那一段。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "skill_events": ["study"],
+    "plan": ["doing", "pending", "pending", "pending"],
+    "tool_output_contains": [ { "id": "s1", "text": "# Study" }, { "id": "r1", "text": "<web-page-context source=\"https://arxiv.org/html/1706.03762\"" } ],
+    "note_contains": [
+      { "path": "papers/vaswani-2017/source.md", "text": "extremely small gradients. ^s3p2" },
+      { "path": "papers/vaswani-2017/chapters/01 Scaled dot-product attention.md", "text": "![[papers/vaswani-2017/source#^s3p2]]" },
+      { "path": "papers/vaswani-2017/chapters/01 Scaled dot-product attention.md", "text": "#chapter [status:: unread]" },
+      { "path": "papers/vaswani-2017/Attention Is All You Need.md", "text": "```vemry-query\ntag: chapter\n```" }
+    ]
+  }
+}

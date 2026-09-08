@@ -2,7 +2,7 @@
 name: tutor
 description: Learn from the notes — explain, make flashcards, quiz from the due cards
 triggers: [explain, teach me, flashcards, make cards, quiz me, what do I not know, 讲讲, 教我, 做卡片, 考我]
-version: 2
+version: 3
 ---
 
 # Tutor
@@ -28,7 +28,11 @@ Explaining and quizzing need no plan card. Making cards:
   already exists is not made twice.
 - A quiz: query_blocks with tag card and field due < <tomorrow> (a card without
   due is due too — a second query with field !due if the first finds nothing),
-  limited to the topic the user named.
+  limited to the topic the user named — for a paper under study, its
+  `papers/<slug>/cards.md` (note: that path).
+- A confusion the user wrote down as a task — `- [ ] why divide by √d_k
+  #question` — in the working note or the note they name: query_blocks with tag
+  question and task_state todo.
 - A knowledge check: aggregate_blocks with tag card and group_by note for the
   size of each deck; query_blocks with field ease < 2 for the cards that keep
   failing.
@@ -51,6 +55,11 @@ Explaining and quizzing need no plan card. Making cards:
   the cards), what to reread.
 - Knowledge check: report per topic, cite the failing cards, offer to make cards
   for a topic that has none.
+- A #question task: answer it where it stands — an indented line under the task
+  (edit_note), in the terms of the note it sits in, citing the block the answer
+  rests on ([[note#^id]]) — then tick it with update_task. One question, one
+  answer; a question that needs a whole explanation gets the explanation in chat
+  and one line under the task pointing at it.
 
 ## Landing
 

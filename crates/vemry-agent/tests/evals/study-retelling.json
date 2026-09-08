@@ -1,0 +1,29 @@
+{
+  "name": "study-retelling",
+  "vault": {
+    "papers/smith-2021/source.md": "---\ntitle: Sleep restriction and recall\nauthors: Smith et al.\nyear: 2021\ngenre: empirical\n---\n\n# Sleep restriction and recall\n\n## 2 Design\n\nParticipants were randomly assigned to a full-sleep or a restricted-sleep condition for five nights; recall was tested on the sixth morning. ^s2p1\n\n## 3 Results\n\nRestricted sleep reduced recall by 18% on average, but the effect vanished in the subgroup that napped. ^s3p1\n",
+    "papers/smith-2021/chapters/02 Main result.md": "# Main result\n#chapter [status:: read]\n\n## From the paper\n\n![[papers/smith-2021/source#^s3p1]]\n\n## In my words\n\nLess sleep makes people remember less, about a fifth less, and that is the whole story.\n",
+    "papers/smith-2021/cards.md": "# Cards\n\nFrom [[papers/smith-2021/source]].\n"
+  },
+  "allow_writes": true,
+  "turns": [
+    {
+      "user": "检查我这章的复述",
+      "script": [
+        [ { "tool": { "id": "s1", "name": "read_skill", "args": { "name": "study" } } } ],
+        [ { "tool": { "id": "c1", "name": "read_note", "args": { "path": "papers/smith-2021/chapters/02 Main result.md" } } } ],
+        [ { "tool": { "id": "c2", "name": "read_block", "args": { "path": "papers/smith-2021/source.md", "block": "^s3p1" } } } ],
+        [ { "tool": { "id": "w1", "name": "append_note", "args": { "path": "papers/smith-2021/cards.md", "content": "> [!card] In which subgroup did the recall effect of sleep restriction vanish?\n> The participants who napped (from [[papers/smith-2021/source#^s3p1]]).\n> [due:: 2026-09-08] #card\n" } } } ],
+        [ { "text": "对的:少睡的人记得更少,幅度约五分之一 [[papers/smith-2021/source#^s3p1]]。漏掉的:效应在小睡的亚组里消失,所以「就是全部」不成立。没有说反的。做了 1 张卡片,放在 [[papers/smith-2021/cards]]。" } ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "max_tool_calls": 4,
+    "skill_events": ["study"],
+    "tool_output_contains": [ { "id": "c2", "text": "vanished in the subgroup that napped" } ],
+    "note_contains": [ { "path": "papers/smith-2021/cards.md", "text": "> [!card] In which subgroup did the recall effect of sleep restriction vanish?\n> The participants who napped (from [[papers/smith-2021/source#^s3p1]]).\n> [due:: 2026-09-08] #card" } ]
+  }
+}

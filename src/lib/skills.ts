@@ -10,7 +10,7 @@ import type { SkillEntry } from "$lib/api";
  *  inside a scene are in the order of use, not alphabetical. A vault's own skills form the
  *  last group. */
 const SKILL_GROUPS: { id: "research" | "daily" | "product" | "tidy"; names: string[] }[] = [
-  { id: "research", names: ["research", "tutor"] },
+  { id: "research", names: ["research", "study", "tutor"] },
   { id: "daily", names: ["daily-start", "daily-close", "weekly-report", "meeting-actions"] },
   { id: "product", names: ["prd", "feedback-triage", "decision-log", "iteration-plan", "retro", "brief"] },
   { id: "tidy", names: ["tidy", "tidy-note"] },

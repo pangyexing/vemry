@@ -1442,6 +1442,39 @@ mod tests {
     }
 
     #[test]
+    fn demo_vault_lab_block_runs_and_moves() {
+        // the chapter the demo vault ships (examples/demo-vault/papers/…) is what a
+        // reader presses Run on first: its fence must run clean, declare its
+        // controls, draw its views, and answer a moved slider
+        let note = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/demo-vault/papers/vaswani-2017/chapters/01 Scaled dot-product attention.md"),
+        )
+        .unwrap();
+        let start = note.find("```js\n").expect("a js fence") + 6;
+        let end = start + note[start..].find("\n```").expect("the closing fence");
+        let code = &note[start..end];
+        let (_d, vault) = fixture(&[]);
+        let bridge = TestBridge::new(false);
+        let host = spawn_host(&vault, &bridge, false);
+        let r = host.eval_block(code, None, None);
+        assert_eq!(r.error, None, "{}", r.output);
+        let spec = r.lab.expect("a lab");
+        assert_eq!(spec.controls.iter().map(|c| c.name()).collect::<Vec<_>>(), ["d_k", "scale", "Q", "K"]);
+        assert_eq!(spec.views.iter().map(|v| v.title()).collect::<Vec<_>>(), ["scores", "attention weights", "the first row, step by step"]);
+        // scale off, d_k up: the softmax saturates — the first row's largest weight is close to one
+        let r = host.eval_block(code, None, Some(serde_json::json!({ "d_k": 512, "scale": false })));
+        assert_eq!(r.error, None);
+        match &r.lab.unwrap().views[1] {
+            lab::LabView::Heatmap { data, .. } => {
+                let top = data[0].iter().flatten().cloned().fold(0.0_f64, f64::max);
+                assert!(top > 0.99, "{top}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn lab_api_is_absent_from_script_contexts() {
         // the lab is enabled by the params global the block path sets; a script's
         // context never has it, so the API refuses rather than accumulating a spec

@@ -53,6 +53,7 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     ("retro.md", include_str!("../skills/retro.md")),
     ("brief.md", include_str!("../skills/brief.md")),
     ("tutor.md", include_str!("../skills/tutor.md")),
+    ("study.md", include_str!("../skills/study.md")),
 ];
 
 /// Where a listed skill comes from.

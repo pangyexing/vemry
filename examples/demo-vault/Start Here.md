@@ -18,6 +18,8 @@ the activity bar on the far edge of the window, or with ⌘P.
 - [[Self-Experiment]] — the project, with the tasks that fill Agenda and the board
 - [[Reading Queue]] — what is queued, in progress and done
 - [[2026-08-25]] — the most recent journal entry
+- [[Attention Is All You Need]] — a paper under study: its source in blocks, a
+  chapter with a lab block you can run and drag, and the cards its gaps left
 
 ## Everything below is live
 
