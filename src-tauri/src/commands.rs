@@ -739,6 +739,31 @@ pub fn block_id_plan(source: String, selector: BlockSelector) -> Result<BlockIdP
     vemry_core::plan_block_id(&source, &selector).map_err(crate::i18n::err)
 }
 
+/// A note the agent wrote that quotes a page — `source:` in its frontmatter and
+/// images still pointing at that page (a paper's figures archived by the study
+/// skill) — gets the clip's image localisation: the figures are downloaded into
+/// clips/assets/ and the note rewritten to reference them, the way a clip's are
+/// at the moment of clipping. The user approved the write and, for the read, the
+/// page; fetching the page's figures is within that. It honours the localisation
+/// setting, and a note with nothing remote is left alone (the rewrite comes back
+/// through here once more and finds nothing to do).
+fn localize_agent_figures(app: &AppHandle, rel: &str) {
+    if !rel.ends_with(".md") {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let source = with_vault(&state, |v| {
+        let id = v.note_id(rel).map_err(crate::i18n::err)?;
+        let raw = v.read_note(&id).map_err(crate::i18n::err)?;
+        let parsed = vemry_core::parser::parse_note(&raw);
+        let source = parsed.frontmatter.extra.get("source").and_then(|s| s.as_str()).map(str::to_string);
+        Ok(source.filter(|u| u.starts_with("http") && !vemry_clip::image_refs(&raw, u).is_empty()))
+    });
+    if let Ok(Some(url)) = source {
+        crate::browser::clip::maybe_localize(app, rel.to_string(), url);
+    }
+}
+
 /// Who authored each block of a note (see vemry-core's provenance.rs).
 #[tauri::command]
 pub fn provenance_get(state: State<'_, AppState>, path: String) -> Result<Vec<BlockProvenance>, String> {
@@ -1375,6 +1400,9 @@ async fn run_agent_turn(
         if let AgentEvent::VaultChanged { events } = &e {
             for ev in events {
                 broadcast(&app_for_events, ev);
+                if let VaultEvent::NoteModified { id } | VaultEvent::NoteAdded { id } = ev {
+                    localize_agent_figures(&app_for_events, id.as_str());
+                }
             }
         }
         let _ = channel.send(e);

@@ -465,8 +465,42 @@ pub(crate) fn maybe_localize(app: &AppHandle, rel: String, url: String) {
     if !crate::settings::load(app).clip_localize_images {
         return;
     }
+    // One run per note at a time: an agent writes a note several times in a turn, and
+    // two runs racing on the same note each rewrite what the other already fetched.
+    // A request during a run queues one more pass, which picks up whatever the later
+    // writes added.
+    static IN_FLIGHT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> = std::sync::OnceLock::new();
+    let in_flight = IN_FLIGHT.get_or_init(Default::default);
+    {
+        let mut m = in_flight.lock().unwrap();
+        if let Some(pending) = m.get_mut(&rel) {
+            *pending = true;
+            return;
+        }
+        m.insert(rel.clone(), false);
+    }
     let app = app.clone();
-    tauri::async_runtime::spawn(async move { localize_clip_images(app, rel, url).await });
+    tauri::async_runtime::spawn(async move {
+        loop {
+            localize_clip_images(app.clone(), rel.clone(), url.clone()).await;
+            let again = {
+                let mut m = in_flight.lock().unwrap();
+                match m.get(&rel) {
+                    Some(true) => {
+                        m.insert(rel.clone(), false);
+                        true
+                    }
+                    _ => {
+                        m.remove(&rel);
+                        false
+                    }
+                }
+            };
+            if !again {
+                break;
+            }
+        }
+    });
 }
 
 /// The image localisation entry point after the frontend inserted a selection quote

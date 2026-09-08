@@ -65,7 +65,11 @@ progress bar, not a receipt at the end.
 - The source note: the paper's own section headings as `##`, one paragraph per
   block ending in an id — `^s<section digits>p<n>`: `^s3p2` is section 3
   paragraph 2, `^s321p4` is section 3.2.1 paragraph 4 — formulas as `$…$` and
-  `$$…$$`, tables as tables, a figure as one line naming it and its caption.
+  `$$…$$`, tables as tables, a figure as its image line `![Figure N: caption](url)`
+  with the URL exactly as the page gave it, followed by the caption's own line
+  (the app saves the pictures into the vault once the note lands — the figures
+  are part of the paper, and an architecture diagram is often the one thing a
+  reader remembers).
   Quotation, not paraphrase: this note is what the chapters cite. Frontmatter
   `title`, `authors`, `year`, `source` (the URL or the file), `genre`. The first
   part is a write_note; every later part is an append_note of its sections. The

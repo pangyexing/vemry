@@ -483,8 +483,13 @@
   /** The buffer sync for a clip's image localisation (clip://localized). The rewrite happens on
    *  disk, but a dirty buffer is not reloaded by NoteModified — the next autosave would quietly
    *  wipe the rewrite out. So the same substitution is applied to the live buffer (touching only
-   *  the target of `![..](target)`, matching the Rust side's rewrite_images); a clean buffer has
-   *  already been reloaded and the substitution naturally does nothing. */
+   *  the target of `![..](target)`, matching the Rust side's rewrite_images).
+   *  On a clean buffer the event can still arrive a beat before the reload that carries the
+   *  same rewrite, and then the substitution is a real change — which must not count as the
+   *  user's: marked dirty, the buffer would skip every NoteModified that follows and the
+   *  autosave would write it, one step stale, over newer disk content (an agent's next edit
+   *  vanished exactly so). It is applied as an external change, like a reload, and the buffer
+   *  stays clean; a buffer the user had dirtied keeps its dirty mark and its autosave. */
   function applyLocalizedImages(path: string, pairs: [string, string][]) {
     if (!view || docPath !== path) return;
     const doc = view.state.doc.toString();
@@ -497,7 +502,18 @@
         changes.push({ from: start, to: start + remote.length, insert: local });
       }
     }
-    if (changes.length) view.dispatch({ changes });
+    if (!changes.length) return;
+    const wasDirty = vault.dirty;
+    loadingDoc = true;
+    try {
+      view.dispatch({ changes, annotations: Transaction.userEvent.of("external") });
+    } finally {
+      loadingDoc = false;
+    }
+    if (!wasDirty) {
+      cancelAutosave();
+      vault.dirty = false;
+    }
   }
   let unlistenLocalized: (() => void) | null = null;
   void listen<{ path: string; replace: [string, string][] }>("clip://localized", (e) => {
