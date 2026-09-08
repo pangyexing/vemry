@@ -577,6 +577,11 @@ button:focus-visible,
   padding: 3px 12px;
   cursor: pointer;
 }
+/* a range selection reaching across the card: the card is in the selection, and says so */
+.cm-lab.cm-lab-selected {
+  outline: 2px solid color-mix(in oklab, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+}
 /* a preset row: pill buttons, the one last pressed filled */
 .cm-lab-presets {
   display: flex;

@@ -23,7 +23,7 @@ import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { EditorState, type Extension, RangeSet, RangeValue, StateEffect, StateField, type Transaction } from "@codemirror/state";
 import { fencedCodeAt, fencedCodeText } from "./fenced";
-import { selectionTouches } from "./reveal";
+import { selectionReveals, selectionTouches } from "./reveal";
 import { foldRangesOf, insideFold } from "./table";
 
 export interface RunHost {
@@ -216,11 +216,13 @@ class LabCardWidget extends WidgetType {
     readonly session: LabSession | null,
     readonly caption: string,
     readonly stale: boolean,
+    /** A range selection reaches across the card: drawn as selected, since the editor draws nothing over a replaced block. */
+    readonly selected = false,
   ) {
     super();
   }
   eq(other: LabCardWidget) {
-    return other.session === this.session && other.caption === this.caption && other.stale === this.stale;
+    return other.session === this.session && other.caption === this.caption && other.stale === this.stale && other.selected === this.selected;
   }
   ignoreEvent() {
     return true;
@@ -232,10 +234,12 @@ class LabCardWidget extends WidgetType {
     if (this.session) {
       this.session.attach(view);
       this.session.setStale(this.stale);
+      this.session.root.classList.toggle("cm-lab-selected", this.selected);
       return blockRoot(this.session.root);
     }
     const card = document.createElement("div");
     card.className = "cm-lab cm-lab-cold";
+    card.classList.toggle("cm-lab-selected", this.selected);
     const head = document.createElement("div");
     head.className = "cm-lab-head";
     const kind = document.createElement("span");
@@ -360,8 +364,12 @@ class SessionMark extends RangeValue {
   }
 }
 
-/** The lab cards: every js fence that calls the lab API and is not touched by the
- *  selection (nor inside a fold) is replaced whole by its card. */
+/** The lab cards: every js fence that calls the lab API is replaced whole by its card
+ *  unless a bare cursor stands inside it (the keyboard's way in, and the ✎'s) or it is
+ *  inside a fold. A range selection that reaches across the card does not open it —
+ *  the table's block rule, made for a block with no other way in, would show a
+ *  hundred lines of JavaScript to a reader who dragged past — the card is marked
+ *  selected instead, since the editor draws no selection over a replaced block. */
 function buildCards(state: EditorState, labs: RangeSet<SessionMark>, host: RunHost): DecorationSet {
   const doc = state.doc;
   const decos: ReturnType<Decoration["range"]>[] = [];
@@ -374,13 +382,14 @@ function buildCards(state: EditorState, labs: RangeSet<SessionMark>, host: RunHo
       if (!LAB_RE.test(code)) return false;
       const from = firstLine.from;
       const to = doc.lineAt(Math.min(node.to, doc.length)).to;
-      if (selectionTouches(state, from, to) || insideFold(state, from, to)) return false;
+      if (selectionReveals(state, from, to) || insideFold(state, from, to)) return false;
+      const selected = selectionTouches(state, from, to);
       let session: LabSession | null = null;
       labs.between(from, from, (f, _t, mark) => {
         if (f === from) session = mark.session;
       });
       const stale = session ? (session as LabSession).lastCode !== code : false;
-      decos.push(Decoration.replace({ widget: new LabCardWidget(host, session, captionOf(code), stale), block: true }).range(from, to));
+      decos.push(Decoration.replace({ widget: new LabCardWidget(host, session, captionOf(code), stale, selected), block: true }).range(from, to));
       return false;
     },
   });
