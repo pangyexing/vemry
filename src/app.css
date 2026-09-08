@@ -531,9 +531,70 @@ button:focus-visible,
   }
 }
 .cm-lab-status {
-  flex: 1;
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--fs-xs);
   color: var(--fg-faint);
+}
+/* the cold card: what a lab block looks like before its first run — one line, the block's caption, a Run button */
+.cm-lab-cold .cm-lab-head {
+  border-bottom: 0;
+  padding: 7px 8px 7px 12px;
+}
+.cm-lab-cold .cm-lab-live {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--accent);
+}
+.cm-lab-cold .cm-lab-live svg {
+  display: block;
+}
+/* width: 0 with flex-grow: a nowrap caption must not contribute its full length to the
+   block's intrinsic width — inside CodeMirror's content that width becomes the document's,
+   and the whole note scrolls sideways */
+.cm-lab-caption {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-size: var(--fs-sm);
+}
+.cm-lab-run {
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--bg);
+  background: var(--accent);
+  border: 0;
+  border-radius: 4px;
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.cm-lab-run:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.cm-lab-run:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.cm-lab-run:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* an edited fence: the status names it, the rerun button is lit until it is pressed */
+.cm-lab.stale .cm-lab-status {
+  color: var(--co-warn);
+}
+.cm-lab.stale .cm-lab-rerun {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .cm-lab-tools {
   display: inline-flex;
@@ -708,6 +769,9 @@ button:focus-visible,
   margin-bottom: 6px;
 }
 .cm-lab-fig-title {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
   font-weight: 600;
   font-size: var(--fs-sm);
   color: var(--fg);

@@ -658,8 +658,12 @@ skipped rather than replayed, leaving one `schedule_missed` line.
 - A block that calls `vemry.lab.*` is a lab (docs/SYNTAX.md, "Lab blocks"): the
   glue in `bindings.rs` normalises its calls into the canonical spec of
   `vemry-script/src/lab.rs` (four controls, six views, hard caps), which travels
-  back in `BlockEvalResult.lab`; the editor renders it as a live card (`editor/
-  lab.ts`, the charts in `lib/lab/charts.ts`) and, while the card is open,
+  back in `BlockEvalResult.lab`; the editor shows the block as its card rather
+  than its code (a block-level replace in `runblock.ts`, the same reveal
+  semantics as a query block: the source only while the cursor is inside; the
+  session survives the reveal in a state field keyed by the fence's start),
+  renders the session as a live card (`editor/lab.ts`, the charts in
+  `lib/lab/charts.ts`) and, while the card is open,
   re-runs the block with the controls' values as `params` on every move — the
   same one-shot Context, the same fuse, the code read again from the document
   each time. The lab API exists only in a block Context (the params global the

@@ -356,12 +356,19 @@ entry point in the whole chain, and the AI has no tool that can run code either.
 ### Lab blocks
 
 A block that calls `vemry.lab.*` is a **lab**: it declares controls, reads their
-values, and draws views. Its output is a live card under the fence — the controls
-it declared and the views it drew — and while that card is open, moving a control
-re-runs the block with the controls' current values (the same sandbox, the same
-fuse, one run per move). Closing the card, or the document, ends it; the next
-visit shows the static code again. Nothing about this loosens the rule above: the
-first run is still the click, and a re-run only ever follows a person's move.
+values, and draws views. The reader sees the card, not the code: with the cursor
+outside the fence the whole block is replaced by its card — before the first run a
+one-line cold card (the block's leading `//` comment as its caption, a Run button),
+after it the live card with the controls it declared and the views it drew. While
+that card is open, moving a control re-runs the block with the controls' current
+values (the same sandbox, the same fuse, one run per move). The code shows only
+through the card's ✎ or when the cursor is put inside the fence; while the code
+shows, the card does not (as with a query block), and it comes back, controls where
+they were, once the cursor leaves. A block edited after a run says so on its card
+and waits for Run again. Closing the card (✕) returns it to cold; closing the
+document ends the session, and the next visit shows the cold card again. Nothing
+about this loosens the rule above: the first run is still the click, and a re-run
+only ever follows a person's move.
 
 ```js
 const { d_k, scale } = vemry.lab.controls({

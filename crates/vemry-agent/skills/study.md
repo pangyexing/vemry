@@ -89,9 +89,11 @@ A later session on the same paper has a plan of its own: "Check the retelling"
   no gap gets no card.
 - A lab block: a ` ```js ` fence calling `vemry.lab.*`, written only when the
   reader asks for an experiment or a chapter's `## Try it` calls for one. The
-  parameters the reader will want to move are the controls; the block computes
-  the example on a tiny instance (three tokens, a 2×2, ten points) so the
-  numbers can be read; every view has a title that says what it shows. The API:
+  reader sees a card, never the code, so the block opens with one `//` line
+  saying what the experiment shows (the card's caption). The parameters the
+  reader will want to move are the controls; the block computes the example on
+  a tiny instance (three tokens, a 2×2, ten points) so the numbers can be read;
+  every view has a title that says what it shows. The API:
   - controls: `const p = vemry.lab.controls({ name: { slider: [min, max], step, value, label }, flag: { toggle: true }, pick: { select: ["a", "b"] } })`
     returns `{ name, flag, pick }`; `const Q = vemry.lab.matrix("Q", [[1, 0], [0, 1]])`
     returns the current grid.

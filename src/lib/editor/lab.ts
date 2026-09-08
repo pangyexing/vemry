@@ -23,6 +23,8 @@ export interface LabHost {
   locate(): { code: string; range: { from: number; to: number } | null } | null;
   evalBlock(code: string, params: LabParams | null): Promise<BlockEvalResult>;
   replaceCode(range: { from: number; to: number }, code: string): void;
+  /** Show the code: the cursor lands on the first code line, and the card gives way to the source. */
+  reveal(): void;
   close(): void;
 }
 
@@ -34,6 +36,8 @@ const ICON_RERUN =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>';
 const ICON_CLOSE =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+const ICON_EDIT =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
 const ICON_TABLE =
   '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M10 4v16"/></svg>';
 const ICON_CHART =
@@ -92,12 +96,17 @@ export class LabSession implements TipHost {
   private observers: ResizeObserver[] = [];
   private view: EditorView | null = null;
   private closed = false;
+  private stale = false;
+  /** The code the last run used: the card says so when the fence has been edited since. */
+  lastCode: string;
 
   constructor(
     private readonly host: LabHost,
     private spec: LabSpec,
     output: string,
+    code: string,
   ) {
+    this.lastCode = code;
     this.params = paramsOf(spec.controls);
     this.key = controlKey(spec.controls);
     this.root = el("div", "cm-lab");
@@ -109,7 +118,8 @@ export class LabSession implements TipHost {
     const tools = el("span", "cm-lab-tools");
     tools.append(
       iconButton("cm-lab-tool", ICON_PIN, t("runBlock.pin"), () => this.pin()),
-      iconButton("cm-lab-tool", ICON_RERUN, t("runBlock.rerun"), () => this.schedule(0)),
+      iconButton("cm-lab-tool cm-lab-rerun", ICON_RERUN, t("runBlock.rerun"), () => this.schedule(0)),
+      iconButton("cm-lab-tool", ICON_EDIT, t("runBlock.editCode"), () => this.host.reveal()),
       iconButton("cm-lab-tool", ICON_CLOSE, t("runBlock.closeLab"), () => this.host.close()),
     );
     head.append(live, this.statusEl, tools);
@@ -127,6 +137,14 @@ export class LabSession implements TipHost {
   /** Called by the widget when its DOM is placed (the view is needed for re-measuring). */
   attach(view: EditorView) {
     this.view = view;
+  }
+
+  /** The fence has been edited since the last run: the card says so and the rerun
+   *  button is lit; nothing runs until the reader presses it. */
+  setStale(stale: boolean) {
+    this.stale = stale;
+    this.root.classList.toggle("stale", stale);
+    if (!this.inflight) this.statusEl.textContent = stale ? t("runBlock.codeChanged") : "";
   }
 
   destroy() {
@@ -339,7 +357,7 @@ export class LabSession implements TipHost {
   }
 
   private setStatus(text: string, busy: boolean) {
-    this.statusEl.textContent = text;
+    this.statusEl.textContent = text || (this.stale ? t("runBlock.codeChanged") : "");
     this.root.classList.toggle("busy", busy);
   }
 
@@ -364,6 +382,8 @@ export class LabSession implements TipHost {
     try {
       const r = await this.host.evalBlock(located.code, this.params);
       if (this.closed) return;
+      this.lastCode = located.code;
+      this.setStale(false);
       this.setOutput(r.output, r.error);
       if (r.lab) {
         this.spec = r.lab;
