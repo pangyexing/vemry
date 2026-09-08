@@ -55,7 +55,9 @@ for (const file of files) {
   let out = ""; let at = 0;
   const prose = (chunk, offset) => {
     const lineOf = (idx) => text.slice(0, offset + idx).split("\n").length;
-    for (const m of chunk.matchAll(new RegExp(`(?<=${CJK})[,;:?!()"]|[,;:?!()"](?=${CJK})`, "g"))) report(file, lineOf(m.index), "ascii-punct", chunk.slice(Math.max(0, m.index - 12), m.index + 12).replace(/\n/g, " "));
+    // a one-character label in parentheses — a paper's (A), (B) rows, a footnote (1) — is a token, not punctuation
+    const labelled = chunk.replace(/\([A-Za-z0-9]\)/g, "   ");
+    for (const m of labelled.matchAll(new RegExp(`(?<=${CJK})[,;:?!()"]|[,;:?!()"](?=${CJK})`, "g"))) report(file, lineOf(m.index), "ascii-punct", chunk.slice(Math.max(0, m.index - 12), m.index + 12).replace(/\n/g, " "));
     // replacements by position, last first, so one never lands inside another
     const edits = [];
     for (const m of chunk.matchAll(BARE)) {
