@@ -33,9 +33,14 @@
   {/if}
   {#if vault.pendingCount > 0 && prefs.provenanceMarks}
     <button class="pending" title={t("prov.pendingHint")} onclick={() => vault.nextPending?.()}>{t("prov.pendingCount", { n: vault.pendingCount })}</button>
-    <!-- one click for the whole note (the palette command carries the toast) -->
+    <!-- one click for this note (the palette command carries the toast); the labels say "this note", not "all" — the vault chip beside them is the wider scope -->
     <button class="pending" title={t("prov.acceptAll")} onclick={() => void executeCommand("provenance-accept-all")}>{t("prov.acceptAllShort")}</button>
     <button class="pending" title={t("prov.rejectAll")} onclick={() => void executeCommand("provenance-reject-all")}>{t("prov.rejectAllShort")}</button>
+  {/if}
+  {#if prefs.provenanceMarks && vault.pendingVault.notes > (vault.pendingCount > 0 ? 1 : 0)}
+    <!-- unreviewed AI blocks in other notes too (an agent run that wrote many): the count, and one click for the whole vault -->
+    <span class="pending pending-vault" title={t("prov.pendingVaultHint")}>{t("prov.pendingVault", { n: vault.pendingVault.blocks, m: vault.pendingVault.notes })}</span>
+    <button class="pending" title={t("prov.acceptVault")} onclick={() => void executeCommand("provenance-accept-vault")}>{t("prov.acceptVaultShort")}</button>
   {/if}
   <span class="right">
     {#if vault.editorLoc}
@@ -111,6 +116,16 @@
   }
   .pending:hover {
     background: color-mix(in srgb, var(--prov-agent) 14%, transparent);
+  }
+  /* the vault count is a label, not a button: no ring, no hover */
+  .pending-vault,
+  .pending-vault:hover {
+    border-color: transparent;
+    background: none;
+    cursor: default;
+    padding-left: 2px;
+    padding-right: 4px;
+    opacity: 0.85;
   }
   .right {
     margin-left: auto;

@@ -758,6 +758,32 @@ pub fn provenance_accept(state: State<'_, AppState>, path: String, local_id: Opt
     })
 }
 
+/// A vault-wide review count: agent blocks awaiting review, and the notes holding them.
+#[derive(serde::Serialize)]
+pub struct PendingTotal {
+    pub blocks: usize,
+    pub notes: usize,
+}
+
+/// The unreviewed agent blocks across the whole vault (the status bar's "vault" chip).
+#[tauri::command]
+pub fn provenance_pending_total(state: State<'_, AppState>) -> Result<PendingTotal, String> {
+    with_vault(&state, |v| {
+        let (blocks, notes) = v.pending_total();
+        Ok(PendingTotal { blocks, notes })
+    })
+}
+
+/// Accept every unreviewed agent block in every note; returns what was accepted.
+/// Not broadcast: accepting is not a note event.
+#[tauri::command]
+pub fn provenance_accept_vault(state: State<'_, AppState>) -> Result<PendingTotal, String> {
+    with_vault_mut(&state, |v| {
+        let (blocks, notes) = v.accept_provenance_all();
+        Ok(PendingTotal { blocks, notes })
+    })
+}
+
 /// How to undo the agent writes behind the unreviewed blocks of the note in
 /// `text` (the editor's buffer) — one block by local id, or all of them — as
 /// byte replacements in that text. Nothing is written: the editor applies the

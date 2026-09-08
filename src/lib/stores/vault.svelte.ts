@@ -349,6 +349,10 @@ class VaultStore {
   provenanceOverlay = $state(false);
   /** Bumped after an accept so the editor re-reads the ledger (accepting is not a note event and is not broadcast). */
   provenanceEpoch = $state(0);
+  /** Unreviewed AI blocks across the vault (the status bar's "vault" chip); refreshed on
+   *  vault events and after a review action, and read cheaply on the Rust side from the
+   *  ledger's candidate notes alone. */
+  pendingVault = $state<{ blocks: number; notes: number }>({ blocks: 0, notes: 0 });
   /** Editor hook: move the cursor to the next pending block; false when there is none. */
   nextPending: (() => boolean) | null = null;
   /** Editor hook: the pending block under the cursor (its local id), or null. */
@@ -662,6 +666,7 @@ class VaultStore {
       // The paths in the citation-landed cache belong to the old vault
       clips.reset();
       await this.refreshNotes();
+      void this.refreshPendingVault();
       // folders is fresh at this point: prune the expanded entries that no longer exist (orphans of an external or agent rename)
       const live = new Set(this.folders);
       for (const p of Object.keys(this.expanded)) if (!live.has(p)) delete this.expanded[p];
@@ -928,6 +933,7 @@ class VaultStore {
   private async handleEvent(e: VaultEvent) {
     this.indexVersion++;
     await this.refreshNotes();
+    void this.refreshPendingVault();
     const changed = e.type === "note_modified" || e.type === "note_added" ? e.id : null;
     if (changed && changed === this.currentPath && !this.dirty) {
       // reload externally-updated open note (agent edits land here too)
@@ -1599,10 +1605,39 @@ class VaultStore {
       const n = await api.provenanceAccept(path, localId ?? undefined);
       this.provenanceEpoch++;
       toast.push(localId ? t("prov.accepted") : t("prov.acceptedAll", { n }));
+      void this.refreshPendingVault();
       return n;
     } catch (e) {
       toast.push(String(e), "error");
       return 0;
+    }
+  }
+
+  /** The vault-wide review count; a failure (no vault open) leaves the chip at zero. */
+  async refreshPendingVault() {
+    if (!this.root) {
+      this.pendingVault = { blocks: 0, notes: 0 };
+      return;
+    }
+    try {
+      this.pendingVault = await api.provenancePendingTotal();
+    } catch {
+      this.pendingVault = { blocks: 0, notes: 0 };
+    }
+  }
+
+  /** Mark every unreviewed AI block in every note as reviewed — one click after an agent
+   *  run that wrote many notes (a study's chapters, a tidy's moves), when the reader has
+   *  decided to trust the batch rather than open each note. */
+  async acceptProvenanceVault(): Promise<void> {
+    try {
+      if (this.dirty) await this.flushEditor?.();
+      const r = await api.provenanceAcceptVault();
+      this.provenanceEpoch++;
+      toast.push(t("prov.acceptedVault", { n: r.blocks, m: r.notes }));
+      await this.refreshPendingVault();
+    } catch (e) {
+      toast.push(String(e), "error");
     }
   }
 

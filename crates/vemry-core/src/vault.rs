@@ -838,6 +838,40 @@ impl Vault {
     }
 
 
+    /// Agent-written blocks awaiting review across the vault: (blocks, notes). Only
+    /// the notes the ledger names as candidates are read.
+    pub fn pending_total(&self) -> (usize, usize) {
+        let mut blocks = 0;
+        let mut notes = 0;
+        for p in self.provenance.paths_with_pending_agent() {
+            let n = self.pending_count(&NoteId::new(&p));
+            if n > 0 {
+                blocks += n;
+                notes += 1;
+            }
+        }
+        (blocks, notes)
+    }
+
+    /// Accept every pending agent block in every note; returns (blocks accepted,
+    /// notes touched). A note that cannot be read is skipped, not fatal.
+    pub fn accept_provenance_all(&mut self) -> (usize, usize) {
+        let mut blocks = 0;
+        let mut notes = 0;
+        for p in self.provenance.paths_with_pending_agent() {
+            let id = NoteId::new(&p);
+            let before = self.pending_count(&id);
+            if before == 0 {
+                continue;
+            }
+            if let Ok(after) = self.accept_provenance(&id, None) {
+                blocks += before.saturating_sub(after);
+                notes += 1;
+            }
+        }
+        (blocks, notes)
+    }
+
     /// Append one ledger entry (an agent write, or text the user placed).
     pub fn record_provenance(&mut self, entry: ProvenanceEntry) {
         self.provenance.append(entry);
@@ -1758,7 +1792,33 @@ mod tests {
         let added = crate::provenance::added_blocks(&old, &vault.read_note(&n).unwrap());
         vault.record_provenance(ProvenanceEntry::Agent { ts: "t2".into(), session: None, path: "n.md".into(), blocks: added, hunks: vec![] });
         assert_eq!(vault.pending_count(&n), 1);
-        assert_eq!(vault.accept_provenance(&n, Some("b1")).unwrap(), 0);
+        // the vault-wide count sees this note and a second one; accepting all clears both
+        fs::write(root.join("m.md"), "theirs
+").unwrap();
+        let m = NoteId::new("m.md");
+        vault.write_note(&m, "theirs
+
+agent here too
+").unwrap();
+        let added_m = crate::provenance::added_blocks("theirs
+", "theirs
+
+agent here too
+");
+        vault.record_provenance(ProvenanceEntry::Agent { ts: "t3".into(), session: None, path: "m.md".into(), blocks: added_m, hunks: vec![] });
+        assert_eq!(vault.pending_total(), (2, 2));
+        assert_eq!(vault.accept_provenance_all(), (2, 2));
+        assert_eq!(vault.pending_total(), (0, 0));
+        assert_eq!(vault.pending_count(&n), 0);
+        // (the rest of the test continues on n: its late block is accepted now, so re-add one to keep the story)
+        let old2 = vault.read_note(&n).unwrap();
+        vault.write_note(&n, &format!("{old2}
+later still ^b2
+")).unwrap();
+        let added2 = crate::provenance::added_blocks(&old2, &vault.read_note(&n).unwrap());
+        vault.record_provenance(ProvenanceEntry::Agent { ts: "t4".into(), session: None, path: "n.md".into(), blocks: added2, hunks: vec![] });
+        assert_eq!(vault.pending_count(&n), 1);
+        assert_eq!(vault.accept_provenance(&n, Some("b2")).unwrap(), 0);
         let reopened = Vault::open(root).unwrap();
         assert!(matches!(reopened.provenance(&n).unwrap()[0].origin, Origin::Agent { pending: false, .. }));
         // editing the words turns the block into the user's

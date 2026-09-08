@@ -502,6 +502,22 @@ impl ProvenanceLedger {
         self.by_path.contains_key(path)
     }
 
+    /// The notes holding at least one agent record not yet accepted — the candidate
+    /// set of a vault-wide pending count (a note's real count still needs its text:
+    /// a block may have been edited away since). Read from the maps alone.
+    pub fn paths_with_pending_agent(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .by_path
+            .iter()
+            .filter(|(_, hashes)| {
+                hashes.iter().any(|h| self.by_hash.get(h).is_some_and(|r| !r.accepted && matches!(r.source, ProvSource::Agent { .. })))
+            })
+            .map(|(p, _)| p.clone())
+            .collect();
+        out.sort();
+        out
+    }
+
     /// Rewrite the file keeping one line per live hash (an `agent` or
     /// `insert` line carrying its state, plus one `accept` for the accepted
     /// ones). Written to a temporary file and renamed into place.

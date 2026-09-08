@@ -891,6 +891,16 @@
     },
   });
   registerCommand({
+    id: "provenance-accept-vault", group: "note",
+    run: () => {
+      if (!vault.pendingVault.blocks) {
+        toast.push(t("prov.noPendingVault"), "error");
+        return;
+      }
+      void vault.acceptProvenanceVault();
+    },
+  });
+  registerCommand({
     id: "provenance-reject", group: "note",
     run: () => {
       const id = vault.pendingAtCursor?.();

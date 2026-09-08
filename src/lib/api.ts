@@ -211,6 +211,12 @@ export interface BlockProvenance {
 
 /** How to undo the agent writes behind unreviewed blocks (mirrors vemry-core's `RevertPlan`):
  *  byte ranges of the text the plan was made for. */
+/** A vault-wide review count (mirroring commands.rs::PendingTotal). */
+export interface PendingTotal {
+  blocks: number;
+  notes: number;
+}
+
 export interface RevertPlan {
   replacements: { from: number; to: number; insert: string }[];
   /** Unreviewed blocks whose write could not be located (a ledger line older than the hunks, or surroundings that moved on). */
@@ -1014,6 +1020,10 @@ export const api = {
   provenanceGet: (path: string) => invoke<BlockProvenance[]>("provenance_get", { path }),
   /** Accept pending agent blocks (one by local id, or all); resolves to the count still pending. */
   provenanceAccept: (path: string, localId?: string) => invoke<number>("provenance_accept", { path, localId }),
+  /** The unreviewed AI blocks across the vault, and the notes holding them. */
+  provenancePendingTotal: () => invoke<PendingTotal>("provenance_pending_total"),
+  /** Mark every unreviewed AI block in every note as reviewed; returns what was accepted. */
+  provenanceAcceptVault: () => invoke<PendingTotal>("provenance_accept_vault"),
   /** The revert plan for `text` (the editor's buffer): one unreviewed block by local id, or all; the editor applies it as one undoable edit. */
   provenanceRevertPlan: (text: string, localId?: string) => invoke<RevertPlan>("provenance_revert_plan", { text, localId }),
   /** Record text the user placed themselves (lands accepted); a private path or text without blocks records nothing. */
