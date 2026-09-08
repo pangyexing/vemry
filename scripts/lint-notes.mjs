@@ -28,8 +28,11 @@ for (const file of files) {
   const orig = text;
   const lines = text.split("\n");
   const rel = file.slice(ROOT.length + 1);
-  // formulas typeset by KaTeX: any that error
+  // formulas typeset by KaTeX: any that error (a fenced block is code, not formulas)
+  let fenced = false;
   for (const [i, line] of lines.entries()) {
+    if (/^\s*```/.test(line)) { fenced = !fenced; continue; }
+    if (fenced) continue;
     for (const m of line.matchAll(/\$\$([^$\n]+?)\$\$|\$(?![\s$])((?:\\.|[^$\n\\])+?)\$(?!\d)/g)) {
       const tex = m[1] ?? m[2];
       try { katex.renderToString(tex, { throwOnError: true, trust: false }); } catch (e) { report(file, i + 1, "katex-error", `${tex} — ${String(e.message).slice(0, 80)}`); }

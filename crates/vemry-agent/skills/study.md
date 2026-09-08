@@ -67,8 +67,9 @@ progress bar, not a receipt at the end.
   paragraph 2, `^s321p4` is section 3.2.1 paragraph 4 — formulas as `$…$` and
   `$$…$$`, tables as tables, a figure as its image line
   `![Figure N: caption](url) ^figN` (`^fig2l` and `^fig2r` for a figure's two
-  halves) with the URL exactly as the page gave it, followed by the caption's
-  own line. The figures are part of the paper — an architecture diagram is often
+  halves) — the alt is the figure's number and caption, not the page's own alt
+  (arXiv's says "Refer to caption") — with the URL exactly as the page gave it,
+  followed by the caption's own line. The figures are part of the paper — an architecture diagram is often
   the one thing a reader remembers — and the id lets a chapter embed one. The id
   goes on the line as it is written: once the note lands, the app saves the
   pictures into the vault and rewrites the line's URL to the local file, so an
