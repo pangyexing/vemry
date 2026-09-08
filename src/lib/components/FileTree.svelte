@@ -575,6 +575,7 @@
         <span class="gutter"></span>
         <span class="name">{stemOf(note.id)}</span>
         {#if priv.kind === "root"}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
+        {#if vault.pendingIn(note.id)}<span class="pend" title={t("prov.pendingCount", { n: vault.pendingIn(note.id) })}></span>{/if}
       </button>
     {/if}
   {/each}
@@ -967,6 +968,15 @@
     flex-shrink: 0;
     margin-left: 6px;
     color: var(--accent);
+  }
+  /* A note with AI blocks awaiting review: the amber of the editor's pending bar, as a dot */
+  .pend {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    margin-left: 6px;
+    border-radius: 50%;
+    background: var(--prov-agent);
   }
   /* Inside a zone (a folder above carries the badge) the name is dimmed rather than badged
      again. Opacity, not colour, so it composes with .file-row.open/.active's colours,

@@ -869,15 +869,12 @@
       toast.push(t(vault.provenanceOverlay ? "prov.overlayOn" : "prov.overlayOff"));
     },
   });
+  // The run under the cursor is accepted or put back and the review steps on (the same
+  // act as the run's ✓ / ✕ and ⌘Y / ⌘⇧Y in the editor)
   registerCommand({
     id: "provenance-accept", group: "note",
     run: () => {
-      const id = vault.pendingAtCursor?.();
-      if (!id) {
-        toast.push(t("prov.noPendingHere"), "error");
-        return;
-      }
-      void vault.acceptProvenance(id);
+      if (!vault.reviewRun?.("accept")) toast.push(t("prov.noPendingHere"), "error");
     },
   });
   registerCommand({
@@ -918,18 +915,13 @@
         toast.push(t("prov.noPendingVault"), "error");
         return;
       }
-      void vault.acceptProvenanceVault();
+      void vault.acceptProvenanceNotes(null);
     },
   });
   registerCommand({
     id: "provenance-reject", group: "note",
     run: () => {
-      const id = vault.pendingAtCursor?.();
-      if (!id) {
-        toast.push(t("prov.noPendingHere"), "error");
-        return;
-      }
-      void vault.rejectProvenance?.(id);
+      if (!vault.reviewRun?.("reject")) toast.push(t("prov.noPendingHere"), "error");
     },
   });
   registerCommand({
@@ -942,12 +934,21 @@
       void vault.rejectProvenance?.(null);
     },
   });
+  // The review's steps cross notes: at the open note's last run the next note with
+  // unreviewed blocks opens on its first (the previous one on its last)
   registerCommand({
     id: "provenance-next-pending", group: "note",
-    run: () => {
-      if (!vault.nextPending?.()) toast.push(t("prov.noPending"), "error");
+    run: async () => {
+      if (!(await vault.reviewStep("next"))) toast.push(t("prov.noPendingVault"), "error");
     },
   });
+  registerCommand({
+    id: "provenance-prev-pending", group: "note",
+    run: async () => {
+      if (!(await vault.reviewStep("prev"))) toast.push(t("prov.noPendingVault"), "error");
+    },
+  });
+  registerCommand({ id: "provenance-review-start", group: "note", run: () => void vault.reviewStart(null) });
   registerCommand({
     id: "delete-current-note", group: "note",
     run: async () => {
@@ -1142,6 +1143,9 @@
     // ⌘⌥←/→ for forward and back; ⌘[/] is taken by CodeMirror's defaultKeymap for indenting
     else if (e.altKey && key === "arrowleft") { e.preventDefault(); navBack(); }
     else if (e.altKey && key === "arrowright") { e.preventDefault(); navForward(); }
+    // ⌘⌥↓/↑ step the review: the next or previous unreviewed AI change, across notes
+    else if (e.altKey && key === "arrowdown") { e.preventDefault(); void executeCommand("provenance-next-pending"); }
+    else if (e.altKey && key === "arrowup") { e.preventDefault(); void executeCommand("provenance-prev-pending"); }
 
     // ---- The editor's tabs. ⌘⇧[] is decided by e.code (with shift, e.key is {/});
     // ⌘⇧[ is not taken by CM (which only takes ⌘[/] for indenting). ctrl+Tab cycles in order (no

@@ -773,49 +773,60 @@ pub fn provenance_get(state: State<'_, AppState>, path: String) -> Result<Vec<Bl
     })
 }
 
-/// Accept the pending agent blocks of a note (one by local id, or all); returns
-/// how many are still pending. Not broadcast: accepting is not a note event.
+/// Accept the pending agent blocks of a note (those with these local ids — a
+/// run — or all of them); returns how many are still pending. Not broadcast:
+/// accepting is not a note event.
 #[tauri::command]
-pub fn provenance_accept(state: State<'_, AppState>, path: String, local_id: Option<String>) -> Result<usize, String> {
+pub fn provenance_accept(state: State<'_, AppState>, path: String, local_ids: Option<Vec<String>>) -> Result<usize, String> {
     with_vault_mut(&state, |v| {
         let id = v.note_id(&path).map_err(crate::i18n::err)?;
-        v.accept_provenance(&id, local_id.as_deref()).map_err(crate::i18n::err)
+        let ids: Option<Vec<&str>> = local_ids.as_ref().map(|l| l.iter().map(String::as_str).collect());
+        v.accept_provenance_ids(&id, ids.as_deref()).map_err(crate::i18n::err)
     })
 }
 
-/// A vault-wide review count: agent blocks awaiting review, and the notes holding them.
+/// One note holding agent blocks awaiting review, with their count.
 #[derive(serde::Serialize)]
-pub struct PendingTotal {
+pub struct PendingNote {
+    pub path: String,
+    pub blocks: usize,
+}
+
+/// The notes with unreviewed agent blocks across the whole vault, in path order:
+/// the status bar's list, the file tree's marks and the review's note-to-note
+/// step all read it.
+#[tauri::command]
+pub fn provenance_pending_notes(state: State<'_, AppState>) -> Result<Vec<PendingNote>, String> {
+    with_vault(&state, |v| Ok(v.pending_notes().into_iter().map(|(path, blocks)| PendingNote { path, blocks }).collect()))
+}
+
+/// What a note-level accept did: agent blocks accepted, and the notes touched.
+#[derive(serde::Serialize)]
+pub struct AcceptedTotal {
     pub blocks: usize,
     pub notes: usize,
 }
 
-/// The unreviewed agent blocks across the whole vault (the status bar's "vault" chip).
-#[tauri::command]
-pub fn provenance_pending_total(state: State<'_, AppState>) -> Result<PendingTotal, String> {
-    with_vault(&state, |v| {
-        let (blocks, notes) = v.pending_total();
-        Ok(PendingTotal { blocks, notes })
-    })
-}
-
-/// Accept every unreviewed agent block in every note; returns what was accepted.
+/// Accept every unreviewed agent block in these notes (every note, when None).
 /// Not broadcast: accepting is not a note event.
 #[tauri::command]
-pub fn provenance_accept_vault(state: State<'_, AppState>) -> Result<PendingTotal, String> {
+pub fn provenance_accept_notes(state: State<'_, AppState>, paths: Option<Vec<String>>) -> Result<AcceptedTotal, String> {
     with_vault_mut(&state, |v| {
-        let (blocks, notes) = v.accept_provenance_all();
-        Ok(PendingTotal { blocks, notes })
+        let (blocks, notes) = v.accept_provenance_notes(paths.as_deref());
+        Ok(AcceptedTotal { blocks, notes })
     })
 }
 
 /// How to undo the agent writes behind the unreviewed blocks of the note in
-/// `text` (the editor's buffer) — one block by local id, or all of them — as
-/// byte replacements in that text. Nothing is written: the editor applies the
-/// plan as one undoable edit and saves as it does any edit.
+/// `text` (the editor's buffer) — the blocks with these local ids (a run), or
+/// all of them — as byte replacements in that text. Nothing is written: the
+/// editor applies the plan as one undoable edit and saves as it does any edit.
 #[tauri::command]
-pub fn provenance_revert_plan(state: State<'_, AppState>, text: String, local_id: Option<String>) -> Result<RevertPlan, String> {
-    with_vault(&state, |v| v.revert_plan(&text, local_id.as_deref()).map_err(crate::i18n::err))
+pub fn provenance_revert_plan(state: State<'_, AppState>, text: String, local_ids: Option<Vec<String>>) -> Result<RevertPlan, String> {
+    with_vault(&state, |v| {
+        let ids: Option<Vec<&str>> = local_ids.as_ref().map(|l| l.iter().map(String::as_str).collect());
+        v.revert_plan_ids(&text, ids.as_deref()).map_err(crate::i18n::err)
+    })
 }
 
 /// Record text the user placed themselves (a chat answer inserted, a clip, a

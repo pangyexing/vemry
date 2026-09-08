@@ -205,17 +205,28 @@ export interface BlockProvenance {
   span: { start: number; end: number };
   /** For an unreviewed block: the part of it the write added, when the ledger's hunk can be found (a block the model extended keeps its reviewed lines out of the mark). */
   changed?: { start: number; end: number };
+  /** Where that write's hunk sits in the note: blocks sharing it arrived in one hunk and are reviewed as one run. */
+  hunk?: { start: number; end: number };
+  /** The lines that hunk replaced, when the write replaced rather than added. */
+  replaced?: string;
   hash: string;
   origin: Origin;
 }
 
-/** How to undo the agent writes behind unreviewed blocks (mirrors vemry-core's `RevertPlan`):
- *  byte ranges of the text the plan was made for. */
-/** A vault-wide review count (mirroring commands.rs::PendingTotal). */
-export interface PendingTotal {
+/** One note with unreviewed AI blocks (mirroring commands.rs::PendingNote); the list comes in path order. */
+export interface PendingNote {
+  path: string;
+  blocks: number;
+}
+
+/** What a note-level accept did (mirroring commands.rs::AcceptedTotal). */
+export interface AcceptedTotal {
   blocks: number;
   notes: number;
 }
+
+/** How to undo the agent writes behind unreviewed blocks (mirrors vemry-core's `RevertPlan`):
+ *  byte ranges of the text the plan was made for. */
 
 export interface RevertPlan {
   replacements: { from: number; to: number; insert: string }[];
@@ -474,8 +485,8 @@ export type AgentEvent =
   | { type: "read_request"; request: ReadRequest }
   /** The read gate's outcome after the fetch: the pages read, the ones that failed, and whether the standing consent answered it. */
   | { type: "read_decided"; id: string; urls: string[]; failed: string[]; auto: boolean }
-  /** A write landed in this turn: the UI counts them per turn to offer "undo this turn's writes". */
-  | { type: "write_landed"; turn: string | null }
+  /** A write landed in this turn: the UI counts them per turn to offer "undo this turn's writes", and keeps the notes touched so the turn's review can start from them. */
+  | { type: "write_landed"; turn: string | null; path: string }
   /** The web sources this turn cited, settled by Rust at the end of the turn with their verification (authoritative for the turn's source card). */
   | { type: "sources_updated"; turn: string | null; items: SourceRecord[] }
   | { type: "web_searching" }
@@ -647,7 +658,11 @@ export type HostAction =
   | { kind: "insert"; payload: string; session?: string }
   | { kind: "pin"; payload: string; session?: string }
   | { kind: "memo"; text: string }
-  | { kind: "command"; id: string };
+  | { kind: "command"; id: string }
+  /** Start reviewing the AI blocks of these notes (a turn's writes): the first still unreviewed opens on its first run. */
+  | { kind: "review-start"; paths: string[] }
+  /** Mark every unreviewed AI block of these notes as reviewed. */
+  | { kind: "review-accept"; paths: string[] };
 /** An action from the detached browser window's chrome bar (`browserbar`) to the main
  *  window (App.svelte listens and runs it; the clip flow, clipTarget and the editor
  *  buffer all live in the main window alone). The clip actions carry the tab's label. */
@@ -1025,14 +1040,14 @@ export const api = {
   blockIdPlan: (source: string, selector: BlockSelector) => invoke<BlockIdPlan>("block_id_plan", { source, selector }),
   /** Who authored each block of a note. */
   provenanceGet: (path: string) => invoke<BlockProvenance[]>("provenance_get", { path }),
-  /** Accept pending agent blocks (one by local id, or all); resolves to the count still pending. */
-  provenanceAccept: (path: string, localId?: string) => invoke<number>("provenance_accept", { path, localId }),
-  /** The unreviewed AI blocks across the vault, and the notes holding them. */
-  provenancePendingTotal: () => invoke<PendingTotal>("provenance_pending_total"),
-  /** Mark every unreviewed AI block in every note as reviewed; returns what was accepted. */
-  provenanceAcceptVault: () => invoke<PendingTotal>("provenance_accept_vault"),
+  /** Accept pending agent blocks (those with these local ids — a run — or all); resolves to the count still pending. */
+  provenanceAccept: (path: string, localIds?: string[]) => invoke<number>("provenance_accept", { path, localIds }),
+  /** The notes with unreviewed AI blocks across the vault, in path order (the status bar's list, the file tree's marks, the review's note-to-note step). */
+  provenancePendingNotes: () => invoke<PendingNote[]>("provenance_pending_notes"),
+  /** Mark every unreviewed AI block in these notes (every note, when omitted) as reviewed. */
+  provenanceAcceptNotes: (paths?: string[]) => invoke<AcceptedTotal>("provenance_accept_notes", { paths }),
   /** The revert plan for `text` (the editor's buffer): one unreviewed block by local id, or all; the editor applies it as one undoable edit. */
-  provenanceRevertPlan: (text: string, localId?: string) => invoke<RevertPlan>("provenance_revert_plan", { text, localId }),
+  provenanceRevertPlan: (text: string, localIds?: string[]) => invoke<RevertPlan>("provenance_revert_plan", { text, localIds }),
   /** Record text the user placed themselves (lands accepted); a private path or text without blocks records nothing. */
   provenanceRecord: (path: string, text: string, origin: "agent" | "clip" | "capture", session?: string, url?: string) =>
     invoke<void>("provenance_record", { path, text, origin, session, url }),

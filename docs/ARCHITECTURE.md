@@ -416,10 +416,14 @@ head, or the `> — [title](url) · date` credit line older clips end with), a w
 a block without a record is the user's). New agent-created notes now carry
 `vemry.agent_session`, and the audit's `permission` row records the
 `applied_diff` of an "edit, then apply". IPC: `provenance_get` (every block's
-origin), `provenance_accept` (one block or the whole note; not broadcast, since
+origin, with the located hunk and what it replaced for a pending one),
+`provenance_accept` (a set of blocks or the whole note; not broadcast, since
 accepting is not a note event), `provenance_record` (the user-placed inserts),
-`provenance_pending` (notes with pending blocks), `provenance_revert_plan`
-(below). Known limits: a pending block
+`provenance_pending_notes` (the notes with pending blocks, in path order, each
+with its count — the one list the status bar's chip, the file tree's marks and
+the review's note-to-note step read), `provenance_accept_notes` (every pending
+block of a set of notes, or of the vault), `provenance_revert_plan` (below).
+Known limits: a pending block
 moved into another note keeps its state but escapes the per-note count; the
 overlay is disk truth with the autosave lag; similarity matching ("yours,
 edited") is a seam.
@@ -431,11 +435,37 @@ and the field keeps mapping the last rows through the edits meanwhile. Two
 independent layers: an amber bar beside every AI block still awaiting review
 (on by default, the `provenance_marks` setting) and a four-colour origin
 overlay that a command toggles. The status bar names the origin of the block
-under the cursor when it is not the user's, and shows "pending N" as a button
-that jumps to the next unreviewed block; the block menu offers "accept AI
-change" and "accept all in this note"; the sessions view's write rows open the
-note with the overlay on ("view the written blocks") and show the
-`applied_diff` of an edit-then-apply. The user-placed inserts are recorded at
+under the cursor when it is not the user's, and shows "unreviewed N" with a
+step either way; the block menu offers "accept AI change" and "accept all in
+this note"; the sessions view's write rows open the note on its first
+unreviewed change with the overlay on ("view the written blocks") and show the
+`applied_diff` of an edit-then-apply.
+
+Review is a walk, in runs. The blocks one hunk produced (a heading and the
+paragraphs under it) are one **run** with one pair of controls on its first
+line — ✓ marks the run reviewed, ✕ puts its write back, and a run whose write
+replaced lines has ⇄, which unfolds what it replaced above the run, struck
+through and read-only; a block inside a run of several keeps its own pair,
+shown when its line is hovered, and the block menu and the palette still act
+per block. Either decision **steps on**: the cursor lands on the next run
+below, else the note's first run still unreviewed, else the next note with
+unreviewed blocks opens on its first run (`vault.reviewNextNote`), and when no
+note has any left a toast says so. ⌘Y and ⌘⇧Y are the two decisions from the
+keyboard (bound inside the editor, falling through off a run, so Ctrl+Y stays
+redo where it is one); ⌘⌥↓ and ⌘⌥↑ step without deciding, across notes at
+either end (`vault.reviewStep`). The note-to-note order is path order over
+`provenance_pending_notes`; a note opened for review lands once the editor has
+its rows (`vault.reviewLanding`, consumed by `loadProvenance`), since the rows
+come from an async read after the open resolves. The same list marks each
+note in the file tree with an amber dot, fills the status bar's vault chip
+("other notes M · N blocks"), whose click lists those notes with their counts
+(a click opens one on its first run; marking the whole vault sits at the
+bottom, behind a second click), and puts a strip under a turn's final answer
+in the chat when notes it wrote still await review — "Review" opens the first
+of them, "mark all as reviewed" takes just that turn's notes; both run in the
+main window (`HostAction` review-start / review-accept), the turn's notes
+coming from `write_landed` events (`agent.notesByTurn`). Vault-wide revert is
+not a separate action: the turn's own "undo this turn's writes" is that. The user-placed inserts are recorded at
 their landing points — a chat answer inserted or pinned (`host.ts`, with the
 session id), a selection clip (`clipTarget.deliver`, with the URL), a quick
 capture (`vault.capture`), and "save as note" (which now also writes
@@ -456,9 +486,9 @@ block's hash. The mark itself follows the hunk: `provenance_get` reports, for
 a pending block whose hunk can be found, the part of the block that write
 added (`changed`), and the amber bar and the controls sit on those lines — a
 block the model merely extended keeps its reviewed lines bare, the block stays
-the unit of accepting, the line the unit of showing. The control on an
-unreviewed block's first changed line is therefore a pair, ✓ and ✕; the status bar has "✓ All" and "✕ All"; the block menu and the
-command palette carry both. Independently of the ledger, a reload of the open
+the unit of accepting, the line the unit of showing, the hunk the unit of
+deciding (the run above). The status bar has "✓ This note" and "✕ This note";
+the block menu and the command palette carry both per block. Independently of the ledger, a reload of the open
 note from disk — an agent write landing, an edit in another app — is applied to
 the buffer as one edit rather than a fresh state (`Editor.svelte`'s `loadDoc`):
 the undo stack survives it, the cursor stays, and ⌘Z takes an agent write back

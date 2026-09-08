@@ -1878,6 +1878,45 @@ button:focus-visible,
   border-color: color-mix(in srgb, var(--danger) 55%, transparent);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
+.cm-prov-review.cm-prov-old-toggle.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--prov-agent) 22%, transparent);
+}
+/* A block's own pair inside a run of several: there on hover of its line only, the
+   run's pair on the first line being the one that is always shown */
+.cm-line .cm-prov-controls.cm-prov-block {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.cm-line:hover .cm-prov-controls.cm-prov-block {
+  opacity: 1;
+}
+/* What a run's write replaced, unfolded above it: the text as it was, struck through,
+   read-only (a block widget, so it goes through blockRoot like every other) */
+.cm-prov-old {
+  margin: 4px 0 6px;
+  padding: 4px 10px 4px 9px;
+  border-left: 3px dotted color-mix(in srgb, var(--prov-agent) 60%, transparent);
+  color: var(--fg-muted);
+  font-size: 0.92em;
+}
+.cm-prov-old-label {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--prov-agent);
+  margin-bottom: 2px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.cm-prov-old-body {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--fg-muted) 55%, transparent);
+}
 .cm-editor .cm-scroller .cm-line.cm-prov-you {
   background: color-mix(in srgb, var(--prov-you) 9%, transparent);
 }

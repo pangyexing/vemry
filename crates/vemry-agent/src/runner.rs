@@ -121,8 +121,9 @@ pub enum AgentEvent {
     /// A skill is in effect for this turn: the user attached it (`/name`) or the model read it.
     SkillActivated { name: String },
     /// A write landed on disk in this turn (after the vault events): the UI counts
-    /// them per turn to offer "undo this turn's writes".
-    WriteLanded { turn: Option<String> },
+    /// them per turn to offer "undo this turn's writes", and keeps the notes
+    /// touched so the turn's review can start from them.
+    WriteLanded { turn: Option<String>, path: String },
     /// A write tool landed on disk. The vault's own watcher swallows the change as
     /// a self-write (the same suppression that keeps a user's save from echoing), so
     /// the glue layer broadcasts these as vault events — the open note reloads, the
@@ -1043,7 +1044,7 @@ impl AgentRunner {
         if !events.is_empty() {
             on_event(AgentEvent::VaultChanged { events });
         }
-        on_event(AgentEvent::WriteLanded { turn: turn.map(String::from) });
+        on_event(AgentEvent::WriteLanded { turn: turn.map(String::from), path: write_req.path.clone() });
         Ok(outcome.message)
     }
 

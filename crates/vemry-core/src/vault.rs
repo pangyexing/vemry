@@ -813,16 +813,22 @@ impl Vault {
                 let slice = &raw[b.span.clone()];
                 let hash = provenance::block_hash(slice, &b.kind);
                 let record = hash.as_deref().and_then(|h| self.provenance.lookup(h));
-                // The lines the pending write added, when its hunk can be found
-                let changed = record
+                // The pending write's hunk, when it can be found: the lines it added
+                // inside this block are the mark, its whole region names the run, and
+                // what it replaced is kept for showing
+                let located = record
                     .filter(|r| !r.accepted && matches!(r.source, provenance::ProvSource::Agent { .. }))
-                    .and_then(|r| provenance::hunk_of_block(&raw, r, &b.span))
+                    .and_then(|r| provenance::hunk_of_block(&raw, r, &b.span));
+                let changed = located
+                    .as_ref()
                     .map(|(r, _)| r.start.max(b.span.start)..r.end.min(b.span.end))
                     .filter(|c| c.start < c.end);
                 BlockProvenance {
                     local_id: b.local_id.clone(),
                     span: b.span.clone(),
                     changed,
+                    hunk: located.as_ref().map(|(r, _)| r.clone()),
+                    replaced: located.and_then(|(_, h)| (!h.old.is_empty()).then(|| h.old.clone())),
                     origin: provenance::derive_origin(slice, record, &facts, known),
                     hash: hash.unwrap_or_default(),
                 }
@@ -838,27 +844,37 @@ impl Vault {
     }
 
 
-    /// Agent-written blocks awaiting review across the vault: (blocks, notes). Only
-    /// the notes the ledger names as candidates are read.
-    pub fn pending_total(&self) -> (usize, usize) {
-        let mut blocks = 0;
-        let mut notes = 0;
-        for p in self.provenance.paths_with_pending_agent() {
-            let n = self.pending_count(&NoteId::new(&p));
-            if n > 0 {
-                blocks += n;
-                notes += 1;
-            }
-        }
-        (blocks, notes)
+    /// The notes holding agent-written blocks awaiting review, in path order, each
+    /// with its count — the list a review walks note by note. Only the notes the
+    /// ledger names as candidates are read.
+    pub fn pending_notes(&self) -> Vec<(String, usize)> {
+        self.provenance
+            .paths_with_pending_agent()
+            .into_iter()
+            .filter_map(|p| {
+                let n = self.pending_count(&NoteId::new(&p));
+                (n > 0).then_some((p, n))
+            })
+            .collect()
     }
 
-    /// Accept every pending agent block in every note; returns (blocks accepted,
-    /// notes touched). A note that cannot be read is skipped, not fatal.
-    pub fn accept_provenance_all(&mut self) -> (usize, usize) {
+    /// Agent-written blocks awaiting review across the vault: (blocks, notes).
+    pub fn pending_total(&self) -> (usize, usize) {
+        let notes = self.pending_notes();
+        (notes.iter().map(|(_, n)| n).sum(), notes.len())
+    }
+
+    /// Accept every pending agent block in these notes (every note with one, when
+    /// None — the whole vault); returns (blocks accepted, notes touched). A note that
+    /// cannot be read is skipped, not fatal.
+    pub fn accept_provenance_notes(&mut self, paths: Option<&[String]>) -> (usize, usize) {
+        let paths = match paths {
+            Some(p) => p.to_vec(),
+            None => self.provenance.paths_with_pending_agent(),
+        };
         let mut blocks = 0;
         let mut notes = 0;
-        for p in self.provenance.paths_with_pending_agent() {
+        for p in paths {
             let id = NoteId::new(&p);
             let before = self.pending_count(&id);
             if before == 0 {
@@ -878,24 +894,36 @@ impl Vault {
     }
 
     /// Accept the pending agent blocks of a note — one by local id, or all of
-    /// them — and return how many are still pending.
+    /// them — and return how many are still pending (`accept_provenance_ids`
+    /// for a set of blocks).
     pub fn accept_provenance(&mut self, id: &NoteId, local_id: Option<&str>) -> Result<usize> {
+        self.accept_provenance_ids(id, local_id.map(|l| vec![l]).as_deref())
+    }
+
+    /// Accept the pending agent blocks of a note — those with these local ids
+    /// (a run the editor reviews as one), or all of them — and return how many
+    /// are still pending. A block already reviewed is passed over; an id that
+    /// names no block is an error.
+    pub fn accept_provenance_ids(&mut self, id: &NoteId, local_ids: Option<&[&str]>) -> Result<usize> {
         let prov = self.provenance(id)?;
         let pending = |p: &BlockProvenance| matches!(p.origin, Origin::Agent { pending: true, .. });
-        let hashes: Vec<String> = match local_id {
+        let hashes: Vec<String> = match local_ids {
             None => prov.iter().filter(|p| pending(p)).map(|p| p.hash.clone()).collect(),
-            Some(lid) => {
+            Some(ids) => {
                 // The one lookup rule (an explicit `^id` beats a positional `bN` spelled
                 // the same): the rows are in block order, so the index carries over
                 let raw = self.read_note(id)?;
-                let p = crate::locate::find_block(&parse_note(&raw).blocks, lid)
-                    .and_then(|i| prov.get(i))
-                    .ok_or_else(|| VemryError::BlockNotFound { local_id: lid.to_string() })?;
-                if pending(p) {
-                    vec![p.hash.clone()]
-                } else {
-                    vec![]
+                let blocks = parse_note(&raw).blocks;
+                let mut hashes = Vec::new();
+                for lid in ids {
+                    let p = crate::locate::find_block(&blocks, lid)
+                        .and_then(|i| prov.get(i))
+                        .ok_or_else(|| VemryError::BlockNotFound { local_id: lid.to_string() })?;
+                    if pending(p) && !hashes.contains(&p.hash) {
+                        hashes.push(p.hash.clone());
+                    }
                 }
+                hashes
             }
         };
         if !hashes.is_empty() {
@@ -910,6 +938,11 @@ impl Vault {
     /// is written here.
     pub fn revert_plan(&self, text: &str, local_id: Option<&str>) -> Result<provenance::RevertPlan> {
         provenance::plan_revert(text, |h| self.provenance.lookup(h), local_id)
+    }
+
+    /// `revert_plan` for a set of blocks (a run), or all of them when None.
+    pub fn revert_plan_ids(&self, text: &str, local_ids: Option<&[&str]>) -> Result<provenance::RevertPlan> {
+        provenance::plan_revert_ids(text, |h| self.provenance.lookup(h), local_ids)
     }
 
     /// Append text (with separating newline) — used by quick capture.
@@ -1807,7 +1840,12 @@ agent here too
 ");
         vault.record_provenance(ProvenanceEntry::Agent { ts: "t3".into(), session: None, path: "m.md".into(), blocks: added_m, hunks: vec![] });
         assert_eq!(vault.pending_total(), (2, 2));
-        assert_eq!(vault.accept_provenance_all(), (2, 2));
+        // the note list is what a review walks: path order, each with its count
+        assert_eq!(vault.pending_notes(), vec![("m.md".to_string(), 1), (n.to_string(), 1)]);
+        // a note-level accept takes the notes named and leaves the rest
+        assert_eq!(vault.accept_provenance_notes(Some(&["m.md".to_string()])), (1, 1));
+        assert_eq!(vault.pending_notes(), vec![(n.to_string(), 1)]);
+        assert_eq!(vault.accept_provenance_notes(None), (1, 1));
         assert_eq!(vault.pending_total(), (0, 0));
         assert_eq!(vault.pending_count(&n), 0);
         // (the rest of the test continues on n: its late block is accepted now, so re-add one to keep the story)

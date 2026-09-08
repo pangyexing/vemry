@@ -38,10 +38,10 @@ export interface BlockMenuHost {
   pendingBlock(view: EditorView, block: EditorBlock): string | null;
   /** How many blocks of this note await review. */
   pendingCount(): number;
-  /** Accept one pending block (a local id) or, with null, every one in the note. */
-  acceptProvenance(localId: string | null): void;
-  /** Put the write behind one pending block (a local id) or, with null, every one in the note back. */
-  rejectProvenance(localId: string | null): void;
+  /** Accept pending blocks (local ids) or, with null, every one in the note. */
+  acceptProvenance(ids: string[] | null): void;
+  /** Put the write behind pending blocks (local ids) or, with null, every one in the note back. */
+  rejectProvenance(ids: string[] | null): void;
   /** The vault's enabled block types ("turn into ›" lists them after the kinds). */
   blockTypes(): BlockType[];
 }
@@ -131,8 +131,8 @@ export function blockMenuEntries(view: EditorView, b: EditorBlock, host: BlockMe
   const prov: MenuEntry[] = [];
   const pend = host.pendingBlock(view, b);
   if (pend) {
-    prov.push({ label: t("prov.acceptBlock"), action: () => host.acceptProvenance(pend) });
-    prov.push({ label: t("prov.rejectBlock"), action: () => host.rejectProvenance(pend) });
+    prov.push({ label: t("prov.acceptBlock"), action: () => host.acceptProvenance([pend]) });
+    prov.push({ label: t("prov.rejectBlock"), action: () => host.rejectProvenance([pend]) });
   }
   if (host.pendingCount() > 0) {
     prov.push({ label: t("prov.acceptAll"), action: () => host.acceptProvenance(null) });

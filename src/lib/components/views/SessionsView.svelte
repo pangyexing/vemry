@@ -97,10 +97,8 @@
    *  the first block still awaiting review (a note whose blocks were all accepted or
    *  rewritten since just opens). */
   async function openWritten(path: string) {
-    await vault.openNote(path);
     vault.provenanceOverlay = true;
-    await tick();
-    vault.nextPending?.();
+    await vault.openForReview(path, "first");
   }
 
   /** Reread the session's content while keeping the expansion state (the log only appends, so the indices of existing entries are stable) */

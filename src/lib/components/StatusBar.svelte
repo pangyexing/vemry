@@ -6,13 +6,38 @@
   // Every figure comes from what the vault store already pushes — the editor is the
   // only producer, and this merely projects it.
   import { t, tn } from "$lib/i18n/i18n.svelte";
-  import { vault, vaultName } from "$lib/stores/vault.svelte";
+  import { stemOf, vault, vaultName } from "$lib/stores/vault.svelte";
   import { originLabel } from "$lib/editor/provenance";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { executeCommand } from "$lib/commands/registry";
+  import { contextMenu } from "$lib/stores/contextMenu.svelte";
+  import { k } from "$lib/shortcut";
   import PrivacyIcon from "./PrivacyIcon.svelte";
 
   const inPrivate = $derived(vault.currentPath !== null && vault.privatePaths.has(vault.currentPath));
+  /** Unreviewed AI blocks in notes other than the open one (the vault chip's count). */
+  const others = $derived.by(() => {
+    const rest = vault.pendingNotes.filter((p) => p.path !== vault.currentPath);
+    return { notes: rest.length, blocks: rest.reduce((n, p) => n + p.blocks, 0) };
+  });
+
+  /** The vault chip's list: every note with unreviewed AI blocks and its count, a click
+   *  opening the note on its first run; marking the whole vault sits at the bottom behind
+   *  a second click, since it is the one action here that cannot be looked at first. */
+  function pendingList(e: MouseEvent) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    contextMenu.openAt(r.left, r.top - 4, [
+      { title: t("prov.pendingListTitle") },
+      ...vault.pendingNotes.map((p) => ({
+        label: stemOf(p.path),
+        hint: String(p.blocks),
+        checked: p.path === vault.currentPath,
+        action: () => void vault.openForReview(p.path),
+      })),
+      { separator: true },
+      { label: t("prov.acceptVault"), confirm: t("prov.acceptVaultConfirm"), action: () => void executeCommand("provenance-accept-vault") },
+    ]);
+  }
 </script>
 
 <footer class="statusbar">
@@ -32,15 +57,21 @@
     <span class="origin origin-{vault.editorOrigin.origin}" title={originLabel(vault.editorOrigin)}>{originLabel(vault.editorOrigin, { withState: false })}</span>
   {/if}
   {#if vault.pendingCount > 0 && prefs.provenanceMarks}
-    <button class="pending" title={t("prov.pendingHint")} onclick={() => vault.nextPending?.()}>{t("prov.pendingCount", { n: vault.pendingCount })}</button>
+    <span class="pending-group">
+      <button class="pending" title={t("prov.pendingHint")} onclick={() => void executeCommand("provenance-next-pending")}>{t("prov.pendingCount", { n: vault.pendingCount })}</button>
+      <!-- the review's steps: the previous or next unreviewed change, on to the next note at either end -->
+      <button class="pending step" title={t("prov.prevHint", { key: k("Mod+Alt+↑") })} onclick={() => void executeCommand("provenance-prev-pending")}>↑</button>
+      <button class="pending step" title={t("prov.nextHint", { key: k("Mod+Alt+↓") })} onclick={() => void executeCommand("provenance-next-pending")}>↓</button>
+    </span>
     <!-- one click for this note (the palette command carries the toast); the labels say "this note", not "all" — the vault chip beside them is the wider scope -->
     <button class="pending" title={t("prov.acceptAll")} onclick={() => void executeCommand("provenance-accept-all")}>{t("prov.acceptAllShort")}</button>
     <button class="pending" title={t("prov.rejectAll")} onclick={() => void executeCommand("provenance-reject-all")}>{t("prov.rejectAllShort")}</button>
   {/if}
-  {#if prefs.provenanceMarks && vault.pendingVault.notes > (vault.pendingCount > 0 ? 1 : 0)}
-    <!-- unreviewed AI blocks in other notes too (an agent run that wrote many): the count, and one click for the whole vault -->
-    <span class="pending pending-vault" title={t("prov.pendingVaultHint")}>{t("prov.pendingVault", { n: vault.pendingVault.blocks, m: vault.pendingVault.notes })}</span>
-    <button class="pending" title={t("prov.acceptVault")} onclick={() => void executeCommand("provenance-accept-vault")}>{t("prov.acceptVaultShort")}</button>
+  {#if prefs.provenanceMarks && others.notes > 0}
+    <!-- unreviewed AI blocks in other notes too (an agent run that wrote many): the count opens the list of those notes -->
+    <button class="pending pending-vault" title={t("prov.pendingListHint")} onclick={pendingList}
+      >{t(vault.pendingCount > 0 ? "prov.pendingOthers" : "prov.pendingVault", { n: others.blocks, m: others.notes })} ▾</button
+    >
   {/if}
   <span class="right">
     {#if vault.editorLoc}
@@ -117,15 +148,23 @@
   .pending:hover {
     background: color-mix(in srgb, var(--prov-agent) 14%, transparent);
   }
-  /* the vault count is a label, not a button: no ring, no hover */
-  .pending-vault,
-  .pending-vault:hover {
+  /* the count and its two steps read as one control */
+  .pending-group {
+    display: inline-flex;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .pending.step {
+    padding: 0 5px;
+  }
+  /* the vault chip is quieter than this note's: no ring until hovered */
+  .pending-vault {
     border-color: transparent;
-    background: none;
-    cursor: default;
-    padding-left: 2px;
-    padding-right: 4px;
     opacity: 0.85;
+  }
+  .pending-vault:hover {
+    border-color: var(--prov-agent);
+    opacity: 1;
   }
   .right {
     margin-left: auto;

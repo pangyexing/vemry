@@ -890,6 +890,17 @@
       toast.push(String(e), "error");
     }
   }
+  /** The notes this bubble's turn wrote that still hold unreviewed AI blocks, with their
+   *  count — the strip under the answer that starts the turn's review. Null when the turn
+   *  wrote nothing, or everything it wrote has been looked at (or undone). */
+  function turnReview(i: number): { paths: string[]; blocks: number } | null {
+    const turn = turnIdFor(i);
+    const written = turn && !agent.undoneTurns[turn] ? agent.notesByTurn[turn] : undefined;
+    if (!written?.length) return null;
+    const pending = vault.pendingNotes.filter((p) => written.includes(p.path));
+    if (!pending.length) return null;
+    return { paths: pending.map((p) => p.path), blocks: pending.reduce((n, p) => n + p.blocks, 0) };
+  }
 
   const run = (p: Promise<unknown>) => void p.catch((e) => toast.push(String(e), "error"));
 
@@ -1788,6 +1799,17 @@
                  It is not shown while streaming. -->
             {#if isTurnFinal(i) && !(agent.running && i === lastAssistantIndex)}
               {@const undoable = undoableTurn(i)}
+              {@const review = turnReview(i)}
+              {#if review}
+                <!-- The turn's writes await review: the strip stays visible (unlike the foot) until
+                     they have been looked at, and its two actions run in the main window, where the
+                     editor is -->
+                <div class="review-strip">
+                  <span class="review-text">{t("chat.turnWrote", { m: review.paths.length, n: review.blocks })}</span>
+                  <button class="review-go" title={t("chat.reviewStartHint", { accept: k("Mod+Y"), next: k("Mod+Alt+↓") })} onclick={() => void hostDispatch({ kind: "review-start", paths: review.paths })}>{t("chat.reviewStart")}</button>
+                  <button title={t("chat.reviewAcceptHint")} onclick={() => void hostDispatch({ kind: "review-accept", paths: review.paths })}>{t("chat.reviewAccept")}</button>
+                </div>
+              {/if}
               <div class="msg-foot" class:current={i === lastAssistantIndex}>
                 <button title={t("chat.copyAnswerHint")} onclick={() => void copyAnswer(body)}>{t("chat.copy")}</button>
                 <button title={t("chat.insertAnswerHint")} onclick={() => void insertAnswer(body)}>{t("chat.insert")}</button>
@@ -3315,6 +3337,44 @@
      into a note. It rests at the end of each turn's final answer — where the hand already is after
      reading; the newest turn shows it permanently (quietened), and an older turn on hover.
      Its space is constant, so hovering does not shift the layout ---- */
+  /* The review strip under an answer whose writes await review: the amber of the
+     editor's pending bar, and unlike the foot it does not wait to be hovered */
+  .review-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 4px 8px;
+    border-left: 3px solid var(--prov-agent);
+    background: color-mix(in srgb, var(--prov-agent) 9%, transparent);
+    border-radius: 0 4px 4px 0;
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .review-strip .review-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .review-strip button {
+    font-size: var(--fs-xs);
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--prov-agent) 55%, transparent);
+    color: var(--prov-agent);
+    background: none;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .review-strip button:hover {
+    background: color-mix(in srgb, var(--prov-agent) 14%, transparent);
+  }
+  .review-strip .review-go {
+    background: color-mix(in srgb, var(--prov-agent) 16%, transparent);
+    border-color: var(--prov-agent);
+  }
   .msg-foot {
     display: flex;
     flex-wrap: wrap;

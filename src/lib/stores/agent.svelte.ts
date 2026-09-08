@@ -203,6 +203,8 @@ class AgentStore {
    *  restart or a session switch. */
   writesByTurn = $state<Record<string, number>>({});
   undoneTurns = $state<Record<string, boolean>>({});
+  /** The notes each turn wrote (turn id → paths, in landing order): the turn's review starts from them. Live only, like the counts. */
+  notesByTurn = $state<Record<string, string[]>>({});
   thinking = $state("");
   /** What the stream is delivering right now: reasoning tokens, answer text, or neither (a
    *  tool call in flight, or the gap between them) — the status strip's verb. Live only. */
@@ -640,6 +642,7 @@ class AgentStore {
     this.sourceTable = [];
     this.writesByTurn = {};
     this.undoneTurns = {};
+    this.notesByTurn = {};
     this.thinking = "";
   }
 
@@ -722,6 +725,7 @@ class AgentStore {
     this.sourceTable = [];
     this.writesByTurn = {}; // the journal is live-only: a rebuilt timeline offers no undo
     this.undoneTurns = {};
+    this.notesByTurn = {};
     let turnStart = 0;
     const finishTurn = () => {
       this.harvestTurn(items, turnStart);
@@ -1034,7 +1038,11 @@ class AgentStore {
         break;
       }
       case "write_landed": {
-        if (e.turn) this.writesByTurn[e.turn] = (this.writesByTurn[e.turn] ?? 0) + 1;
+        if (e.turn) {
+          this.writesByTurn[e.turn] = (this.writesByTurn[e.turn] ?? 0) + 1;
+          const paths = (this.notesByTurn[e.turn] ??= []);
+          if (!paths.includes(e.path)) paths.push(e.path);
+        }
         break;
       }
       case "web_searching": {

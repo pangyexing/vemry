@@ -38,11 +38,14 @@
   import { clearEmbedCaches, type EmbedHost } from "$lib/editor/embed";
   import {
     isPending,
-    nextPending,
     originAt,
     provenanceMarks as provMarksEffect,
     provenanceOverlay as provOverlayEffect,
     provenanceSet,
+    pendingRuns,
+    runAt,
+    stepRun,
+    type ReviewStep,
   } from "$lib/editor/provenance";
   import { flashRange } from "$lib/editor/flash";
   import { declaredField, fieldValueKind, scanFields, setFieldValue } from "$lib/fields";
@@ -384,25 +387,56 @@
     return true;
   }
   vault.blockCommand = blockCommand;
-  vault.nextPending = () => {
+  /** Land the cursor on a pending run (its first line) and bring it into view. */
+  function landOn(v: EditorView, pos: number) {
+    v.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+    focusEditor(v);
+  }
+  const stepPending = (which: ReviewStep): boolean => {
     if (!view) return false;
-    const pos = nextPending(view.state, view.state.selection.main.head);
+    const pos = stepRun(view.state, view.state.selection.main.head, which);
     if (pos == null) return false;
-    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
-    focusEditor(view);
+    landOn(view, pos);
     return true;
   };
-  vault.pendingAtCursor = () => {
-    if (!view) return null;
-    const row = originAt(view.state, view.state.selection.main.head);
-    return row && isPending(row.origin) ? row.local_id : null;
-  };
-  /** Put the agent write behind one unreviewed block (a local id) or, with null, every
-   *  unreviewed block of the note back: the ledger's record of what the write replaced goes
-   *  in again, as one undoable edit in the buffer, which then saves like any edit (the mark
-   *  goes with the block's hash). The buffer flushes first so the local ids the marks carry
-   *  are disk's; the plan is made against the buffer and applied only if it is unchanged. */
-  async function revertProvenance(localId: string | null) {
+  vault.stepPending = stepPending;
+  vault.pendingAtCursor = () => (view ? (runAt(view.state, view.state.selection.main.head)?.ids ?? null) : null);
+  /** Where the review goes on after acting on these blocks: the start of the next run
+   *  below the ones they belong to, else the note's first run still unreviewed (a review
+   *  begun mid-note wraps before leaving it), else null — the note's end. Null ids (the
+   *  whole note) go nowhere. */
+  function afterRuns(state: EditorState, ids: string[] | null): number | null {
+    if (!ids) return null;
+    const runs = pendingRuns(state);
+    const acted = (r: { ids: string[] }) => r.ids.some((id) => ids.includes(id));
+    const end = runs.filter(acted).reduce((m, r) => Math.max(m, r.to), -1);
+    if (end < 0) return null;
+    const rest = runs.filter((r) => !acted(r));
+    return (rest.find((r) => r.from >= end) ?? rest[0])?.from ?? null;
+  }
+  /** After a run is reviewed: the cursor moves to the next run of the note, or the review
+   *  steps to the next note with unreviewed blocks. `null` ids (a whole-note action) stay. */
+  function advance(v: EditorView, ids: string[] | null, next: number | null) {
+    if (!ids) return;
+    if (next != null) landOn(v, next);
+    else void vault.reviewNextNote();
+  }
+  /** Mark blocks reviewed and step on (the run's ✓, ⌘Y, the palette). */
+  async function acceptProvenance(ids: string[] | null) {
+    const v = view;
+    if (!v) return;
+    const next = afterRuns(v.state, ids);
+    const n = await vault.acceptProvenance(ids);
+    if (view !== v || !n) return;
+    advance(v, ids, next);
+  }
+  /** Put the agent write behind unreviewed blocks (local ids: one block, or the run the
+   *  editor groups) or, with null, every unreviewed block of the note back: the ledger's
+   *  record of what the write replaced goes in again, as one undoable edit in the buffer,
+   *  which then saves like any edit (the mark goes with the block's hash). The buffer
+   *  flushes first so the local ids the marks carry are disk's; the plan is made against
+   *  the buffer and applied only if it is unchanged. Then the review steps on. */
+  async function revertProvenance(ids: string[] | null) {
     const v = view;
     const path = docPath;
     if (!v || !path) return;
@@ -411,7 +445,7 @@
     const text = v.state.doc.toString();
     let plan: RevertPlan;
     try {
-      plan = await api.provenanceRevertPlan(text, localId ?? undefined);
+      plan = await api.provenanceRevertPlan(text, ids ?? undefined);
     } catch (e) {
       toast.push(String(e), "error");
       return;
@@ -424,15 +458,27 @@
       toast.push(t(plan.missed ? "prov.revertMissed" : "prov.noPendingHere"), "error");
       return;
     }
-    const changes = plan.replacements.map((r) => ({ from: byteToChar(text, r.from), to: byteToChar(text, r.to), insert: r.insert }));
+    const changes = v.state.changes(plan.replacements.map((r) => ({ from: byteToChar(text, r.from), to: byteToChar(text, r.to), insert: r.insert })));
     const missed = plan.missed;
+    // the run after the reverted one, carried across the edit
+    const after = afterRuns(v.state, ids);
+    const next = after != null ? changes.mapPos(after, 1) : null;
     whenNotComposing(() => {
       if (view !== v) return;
       v.dispatch({ changes, annotations: Transaction.userEvent.of("prov.revert") });
-      toast.push(missed ? t("prov.revertedPartly", { n: changes.length, m: missed }) : t("prov.reverted", { n: changes.length }));
+      const n = plan.replacements.length;
+      toast.push(missed ? t("prov.revertedPartly", { n, m: missed }) : t("prov.reverted", { n }));
+      advance(v, ids, next);
     });
   }
   vault.rejectProvenance = revertProvenance;
+  vault.reviewRun = (act) => {
+    if (!view) return false;
+    const run = runAt(view.state, view.state.selection.main.head);
+    if (!run) return false;
+    void (act === "accept" ? acceptProvenance(run.ids) : revertProvenance(run.ids));
+    return true;
+  };
 
   /** The snapshot source of `@ current selection`: with a non-empty main selection it updates
    *  vault.editorSelection with the line numbers (1-based, inclusive) and the text, and an
@@ -587,8 +633,8 @@
     },
     pendingCount: () => vault.pendingCount,
     blockTypes: () => types.enabled,
-    rejectProvenance: (localId) => void revertProvenance(localId),
-    acceptProvenance: (localId) => void vault.acceptProvenance(localId),
+    rejectProvenance: (ids) => void revertProvenance(ids),
+    acceptProvenance: (ids) => void acceptProvenance(ids),
     // Select the block's lines (the composer's automatic selection chip picks the
     // selection up through syncSelection → vault.editorSelection) and summon the agent
     askAgent: (v, b) => {
@@ -953,15 +999,27 @@
       text,
       items.map((p) => p.changed ?? p.span),
     );
+    const hunks = byteSpansToChar(
+      text,
+      items.map((p) => p.hunk ?? p.span),
+    );
     const rows = items.map((p, i) => ({
       ...ranges[i],
       local_id: p.local_id,
       origin: p.origin,
       changed: p.changed ? changed[i] : undefined,
+      hunk: p.hunk ? hunks[i] : undefined,
+      replaced: p.replaced,
     }));
     view.dispatch({ effects: provenanceSet.of(rows) });
     vault.pendingCount = rows.filter((r) => isPending(r.origin)).length;
     vault.editorOrigin = originAt(view.state, view.state.selection.main.head)?.origin ?? null;
+    // A note opened for review lands on its first (or last) run once the rows are here
+    const landing = vault.reviewLanding;
+    if (landing?.path === path) {
+      vault.reviewLanding = null;
+      stepPending(landing.which);
+    }
   }
 
   async function loadDoc(counter: number, path: string, content: string) {
@@ -1204,8 +1262,9 @@
     if (vault.insertAtSection === insertAtSection) vault.insertAtSection = null;
     if (vault.revealPos === revealPos) vault.revealPos = null;
     vault.blockCommand = null;
-    vault.nextPending = null;
+    vault.stepPending = null;
     vault.pendingAtCursor = null;
+    vault.reviewRun = null;
     vault.rejectProvenance = null;
     vault.locateText = null;
     vault.copyBlockRef = null;

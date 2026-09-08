@@ -301,21 +301,37 @@ pub fn hunk_of_block<'a>(
 }
 
 /// The revert plan for `text`: the pending block with `local_id`, or every
-/// pending block when None. A block's write is the ledger hunk whose added
-/// lines hold the block; the plan puts that hunk back to what it replaced, so
-/// blocks that arrived in one hunk go back together. Replacements come sorted
-/// and disjoint; a hunk that cannot be found once is missed, never guessed at.
+/// pending block when None (`plan_revert_ids` for a set of blocks).
 pub fn plan_revert<'a>(
     text: &str,
     lookup: impl Fn(&str) -> Option<&'a ProvRecord>,
     local_id: Option<&str>,
 ) -> crate::Result<RevertPlan> {
+    plan_revert_ids(text, lookup, local_id.map(|l| vec![l]).as_deref())
+}
+
+/// The revert plan for `text`: the pending blocks with these local ids (a run
+/// the editor reviews as one), or every pending block when None. A block's
+/// write is the ledger hunk whose added lines hold the block; the plan puts
+/// that hunk back to what it replaced, so blocks that arrived in one hunk go
+/// back together. Replacements come sorted and disjoint; a hunk that cannot be
+/// found once is missed, never guessed at.
+pub fn plan_revert_ids<'a>(
+    text: &str,
+    lookup: impl Fn(&str) -> Option<&'a ProvRecord>,
+    local_ids: Option<&[&str]>,
+) -> crate::Result<RevertPlan> {
     let parsed = parse_note(text);
-    let targets: Vec<&Block> = match local_id {
+    let targets: Vec<&Block> = match local_ids {
         // the one lookup rule: an explicit `^id` wins over a positional `bN` spelled the same
-        Some(lid) => vec![crate::locate::find_block(&parsed.blocks, lid)
-            .map(|i| &parsed.blocks[i])
-            .ok_or_else(|| crate::VemryError::BlockNotFound { local_id: lid.to_string() })?],
+        Some(ids) => ids
+            .iter()
+            .map(|lid| {
+                crate::locate::find_block(&parsed.blocks, lid)
+                    .map(|i| &parsed.blocks[i])
+                    .ok_or_else(|| crate::VemryError::BlockNotFound { local_id: lid.to_string() })
+            })
+            .collect::<crate::Result<Vec<_>>>()?,
         None => parsed.blocks.iter().collect(),
     };
     let mut plan = RevertPlan::default();
@@ -628,6 +644,15 @@ pub struct BlockProvenance {
     /// reviewed lines out of the mark). None when the ledger cannot say.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changed: Option<std::ops::Range<usize>>,
+    /// Where that write's hunk sits in the note now (its added lines, or the point
+    /// a pure removal left): blocks sharing it arrived in one hunk and are
+    /// reviewed as one run. None when the ledger cannot say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hunk: Option<std::ops::Range<usize>>,
+    /// The lines that hunk replaced, for the editor to show on request; None
+    /// when the write only added.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<String>,
     /// Empty for a block whose normalized text is empty.
     pub hash: String,
     pub origin: Origin,
@@ -829,6 +854,26 @@ mod tests {
         assert_eq!(plan.replacements, vec![Replacement { from: 2, to: 2, insert: "gone\n".into() }]);
         // a hunk elsewhere in the note does not belong to this block
         assert!(hunk_of_block("x\n\nTEST6\n", &ext, &(0..1)).is_none());
+    }
+
+    #[test]
+    fn a_run_of_blocks_from_one_hunk_goes_back_as_one_replacement() {
+        // a heading and its paragraph added by one hunk: the editor reviews them as one run
+        let text = "a\n\n## H\n\nP\n";
+        let stamps = stamps_of(text);
+        let rec = ProvRecord {
+            source: ProvSource::Agent { session: None },
+            ts: "t".into(),
+            accepted: false,
+            hunks: vec![Hunk { before: "a\n\n".into(), old: "old\n".into(), new: "## H\n\nP\n".into(), after: String::new() }],
+        };
+        let lookup = |h: &str| stamps.iter().any(|s| s.hash == h).then_some(&rec);
+        let both = plan_revert_ids(text, &lookup, Some(&["b1", "b2"][..])).unwrap();
+        assert_eq!(both.replacements, vec![Replacement { from: 3, to: 11, insert: "old\n".into() }]);
+        // either block alone names the same hunk, so the same replacement
+        assert_eq!(plan_revert_ids(text, &lookup, Some(&["b2"][..])).unwrap().replacements, both.replacements);
+        // an id that names no block is an error, not a skipped one
+        assert!(plan_revert_ids(text, &lookup, Some(&["b1", "b9"][..])).is_err());
     }
 
     #[test]

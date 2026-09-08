@@ -14,7 +14,7 @@ import { toast } from "$lib/stores/toast.svelte";
 import { executeCommand } from "$lib/commands/registry";
 
 /** For a navigation or command action the user wants to see the result: relaying it also brings the main window to the front. */
-const FOCUS_MAIN = new Set<HostAction["kind"]>(["open-note", "follow-link", "command"]);
+const FOCUS_MAIN = new Set<HostAction["kind"]>(["open-note", "follow-link", "command", "review-start"]);
 
 /** Run the action in the right window. From the chat window it is a one-way delivery
  *  (the result and any error toast in the main window); in the main window it runs
@@ -44,6 +44,12 @@ export async function runHostAction(a: HostAction): Promise<void> {
   switch (a.kind) {
     case "open-note":
       await vault.openNote(a.path);
+      return;
+    case "review-start":
+      await vault.reviewStart(a.paths);
+      return;
+    case "review-accept":
+      await vault.acceptProvenanceNotes(a.paths);
       return;
     case "follow-link":
       await vault.followLink(a.target, { guard: a.guard });

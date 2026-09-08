@@ -3,7 +3,7 @@ import { t } from "$lib/i18n/i18n.svelte";
 import { tick, untrack } from "svelte";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, onVaultEvent, type EditorSelection, type NoteSummary, type Origin, type VaultEvent } from "$lib/api";
+import { api, onVaultEvent, type EditorSelection, type NoteSummary, type Origin, type PendingNote, type VaultEvent } from "$lib/api";
 import { agent } from "$lib/stores/agent.svelte";
 import { clips } from "$lib/stores/clips.svelte";
 import { toast } from "$lib/stores/toast.svelte";
@@ -14,6 +14,7 @@ import { byteToChar } from "$lib/bytes";
 import { ymd } from "$lib/views/tasks";
 import { loadBucketMap, saveBucket } from "$lib/persist";
 import type { OutlineItem } from "$lib/outline";
+import type { ReviewStep } from "$lib/editor/provenance";
 
 /** What the center pane shows: the editor or one of the projection views.
  *  "reading" is the web reading projection (v0.5 P2) — its content and page history
@@ -349,16 +350,31 @@ class VaultStore {
   provenanceOverlay = $state(false);
   /** Bumped after an accept so the editor re-reads the ledger (accepting is not a note event and is not broadcast). */
   provenanceEpoch = $state(0);
-  /** Unreviewed AI blocks across the vault (the status bar's "vault" chip); refreshed on
-   *  vault events and after a review action, and read cheaply on the Rust side from the
-   *  ledger's candidate notes alone. */
-  pendingVault = $state<{ blocks: number; notes: number }>({ blocks: 0, notes: 0 });
-  /** Editor hook: move the cursor to the next pending block; false when there is none. */
-  nextPending: (() => boolean) | null = null;
-  /** Editor hook: the pending block under the cursor (its local id), or null. */
-  pendingAtCursor: (() => string | null) | null = null;
-  /** Put the write behind one unreviewed block (a local id) or, with null, every one of the current note back (set by the editor). */
-  rejectProvenance: ((localId: string | null) => Promise<void>) | null = null;
+  /** The notes with unreviewed AI blocks across the vault, in path order, each with its
+   *  count (the status bar's list, the file tree's marks, the review's note-to-note step);
+   *  refreshed on vault events and after a review action, and read cheaply on the Rust
+   *  side from the ledger's candidate notes alone. */
+  pendingNotes = $state<PendingNote[]>([]);
+  /** The vault-wide count the status bar shows: blocks and notes. */
+  get pendingVault(): { blocks: number; notes: number } {
+    return { blocks: this.pendingNotes.reduce((n, p) => n + p.blocks, 0), notes: this.pendingNotes.length };
+  }
+  /** How many AI blocks of a note await review (the file tree's mark). */
+  pendingIn(path: string): number {
+    return this.pendingNotes.find((p) => p.path === path)?.blocks ?? 0;
+  }
+  /** Where the review lands once the editor has the rows of the note just opened for it
+   *  (one-shot: the rows arrive from an async read, after the open resolves). */
+  reviewLanding: { path: string; which: "first" | "last" } | null = null;
+  /** Editor hook: move the cursor to a pending run of the open note (the next or previous
+   *  from the cursor, the first or last of the note); false when there is none that way. */
+  stepPending: ((which: ReviewStep) => boolean) | null = null;
+  /** Editor hook: the pending run under the cursor (its blocks' local ids), or null. */
+  pendingAtCursor: (() => string[] | null) | null = null;
+  /** Editor hook: act on the run under the cursor and step on; false when the cursor is not on one. */
+  reviewRun: ((act: "accept" | "reject") => boolean) | null = null;
+  /** Put the write behind unreviewed blocks (local ids) or, with null, every one of the current note back (set by the editor). */
+  rejectProvenance: ((ids: string[] | null) => Promise<void>) | null = null;
   /** The selection's statistics (for the status line). chars is computed from the doc
    *  (in UTF-16 units) — editorSelection.text is truncated at SELECTION_MAX_CHARS and
    *  cannot be counted. */
@@ -1591,20 +1607,25 @@ class VaultStore {
     return { intoEditor: false, landed };
   }
 
-  /** Accept one pending AI block (a local id) or, with null, every pending block of the
-   *  current note, and report it. The buffer flushes first: the ledger is flipped by the
-   *  hash of the block as it is on disk, and a stale disk copy would accept the wrong
-   *  text. The receipt is pushed here rather than by each of the three entry points (the
-   *  palette, the status bar and the block menu), so what the user is told does not depend
-   *  on which one they reached for. Returns how many blocks were accepted. */
-  async acceptProvenance(localId: string | null): Promise<number> {
+  /** Accept pending AI blocks (local ids: one block, or the run the editor groups) or,
+   *  with null, every pending block of the current note, and report it. The buffer
+   *  flushes first: the ledger is flipped by the hash of the block as it is on disk, and
+   *  a stale disk copy would accept the wrong text. The receipt is pushed here rather
+   *  than by each of the entry points (the palette, the status bar, the block menu, the
+   *  run's control, ⌘Y), so what the user is told does not depend on which one they
+   *  reached for. Returns how many blocks were accepted. */
+  async acceptProvenance(ids: string[] | null): Promise<number> {
     const path = this.currentPath;
     if (!path) return 0;
     try {
       if (this.dirty) await this.flushEditor?.();
-      const n = await api.provenanceAccept(path, localId ?? undefined);
+      const before = this.pendingCount;
+      const remaining = await api.provenanceAccept(path, ids ?? undefined);
+      // what the receipt counts: the note's drop in pending blocks (the editor's count is
+      // disk's after the flush), the ids' number only when no count was known
+      const n = before > 0 ? Math.max(before - remaining, 0) : (ids?.length ?? 0);
       this.provenanceEpoch++;
-      toast.push(localId ? t("prov.accepted") : t("prov.acceptedAll", { n }));
+      toast.push(n === 1 ? t("prov.accepted") : t("prov.acceptedAll", { n }));
       void this.refreshPendingVault();
       return n;
     } catch (e) {
@@ -1613,32 +1634,82 @@ class VaultStore {
     }
   }
 
-  /** The vault-wide review count; a failure (no vault open) leaves the chip at zero. */
+  /** The vault-wide review list; a failure (no vault open) leaves it empty. */
   async refreshPendingVault() {
     if (!this.root) {
-      this.pendingVault = { blocks: 0, notes: 0 };
+      this.pendingNotes = [];
       return;
     }
     try {
-      this.pendingVault = await api.provenancePendingTotal();
+      this.pendingNotes = await api.provenancePendingNotes();
     } catch {
-      this.pendingVault = { blocks: 0, notes: 0 };
+      this.pendingNotes = [];
     }
   }
 
-  /** Mark every unreviewed AI block in every note as reviewed — one click after an agent
-   *  run that wrote many notes (a study's chapters, a tidy's moves), when the reader has
-   *  decided to trust the batch rather than open each note. */
-  async acceptProvenanceVault(): Promise<void> {
+  /** Mark every unreviewed AI block in these notes (every note, with null) as reviewed —
+   *  one click after an agent run that wrote many notes (a study's chapters, a tidy's
+   *  moves), when the reader has decided to trust the batch rather than open each note. */
+  async acceptProvenanceNotes(paths: string[] | null): Promise<void> {
     try {
       if (this.dirty) await this.flushEditor?.();
-      const r = await api.provenanceAcceptVault();
+      const r = await api.provenanceAcceptNotes(paths ?? undefined);
       this.provenanceEpoch++;
       toast.push(t("prov.acceptedVault", { n: r.blocks, m: r.notes }));
       await this.refreshPendingVault();
     } catch (e) {
       toast.push(String(e), "error");
     }
+  }
+
+  /** The note with unreviewed blocks the review steps to from the open note: the next
+   *  (or previous) one in path order, wrapping; null when no other note has any. */
+  nextPendingNote(dir: "next" | "prev"): string | null {
+    const cur = this.currentPath;
+    const others = this.pendingNotes.map((p) => p.path).filter((p) => p !== cur);
+    if (!others.length) return null;
+    if (dir === "next") return others.find((p) => cur == null || p > cur) ?? others[0];
+    return [...others].reverse().find((p) => cur == null || p < cur) ?? others[others.length - 1];
+  }
+
+  /** Open a note for review and land on its first (or last) unreviewed run — right
+   *  away when the editor already holds the rows, else as soon as they arrive. */
+  async openForReview(path: string, which: "first" | "last" = "first"): Promise<void> {
+    this.reviewLanding = { path, which };
+    await this.openNote(path);
+    if (this.currentPath === path && this.stepPending?.(which)) this.reviewLanding = null;
+  }
+
+  /** One step of the review: the next (or previous) run of the open note, else the next
+   *  (or previous) note with unreviewed blocks, opened on its first (last) run; with no
+   *  other note, the open note's first (last) run again. False when nothing awaits
+   *  review anywhere. */
+  async reviewStep(dir: "next" | "prev"): Promise<boolean> {
+    if (this.stepPending?.(dir)) return true;
+    const path = this.nextPendingNote(dir);
+    if (path) {
+      await this.openForReview(path, dir === "next" ? "first" : "last");
+      return true;
+    }
+    return this.stepPending?.(dir === "next" ? "first" : "last") ?? false;
+  }
+
+  /** After the last run of a note is reviewed: on to the next note with unreviewed
+   *  blocks, or the word that the review is over. */
+  async reviewNextNote(): Promise<void> {
+    const path = this.nextPendingNote("next");
+    if (path) await this.openForReview(path, "first");
+    else toast.push(t("prov.allDone"));
+  }
+
+  /** Start reviewing these notes (a turn's writes) or, with null, every note with
+   *  unreviewed blocks: the first that still has any opens on its first run. */
+  async reviewStart(paths: string[] | null): Promise<void> {
+    await this.refreshPendingVault();
+    const pending = new Set(this.pendingNotes.map((p) => p.path));
+    const first = (paths ? [...paths].sort() : this.pendingNotes.map((p) => p.path)).find((p) => pending.has(p));
+    if (first) await this.openForReview(first, "first");
+    else toast.push(t("prov.allDone"));
   }
 
   /** Capture one quick memo: a list item with a timestamp, inserted into target (inbox.md
