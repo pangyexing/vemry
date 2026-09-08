@@ -190,8 +190,10 @@ What the page can and cannot render — checked against before every write:
 
 `papers/<slug>/` (slug = first author and year, `vaswani-2017`; the user's folder
 when named): the hub `<Title>.md`, `source.md`, `chapters/<nn> <title>.md`, and
-`cards.md`. One write_note per note; the source note by import_page. A study of the same paper later updates these notes in place
-(search_notes first; never a second folder for the same paper).
+`cards.md`. One write_note per note; the source note by import_page. A study of
+the same paper later updates these notes in place — edit_note and append_note on
+the chapters and cards, never a write_note that retypes one — (search_notes
+first; never a second folder for the same paper).
 
 ## Shape
 

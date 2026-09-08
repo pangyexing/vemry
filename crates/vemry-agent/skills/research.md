@@ -61,9 +61,10 @@ text. The same request produces the same plan.
 3. Otherwise research/<topic>.md, the topic being the question in a few words in
    the user's language — one write_note when the investigation is done. First
    search_notes (or list_notes on research/) for a note on the same topic: one
-   that exists is updated in place, not joined by a near-duplicate under a
-   slightly different name; only a request for a fresh note gets a new one,
-   named with the date.
+   that exists is updated in place — append_note for a new section, edit_note
+   for a claim that changed, set_frontmatter for sources: and status: — not
+   joined by a near-duplicate under a slightly different name; only a request
+   for a fresh note gets a new one, named with the date.
 4. A follow-up on the same topic in the same session updates that note.
 
 ## Shape
@@ -87,3 +88,6 @@ text. The same request produces the same plan.
 - Appending the result to whichever note happens to be open, or leaving a
   systematic investigation as a chat answer only.
 - A bare path where a [[wikilink]] belongs.
+- write_note over a note that exists: that retypes every line the note already
+  has through the slow direction; the note is appended to or edited, block by
+  block.
