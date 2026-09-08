@@ -162,7 +162,8 @@ complete dialect and each fallback: [docs/SYNTAX.md](docs/SYNTAX.md).
 Working today on `main`: the editor and its live preview, seven projections, the
 block index and query API, the agent with its domain tools behind a write gate,
 privacy zones, the scripting sandbox, the built-in browser with clipping and a
-reading projection, and an interface that speaks English and Chinese.
+reading projection, side-by-side translation of a note, a web page or a PDF, and an
+interface that speaks English and Chinese.
 
 **The published installers predate this README.** The English interface in
 particular has not shipped yet — the latest release is Chinese-only. Until 0.9.0 is

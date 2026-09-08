@@ -2234,7 +2234,11 @@ the user presses "save as note".
   the same states as a row. A file in a privacy zone is refused whole; the cache
   is filed by the bytes' hash, like the extraction. Saving groups the translations
   under a heading per page ("第 N 页" / "Page N", in the target language) beside
-  the file, `translation_of` naming it.
+  the file, `translation_of` naming it. Clicking a translated paragraph lights its
+  passage on the page: `textRects` looks the segment's text up among pdf.js's text
+  items (whitespace ignored on both sides; the head and the tail when the whole
+  run is not found as one) and the boxes are laid over the canvas as fractions of
+  the page.
 - **Thinking off.** A translation is transcription, not reasoning: on a thinking
   model the thinking is most of the latency (measured on a 2.4k-character page:
   51s at the light level, 6s with thinking disabled), so the request disables it

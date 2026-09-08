@@ -3,13 +3,14 @@
   // column changes width. The preview stacks these; the translation view puts one
   // in each row's left cell. The aspect ratio is reserved before the draw, so the
   // page list does not jump as pages come in.
-  import { renderPage, type PDFDocumentProxy } from "$lib/pdf";
+  import { renderPage, textRects, type PageRect, type PDFDocumentProxy } from "$lib/pdf";
 
   let {
     doc,
     n,
     textLayer = false,
     root = null,
+    highlight = null,
   }: {
     doc: PDFDocumentProxy;
     /** 1-based page number. */
@@ -18,6 +19,8 @@
     textLayer?: boolean;
     /** The scrolling ancestor the visibility is measured against (null = the viewport). */
     root?: HTMLElement | null;
+    /** A passage of the page's text to light up (the translation row the reader picked); null = none. */
+    highlight?: string | null;
   } = $props();
 
   let host = $state<HTMLDivElement | null>(null);
@@ -28,6 +31,21 @@
   let width = $state(0);
   let drawnWidth = 0;
   let drawing: Promise<unknown> | null = null;
+  let rects = $state<PageRect[]>([]);
+  let first = $state<HTMLDivElement | null>(null);
+
+  // The passage to light up: its boxes are looked up by text, and the first one is brought into view
+  $effect(() => {
+    const text = highlight;
+    if (!text) { rects = []; return; }
+    let stale = false;
+    void doc.getPage(n).then((p) => textRects(p, text)).then((r) => {
+      if (stale) return;
+      rects = r;
+      queueMicrotask(() => first?.scrollIntoView({ block: "nearest" }));
+    });
+    return () => { stale = true; };
+  });
 
   // The page's shape first (cheap: no drawing), so the row has its height at once
   $effect(() => {
@@ -70,6 +88,13 @@
   {#if textLayer}
     <div class="textLayer" bind:this={layer}></div>
   {/if}
+  {#each rects as r, i (i)}
+    {#if i === 0}
+      <div class="hl" bind:this={first} style:left={`${r.left * 100}%`} style:top={`${r.top * 100}%`} style:width={`${r.width * 100}%`} style:height={`${r.height * 100}%`}></div>
+    {:else}
+      <div class="hl" style:left={`${r.left * 100}%`} style:top={`${r.top * 100}%`} style:width={`${r.width * 100}%`} style:height={`${r.height * 100}%`}></div>
+    {/if}
+  {/each}
 </div>
 
 <style>
@@ -83,6 +108,16 @@
   canvas {
     display: block;
     width: 100%;
+  }
+  /* The lit passage: one box per text run, multiplied onto the page so overlaps do not darken */
+  .hl {
+    position: absolute;
+    background: var(--mark-bg, rgba(255, 213, 79, 0.45));
+    mix-blend-mode: multiply;
+    border-radius: 2px;
+    pointer-events: none;
+    padding: 1px 0;
+    margin-top: -1px;
   }
   /* pdf.js's text layer: transparent glyph boxes over the canvas, sized by --scale-factor, selectable */
   .textLayer {

@@ -52,6 +52,12 @@
     );
     return () => { stale = true; };
   });
+  /** The text of the lit segment when it sits on this page — what the page lights up. */
+  function litOn(g: { page: number; segs: TranslateSegment[] }): string | null {
+    const id = translate.selected;
+    if (id == null) return null;
+    return g.segs.find((s) => s.id === id)?.text ?? null;
+  }
   /** A PDF's segments by page, in order (a page with no text still gets a row: the picture is the content). */
   const pageGroups = $derived.by(() => {
     if (doc?.source.kind !== "pdf") return [];
@@ -305,7 +311,7 @@
           {#each pageGroups as g (g.page)}
             <div class="row page">
               <div class="src pdfpage">
-                {#if pdfDoc}<PdfPage doc={pdfDoc} n={g.page} {root} />{/if}
+                {#if pdfDoc}<PdfPage doc={pdfDoc} n={g.page} {root} highlight={litOn(g)} />{/if}
               </div>
               <div class="tr md-body pagecells">
                 <div class="pagelabel">{t("translate.pageN", { n: g.page })}</div>
