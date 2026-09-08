@@ -436,7 +436,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                     "task_state": {"type": "string", "enum": ["todo", "doing", "done"]},
                     "due_before": {"type": "string", "description": "YYYY-MM-DD: tasks due on or before this date"},
                     "field": {"type": "string", "description": "Inline-field filter: `key` (present), `key = v`, `key != v`, `key < v`, `key > v`, `key ~ v` (contains); YYYY-MM-DD values compare as dates, numbers as numbers"},
-                    "limit": {"type": "integer"}
+                    "limit": {"type": "integer", "description": "Max results, default and cap 200; aggregate_blocks counts past it"}
                 }
             }),
         ),
@@ -583,7 +583,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         f(
             "edit_note",
-            "Replace an exact text fragment in a note. old_str must match exactly once — include enough surrounding context. Requires user approval.",
+            "Replace an exact text fragment in a note. old_str must match exactly once — include enough surrounding context. Requires user approval unless the note is the working note.",
             json!({
                 "type": "object",
                 "properties": {
@@ -632,7 +632,8 @@ pub fn propose_plan_def() -> ToolDef {
     ToolDef::function(FunctionSpec {
         name: "propose_plan".into(),
         description: "Propose a short plan (3-7 steps) for a multi-step task and wait for the \
-            user's decision before executing. Call it alone, before any other tool. The result \
+            user's decision before executing. Call it alone in its turn, after only the reads that \
+            naming the steps needs and before any write, plan update or action list. The result \
             says whether the user approved, edited, or rejected the plan."
             .into(),
         parameters: json!({

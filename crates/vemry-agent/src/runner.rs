@@ -792,10 +792,9 @@ impl AgentRunner {
                 if let Some(last) = history.last_mut() {
                     if last.role == "tool" {
                         if let Some(c) = &mut last.content {
-                            c.push_str(&format!(
-                                "\n\n[note: iteration budget {used}/{} nearly exhausted — wrap up and answer with your current findings]",
-                                config.max_iterations
-                            ));
+                            c.push_str(
+                                "\n\n[note: this turn's tool-call budget is nearly exhausted — wrap up and answer with your current findings]",
+                            );
                         }
                     }
                 }

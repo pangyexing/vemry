@@ -94,10 +94,6 @@ card is the reader's progress bar, not a receipt at the end.
   After it, `## 可加的实验` when any chapter's experiment was listed rather than
   written (see the lab block below): one line per experiment — the chapter as a
   [[link]], what to move, what to watch — so the reader picks the next one.
-- Formulas: `$…$` in a sentence, a table cell, a question or a card, `$$…$$` on a
-  line of its own — everywhere, not only in the source note. Bare TeX
-  (`QW_i^Q`) and a Unicode stand-in (`√d_k`, `QKᵀ`) stay text on the page; only
-  `$…$` is typeset.
 - Language: everything written for the reader — the hub's sections, every
   chapter heading, the explanations, a lab block's caption, the cards, the
   retelling check — is in the user's language. The section list below gives each
@@ -108,9 +104,8 @@ card is the reader's progress bar, not a receipt at the end.
   "In my words". What is machine-read stays as written here: the `#chapter` tag,
   the `status::` values (unread, reading, retold, done), the folder and file
   names, the block ids. The source note stays in the paper's own language: it is
-  a quotation. Chinese prose takes Chinese punctuation — ，。；：？！（）「」 —
-  and a variable named in a sentence is a formula (`$n$`, `$d_k$`, `$O(n/r)$`);
-  ASCII punctuation belongs to code, formulas and links alone.
+  a quotation. The Format section below says how formulas and punctuation are
+  written.
 - A chapter note — a `# title` line, then `#chapter [status:: unread]` on the
   next line (the hub reads it), then these sections in this order, every time,
   headed in the user's language:
