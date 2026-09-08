@@ -62,7 +62,9 @@ A later session on the same paper has a plan of its own: "Check the retelling"
 - The hub: frontmatter `goal` and `status`; a known list (each item a [[link]] to
   the note that already explains it), a to-learn list, the chapter order for this
   goal (a chapter already known is marked so and skipped), and a query block
-  `tag: chapter` so the chapters and their status show live.
+  with `tag: chapter` and `text: "#chapter"` so the chapters and their status
+  show live, one row per chapter (a tag alone matches every block of a tagged
+  note; the text filter keeps the `#chapter` line itself).
 - A chapter note, in this order, every time:
   1. `#chapter [status:: unread]` on its first line — the hub reads it.
   2. `## In one sentence` — the idea, plainly.

@@ -25,4 +25,5 @@ idea is numeric; the cards come from the gaps in the reader's own retelling.
 
 ```vemry-query
 tag: chapter
+text: "#chapter"
 ```
