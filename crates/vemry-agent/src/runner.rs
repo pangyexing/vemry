@@ -33,7 +33,7 @@ use crate::sources::{self, Source};
 use crate::undo::{self, WriteRecord};
 use crate::tools::{
     execute_read_tool, execute_write, format_action_items, is_local_write, is_session_tool, is_write_tool,
-    open_for_reading_def, parse_action_items, parse_plan_items, parse_read_part, parse_read_urls, prepare_write, propose_actions_def,
+    import_page_def, open_for_reading_def, parse_action_items, parse_import_args, parse_plan_items, parse_read_part, parse_read_urls, prepare_write, propose_actions_def,
     propose_plan_def, tool_defs, PlanItem, PlanStatus, ToolError,
 };
 use crate::types::{
@@ -496,6 +496,7 @@ impl AgentRunner {
             // The action-list and read gates are always available: proposing is free, the user's click is the fetch
             tools.push(propose_actions_def());
             tools.push(open_for_reading_def());
+            tools.push(import_page_def());
             if config.plan_confirm {
                 // Same shape as web_search: an addition to the tool table frozen per
                 // session, so the prefix stays stable
@@ -871,6 +872,18 @@ impl AgentRunner {
         };
         log.append("tool_call", json!({ "tool": name, "args": &args }));
 
+        // import_page: the page through the read gate, the note composed by the app,
+        // and from here on a write_note of that content — the same gate, diff and
+        // landing as any note the model writes; the receipt carries the outline
+        let mut import_outline: Option<String> = None;
+        let (name, args): (&str, Value) = if name == "import_page" {
+            let (path, content, outline) = self.execute_import(call, &args, web, on_event, log).await?;
+            import_outline = Some(outline);
+            ("write_note", json!({ "path": path, "content": content }))
+        } else {
+            (name, args)
+        };
+
         if is_session_tool(name) {
             return match name {
                 "propose_plan" => self.execute_plan(call, &args, plan_rejected, on_event, log).await,
@@ -1002,12 +1015,15 @@ impl AgentRunner {
         };
         // What the write replaces, for the journal (a move records its path pair and rewrites)
         let previous = if write_req.to_path.is_some() { None } else { undo::previous_text(vault, &write_req.path) };
-        let outcome = execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id), !automatic)?;
+        let mut outcome = execute_write(vault, &write_req, content_override.as_deref(), Some(&log.id), !automatic)?;
         // The side writes landed too (a block move's destination, the referrers
         // relinked), and the watcher swallows them as the agent's own: without an
         // event of their own an open buffer of such a note stays stale and its next
         // autosave writes the old text back
         events.extend(outcome.rewritten.into_iter().map(|id| vemry_core::VaultEvent::NoteModified { id }));
+        if let Some(outline) = import_outline {
+            outcome.message = format!("{}\n\n{outline}", outcome.message);
+        }
         undo::record(
             &mut self.journal.lock().unwrap(),
             WriteRecord {
@@ -1135,50 +1151,7 @@ impl AgentRunner {
     ) -> std::result::Result<String, String> {
         let urls = parse_read_urls(args)?;
         let part = parse_read_part(args)?;
-        // A page read earlier this turn is served from the turn's cache — its later
-        // parts included — without a fetch and without the gate: the user allowed the
-        // page, and reading on is what they allowed
-        let to_fetch: Vec<String> = {
-            let w = web.lock().unwrap();
-            urls.into_iter().filter(|u| !w.pages.contains_key(u)).collect()
-        };
-        let mut failed: Vec<String> = Vec::new();
-        if !to_fetch.is_empty() {
-            log.append("read", json!({ "id": &call.id, "urls": &to_fetch }));
-            let mut request = ReadRequest { id: call.id.clone(), urls: to_fetch, auto: false };
-            request.auto = self.read_gate.standing(&request);
-            on_event(AgentEvent::ReadRequest { request: request.clone() });
-            let decision = self.read_gate.request(&request).await;
-            // The standing consent given on this card is a fact of the session: its own line,
-            // so a reopened session (or a restart) keeps it rather than asking again
-            if !request.auto && self.read_gate.standing(&request) {
-                log.append("read_auto", json!({ "id": &request.id }));
-            }
-            match decision {
-                ReadDecision::Pages { pages, failed: f } => {
-                    let read: Vec<String> = pages.iter().map(|p| p.url.clone()).collect();
-                    log.append("read_decision", json!({ "id": &request.id, "decision": "pages", "urls": &read, "failed": &f, "auto": request.auto }));
-                    on_event(AgentEvent::ReadDecided { id: request.id.clone(), urls: read, failed: f.clone(), auto: request.auto });
-                    failed = f;
-                    let mut w = web.lock().unwrap();
-                    for p in pages {
-                        w.exempt.insert(p.url.clone());
-                        w.read.push(sources::Citation { title: p.title.clone(), url: p.url.clone() });
-                        // the requested URL may differ from the page's final one (a redirect): both find it
-                        w.pages.insert(p.url.clone(), p.clone());
-                        for u in &request.urls {
-                            if !w.pages.contains_key(u) && w.pages.len() < 64 {
-                                w.pages.insert(u.clone(), p.clone());
-                            }
-                        }
-                    }
-                }
-                ReadDecision::Deny { reason } => {
-                    log.append("read_decision", json!({ "id": &request.id, "decision": "deny", "reason": &reason }));
-                    return Err(format!("The user declined to open these pages: {reason}. Work from what you have, or ask."));
-                }
-            }
-        }
+        let failed = self.fetch_gated(&call.id, urls, web, on_event, log).await?;
         // Only the pages this call asked for: the cached ones it named, plus what was just fetched
         let wanted: Vec<FetchedPage> = {
             let w = web.lock().unwrap();
@@ -1214,6 +1187,90 @@ impl AgentRunner {
             out.push_str(&format!("\n\n(could not be read: {})", failed.join(", ")));
         }
         Ok(out)
+    }
+
+    /// The pages of a call through the read gate, into the turn's cache. A page read
+    /// earlier this turn is served from the cache — its later parts included — without
+    /// a fetch and without the gate: the user allowed the page, and reading on is what
+    /// they allowed. Returns the URLs that could not be read; a denial is an error.
+    async fn fetch_gated(
+        &self,
+        call_id: &str,
+        urls: Vec<String>,
+        web: &Mutex<TurnWeb>,
+        on_event: &(dyn Fn(AgentEvent) + Send + Sync),
+        log: &SessionLog,
+    ) -> std::result::Result<Vec<String>, String> {
+        let to_fetch: Vec<String> = {
+            let w = web.lock().unwrap();
+            urls.into_iter().filter(|u| !w.pages.contains_key(u)).collect()
+        };
+        let mut failed: Vec<String> = Vec::new();
+        if !to_fetch.is_empty() {
+            log.append("read", json!({ "id": call_id, "urls": &to_fetch }));
+            let mut request = ReadRequest { id: call_id.to_string(), urls: to_fetch, auto: false };
+            request.auto = self.read_gate.standing(&request);
+            on_event(AgentEvent::ReadRequest { request: request.clone() });
+            let decision = self.read_gate.request(&request).await;
+            // The standing consent given on this card is a fact of the session: its own line,
+            // so a reopened session (or a restart) keeps it rather than asking again
+            if !request.auto && self.read_gate.standing(&request) {
+                log.append("read_auto", json!({ "id": &request.id }));
+            }
+            match decision {
+                ReadDecision::Pages { pages, failed: f } => {
+                    let read: Vec<String> = pages.iter().map(|p| p.url.clone()).collect();
+                    log.append("read_decision", json!({ "id": &request.id, "decision": "pages", "urls": &read, "failed": &f, "auto": request.auto }));
+                    on_event(AgentEvent::ReadDecided { id: request.id.clone(), urls: read, failed: f.clone(), auto: request.auto });
+                    failed = f;
+                    let mut w = web.lock().unwrap();
+                    for p in pages {
+                        w.exempt.insert(p.url.clone());
+                        w.read.push(sources::Citation { title: p.title.clone(), url: p.url.clone() });
+                        // the requested URL may differ from the page's final one (a redirect): both find it
+                        w.pages.insert(p.url.clone(), p.clone());
+                        for u in &request.urls {
+                            if !w.pages.contains_key(u) && w.pages.len() < 64 {
+                                w.pages.insert(u.clone(), p.clone());
+                            }
+                        }
+                    }
+                }
+                ReadDecision::Deny { reason } => {
+                    log.append("read_decision", json!({ "id": &request.id, "decision": "deny", "reason": &reason }));
+                    return Err(format!("The user declined to open these pages: {reason}. Work from what you have, or ask."));
+                }
+            }
+        }
+        Ok(failed)
+    }
+
+    /// import_page: the page through the read gate, then the note composed by the app
+    /// (import.rs). Returns the landing path, the note's content and the outline the
+    /// model reads; the write itself happens on the caller's write path.
+    async fn execute_import(
+        &self,
+        call: &ToolCall,
+        args: &Value,
+        web: &Mutex<TurnWeb>,
+        on_event: &(dyn Fn(AgentEvent) + Send + Sync),
+        log: &SessionLog,
+    ) -> std::result::Result<(String, String, String), String> {
+        let (url, path, title, front) = parse_import_args(args)?;
+        let failed = self.fetch_gated(&call.id, vec![url.clone()], web, on_event, log).await?;
+        let page = web.lock().unwrap().pages.get(&url).cloned();
+        let Some(page) = page else {
+            return Err(if failed.is_empty() {
+                "The user did not allow the page; do not import it.".into()
+            } else {
+                format!("The page could not be read: {}", failed.join(", "))
+            });
+        };
+        let title = title.unwrap_or_else(|| page.title.trim().to_string());
+        let title = if title.is_empty() { url.clone() } else { title };
+        let imported = crate::import::compose_source_note(&page.markdown, &page.url, &title, &front);
+        log.append("import", json!({ "id": &call.id, "url": &page.url, "path": &path, "paragraphs": imported.paragraphs, "equations": imported.equations, "figures": imported.figures, "tables": imported.tables }));
+        Ok((path, imported.content, imported.outline))
     }
 
     /// update_plan: validate → record the `plan_update` line → emit the event → a

@@ -30,15 +30,17 @@ progress bar, not a receipt at the end.
 ## Inputs
 
 - The source, in this order: a vault file (read_file — a PDF comes back as text),
-  a clipped page (clips_lookup, then read_note), a URL (open_for_reading; an
-  arXiv link means its HTML version alone, `https://arxiv.org/html/<id>`, which
-  keeps the section structure — the abstract page adds nothing and is not
-  requested). A long page comes back in parts — the
-  result says `part 1 of N` — and the next part is one call away: the same URL
-  with `part: 2`, then 3. Write each part's sections into the source note before
-  asking for the next: the source note is the memory, not the context. Never look
-  for the rest of a page anywhere else (the PDF, a mirror, the browser): it is not
-  there, and every such attempt costs a minute.
+  a clipped page (clips_lookup, then read_note), a URL — import_page, one call:
+  the app fetches the page and writes the source note itself (sections, ids,
+  equations, figures, tables), and returns the outline of ids. An arXiv link
+  means its HTML version alone, `https://arxiv.org/html/<id>`, which keeps the
+  section structure — the abstract page adds nothing and is not requested. Then
+  read the note with read_note; a long one comes in parts — the result says
+  `part 1 of N` — and the next is one call away (`part: 2`, then 3). Write the
+  chapters a part supports before reading the next: the source note is the
+  memory, not the context. Never look for the rest of a page anywhere else (the
+  PDF, a mirror, the browser): it is not there, and every such attempt costs a
+  minute.
 - What the vault already holds: search_notes with the paper's key terms and
   query_blocks with kind: claim. The known map is the hits, linked with the
   snippet's gist — no read_note in this step (a clipped explainer read in full
@@ -62,25 +64,19 @@ progress bar, not a receipt at the end.
 
 ## Do
 
-- The source note: the paper's own section headings as `##`, one paragraph per
-  block ending in an id — `^s<section digits>p<n>`: `^s3p2` is section 3
-  paragraph 2, `^s321p4` is section 3.2.1 paragraph 4 — formulas as `$…$` and
-  `$$…$$`, tables as tables, a figure as its image line
-  `![Figure N: caption](url) ^figN` (`^fig2l` and `^fig2r` for a figure's two
-  halves) — the alt is the figure's number and caption, not the page's own alt
-  (arXiv's says "Refer to caption") — with the URL exactly as the page gave it,
-  followed by the caption's own line. The figures are part of the paper — an architecture diagram is often
-  the one thing a reader remembers — and the id lets a chapter embed one. The id
-  goes on the line as it is written: once the note lands, the app saves the
-  pictures into the vault and rewrites the line's URL to the local file, so an
-  edit_note against the remembered text no longer matches.
-  Quotation, not paraphrase: this note is what the chapters cite. Frontmatter
-  `title`, `authors`, `year`, `source` (the URL or the file), `genre`. The first
-  part is a write_note; every later part is an append_note of its sections. The
-  body only: the reference list and an appendix of figure captions are not
-  archived (a chapter cites a reference by its number if it must). An id that
-  exists is never changed or renumbered (chapters and cards cite it); a
-  paragraph added later gets the next free number of its section.
+- The source note is import_page's: the paper's sections as headings, one block
+  per paragraph ending in its id — `^s<section digits>p<n>`: `^s3p2` is section
+  3 paragraph 2, `^s321p4` is section 3.2.1 paragraph 4, `^s0p1` the abstract's
+  first — each equation as `$$…$$` with its number, the tables, each figure with
+  its caption as one block (`^fig1`, `^fig2`: a chapter embeds the diagram by
+  that id — an architecture diagram is often the one thing a reader remembers),
+  each table's caption as `^tab1`; the reference list and the appendix behind it
+  are not archived (a chapter cites a reference by its number if it must).
+  Quotation, not paraphrase: this note is what the chapters cite, and it is not
+  rewritten — not reformatted, not "cleaned", not renumbered (chapters and cards
+  cite the ids). Pass import_page the frontmatter you know (`title`, `authors`,
+  `year`, `genre`); set what you learn later with set_frontmatter. A source that
+  is a vault file or a clip is written with write_note in this same shape.
 - The hub: frontmatter `goal` and `status`; a known list (each item a [[link]] to
   the note that already explains it), a to-learn list, the chapter order for this
   goal (a chapter already known is marked so and skipped), and this query block,
@@ -186,15 +182,15 @@ What the page can and cannot render — checked against before every write:
   (*in my words* is the exception — the reader fills it).
 - Headings in the reader's language; the `#chapter` line, the `status::` values,
   the ids and the file names as this skill spells them.
-- A figure is an image line with its id (`![Figure 1: …](url) ^fig1`), never a
-  caption alone; a chapter embeds a figure or a paragraph by that id.
+- A figure is an image with its caption in one block, `^fig1` (import_page's
+  shape), never a caption alone; a chapter embeds a figure or a paragraph by
+  that id.
 
 ## Landing
 
 `papers/<slug>/` (slug = first author and year, `vaswani-2017`; the user's folder
 when named): the hub `<Title>.md`, `source.md`, `chapters/<nn> <title>.md`, and
-`cards.md`. One write_note per note; the source note section by section with
-append_note. A study of the same paper later updates these notes in place
+`cards.md`. One write_note per note; the source note by import_page. A study of the same paper later updates these notes in place
 (search_notes first; never a second folder for the same paper).
 
 ## Shape
@@ -210,6 +206,6 @@ each item with its citation, then how many cards were made.
 - Cards made from the paper instead of from the reader's gaps.
 - A lab block on a chapter with nothing to compute, or one whose result is
   narrated in the note.
-- Reading the whole paper into the context at once: section by section, written
-  down as it goes.
+- Reading the whole paper into the context at once: part by part, the chapters
+  of a part written before the next is read.
 - A retelling check that grades without citing the block it checked against.

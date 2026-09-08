@@ -1,0 +1,142 @@
+{
+  "name": "study-import",
+  "vault": {},
+  "pages": {
+    "https://arxiv.org/html/1706.03762": "###### Abstract\n\nThe dominant sequence transduction models are based on complex recurrent networks.\n\n## 1 Introduction\n\nRecurrent models compute hidden states sequentially \\[[13](#bib.bib13)\\], which precludes parallelization.\n\n## 3 Model Architecture\n\n![Refer to caption](https://arxiv.org/html/1706.03762v7/Figures/ModalNet-21.png)\n\nFigure 1: The Transformer - model architecture.\n\n#### 3.2.1 Scaled Dot-Product Attention\n\nWe compute the dot products of the query with all keys, divide each by $\\sqrt{d_k}$, and apply a softmax function.\n\n|  | $$\\mathrm{Attention}(Q,K,V)=\\mathrm{softmax}(\\frac{QK^{T}}{\\sqrt{d_{k}}})V$$ |  | (1) |\n| --- | --- | --- | --- |\n\nFor large values of $d_k$, the dot products grow large in magnitude, pushing the softmax into regions with small gradients.\n\n## References\n\n*   [13] Sepp Hochreiter. Long short-term memory. 1997.\n"
+  },
+  "allow_writes": true,
+  "turns": [
+    {
+      "user": "精读这篇 https://arxiv.org/abs/1706.03762，我想懂它的思想",
+      "script": [
+        [
+          {
+            "tool": {
+              "id": "s1",
+              "name": "read_skill",
+              "args": {
+                "name": "study"
+              }
+            }
+          }
+        ],
+        [
+          {
+            "tool": {
+              "id": "p1",
+              "name": "update_plan",
+              "args": {
+                "items": [
+                  {
+                    "text": "导入原文",
+                    "status": "doing"
+                  },
+                  {
+                    "text": "已知与待学",
+                    "status": "pending"
+                  },
+                  {
+                    "text": "写章节",
+                    "status": "pending"
+                  },
+                  {
+                    "text": "卡片与枢纽",
+                    "status": "pending"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        [
+          {
+            "tool": {
+              "id": "i1",
+              "name": "import_page",
+              "args": {
+                "url": "https://arxiv.org/html/1706.03762",
+                "path": "papers/vaswani-2017/source.md",
+                "title": "Attention Is All You Need",
+                "authors": "Vaswani et al.",
+                "year": "2017",
+                "genre": "method"
+              }
+            }
+          }
+        ],
+        [
+          {
+            "tool": {
+              "id": "r1",
+              "name": "read_note",
+              "args": {
+                "path": "papers/vaswani-2017/source.md",
+                "part": 1
+              }
+            }
+          }
+        ],
+        [
+          {
+            "tool": {
+              "id": "w1",
+              "name": "write_note",
+              "args": {
+                "path": "papers/vaswani-2017/chapters/01 缩放点积注意力.md",
+                "content": "# 缩放点积注意力\n#chapter [status:: unread]\n\n## 一句话\n\n每个 query 对所有 key 打分，除以 $\\sqrt{d_k}$ 让 softmax 不饱和。\n\n## 原文\n\n![[papers/vaswani-2017/source#^fig1]]\n\n![[papers/vaswani-2017/source#^s321p1]]\n\n![[papers/vaswani-2017/source#^s321p2]]\n\n## 问题\n\n不缩放时 softmax 的梯度会怎样？\n\n## 我的话\n\n"
+              }
+            }
+          }
+        ],
+        [
+          {
+            "text": "原文已导入 [[papers/vaswani-2017/source]]，先读 [[papers/vaswani-2017/chapters/01 缩放点积注意力]]，它嵌入了公式 [[papers/vaswani-2017/source#^s321p2]]。"
+          }
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "citations_resolve": true,
+    "tools_ok": true,
+    "skill_events": [
+      "study"
+    ],
+    "tool_output_contains": [
+      {
+        "id": "i1",
+        "text": "#### 3.2.1 Scaled Dot-Product Attention — ^s321p1…^s321p3"
+      },
+      {
+        "id": "i1",
+        "text": "## 3 Model Architecture — ^fig1"
+      },
+      {
+        "id": "r1",
+        "text": "# Attention Is All You Need\n\n## Abstract\n\nThe dominant sequence transduction models"
+      }
+    ],
+    "note_contains": [
+      {
+        "path": "papers/vaswani-2017/source.md",
+        "text": "title: Attention Is All You Need\nauthors: Vaswani et al.\nyear: \"2017\"\ngenre: method\nsource: https://arxiv.org/html/1706.03762"
+      },
+      {
+        "path": "papers/vaswani-2017/source.md",
+        "text": "sequentially [13], which precludes parallelization. ^s1p1"
+      },
+      {
+        "path": "papers/vaswani-2017/source.md",
+        "text": "![Figure 1: The Transformer - model architecture](https://arxiv.org/html/1706.03762v7/Figures/ModalNet-21.png)\nFigure 1: The Transformer - model architecture. ^fig1"
+      },
+      {
+        "path": "papers/vaswani-2017/chapters/01 缩放点积注意力.md",
+        "text": "![[papers/vaswani-2017/source#^s321p2]]"
+      },
+      {
+        "path": "papers/vaswani-2017/source.md",
+        "text": "$$\\mathrm{Attention}(Q,K,V)=\\mathrm{softmax}(\\frac{QK^{T}}{\\sqrt{d_{k}}})V$$ (1) ^s321p2"
+      }
+    ]
+  }
+}

@@ -845,6 +845,7 @@ add("tool.", {
     "aggregate_blocks": ("Count blocks", "统计块"),
     "read_file": ("Read file", "读取文件"),
     "open_for_reading": ("Read pages", "读取网页"),
+    "import_page": ("Import page", "导入网页"),
     "update_task": ("Update task", "更新任务"),
     "set_block_field": ("Set field", "设置字段"),
     "propose_actions": ("Propose actions", "提出行动项"),

@@ -9,6 +9,7 @@
 pub mod client;
 pub mod compact;
 pub mod context;
+pub mod import;
 pub mod permission;
 pub mod prompt;
 pub mod provider;

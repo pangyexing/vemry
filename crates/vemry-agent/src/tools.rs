@@ -122,13 +122,61 @@ pub fn parse_read_urls(args: &Value) -> Result<Vec<String>, String> {
 
 /// open_for_reading's `part`: 1-based, default 1.
 pub fn parse_read_part(args: &Value) -> Result<usize, String> {
+    parse_part(args, "open_for_reading")
+}
+
+/// A tool's `part` argument (open_for_reading, read_note): 1-based, default 1.
+pub fn parse_part(args: &Value, tool: &str) -> Result<usize, String> {
     match args.get("part") {
         None | Some(Value::Null) => Ok(1),
         Some(v) => match v.as_u64() {
             Some(n) if n >= 1 => Ok(n as usize),
-            _ => Err("open_for_reading's `part` is a whole number from 1".into()),
+            _ => Err(format!("{tool}'s `part` is a whole number from 1")),
         },
     }
+}
+
+/// The import tool (next to open_for_reading in the table): a page kept as a source
+/// note, composed by the app (import.rs) rather than copied through the model.
+pub fn import_page_def() -> ToolDef {
+    ToolDef::function(FunctionSpec {
+        name: "import_page".into(),
+        description: "Import a web page as a source note the vault keeps verbatim — a paper, a spec, a long article — without copying its text through you. The page is fetched (the user approves it on the read card) and the app writes the note itself: the page's sections as headings; one block per paragraph with a stable id, ^s<section digits>p<n> (^s321p4 is section 3.2.1 paragraph 4, ^s0p1 the abstract's first); each equation as $$…$$ with its number; the tables; each figure with its caption (^fig1, ^fig2 — a chapter embeds the diagram by that id) and each table's caption (^tab1); the reference list and an appendix behind it left out. The result is the note's outline: every heading with the ids its section holds. Then read the note with read_note — a long one part by part (part: 1, 2, …) — and cite its ids. Use this whenever a page is to be kept, instead of open_for_reading followed by write_note.".into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The page's http(s) URL (an arXiv paper: its HTML version, https://arxiv.org/html/<id>)"},
+                "path": {"type": "string", "description": "Where the note lands, e.g. 'papers/vaswani-2017/source.md'"},
+                "title": {"type": "string", "description": "The note's title (default: the page's own)"},
+                "authors": {"type": "string", "description": "Frontmatter `authors`, when known"},
+                "year": {"type": "string", "description": "Frontmatter `year`, when known"},
+                "genre": {"type": "string", "description": "Frontmatter `genre`: method, empirical, theory, survey or system"}
+            },
+            "required": ["url", "path"]
+        }),
+    })
+}
+
+/// import_page's arguments: the URL, the landing path, the title if given, and the
+/// frontmatter pairs the model knows.
+pub type ImportArgs = (String, String, Option<String>, Vec<(String, String)>);
+
+/// import_page's arguments, parsed.
+pub fn parse_import_args(args: &Value) -> Result<ImportArgs, String> {
+    let url = args.get("url").and_then(|v| v.as_str()).map(str::trim).unwrap_or("");
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(format!("import_page needs an http(s) `url`, not '{url}'"));
+    }
+    let path = args.get("path").and_then(|v| v.as_str()).map(str::trim).unwrap_or("");
+    if path.is_empty() {
+        return Err("import_page needs a `path` for the note".into());
+    }
+    let title = args.get("title").and_then(|v| v.as_str()).map(str::trim).filter(|t| !t.is_empty()).map(String::from);
+    let front: Vec<(String, String)> = ["authors", "year", "genre"]
+        .iter()
+        .filter_map(|k| args.get(*k).and_then(|v| v.as_str()).map(|v| ((*k).to_string(), v.trim().to_string())))
+        .collect();
+    Ok((url.to_string(), path.to_string(), title, front))
 }
 
 /// The action-list cap: a card the user can still review in one look.
@@ -262,10 +310,13 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         f(
             "read_note",
-            "Read the full content of a note by its vault-relative path. A line ending in ` ^id` names a block you can cite as [[path#^id]].",
+            "Read the full content of a note by its vault-relative path. A line ending in ` ^id` names a block you can cite as [[path#^id]]. A long note (over 30,000 characters) comes in parts of 20,000: the result says `part 1 of N`; call again with `part: 2` (then 3, …) for the rest.",
             json!({
                 "type": "object",
-                "properties": {"path": {"type": "string", "description": "e.g. 'projects/Alpha.md'"}},
+                "properties": {
+                    "path": {"type": "string", "description": "e.g. 'projects/Alpha.md'"},
+                    "part": {"type": "integer", "description": "Which part of a long note to read (1-based; default 1)"}
+                },
                 "required": ["path"]
             }),
         ),
@@ -677,18 +728,28 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
             let red = vault.read_note_for_agent(&id).map_err(|e| ToolError::Other(e.to_string()))?;
             let filtered = red.count();
             let content = red.text;
-            // The truncation note points at a way to read on: the block index is
-            // exactly the "read a part on demand" API
-            let text = match crate::truncate_chars(
-                &content,
-                READ_NOTE_MAX_CHARS,
-                &format!(
-                    "[... truncated at {READ_NOTE_MAX_CHARS} chars — use query_blocks(note=\"{id}\") to read the rest in blocks]"
-                ),
-            ) {
-                Some(t) => t,
-                None if content.is_empty() => "(empty note)".into(),
-                None => content,
+            let part = parse_part(args, "read_note").map_err(ToolError::Other)?;
+            // A long note is read in parts, the same parts as a page (prompt::page_part):
+            // the model asks for the next one, and never sees a truncation it cannot get past
+            let text = if content.is_empty() {
+                "(empty note)".into()
+            } else if part == 1 && content.chars().count() <= READ_NOTE_MAX_CHARS {
+                content
+            } else {
+                match crate::prompt::page_part(&content, part) {
+                    Some((body, total)) => {
+                        let next = if part < total {
+                            format!("call read_note again with part: {} for the next", part + 1)
+                        } else {
+                            "the last part".to_string()
+                        };
+                        format!("[{id}: part {part} of {total}; {next}]\n{body}")
+                    }
+                    None => {
+                        let total = crate::prompt::page_part(&content, 1).map_or(1, |(_, t)| t);
+                        return Err(ToolError::Other(format!("{id} has only {total} part(s); part {part} does not exist")));
+                    }
+                }
             };
             Ok(ReadOutcome { text, filtered })
         }
@@ -2335,6 +2396,31 @@ mod tests {
         let out = read(&vault, "read_note", json!({"path": "Mixed.md"})).unwrap();
         assert_eq!(out.text, "# Mixed\n\npublic apple\n\ntail apple\n");
         assert_eq!(out.filtered, 1);
+    }
+
+    #[test]
+    fn read_note_serves_a_long_note_in_parts() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".vemry")).unwrap();
+        let body: String = (0..2000).map(|i| format!("paragraph {i} of a long source note\n\n")).collect();
+        std::fs::write(dir.path().join("Long.md"), format!("# Long\n\n{body}")).unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let total = std::fs::read_to_string(dir.path().join("Long.md")).unwrap().chars().count();
+        assert!(total > READ_NOTE_MAX_CHARS, "{total}");
+        let parts = total.div_ceil(crate::prompt::PAGE_CONTEXT_MAX_CHARS);
+        // over the cap: part 1 by default, headed with the part count and how to read on
+        let out = read(&vault, "read_note", json!({"path": "Long.md"})).unwrap();
+        assert!(out.text.starts_with(&format!("[Long.md: part 1 of {parts}; call read_note again with part: 2 for the next]\n# Long\n")), "{}", &out.text[..120]);
+        assert_eq!(out.text.lines().skip(1).collect::<Vec<_>>().join("\n").chars().count(), crate::prompt::PAGE_CONTEXT_MAX_CHARS);
+        let last = read(&vault, "read_note", json!({"path": "Long.md", "part": parts})).unwrap();
+        assert!(last.text.starts_with(&format!("[Long.md: part {parts} of {parts}; the last part]\n")), "{}", &last.text[..80]);
+        assert!(last.text.trim_end().ends_with("of a long source note"));
+        let err = read(&vault, "read_note", json!({"path": "Long.md", "part": parts + 1})).unwrap_err();
+        assert!(matches!(err, ToolError::Other(m) if m.contains("does not exist")));
+        // a short note reads whole, as it always did
+        let (_d, vault) = fixture();
+        let out = read(&vault, "read_note", json!({"path": "Hello.md"})).unwrap();
+        assert!(out.text.starts_with("# Hello\n"));
     }
 
     #[test]
