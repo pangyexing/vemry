@@ -48,6 +48,11 @@ export type ImageCopier = (target: string) => Promise<boolean>;
 // inCode lives in fenced.ts (editor/math.ts needs it without a cycle); the importers here keep their path
 export { inCode };
 const TAG_RE = /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
+/** An emphasis span the parser may have refused: `**…**` or `*…*` on one line, no `*` inside */
+const CJK_EMPH_RE = /(\*\*|\*)([^*\n]+?)\1/g;
+const CJK_PUNCT = /[。，、；：！？）」』】》〉…—～（「『【《〈]/;
+const cjkStrongDeco = Decoration.mark({ class: "cm-lp-cjk-strong" });
+const cjkEmDeco = Decoration.mark({ class: "cm-lp-cjk-em" });
 /** A bare URL's extent for the escape fold above (the click boundary itself is mdlink's) */
 const BARE_URL_RE = /https?:\/\/[^\s<>]+/g;
 // The character class mirrors Rust's block-id rule (blockid.rs::is_valid_block_id): a badge must never claim an id the parser rejects
@@ -954,6 +959,35 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
         const start = range.from + m.index;
         if (isCode(start) || revealedEl(start, start + m[0].length)) continue;
         for (const e of m[0].matchAll(/\\(?=[_*~#])/g)) hide(start + (e.index ?? 0), start + (e.index ?? 0) + 1);
+      }
+    }
+
+    // `**…分析。**当然`: CJK punctuation inside the delimiter leaves the span unparsed
+    // (CommonMark's flanking rule; new clips move the punctuation out, this reads what
+    // is already on disk). A span the tree did not take, whose delimiter touches CJK
+    // punctuation on the inside and a word on the outside, folds like the real one
+    if (text.includes("*")) {
+      CJK_EMPH_RE.lastIndex = 0;
+      while ((m = CJK_EMPH_RE.exec(text))) {
+        const start = range.from + m.index;
+        const end = start + m[0].length;
+        const run = m[1].length;
+        if (isCode(start)) continue;
+        // the parser took it: nothing to do here
+        let n: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(start + run, 1);
+        let parsed = false;
+        for (; n; n = n.parent) if (n.name === "Emphasis" || n.name === "StrongEmphasis") parsed = true;
+        if (parsed) continue;
+        const inner = m[2];
+        const after = text[m.index + m[0].length] ?? "";
+        const before = m.index > 0 ? text[m.index - 1] : "";
+        const cjkTail = CJK_PUNCT.test(inner[inner.length - 1]) && after !== "" && !/[\s\p{P}\p{S}]/u.test(after);
+        const cjkHead = CJK_PUNCT.test(inner[0]) && before !== "" && !/[\s\p{P}\p{S}]/u.test(before);
+        if (!cjkTail && !cjkHead) continue;
+        marks.push({ from: start + run, to: end - run, deco: run === 2 ? cjkStrongDeco : cjkEmDeco });
+        if (revealedEl(start, end)) continue;
+        hide(start, start + run);
+        hide(end - run, end);
       }
     }
 

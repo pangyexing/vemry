@@ -378,7 +378,108 @@ const CITE_MAX_BYTES: usize = 32;
 /// Code fences, inline code and `$…$` math spans are skipped wholesale: what the
 /// sentinel handlers emit passes through verbatim, so every backslash in there is
 /// real content (LaTeX's `\\`, a regex's `\.`).
+/// CJK punctuation right inside an emphasis delimiter — `**…分析。**当然` — leaves the
+/// `**` literal in every conforming renderer: CommonMark's flanking rule lets a
+/// closer that follows punctuation close only when whitespace or punctuation
+/// follows it, and `当` is neither. Moving the trailing punctuation out of the span
+/// (`**…分析**。当然`) keeps the visible text and lets the emphasis parse; a leading
+/// one (`当然**。x**`) is mirrored. Only `**` and `*` are handled, only outside
+/// fences, only on one line.
+fn cjk_emphasis(md: &str) -> String {
+    const PUNCT: &str = "。，、；：！？）」』】》〉…—～（「『【《〈";
+    let is_p = |c: char| PUNCT.contains(c);
+    let mut out = String::with_capacity(md.len());
+    let mut fence = false;
+    for (i, line) in md.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fence = !fence;
+        }
+        if fence || !line.contains('*') {
+            out.push_str(line);
+            continue;
+        }
+        out.push_str(&cjk_emphasis_line(line, &is_p));
+    }
+    out
+}
+
+fn cjk_emphasis_line(line: &str, is_p: &dyn Fn(char) -> bool) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out: Vec<char> = Vec::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '*' {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        // the delimiter run: `**` or `*` (three or more are left alone)
+        let run = chars[i..].iter().take_while(|&&c| c == '*').count();
+        if run > 2 {
+            out.extend(&chars[i..i + run]);
+            i += run;
+            continue;
+        }
+        // the matching closer on this line, with no `*` inside
+        let start = i + run;
+        let mut j = start;
+        let mut close = None;
+        while j < chars.len() {
+            if chars[j] == '*' {
+                let r = chars[j..].iter().take_while(|&&c| c == '*').count();
+                if r == run && j > start {
+                    close = Some(j);
+                }
+                break;
+            }
+            j += 1;
+        }
+        let Some(close) = close else {
+            out.extend(&chars[i..i + run]);
+            i += run;
+            continue;
+        };
+        let mut inner: Vec<char> = chars[start..close].to_vec();
+        let after = chars.get(close + run).copied();
+        let before = if i > 0 { Some(chars[i - 1]) } else { None };
+        // trailing punctuation moves after the closer when a word follows it
+        let mut tail: Vec<char> = Vec::new();
+        if after.is_some_and(|c| !c.is_whitespace() && !is_p(c) && !c.is_ascii_punctuation()) {
+            while inner.last().is_some_and(|&c| is_p(c)) {
+                tail.insert(0, inner.pop().unwrap());
+            }
+        }
+        // leading punctuation moves before the opener when a word precedes it
+        let mut head: Vec<char> = Vec::new();
+        if before.is_some_and(|c| !c.is_whitespace() && !is_p(c) && !c.is_ascii_punctuation()) {
+            while inner.first().is_some_and(|&c| is_p(c)) {
+                head.push(inner.remove(0));
+            }
+        }
+        if inner.is_empty() || inner.iter().all(|c| c.is_whitespace()) {
+            // nothing but punctuation inside: leave the span as it was
+            out.extend(&chars[i..close + run]);
+        } else {
+            out.extend(head);
+            out.extend(&chars[i..i + run]);
+            out.extend(inner);
+            out.extend(&chars[close..close + run]);
+            out.extend(tail);
+        }
+        i = close + run;
+    }
+    out.into_iter().collect()
+}
+
 fn soften_escapes(md: &str) -> String {
+    cjk_emphasis(&soften_escapes_inner(md))
+}
+
+fn soften_escapes_inner(md: &str) -> String {
     let b = md.as_bytes();
     // Every decision point is an ASCII byte; multi-byte UTF-8 is only ever moved
     // across verbatim, so accumulating byte by byte is safe
@@ -1178,6 +1279,19 @@ mod tests {
             fragment_to_markdown("<p>见 https://github.com/bojone/attention/blob/master/attention_tf.py 与 snake_case 变量</p>"),
             "见 https://github.com/bojone/attention/blob/master/attention_tf.py 与 snake\\_case 变量"
         );
+    }
+
+    #[test]
+    fn cjk_punctuation_leaves_the_emphasis_span() {
+        assert_eq!(cjk_emphasis("**在本篇文章中，做一点简单的分析。**当然，这两篇"), "**在本篇文章中，做一点简单的分析**。当然，这两篇");
+        assert_eq!(cjk_emphasis("他说*可以！*然后走了"), "他说*可以*！然后走了");
+        assert_eq!(cjk_emphasis("看这个**（注）说明**"), "看这个（**注）说明**"); // a leading opener moves before it
+        // a closer followed by a space or the line's end needs nothing; a fence is left alone
+        assert_eq!(cjk_emphasis("**分析。** 当然"), "**分析。** 当然");
+        assert_eq!(cjk_emphasis("**分析。**"), "**分析。**");
+        assert_eq!(cjk_emphasis("```\n**a。**b\n```"), "```\n**a。**b\n```");
+        assert_eq!(cjk_emphasis("**。**当"), "**。**当");
+        assert_eq!(fragment_to_markdown("<p><strong>在本篇文章中，分析。</strong>当然</p>"), "**在本篇文章中，分析**。当然");
     }
 
     #[test]
