@@ -1,18 +1,28 @@
 <script lang="ts">
-  // In-app preview for images and PDFs. Loads its own bytes and owns its blob
-  // URL, so multiple instances can coexist (a future split view: the PDF beside its
-  // translation).
+  // In-app preview for images and PDFs. An image loads its own bytes and owns its
+  // blob URL; a PDF goes through pdf.js (PdfViewer, one parsed document shared with
+  // the translation view), with a toolbar for reading it beside its translation.
   import { t } from "$lib/i18n/i18n.svelte";
   import { api } from "$lib/api";
   import { fileKind, mimeOf } from "$lib/stores/vault.svelte";
+  import { executeCommand } from "$lib/commands/registry";
+  import { k } from "$lib/shortcut";
+  import PdfViewer from "./PdfViewer.svelte";
 
   let { path }: { path: string } = $props();
 
   let url = $state<string | null>(null);
   let failed = $state<string | null>(null);
+  const isPdf = $derived(fileKind(path) === "pdf");
+  const name = $derived(path.split("/").pop() ?? path);
 
   $effect(() => {
     const p = path;
+    if (fileKind(p) === "pdf") {
+      url = null;
+      failed = null;
+      return;
+    }
     let revoked: string | null = null;
     let stale = false;
     url = null;
@@ -43,8 +53,14 @@
     <p class="reason">{failed}</p>
     <button onclick={openWithSystem}>{t("editor.openWithSystem")}</button>
   </div>
-{:else if url && fileKind(path) === "pdf"}
-  <iframe class="pdf" src={url} title={path}></iframe>
+{:else if isPdf}
+  <div class="bar">
+    <span class="name" title={path}>{name}</span>
+    <button title={t("filePreview.translateHint", { key: k("Mod+Shift+T") })} onclick={() => void executeCommand("translate-toggle")}>{t("filePreview.translate")}</button>
+  </div>
+  {#key path}
+    <PdfViewer {path} onFailed={(r) => (failed = r)} />
+  {/key}
 {:else if url}
   <div class="image-wrap">
     <img src={url} alt={path} />
@@ -52,12 +68,32 @@
 {/if}
 
 <style>
-  .pdf {
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .bar .name {
+    font-size: var(--fs-sm);
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
     flex: 1;
-    min-height: 0;
-    width: 100%;
-    border: none;
-    background: var(--bg-panel);
+  }
+  .bar button {
+    font-size: var(--fs-xs);
+    padding: 3px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    color: var(--accent);
+  }
+  .bar button:hover {
+    background: var(--bg-hover);
   }
   .image-wrap {
     flex: 1;

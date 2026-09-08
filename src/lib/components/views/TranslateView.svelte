@@ -14,6 +14,8 @@
   import { executeCommand } from "$lib/commands/registry";
   import { handleCodeCopyClick, renderNoteMarkdown } from "$lib/markdown";
   import { k } from "$lib/shortcut";
+  import { loadPdf, type PDFDocumentProxy } from "$lib/pdf";
+  import PdfPage from "$lib/components/PdfPage.svelte";
   import "katex/dist/katex.min.css";
 
   /** Below this width two columns are too narrow to read, and the rows interleave. */
@@ -37,6 +39,30 @@
   });
 
   const run = (p: Promise<unknown>) => void p.catch((e) => toast.push(String(e), "error"));
+
+  // ---- a PDF: rows are pages, the page drawn on the left and its paragraphs on the right ----
+  let pdfDoc = $state<PDFDocumentProxy | null>(null);
+  $effect(() => {
+    const src = doc?.source;
+    if (src?.kind !== "pdf") { pdfDoc = null; return; }
+    let stale = false;
+    loadPdf(src.path).then(
+      (d) => { if (!stale) pdfDoc = d; },
+      (e) => { if (!stale) toast.push(String(e), "error"); },
+    );
+    return () => { stale = true; };
+  });
+  /** A PDF's segments by page, in order (a page with no text still gets a row: the picture is the content). */
+  const pageGroups = $derived.by(() => {
+    if (doc?.source.kind !== "pdf") return [];
+    const total = pdfDoc?.numPages ?? Math.max(1, ...doc.segments.map((s) => s.page ?? 1));
+    const groups: { page: number; segs: TranslateSegment[] }[] = Array.from({ length: total }, (_, i) => ({ page: i + 1, segs: [] }));
+    for (const s of doc.segments) {
+      const g = groups[(s.page ?? 1) - 1];
+      if (g) g.segs.push(s);
+    }
+    return groups;
+  });
 
   // ---- rendering ----
   /** One segment's HTML from prefix + body: the note renderer (wikilinks, callouts, KaTeX, local images as data-asset). */
@@ -189,7 +215,7 @@
     const next = ids[Math.min(ids.length - 1, Math.max(0, at + (key === "j" ? 1 : -1)))];
     if (next == null) return;
     translate.selected = next;
-    root?.querySelector<HTMLElement>(`.row[data-id="${next}"]`)?.scrollIntoView({ block: "nearest" });
+    root?.querySelector<HTMLElement>(`[data-id="${next}"]`)?.scrollIntoView({ block: "nearest" });
   }
 </script>
 
@@ -198,7 +224,7 @@
 <div class="view">
   <header>
     {#if doc}
-      <span class="title" title={doc.source.kind === "note" ? doc.source.path : doc.source.url}>{doc.title}</span>
+      <span class="title" title={doc.source.kind === "page" ? doc.source.url : doc.source.path}>{doc.title}</span>
       <span class="actions">
         <select
           class="chip"
@@ -248,41 +274,63 @@
       <div class="rows mode-{mode}">
         {#if mode === "side"}
           <div class="cols">
-            <div>{t("translate.original")}{#if doc.source.kind === "note"} <span class="hint">· {t("translate.sourceHint")}</span>{/if}</div>
+            <div>{t("translate.original")}{#if doc.source.kind === "note"} <span class="hint">· {t("translate.sourceHint")}</span>{:else if doc.source.kind === "pdf"} <span class="hint">· {t("translate.pdfHint")}</span>{/if}</div>
             <div>{t("translate.translation")}</div>
           </div>
         {/if}
-        {#each doc.segments as seg (seg.id)}
+        {#snippet trCell(seg: TranslateSegment)}
           {@const row = translate.rows[seg.id]}
-          <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-          <div class="row kind-{seg.kind.type}" class:lit={translate.selected === seg.id} use:observe={seg.id} data-id={seg.id}>
-            <div class="src md-body" use:assets ondblclick={() => openSource(seg)} onclick={onCellClick}>
-              {@html html(seg.prefix, seg.text)}
+          {#if seg.private}
+            <span class="priv">{t("translate.privateSegment")}</span>
+          {:else if !seg.translate}
+            {@html html(seg.prefix, seg.text)}
+          {:else if row?.done && row.text != null}
+            {@html html(seg.prefix, row.text)}
+            <span class="tools">
+              <button title={t("translate.retranslate")} onclick={(e) => { e.stopPropagation(); translate.request([seg.id], true); }}>↻</button>
+              <button title={t("translate.copy")} onclick={(e) => { e.stopPropagation(); void copyRow(seg); }}>⧉</button>
+            </span>
+          {:else if row?.text != null}
+            <p class="partial">{seg.prefix}{row.text}<span class="cur"></span></p>
+          {:else if row?.error}
+            <p class="failed" title={row.error}>{t("translate.untranslated")} · {row.error}</p>
+            <span class="tools">
+              <button title={t("translate.retranslate")} onclick={(e) => { e.stopPropagation(); translate.request([seg.id], true); }}>↻</button>
+            </span>
+          {:else}
+            <div class="skel"><i></i><i></i><i class="short"></i></div>
+          {/if}
+        {/snippet}
+        {#if doc.source.kind === "pdf"}
+          {#each pageGroups as g (g.page)}
+            <div class="row page">
+              <div class="src pdfpage">
+                {#if pdfDoc}<PdfPage doc={pdfDoc} n={g.page} {root} />{/if}
+              </div>
+              <div class="tr md-body pagecells">
+                <div class="pagelabel">{t("translate.pageN", { n: g.page })}</div>
+                {#each g.segs as seg (seg.id)}
+                  <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+                  <div class="cell" class:lit={translate.selected === seg.id} use:observe={seg.id} data-id={seg.id} onclick={(e) => { onCellClick(e); select(seg.id); }}>
+                    {@render trCell(seg)}
+                  </div>
+                {/each}
+              </div>
             </div>
-            <div class="tr md-body" use:assets onclick={(e) => { onCellClick(e); select(seg.id); }}>
-              {#if seg.private}
-                <span class="priv">{t("translate.privateSegment")}</span>
-              {:else if !seg.translate}
+          {/each}
+        {:else}
+          {#each doc.segments as seg (seg.id)}
+            <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+            <div class="row kind-{seg.kind.type}" class:lit={translate.selected === seg.id} use:observe={seg.id} data-id={seg.id}>
+              <div class="src md-body" use:assets ondblclick={() => openSource(seg)} onclick={onCellClick}>
                 {@html html(seg.prefix, seg.text)}
-              {:else if row?.done && row.text != null}
-                {@html html(seg.prefix, row.text)}
-                <span class="tools">
-                  <button title={t("translate.retranslate")} onclick={(e) => { e.stopPropagation(); translate.request([seg.id], true); }}>↻</button>
-                  <button title={t("translate.copy")} onclick={(e) => { e.stopPropagation(); void copyRow(seg); }}>⧉</button>
-                </span>
-              {:else if row?.text != null}
-                <p class="partial">{seg.prefix}{row.text}<span class="cur"></span></p>
-              {:else if row?.error}
-                <p class="failed" title={row.error}>{t("translate.untranslated")} · {row.error}</p>
-                <span class="tools">
-                  <button title={t("translate.retranslate")} onclick={(e) => { e.stopPropagation(); translate.request([seg.id], true); }}>↻</button>
-                </span>
-              {:else}
-                <div class="skel"><i></i><i></i><i class="short"></i></div>
-              {/if}
+              </div>
+              <div class="tr md-body" use:assets onclick={(e) => { onCellClick(e); select(seg.id); }}>
+                {@render trCell(seg)}
+              </div>
             </div>
-          </div>
-        {/each}
+          {/each}
+        {/if}
       </div>
     </div>
   {:else}
@@ -480,8 +528,38 @@
     background: var(--bg-hover);
     box-shadow: inset 3px 0 0 var(--accent);
   }
-  .row .tr:hover .tools {
+  .row .tr:hover .tools,
+  .cell:hover .tools {
     opacity: 1;
+  }
+  /* A PDF row: the page drawn on the left, its paragraphs as cells on the right */
+  .row.page .pdfpage {
+    padding: 14px 20px;
+    align-self: start;
+    position: sticky;
+    top: 28px;
+  }
+  .mode-stack .row.page .pdfpage,
+  .mode-target .row.page .pdfpage {
+    position: static;
+  }
+  .row.page .pagecells {
+    padding: 8px 0 12px;
+  }
+  .pagelabel {
+    font-size: var(--fs-xs);
+    letter-spacing: 0.04em;
+    color: var(--fg-faint);
+    padding: 2px 20px 6px;
+  }
+  .cell {
+    position: relative;
+    padding: 6px 20px;
+    border-radius: 4px;
+  }
+  .cell.lit {
+    background: var(--bg-hover);
+    box-shadow: inset 3px 0 0 var(--accent);
   }
   .tools {
     position: absolute;

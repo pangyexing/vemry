@@ -44,7 +44,7 @@ Three constraints follow:
 | `index.rs` | `BlockIndex`: note table, block table, link graph (backlinks derived), name resolution table (stem/alias, shortest path wins), tag table. Incremental update: reparse one file, then reparse links wholesale (O(total links), milliseconds at ten-thousand-note scale) |
 | `query.rs` | `BlockQuery` → `Vec<BlockHit>`: the one query entry point. Inline-field conditions (`FieldFilter`, parsed from the flat `key = v` grammar shared by query blocks, the agent tool and scripts) consult a block's own fields first, then the note's frontmatter scalars |
 | `search.rs` | The `SearchProvider` trait plus an in-memory multi-term AND substring match (no tokenisation, so CJK works by construction). tantivy or semantic retrieval would be another implementation of the same trait |
-| `segment.rs` | The translation units of a document: the parser's blocks sorted into what the model translates (prose, headings, list items, quotes, tables) and what is copied through (code, display maths, images, rules, private blocks), each with its structural marker (`## `, `- [ ] `) split off into a `prefix` so the translation keeps the heading level and the list shape by construction. Pure; the byte span of each segment is the "jump to the source" anchor |
+| `segment.rs` | The translation units of a document: the parser's blocks sorted into what the model translates (prose, headings, list items, quotes, tables) and what is copied through (code, display maths, images, rules, private blocks), each with its structural marker (`## `, `- [ ] `) split off into a `prefix` so the translation keeps the heading level and the list shape by construction; and `segment_pages`, which rebuilds a PDF's paragraphs from extracted lines (the justification signal: padded lines are full, an unpadded one ends the paragraph). Pure; the byte span of each segment is the "jump to the source" anchor, a PDF segment's page its row |
 | `vault.rs` | Orchestrates disk ↔ parse ↔ index ↔ search; path validation (rejects `../` escapes); self-write suppression (watcher loop protection) |
 | `watcher.rs` | notify + 500 ms debounce → a batch of paths → `handle_fs_change` |
 | `event.rs` | `VaultEvent` (including the `ScriptsChanged` hot-reload signal). Since v0.3 workflows subscribe to these through the `broadcast` fan-out in src-tauri |
@@ -120,8 +120,8 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   selection or DOM; writing goes through `write_note` + `broadcast`, so indexing,
   frontend refresh and workflow triggering are all free); `adblock.rs` is the rule
   compilation pipeline (see "The built-in knowledge browser").
-- `translate.rs`: side-by-side translation's glue — the source is cut into segments
-  here (a note in the privacy zone is refused whole), one job at a time is held,
+- `translate.rs`: side-by-side translation's glue — the source (a note, the reader's
+  page, a PDF) is cut into segments here (one in the privacy zone is refused whole), one job at a time is held,
   its events are relayed as `translate://event`, and `translate_save` writes the
   translations as a note through `write_note` + `broadcast` like any other note.
 - `menu.rs` (macOS): the native window menu bar. **A menu item's id is the
@@ -552,7 +552,7 @@ The stamp reaches every consumer as
 | tantivy or semantic retrieval (unscheduled; the README roadmap's "next") | the `SearchProvider` trait |
 | vemry Publish (distant) | vemry-core has no Tauri dependency and can be reused server-side |
 | An AI gateway (distant) | the `ProviderConfig` abstraction |
-| PDF and image Q&A, side-by-side translation (below) | `read_file_bytes` / `file_read_binary`; the `currentPath` context channel is type-agnostic; `FilePreview` is parameterised by path with a replaceable rendering engine; `tool_defs()` is an incrementally extensible registry |
+| PDF and image Q&A (below; side-by-side translation is done, see "Side-by-side translation") | `read_file_bytes` / `file_read_binary`; the `currentPath` context channel is type-agnostic; `FilePreview` renders a PDF through pdf.js (`PdfViewer`, page numbers and jump-to-page exposed); `tool_defs()` is an incrementally extensible registry |
 | The built-in browser: detaching a single tab, favicons, a page snapshot as the veil placeholder (below) | Tauri 2 multi-webview is in use (v0.9); `Webview::reparent` works per tab; the veil placeholder is a DOM slot that can take an image |
 | The agent triggering scripts (distant; needs fine-grained permissions first) | every script binding already takes a `Perspective{hide_private}` parameter, with the filtering implemented and tested; script-level skills could grow on top |
 | Block-level backlinks ("which blocks reference this block") | `LinkEdge` already records the source block; the target fragment (`heading` / `block_ref`) survives on `Block.links` and would move into the edge |
@@ -586,31 +586,28 @@ order:
    which forces a `.md`. It needs `read_file` (text — `Vault::read_file` can already
    take it directly) and `read_attachment` (an image becomes a content part; a PDF
    gets its text extracted).
-3. **PDFs have no text extraction or indexing.** Extraction is half done: a PDF
-   attached through `@` or "+" has its text pulled by `context.rs::read_pdf_text`
-   using pdf-extract into `<file-context>`, with a 20 MiB cap, a panic guard around
-   the library, and an explicit "no extractable text" note for scans. What is
-   **missing** is caching into `.vemry/` and entry into the block index. The main
-   path (usable with a text-only model) is extract (pdf-extract/pdfium) → cache in
-   `.vemry/` → join the existing block index and search, making a PDF one more data
-   source the projections are built from. Side-by-side translation fetching the
-   source page by page depends on this too.
-4. **The native PDF viewer is a black box**: the iframe's built-in viewer exposes
-   no page number or selection and cannot be highlighted or scrolled
-   programmatically. That is fine for reading; "ask about this page or this
-   passage", page-aligned translation and jump-to-page from a citation all need
-   pdf.js instead — a replacement inside `FilePreview` that nothing outside notices.
+3. ~~**PDFs have no text extraction or indexing.**~~ — **extraction and caching
+   done**: `context.rs::pdf_pages` pulls a PDF's text page by page with pdf-extract
+   (a 20 MiB cap, a panic guard around the library, an explicit "no extractable
+   text" note for scans) and caches it under `.vemry/cache/pdf/<hash of the
+   bytes>` — the pages, the flat text with `[p. N]` markers that `read_file` hands
+   the model and `search_notes` searches, and the path it came from. What is still
+   **missing** is entry into the block index, which would make a PDF one more data
+   source the projections are built from.
+4. ~~**The native PDF viewer is a black box**~~ — **done**: `FilePreview` renders a
+   PDF through pdf.js (`PdfViewer` over `PdfPage`: pages drawn as they come near, a
+   selectable text layer, the page in view reported, `scrollToPage` exposed), so
+   "ask about this page", page-aligned translation and jump-to-page from a
+   citation have what they need; nothing outside `FilePreview` noticed the change.
 
 On the model side: the default glm-4.7-flash is text-only, so image Q&A means
 switching to a multimodal endpoint (glm-4v, say). Settings already supports that;
 there is no architectural obstacle.
 
-**Suggested order**: the extraction route (PDF extraction + a `read_file` tool +
-indexing, which also lays the groundwork for side-by-side translation) →
-~~multimodal parts (images)~~ done, and a scanned PDF can reuse the same inflation
-path → replacing the viewer with pdf.js (together with side-by-side translation, in
-one go). If image resizing or transcoding is ever needed (tiff→png, compressing
-past 5 MiB), the seam is the single `inflate_images` function.
+**What remains**: indexing PDF text into the block index, and image Q&A on a
+multimodal endpoint (a scanned PDF can reuse the same inflation path). If image
+resizing or transcoding is ever needed (tiff→png, compressing past 5 MiB), the seam
+is the single `inflate_images` function.
 
 ## Programmability (v0.3, implemented)
 
@@ -2224,6 +2221,20 @@ the user presses "save as note".
   the original first (or reuses the clip the page already has) and files the
   translation beside it in `clips/`, with the same `source:` and `domain:` and
   `translation_of` pointing at the clip.
+- **A PDF.** The file's text comes page by page from the same extraction and cache
+  the agent's `read_file` uses (`context.rs::pdf_pages`), and
+  `vemry_core::segment_pages` rebuilds paragraphs from what pdf-extract gives —
+  lines, not paragraphs: on a justified page every full line is padded with double
+  spaces and a paragraph's last line is not, so an unpadded line that ends a
+  sentence ends the paragraph; elsewhere a line clearly shorter than the column
+  does; a short line standing alone without a full stop is a heading, a hyphen
+  broken across lines is mended, a bare page number is dropped. The rows are
+  **pages**: the page drawn on the left (`PdfPage`, the same pdf.js document the
+  preview parsed), its paragraphs as cells on the right, each cell a segment with
+  the same states as a row. A file in a privacy zone is refused whole; the cache
+  is filed by the bytes' hash, like the extraction. Saving groups the translations
+  under a heading per page ("第 N 页" / "Page N", in the target language) beside
+  the file, `translation_of` naming it.
 - **Thinking off.** A translation is transcription, not reasoning: on a thinking
   model the thinking is most of the latency (measured on a 2.4k-character page:
   51s at the light level, 6s with thinking disabled), so the request disables it

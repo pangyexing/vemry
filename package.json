@@ -24,7 +24,8 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "d3-force": "^3.0.0",
-    "katex": "^0.18.4"
+    "katex": "^0.18.4",
+    "pdfjs-dist": "^6.3.289"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.3",

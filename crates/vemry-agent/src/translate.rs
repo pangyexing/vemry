@@ -576,7 +576,7 @@ mod tests {
     use std::time::Duration;
 
     fn seg(id: u32, kind: SegKind, text: &str, translate: bool, private: bool) -> Segment {
-        Segment { id, kind, prefix: String::new(), text: text.into(), translate, private, span: 0..0 }
+        Segment { id, kind, prefix: String::new(), text: text.into(), translate, private, span: 0..0, page: None }
     }
 
     fn doc(segments: Vec<Segment>) -> TranslateDoc {

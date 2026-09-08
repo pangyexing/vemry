@@ -1065,6 +1065,10 @@
       }
       const path = vault.currentPath;
       if (!path) { toast.push(t("translate.noSource")); return; }
+      if (vault.currentKind === "pdf") {
+        await enterTranslation(() => translate.open({ kind: "pdf", path }));
+        return;
+      }
       if (vault.currentKind !== "note") { toast.push(t("translate.notANote")); return; }
       await vault.flushEditor?.();
       await enterTranslation(() => translate.open({ kind: "note", path }));

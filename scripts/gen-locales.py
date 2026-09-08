@@ -1128,13 +1128,19 @@ add("translate.", {
     "privateSegment": ("Private block — not translated", "私密块——不翻译"),
     "privateNote": ("This note is in a privacy zone and is not sent anywhere, so it cannot be translated",
                     "这篇笔记在隐私区,不会发送到任何地方,因此不能翻译"),
+    "privateFile": ("This file is in a privacy zone and is not sent anywhere, so it cannot be translated",
+                    "这个文件在隐私区,不会发送到任何地方,因此不能翻译"),
+    "pageN": ("Page {n}", "第 {n} 页"),
+    "pdfHint": ("The page on the left, its paragraphs translated on the right; the text is the PDF's extracted text",
+                "左边是页面,右边是该页各段的译文;正文取自 PDF 抽取的文本"),
+    "pdfEmpty": ("No text could be extracted from this PDF — it may be a scan", "这份 PDF 抽不出文本——可能是扫描件"),
     "nothingToTranslate": ("Nothing here to translate", "没有可翻译的内容"),
     "pageExpired": ("The page is no longer in the reader's cache — open it in the reader again, then translate",
                     "这一页已不在阅读投影的缓存里——重新在投影里打开后再翻译"),
     "pageFailed": ("The page could not be extracted — open it in the reader to see why",
                    "抓不到这一页的正文——在阅读投影里打开看看原因"),
     "noSource": ("Open a note first, then translate it", "先打开一篇笔记,再对照翻译"),
-    "notANote": ("Only a note can be translated for now", "目前只能翻译笔记"),
+    "notANote": ("Only a note or a PDF can be translated", "只能翻译笔记或 PDF"),
     "waiting": ("Waiting…", "等待中…"),
     "sourceHint": ("Double-click a block to open it in the editor", "双击一段回到编辑器该块"),
     "openInEditor": ("Open in the editor", "在编辑器中打开"),
@@ -1843,6 +1849,13 @@ add("vaultStore.", {
 })
 
 # ---------------------------------------------------------------- editor
+add("filePreview.", {
+    "translate": ("Translate", "对照翻译"),
+    "translateHint": ("Read this PDF beside its translation, page by page ({key})", "按页与译文并排对照阅读这份 PDF ({key})"),
+    "pageOf": ("{n} / {total}", "{n} / {total}"),
+    "loading": ("Loading the PDF…", "正在载入 PDF…"),
+})
+
 add("editor.", {
     "privateBlockHint": ("Private block — invisible to the AI", "私密块——对 AI 不可见"),
     "clipboardEmpty": ("Nothing to paste from the clipboard", "剪贴板没有可粘贴的内容"),

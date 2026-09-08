@@ -823,7 +823,7 @@ export interface ReadPage {
 
 // ---- side-by-side translation (src-tauri/src/translate.rs) ----
 /** What is being translated. */
-export type TranslateSource = { kind: "note"; path: string } | { kind: "page"; url: string };
+export type TranslateSource = { kind: "note"; path: string } | { kind: "page"; url: string } | { kind: "pdf"; path: string };
 /** A segment's kind (vemry_core::segment::SegKind). */
 export type SegKind =
   | { type: "heading"; level: number }
@@ -847,6 +847,8 @@ export interface TranslateSegment {
   private: boolean;
   /** The block's byte offset in the note (openBlockAt's unit); 0 for a source with no anchors. */
   byte_start: number;
+  /** The 1-based page of a PDF's segment; null for the other sources. */
+  page: number | null;
   /** The translation the cache already held. */
   cached: string | null;
 }

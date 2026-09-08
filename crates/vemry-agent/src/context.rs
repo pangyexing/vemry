@@ -486,34 +486,59 @@ pub(crate) fn is_pdf(path: &str) -> bool {
 /// whitespace normalisation. Layout is necessarily lost, which the first line of
 /// the envelope says.
 pub(crate) fn read_pdf_text(vault: &Vault, path: &str, rel: &str) -> Result<String, String> {
+    let (_, pages) = pdf_pages(vault, path, rel)?;
+    let text = pages_text(&pages);
+    if text.is_empty() {
+        return Ok(text);
+    }
+    Ok(format!("(the text below was extracted from a PDF; its layout may be lost; [p. N] marks where page N starts)\n\n{text}"))
+}
+
+/// The flat text of a PDF: the pages one after another, each opened by a `[p. N]`
+/// marker so a reader (the model, a search hit) can name the page.
+fn pages_text(pages: &[String]) -> String {
+    let mut out = String::new();
+    for (i, page) in pages.iter().enumerate() {
+        if page.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(&format!("[p. {}]\n{}", i + 1, page));
+    }
+    out
+}
+
+/// A PDF's text page by page (pdf-extract, pure Rust), with the bytes' hash it is
+/// filed under. The extraction is cached under .vemry/cache/pdf by that hash: a PDF
+/// read once (attached, through read_file, or for translation) costs nothing the
+/// next time. Three files per PDF: `<key>.pages.json` (the pages), `<key>.txt` (the
+/// flat text search_notes searches) and `<key>.path` (where it came from).
+/// The privacy gate is passed by the caller first; this only handles size, parse
+/// failures (including a panic inside the library — a malformed PDF must not take
+/// down the whole turn) and whitespace normalisation.
+pub fn pdf_pages(vault: &Vault, path: &str, rel: &str) -> Result<(String, Vec<String>), String> {
     let bytes = vault.read_file_bytes(path).map_err(|e| e.to_string())?;
     if bytes.len() > PDF_MAX_BYTES {
         return Err(format!("PDF too large (>20MB): {rel}"));
     }
-    // The extraction is cached under .vemry/cache/pdf by the bytes' hash: a PDF read
-    // once (attached, or through read_file) costs nothing the next time, and the
-    // cached text is what search_notes searches for PDFs
     let key = format!("{:016x}", vemry_core::provenance::fnv1a64(&bytes));
     let cache_dir = vault.meta_dir().join(PDF_CACHE_SUBDIR);
-    let cached = cache_dir.join(format!("{key}.txt"));
-    let text = match std::fs::read_to_string(&cached) {
-        Ok(t) => t,
-        Err(_) => {
-            let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pdf_extract::extract_text_from_mem(&bytes)))
-                .map_err(|_| format!("PDF parse failed: {rel}"))?
-                .map_err(|e| format!("PDF parse failed: {rel} ({e})"))?;
-            let text = collapse_blank_lines(&extracted);
-            if std::fs::create_dir_all(&cache_dir).is_ok() {
-                let _ = std::fs::write(&cached, &text);
-                let _ = std::fs::write(cache_dir.join(format!("{key}.path")), rel);
-            }
-            text
-        }
-    };
-    if text.is_empty() {
-        return Ok(text);
+    let cached = cache_dir.join(format!("{key}.pages.json"));
+    if let Some(pages) = std::fs::read_to_string(&cached).ok().and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()) {
+        return Ok((key, pages));
     }
-    Ok(format!("(the text below was extracted from a PDF; its layout may be lost)\n\n{text}"))
+    let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pdf_extract::extract_text_from_mem_by_pages(&bytes)))
+        .map_err(|_| format!("PDF parse failed: {rel}"))?
+        .map_err(|e| format!("PDF parse failed: {rel} ({e})"))?;
+    let pages: Vec<String> = extracted.iter().map(|p| collapse_blank_lines(p)).collect();
+    if std::fs::create_dir_all(&cache_dir).is_ok() {
+        let _ = std::fs::write(&cached, serde_json::to_string(&pages).unwrap_or_default());
+        let _ = std::fs::write(cache_dir.join(format!("{key}.txt")), pages_text(&pages));
+        let _ = std::fs::write(cache_dir.join(format!("{key}.path")), rel);
+    }
+    Ok((key, pages))
 }
 
 /// Where extracted PDF texts live under the vault's meta directory (`<key>.txt` = the
@@ -1396,9 +1421,12 @@ mod tests {
         assert_eq!(cached[0].0, "paper.PDF");
         assert!(std::fs::read_to_string(&cached[0].1).unwrap().contains("Hello PDF attachment"));
         let out = crate::tools::execute_read_tool(&vault, "search_notes", &json!({"query": "hello attachment"})).unwrap();
-        assert!(out.text.contains("paper.PDF:1:") && out.text.contains("(PDF; read_file for the text)"), "{}", out.text);
+        // line 1 of the cached text is the page marker, the hit is on line 2
+        assert!(out.text.contains("paper.PDF:2:") && out.text.contains("(PDF; read_file for the text)"), "{}", out.text);
         let out = crate::tools::execute_read_tool(&vault, "read_file", &json!({"path": "paper.PDF"})).unwrap();
-        assert!(out.text.contains("Hello PDF attachment"));
+        assert!(out.text.contains("[p. 1]\nHello PDF attachment"), "{}", out.text);
+        // the pages are cached beside the flat text
+        assert!(cache.join(format!("{}.pages.json", cached[0].1.file_stem().unwrap().to_string_lossy())).is_file());
         let (private_pdf, f1) = one(&vault, ContextRef::File { path: "secret/paper.pdf".into() });
         let (missing_pdf, f2) = one(&vault, ContextRef::File { path: "secret/nope.pdf".into() });
         assert_eq!(private_pdf.body.unwrap_err(), missing_pdf.body.unwrap_err().replace("nope", "paper"));

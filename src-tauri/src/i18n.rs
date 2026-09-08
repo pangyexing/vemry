@@ -144,6 +144,7 @@ mod tests {
         "translate.privateNote",
         "translate.nothingToTranslate",
         "translate.pageExpired",
+        "translate.privateFile",
         "cmd.toggle-left.title",
         "cmd.toggle-right.title",
         "cmd.toggle-sidebar-side.title",

@@ -56,8 +56,11 @@ pub struct Segment {
     /// A `> [!private]` block: shown on the left, never sent, never translated.
     pub private: bool,
     /// Byte range of the block in the raw text (frontmatter offset included) —
-    /// the "jump to the source" anchor.
+    /// the "jump to the source" anchor. Empty for a PDF's segments.
     pub span: Range<usize>,
+    /// The 1-based page a PDF segment came from; None for Markdown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
 }
 
 /// A document cut into segments, with the frontmatter it carried (the title is
@@ -107,9 +110,133 @@ pub fn segment_markdown(raw: &str) -> Segmented {
             text,
             translate,
             span,
+            page: None,
         });
     }
     Segmented { frontmatter, segments }
+}
+
+/// Cut a PDF's extracted pages into segments. Extraction gives lines, not
+/// paragraphs, so paragraphs are rebuilt from two signals the text carries:
+/// a justified line is padded with double spaces and the last line of a paragraph
+/// is not (on a page where most lines are padded, an unpadded line that ends a
+/// sentence ends the paragraph); elsewhere a line clearly shorter than the column
+/// that ends a sentence does. A hyphen broken across lines is mended, a blank line
+/// separates paragraphs unless the page is double-spaced throughout, a short line
+/// standing alone without a full stop is a heading, and a bare number (the page
+/// number) is dropped. Every segment carries its page, which is what the rows
+/// align on.
+pub fn segment_pages(pages: &[String]) -> Vec<Segment> {
+    let mut out: Vec<Segment> = vec![];
+    for (i, page) in pages.iter().enumerate() {
+        let page_no = i as u32 + 1;
+        let raw_lines: Vec<&str> = page.lines().map(str::trim).collect();
+        let nonblank = raw_lines.iter().filter(|l| !l.is_empty()).count().max(1);
+        let blank = raw_lines.len() - raw_lines.iter().filter(|l| !l.is_empty()).count();
+        // Double-spaced output: a blank line after nearly every line means nothing
+        let blanks_mean_nothing = blank * 10 >= nonblank * 4;
+        let padded = raw_lines.iter().filter(|l| l.contains("  ")).count();
+        // Most lines padded: the padding is justification, and its absence marks a paragraph's last line
+        let justified_page = padded * 10 >= nonblank * 3;
+        let lines: Vec<(String, bool)> = raw_lines
+            .iter()
+            .map(|l| (l.split_whitespace().collect::<Vec<_>>().join(" "), l.contains("  ")))
+            .collect();
+        let column = lines.iter().map(|(l, _)| l.chars().count()).max().unwrap_or(0).max(40);
+        let mut paragraphs: Vec<Vec<&str>> = vec![];
+        let mut cur: Vec<&str> = vec![];
+        for (li, (line, padded)) in lines.iter().enumerate() {
+            if line.is_empty() {
+                if !cur.is_empty() && !blanks_mean_nothing {
+                    paragraphs.push(std::mem::take(&mut cur));
+                }
+                continue;
+            }
+            let short = line.chars().count() + 6 <= column;
+            let last_line = if justified_page { !padded } else { short };
+            // A line opening a paragraph that is no sentence, with a sentence starting
+            // right under it: a heading set without a blank line around it
+            if cur.is_empty() && last_line && looks_like_heading(line) && next_opens_sentence(&lines, li) {
+                paragraphs.push(vec![line]);
+                continue;
+            }
+            cur.push(line);
+            if ends_sentence(line) && last_line {
+                paragraphs.push(std::mem::take(&mut cur));
+            }
+        }
+        if !cur.is_empty() {
+            paragraphs.push(cur);
+        }
+        for para in paragraphs {
+            let text = join_lines(&para);
+            if text.is_empty() || is_page_number(&text) {
+                continue;
+            }
+            let heading = para.len() == 1 && looks_like_heading(&text);
+            let (kind, prefix) = if heading { (SegKind::Heading { level: 2 }, "## ".to_string()) } else { (SegKind::Para, String::new()) };
+            out.push(Segment {
+                id: out.len() as u32,
+                kind,
+                prefix,
+                text,
+                translate: true,
+                private: false,
+                span: 0..0,
+                page: Some(page_no),
+            });
+        }
+    }
+    out
+}
+
+/// The next non-blank line (if any) starts like a sentence: a capital, a digit, a quote.
+fn next_opens_sentence(lines: &[(String, bool)], at: usize) -> bool {
+    match lines[at + 1..].iter().find(|(l, _)| !l.is_empty()) {
+        None => true,
+        Some((next, _)) => next.chars().next().is_some_and(|c| c.is_uppercase() || c.is_ascii_digit() || matches!(c, '"' | '“' | '(')),
+    }
+}
+
+fn ends_sentence(line: &str) -> bool {
+    line.trim_end_matches(['"', '\'', ')', ']', '”', '’']).ends_with(['.', '!', '?', ':', '。', '！', '？'])
+}
+
+/// A line of its own, short, not a sentence, mostly not punctuation — a title or a
+/// section heading. A numbered heading (`3.2 Attention`) ends in a word, not a stop.
+fn looks_like_heading(text: &str) -> bool {
+    let n = text.chars().count();
+    if n == 0 || n > 90 || ends_sentence(text) || text.ends_with(',') {
+        return false;
+    }
+    let words = text.split_whitespace().count();
+    words <= 14 && text.chars().any(|c| c.is_alphabetic())
+}
+
+fn is_page_number(text: &str) -> bool {
+    let t = text.trim();
+    !t.is_empty() && t.len() <= 4 && t.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Lines of one paragraph → one string: a space between lines, none after a
+/// hyphen that ends a line. The hyphen itself stays: `key-` + `value` and
+/// `trans-` + `former` cannot be told apart without a dictionary, and a kept
+/// hyphen reads right in the first case and passably in the second, where a
+/// dropped one would glue the compound.
+fn join_lines(lines: &[&str]) -> String {
+    let mut s = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        if i > 0 {
+            let broke_word = s.ends_with('-')
+                && l.chars().next().is_some_and(|c| c.is_lowercase())
+                && s.chars().rev().nth(1).is_some_and(|c| c.is_alphabetic());
+            if !broke_word {
+                s.push(' ');
+            }
+        }
+        s.push_str(l);
+    }
+    s.trim().to_string()
 }
 
 /// A paragraph-kind block sorted by its first line: display maths, a lone image or
@@ -260,6 +387,39 @@ mod tests {
         assert_eq!(v[2].kind, SegKind::Quote);
         assert_eq!(v[3].kind, SegKind::Para);
         assert!(v.iter().all(|s| s.translate));
+    }
+
+    #[test]
+    fn pdf_pages_rebuild_paragraphs_headings_and_drop_page_numbers() {
+        let p1 = "Scaled Dot-Product Attention\n\nAn attention function can be described as mapping a query and a set of\nkey-value pairs to an output, where the query, keys, values, and out-\nput are all vectors. The output is a weighted sum.\nWe call it scaled attention. The input consists of queries and keys of\ndimension dk, and values of dimension dv.\n1".to_string();
+        let p2 = "Why scale\nThe two most commonly used attention functions are additive attention,\nand dot-product attention.\n2".to_string();
+        let v = segment_pages(&[p1, p2]);
+        let kinds: Vec<(u32, &SegKind, &str)> = v.iter().map(|s| (s.page.unwrap(), &s.kind, s.text.as_str())).collect();
+        assert_eq!(kinds[0], (1, &SegKind::Heading { level: 2 }, "Scaled Dot-Product Attention"));
+        assert_eq!(v[0].prefix, "## ");
+        assert_eq!(kinds[1].1, &SegKind::Para);
+        assert!(kinds[1].2.starts_with("An attention function") && kinds[1].2.contains("and out-put are all vectors. The output is a weighted sum."), "{}", kinds[1].2);
+        assert!(kinds[2].2.starts_with("We call it scaled attention"), "{}", kinds[2].2);
+        assert_eq!(kinds[3], (2, &SegKind::Heading { level: 2 }, "Why scale"));
+        assert_eq!(v.len(), 5, "{kinds:?}");
+        assert!(v.iter().all(|s| s.translate && !s.private && s.span.is_empty()));
+        assert_eq!(v.iter().map(|s| s.id).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn double_spaced_justified_extraction_rebuilds_paragraphs() {
+        // What pdf-extract gives for a justified page: a blank line after every line,
+        // double spaces inside the full lines, single spaces in a paragraph's last line
+        let p = "Scaled Dot-Product Attention\n\nAn  attention  function  can  be  described  as  mapping  a  query  and  a  set  of  key-\n\nvalue  pairs  to  an  output,  where  the  query,  keys,  values,  and  output  are  all\n\nvectors. The output is a weighted sum.\n\nWe  call  our  particular  attention  \"Scaled  Dot-Product  Attention\".  The  input\n\nconsists of queries and keys of dimension dk.\n\nWhy scale the dot products\n\nThe  two  most  commonly  used  attention  functions  are  additive  attention,  and\n\ndot-product attention.\n".to_string();
+        let v = segment_pages(&[p]);
+        let got: Vec<(&SegKind, &str)> = v.iter().map(|s| (&s.kind, s.text.as_str())).collect();
+        assert_eq!(got.len(), 5, "{got:?}");
+        assert_eq!(got[0], (&SegKind::Heading { level: 2 }, "Scaled Dot-Product Attention"));
+        assert_eq!(got[1], (&SegKind::Para, "An attention function can be described as mapping a query and a set of key-value pairs to an output, where the query, keys, values, and output are all vectors. The output is a weighted sum."));
+        assert_eq!(got[2].0, &SegKind::Para);
+        assert!(got[2].1.starts_with("We call our particular attention") && got[2].1.ends_with("dimension dk."), "{}", got[2].1);
+        assert_eq!(got[3], (&SegKind::Heading { level: 2 }, "Why scale the dot products"));
+        assert_eq!(got[4], (&SegKind::Para, "The two most commonly used attention functions are additive attention, and dot-product attention."));
     }
 
     #[test]

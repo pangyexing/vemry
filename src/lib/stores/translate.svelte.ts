@@ -177,6 +177,7 @@ class TranslateStore {
 function sameSource(a: TranslateSource, b: TranslateSource): boolean {
   if (a.kind === "note" && b.kind === "note") return a.path === b.path;
   if (a.kind === "page" && b.kind === "page") return a.url === b.url;
+  if (a.kind === "pdf" && b.kind === "pdf") return a.path === b.path;
   return false;
 }
 
