@@ -30,17 +30,20 @@ progress bar, not a receipt at the end.
 ## Inputs
 
 - The source, in this order: a vault file (read_file — a PDF comes back as text),
-  a clipped page (clips_lookup, then read_note), a URL (open_for_reading; for an
-  arXiv abstract page ask for its HTML version, `https://arxiv.org/html/<id>`,
-  which keeps the section structure). A long page comes back in parts — the
+  a clipped page (clips_lookup, then read_note), a URL (open_for_reading; an
+  arXiv link means its HTML version alone, `https://arxiv.org/html/<id>`, which
+  keeps the section structure — the abstract page adds nothing and is not
+  requested). A long page comes back in parts — the
   result says `part 1 of N` — and the next part is one call away: the same URL
   with `part: 2`, then 3. Write each part's sections into the source note before
   asking for the next: the source note is the memory, not the context. Never look
   for the rest of a page anywhere else (the PDF, a mirror, the browser): it is not
   there, and every such attempt costs a minute.
 - What the vault already holds: search_notes with the paper's key terms and
-  query_blocks with kind: claim. The known map is the hits, linked — a hit is not
-  read in full; a chapter the vault already explains is linked, not rewritten.
+  query_blocks with kind: claim. The known map is the hits, linked with the
+  snippet's gist — no read_note in this step (a clipped explainer read in full
+  is ten thousand characters of someone else's words); a chapter the vault
+  already explains is linked, not rewritten.
 - What the reader reads it for, asked once at the start when the request does not
   say: understand the idea, reproduce it, write a survey, prepare for an interview,
   review it. The goal orders the chapters and picks the output.
@@ -65,43 +68,56 @@ progress bar, not a receipt at the end.
   `$$…$$`, tables as tables, a figure as one line naming it and its caption.
   Quotation, not paraphrase: this note is what the chapters cite. Frontmatter
   `title`, `authors`, `year`, `source` (the URL or the file), `genre`. The first
-  part is a write_note; every later part is an append_note of its sections. An id
-  that exists is never changed or renumbered (chapters and cards cite it); a
+  part is a write_note; every later part is an append_note of its sections. The
+  body only: the reference list and an appendix of figure captions are not
+  archived (a chapter cites a reference by its number if it must). An id that
+  exists is never changed or renumbered (chapters and cards cite it); a
   paragraph added later gets the next free number of its section.
 - The hub: frontmatter `goal` and `status`; a known list (each item a [[link]] to
   the note that already explains it), a to-learn list, the chapter order for this
-  goal (a chapter already known is marked so and skipped), and a query block
-  with `tag: chapter` and `text: "#chapter"` so the chapters and their status
-  show live, one row per chapter (a tag alone matches every block of a tagged
-  note; the text filter keeps the `#chapter` line itself).
-- Language: everything written for the reader — the hub's sections, the chapter
-  headings below, the explanations, a lab block's caption, the cards, the
-  retelling check — is in the user's language; the English names below are the
-  structure, not the wording (a Chinese reader gets 一句话 / 原文 / 记号 / 试一试 /
-  失效条件 / 问题 / 我的话, and 已知 / 待学 / 章节 on the hub). What is machine-read
-  stays as written here: the `#chapter` tag, the `status::` values (unread,
-  reading, retold, done), the folder and file names, the block ids. The source
-  note stays in the paper's own language: it is a quotation.
-- A chapter note, in this order, every time:
-  1. `#chapter [status:: unread]` on its first line — the hub reads it.
-  2. `## In one sentence` — the idea, plainly.
-  3. `## From the paper` — the paragraphs it rests on, embedded:
+  goal (a chapter already known is marked so and skipped), and this query block,
+  exactly, so the chapters and their status show live, one row per chapter:
+
+  ```vemry-query
+  tag: chapter
+  text: "#chapter"
+  ```
+
+  (the fence language is `vemry-query`, one key per line; a tag alone matches
+  every block of a tagged note, and the text filter keeps the `#chapter` line).
+- Language: everything written for the reader — the hub's sections, every
+  chapter heading, the explanations, a lab block's caption, the cards, the
+  retelling check — is in the user's language. The section list below gives each
+  heading's meaning, not its text: a Chinese reader's chapter reads `## 一句话`,
+  `## 原文`, `## 记号`, `## 试一试`, `## 失效条件`, `## 问题`, `## 我的话`, and the
+  hub `## 已知`, `## 待学`, `## 章节`; an English reader's, "In one sentence",
+  "From the paper", "Notation", "Try it", "Where it stops holding", "Question",
+  "In my words". What is machine-read stays as written here: the `#chapter` tag,
+  the `status::` values (unread, reading, retold, done), the folder and file
+  names, the block ids. The source note stays in the paper's own language: it is
+  a quotation.
+- A chapter note — a `# title` line, then `#chapter [status:: unread]` on the
+  next line (the hub reads it), then these sections in this order, every time,
+  headed in the user's language:
+  1. *in one sentence* — the idea, plainly.
+  2. *from the paper* — the paragraphs it rests on, embedded:
      `![[papers/<slug>/source#^s3p2]]`. Never a chapter without one.
-  4. `## Notation` — only when the chapter introduces symbols: a two-column table,
+  3. *notation* — only when the chapter introduces symbols: a two-column table,
      symbol and meaning, in the paper's own notation.
-  5. `## Try it` — only when the idea is numeric and the reader asked for an
+  4. *try it* — only when the idea is numeric and the reader asked for an
      experiment (or the goal is reproduce): a lab block, see below.
-  6. `## Where it stops holding` — the condition the idea depends on, in one or
-     two sentences.
-  7. `## Question` — one question the reader should be able to answer after the
-     chapter, never yes/no. Then `## In my words`, left empty: the reader fills it.
+  5. *where it stops holding* — the condition the idea depends on, in one or two
+     sentences.
+  6. *question* — one question the reader should be able to answer after the
+     chapter, never yes/no.
+  7. *in my words* — left empty: the reader fills it.
   Under 350 words of explanation per chapter; the source blocks carry the rest.
 - The reader's confusions are tasks: `- [ ] why divide by √d_k #question` in a
   chapter note. When asked to answer them (or when one is in the working note),
   answer under the task as an indented line (edit_note), in the chapter's
   notation, citing the source block, then tick it with update_task.
-- Checking the retelling: read the chapter's `## In my words` and the source
-  blocks it embeds (read_block each), then say what the retelling got right, what
+- Checking the retelling: read the chapter's last section (*in my words*) and the
+  source blocks it embeds (read_block each), then say what the retelling got right, what
   it left out (a condition, a step), what it turned around (a cause for an
   effect), and which symbol it confused — each point citing the block. The cards
   come from these gaps alone, one per gap, in the tutor's shape; a retelling with
