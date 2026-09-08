@@ -14,7 +14,7 @@
   import { executeCommand } from "$lib/commands/registry";
   import { handleCodeCopyClick, renderNoteMarkdown } from "$lib/markdown";
   import { k } from "$lib/shortcut";
-  import { loadPdf, type PDFDocumentProxy } from "$lib/pdf";
+  import { loadPdf, segmentTops, type PDFDocumentProxy } from "$lib/pdf";
   import PdfPage from "$lib/components/PdfPage.svelte";
   import "katex/dist/katex.min.css";
 
@@ -58,6 +58,47 @@
     if (id == null) return null;
     return g.segs.find((s) => s.id === id)?.text ?? null;
   }
+  /** Where each PDF segment starts on its page (a fraction of the page height), by segment id; looked up per page as the document arrives. */
+  let tops = $state<Record<number, number>>({});
+  $effect(() => {
+    const d = pdfDoc;
+    const groups = pageGroups;
+    if (!d || !groups.length) { tops = {}; return; }
+    let stale = false;
+    void (async () => {
+      const next: Record<number, number> = {};
+      for (const g of groups) {
+        const segs = g.segs.filter((s) => !s.private);
+        if (!segs.length) continue;
+        const page = await d.getPage(g.page);
+        const found = await segmentTops(page, segs.map((s) => s.text));
+        if (stale) return;
+        segs.forEach((s, i) => { const f = found[i]; if (f != null) next[s.id] = f; });
+      }
+      if (!stale) tops = next;
+    })();
+    return () => { stale = true; };
+  });
+  /** The measured heights: the page cell per page, each translation cell per segment (bind:clientHeight). */
+  let pageHeights = $state<Record<number, number>>({});
+  let cellHeights = $state<Record<number, number>>({});
+  /** Each cell's top margin so it sits at its source's height on the page — or right under the cell above when that one is taller than its block (side mode only). */
+  const cellGaps = $derived.by(() => {
+    const gaps: Record<number, number> = {};
+    if (mode !== "side") return gaps;
+    for (const g of pageGroups) {
+      const ph = pageHeights[g.page] ?? 0;
+      let bottom = 0;
+      for (const s of g.segs) {
+        if (s.private || s.kind.type === "aside") continue;
+        const want = tops[s.id] != null ? tops[s.id] * ph : bottom;
+        const gap = Math.max(0, want - bottom);
+        gaps[s.id] = gap;
+        bottom += gap + (cellHeights[s.id] ?? 0) + 6;
+      }
+    }
+    return gaps;
+  });
   /** A PDF's segments by page, in order (a page with no text still gets a row: the picture is the content). */
   const pageGroups = $derived.by(() => {
     if (doc?.source.kind !== "pdf") return [];
@@ -288,6 +329,8 @@
           {@const row = translate.rows[seg.id]}
           {#if seg.private}
             <span class="priv">{t("translate.privateSegment")}</span>
+          {:else if seg.kind.type === "aside"}
+            <span class="aside-mark" title={t("translate.asideHint")}>·</span>
           {:else if !seg.translate}
             {@html html(seg.prefix, seg.text)}
           {:else if row?.done && row.text != null}
@@ -311,13 +354,23 @@
           {#each pageGroups as g (g.page)}
             <div class="row page">
               <div class="src pdfpage">
-                {#if pdfDoc}<PdfPage doc={pdfDoc} n={g.page} {root} highlight={litOn(g)} />{/if}
+                <div class="pagebox" bind:clientHeight={pageHeights[g.page]}>
+                  {#if pdfDoc}<PdfPage doc={pdfDoc} n={g.page} {root} highlight={litOn(g)} />{/if}
+                </div>
               </div>
               <div class="tr md-body pagecells">
                 <div class="pagelabel">{t("translate.pageN", { n: g.page })}</div>
-                {#each g.segs as seg (seg.id)}
+                {#each g.segs.filter((s) => s.kind.type !== "aside" && !s.private) as seg (seg.id)}
                   <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-                  <div class="cell" class:lit={translate.selected === seg.id} use:observe={seg.id} data-id={seg.id} onclick={(e) => { onCellClick(e); select(seg.id); }}>
+                  <div
+                    class="cell"
+                    class:lit={translate.selected === seg.id}
+                    style:margin-top={`${cellGaps[seg.id] ?? 0}px`}
+                    bind:clientHeight={cellHeights[seg.id]}
+                    use:observe={seg.id}
+                    data-id={seg.id}
+                    onclick={(e) => { onCellClick(e); select(seg.id); }}
+                  >
                     {@render trCell(seg)}
                   </div>
                 {/each}
@@ -538,19 +591,32 @@
   .cell:hover .tools {
     opacity: 1;
   }
-  /* A PDF row: the page drawn on the left, its paragraphs as cells on the right */
+  /* A PDF row: the page drawn on the left, its paragraphs as cells on the right, each at its
+     source's height (the page label row is the same height as the page cell's top padding) */
   .row.page .pdfpage {
-    padding: 14px 20px;
+    padding: 0 20px 14px;
     align-self: start;
-    position: sticky;
-    top: 28px;
+  }
+  .mode-side .row.page .pdfpage {
+    padding-top: 26px;
   }
   .mode-stack .row.page .pdfpage,
   .mode-target .row.page .pdfpage {
-    position: static;
+    padding-top: 14px;
   }
   .row.page .pagecells {
-    padding: 8px 0 12px;
+    padding: 0 0 12px;
+  }
+  .mode-side .pagelabel {
+    height: 26px;
+    box-sizing: border-box;
+    padding-top: 6px;
+  }
+  .kind-aside .src {
+    opacity: 0.55;
+  }
+  .aside-mark {
+    color: var(--fg-faint);
   }
   .pagelabel {
     font-size: var(--fs-xs);

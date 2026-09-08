@@ -165,11 +165,11 @@
   /** Docked: the page joins the research panel's conversation as context (the panel is brought
    *  out). Bar: the floating chat window is summoned with the page attached (relayed; the main
    *  window opens the window first and extracts the page after). */
-  /** Side-by-side translation of the current page, in the main window (the bar relays; docked it is a command). */
+  /** The translation pane inside the current tab: opened, or closed when it is open (the same IPC from the bar and the docked chrome). */
+  const trState = $derived(cur ? browser.translating[cur.label] ?? null : null);
   function translatePage() {
-    if (!url) return;
-    if (inBar) void relay({ kind: "translate-page", url }, true);
-    else void executeCommand("translate-browser-page");
+    if (!cur) return;
+    api.browserTranslateToggle(cur.label).catch(err);
   }
 
   async function ai() {
@@ -597,7 +597,13 @@
         </button>
       {/if}
       <button class="act" title={inBar ? t("clipBar.summonAgentHint") : t("browserPanel.aiDockedHint")} onclick={() => void ai()} disabled={!cur || isBlank || agent.grabbingPage}>AI</button>
-      <button class="act" title={t("browserPanel.translateHint")} onclick={() => void translatePage()} disabled={!cur || isBlank}>{t("browserPanel.translate")}</button>
+      <button
+        class="act"
+        class:on={!!trState}
+        title={trState ? (trState.done >= trState.total ? t("browserPanel.translateDoneHint") : t("browserPanel.translateActiveHint", trState)) : t("browserPanel.translateHint")}
+        onclick={() => void translatePage()}
+        disabled={!cur || isBlank}
+      >{t("browserPanel.translate")}{#if trState && trState.done < trState.total}<span class="tr-count">{trState.done}/{trState.total}</span>{/if}</button>
       <span class="clipgroup">
         <button
           class="act primary"
@@ -1103,5 +1109,15 @@
     color: var(--fg-faint);
     font-size: 12px;
     padding: 8px;
+  }
+  .act.on {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .tr-count {
+    margin-left: 4px;
+    font-size: 10px;
+    opacity: 0.8;
+    font-variant-numeric: tabular-nums;
   }
 </style>

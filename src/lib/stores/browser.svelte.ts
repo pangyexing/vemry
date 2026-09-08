@@ -32,6 +32,8 @@ class BrowserStore {
   adblock = $state<AdblockStatusView | null>(null);
   /** The bookmarks mirror (the source of truth is bookmarks.json, and a change replaces it wholesale through bookmarks_changed). */
   bookmarks = $state<BookmarkView[]>([]);
+  /** Per tab: the in-page translation pane's state (absent = closed). */
+  translating = $state<Record<string, { done: number; total: number }>>({});
 
   /** The docked panel column's width (logical px): the persisted value on its floor, or the default. */
   get panelWidth(): number {
@@ -89,12 +91,22 @@ class BrowserStore {
     } else if (e.type === "closed") {
       this.tabs = this.tabs.filter((w) => w.label !== e.label);
       if (this.active === e.label) this.active = null;
+      if (e.label in this.translating) {
+        const next = { ...this.translating };
+        delete next[e.label];
+        this.translating = next;
+      }
     } else if (e.type === "shape_changed") {
       this.shape = e.shape;
     } else if (e.type === "adblock_status") {
       this.adblock = e.status;
     } else if (e.type === "bookmarks_changed") {
       this.bookmarks = e.bookmarks;
+    } else if (e.type === "translate") {
+      const next = { ...this.translating };
+      if (e.active) next[e.label] = { done: e.done, total: e.total };
+      else delete next[e.label];
+      this.translating = next;
     }
   }
 

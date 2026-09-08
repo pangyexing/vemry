@@ -351,8 +351,8 @@ CMD = {
         ("Return to the most recently opened web page", "回到最近打开的网页阅读投影"),
     ),
     "translate-browser-page": (
-        ("Translate this web page", "对照翻译这个网页"),
-        ("Extract the browser's current page and read it beside its translation", "抽取浏览器当前页正文,与译文并排对照阅读"),
+        ("Translate this web page side by side", "分屏翻译这个网页"),
+        ("A translation pane opens beside the browser's current page, each paragraph aligned with its source; run again to close it", "在浏览器当前页旁开出译文栏,逐段与原文对齐;再执行一次关闭"),
     ),
     "translate-toggle": (
         ("Translate side by side", "对照翻译"),
@@ -1137,8 +1137,7 @@ add("translate.", {
     "nothingToTranslate": ("Nothing here to translate", "没有可翻译的内容"),
     "pageExpired": ("The page is no longer in the reader's cache — open it in the reader again, then translate",
                     "这一页已不在阅读投影的缓存里——重新在投影里打开后再翻译"),
-    "pageFailed": ("The page could not be extracted — open it in the reader to see why",
-                   "抓不到这一页的正文——在阅读投影里打开看看原因"),
+    "asideHint": ("Not body text (a caption, a reference, a byline) — left as it is", "非正文(题注、参考文献、署名)——保持原样"),
     "noSource": ("Open a note first, then translate it", "先打开一篇笔记,再对照翻译"),
     "notANote": ("Only a note or a PDF can be translated", "只能翻译笔记或 PDF"),
     "waiting": ("Waiting…", "等待中…"),
@@ -1164,7 +1163,9 @@ add("browserPanel.", {
     "pickTarget": ("Pick a clip target…", "选落点…"),
     "aiDockedHint": ("Add this page to the conversation as context", "把这一页作为上下文加入对话"),
     "translate": ("Translate", "译"),
-    "translateHint": ("Extract this page and read it beside its translation in the main window", "抽取这一页正文,在主窗口与译文并排对照阅读"),
+    "translateHint": ("Split this page with its translation: the page on the left, each paragraph's translation beside it on the right", "在页面里分屏显示译文:页面在左,每段译文在右侧对齐"),
+    "translateActiveHint": ("Translating ({done}/{total}) — click to close the translation pane", "翻译中({done}/{total})——点击关闭译文栏"),
+    "translateDoneHint": ("Translated — click to close the translation pane", "已翻译——点击关闭译文栏"),
 })
 
 # ---------------------------------------------------------------- clip bar strings (reused by the browser panel chrome)

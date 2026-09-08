@@ -685,9 +685,7 @@ export type BrowserbarAction =
    *  page is attached afterwards through attach-page; it does not go through
    *  focus-agent — that branch would pull the user back to the main window's panel,
    *  while summoning from the detached browser always wants the floating chat window). */
-  | { kind: "summon-agent"; label: string }
-  /** Translate the current page side by side in the main window (the page is extracted there). */
-  | { kind: "translate-page"; url: string };
+  | { kind: "summon-agent"; label: string };
 /** The clip receipt from the main window back to the bar (emitTo'd to
  *  browserbar://result): a toast in the main window is invisible to the bar's user, so
  *  the receipt flashes on the bar itself. */
@@ -835,7 +833,9 @@ export type SegKind =
   | { type: "math" }
   | { type: "image" }
   | { type: "hr" }
-  | { type: "private" };
+  | { type: "private" }
+  /** Not body text (a caption, a reference entry, a byline, a stamp): shown, never translated. */
+  | { type: "aside" };
 export interface TranslateSegment {
   id: number;
   kind: SegKind;
@@ -903,7 +903,9 @@ export type BrowserEvent =
   | { type: "closed"; label: string }
   | { type: "shape_changed"; shape: BrowserShape }
   | { type: "adblock_status"; status: AdblockStatusView }
-  | { type: "bookmarks_changed"; bookmarks: BookmarkView[] };
+  | { type: "bookmarks_changed"; bookmarks: BookmarkView[] }
+  /** A tab's in-page translation pane: on or off, and how many blocks have their translation. */
+  | { type: "translate"; label: string; active: boolean; done: number; total: number };
 
 // ---- user scripts (v0.3 programmability) ----
 
@@ -1028,6 +1030,8 @@ export const api = {
   browserNavigate: (url: string, label?: string) => invoke<void>("browser_navigate", { url, label }),
   browserBack: (label?: string) => invoke<void>("browser_back", { label }),
   browserForward: (label?: string) => invoke<void>("browser_forward", { label }),
+  /** Open a translation pane inside the tab (the page on the left, each paragraph's translation aligned on the right), or close it when it is open; resolves with whether it is open afterwards. */
+  browserTranslateToggle: (label?: string) => invoke<boolean>("browser_translate_toggle", { label }),
   browserReload: (label?: string) => invoke<void>("browser_reload", { label }),
   browserFocus: (label: string) => invoke<void>("browser_focus", { label }),
   browserState: () => invoke<BrowserSnapshot>("browser_state"),

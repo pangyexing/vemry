@@ -106,6 +106,40 @@ export async function textRects(page: PDFPageProxy, needle: string): Promise<Pag
   return rects;
 }
 
+/** Where each of `texts` starts on `page`, as a fraction of the page's height from
+ *  the top (null when not found). One text-content read for all of them, searched
+ *  in order so a repeated sentence lands on its next occurrence. */
+export async function segmentTops(page: PDFPageProxy, texts: string[]): Promise<(number | null)[]> {
+  const squash = (s: string) => s.replace(/\s+/g, "");
+  const content = await page.getTextContent();
+  const base = page.getViewport({ scale: 1 });
+  const items = content.items.filter((i): i is TextItem => "str" in i);
+  const parts = items.map((i) => squash(i.str));
+  const starts: number[] = [];
+  let pos = 0;
+  for (const p of parts) {
+    starts.push(pos);
+    pos += p.length;
+  }
+  const flat = parts.join("");
+  let cursor = 0;
+  return texts.map((t) => {
+    const head = squash(t).slice(0, 32);
+    if (!head) return null;
+    let at = flat.indexOf(head, cursor);
+    if (at < 0) at = flat.indexOf(head);
+    if (at < 0) return null;
+    cursor = at + head.length;
+    // the item the match starts in
+    let k = starts.findIndex((s, i) => at >= s && at < s + parts[i].length);
+    if (k < 0) k = 0;
+    const it = items[k];
+    const [, , c, d, , y] = it.transform as number[];
+    const h = it.height || Math.hypot(c, d);
+    return (base.height - y - h) / base.height;
+  });
+}
+
 /** Draw `page` into `canvas` at `width` CSS pixels (sharp on a retina screen), and
  *  lay a selectable text layer over it when `textLayer` is given. Returns the CSS
  *  height. A render still running for the same canvas is cancelled by the caller

@@ -38,6 +38,8 @@ pub struct AppState {
     pub agent_window: agent_window::AgentWindowState,
     /// The one side-by-side translation job at a time (see translate.rs).
     pub translate: translate::TranslateState,
+    /// The browser tabs being translated in place (see browser/pagetr.rs).
+    pub browser_translate: browser::pagetr::PageTranslations,
 }
 
 pub fn run() {
@@ -66,6 +68,7 @@ pub fn run() {
             adblock: browser::adblock::AdblockState::default(),
             agent_window: agent_window::AgentWindowState::default(),
             translate: translate::TranslateState::default(),
+            browser_translate: browser::pagetr::PageTranslations::default(),
         })
         .setup(|app| {
             let settings = settings::load(app.handle());
@@ -265,6 +268,7 @@ pub fn run() {
             translate::translate_request,
             translate::translate_cancel,
             translate::translate_save,
+            browser::pagetr::browser_translate_toggle,
             browser::adblock::adblock_update_rules,
             browser::adblock::adblock_import_rules
         ])

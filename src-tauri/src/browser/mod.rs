@@ -12,6 +12,7 @@
 //! `browser://event`; the source of truth is the `BrowserState` registry here.
 
 pub mod adblock;
+pub mod pagetr;
 pub mod assets;
 pub mod bookmarks;
 pub mod browserbar;
@@ -25,7 +26,7 @@ pub mod window;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// The browser tab registry. A std Mutex: every access completes synchronously
 /// once the lock is held and never spans an await.
@@ -130,9 +131,18 @@ pub enum BrowserEvent {
     /// neither has to fetch again). Non-tab state riding on browser://event, as
     /// AdblockStatus did first.
     BookmarksChanged { bookmarks: Vec<bookmarks::Bookmark> },
+    /// A tab's in-page translation: on or off, and how many of its blocks have
+    /// their translation (the chrome's button reads it).
+    Translate { label: String, active: bool, done: usize, total: usize },
 }
 
 pub fn emit(app: &AppHandle, event: &BrowserEvent) {
+    // A closed tab takes its in-page translation with it (every close funnels through this event)
+    if let BrowserEvent::Closed { label } = event {
+        if let Some(state) = app.try_state::<crate::AppState>() {
+            pagetr::tab_closed(&state, label);
+        }
+    }
     let _ = app.emit("browser://event", event);
 }
 

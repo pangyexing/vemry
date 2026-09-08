@@ -375,8 +375,9 @@ pub async fn translate_save(app: AppHandle, state: State<'_, AppState>, job: Str
     let source = state.translate.sources.lock().unwrap().get(&job).cloned().ok_or("no such translation")?;
     let s = settings::load(&app);
     let translations = j.translations();
-    let body = compose_translation(&j.doc.segments, &translations, &j.target);
-    let title = translated_title(&j.doc.title, &j.target);
+    let segments = j.segments();
+    let body = compose_translation(&segments, &translations, &j.target);
+    let title = translated_title(&j.title, &j.target);
     let mut fm = Frontmatter {
         title: Some(title.clone()),
         vemry: Some(VemryMeta { origin: Some("translation".into()), agent_session: None }),

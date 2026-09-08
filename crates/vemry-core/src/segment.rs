@@ -10,6 +10,10 @@
 //! keeps the heading level and the list shape by construction rather than by
 //! trusting the model to reproduce them.
 //!
+//! Not everything in a document is its body: a figure caption, a reference list
+//! entry, an author line, a page stamp. Those are `Aside` — shown, never sent —
+//! so what the model gets is the text the reader came for.
+//!
 //! Pure: no vault, no privacy scope. Whether the whole note is private is the
 //! caller's check; a `> [!private]` block inside a visible note is marked here,
 //! since it is the parser that recognises it.
@@ -37,6 +41,9 @@ pub enum SegKind {
     Image,
     Hr,
     Private,
+    /// Not body text — a caption, a reference entry, an author or address line, a
+    /// footnote, a page stamp, a row of numbers: shown, never translated.
+    Aside,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,10 +83,12 @@ pub fn segment_markdown(raw: &str) -> Segmented {
     let (frontmatter, body_offset) = extract_frontmatter(raw);
     let blocks = parse_blocks(raw, body_offset);
     let mut segments = Vec::with_capacity(blocks.len());
+    // Inside a reference list (from a heading named so, to the next heading)
+    let mut in_refs = false;
     for b in blocks {
         let span = b.span.start.min(raw.len())..b.span.end.min(raw.len());
         let source = &raw[span.clone()];
-        let (kind, prefix, text) = match &b.kind {
+        let (mut kind, prefix, text) = match &b.kind {
             BlockKind::Private => (SegKind::Private, String::new(), source.to_string()),
             BlockKind::CodeBlock { .. } => (SegKind::Code, String::new(), source.to_string()),
             BlockKind::Heading { level } => {
@@ -97,6 +106,13 @@ pub fn segment_markdown(raw: &str) -> Segmented {
         };
         if text.trim().is_empty() && prefix.is_empty() {
             continue;
+        }
+        // a numbered item's number is its prefix: `12. Cho et al. … 2014` is one entry
+        let not_body = |text: &str| in_refs || is_caption(text) || is_reference_entry(text) || is_reference_entry(&format!("{prefix}{text}"));
+        match kind {
+            SegKind::Heading { .. } => in_refs = is_reference_heading(&text),
+            SegKind::Para | SegKind::ListItem { .. } | SegKind::Quote | SegKind::Table if not_body(&text) => kind = SegKind::Aside,
+            _ => {}
         }
         let translate = matches!(
             kind,
@@ -128,6 +144,12 @@ pub fn segment_markdown(raw: &str) -> Segmented {
 /// align on.
 pub fn segment_pages(pages: &[String]) -> Vec<Segment> {
     let mut out: Vec<Segment> = vec![];
+    // A paper's front matter: everything between the title and the abstract is
+    // authors and addresses. Only when an abstract heading is there to end it
+    let has_abstract = pages.iter().take(2).any(|p| p.lines().any(|l| is_abstract_heading(l.trim())));
+    let mut seen_title = false;
+    let mut before_abstract = has_abstract;
+    let mut in_refs = false;
     for (i, page) in pages.iter().enumerate() {
         let page_no = i as u32 + 1;
         let raw_lines: Vec<&str> = page.lines().map(str::trim).collect();
@@ -154,6 +176,15 @@ pub fn segment_pages(pages: &[String]) -> Vec<Segment> {
             }
             let short = line.chars().count() + 6 <= column;
             let last_line = if justified_page { !padded } else { short };
+            // A stamp, a footnote, a caption, an address, a row of figures: a line of
+            // its own whatever surrounds it
+            if is_aside_line(line) {
+                if !cur.is_empty() {
+                    paragraphs.push(std::mem::take(&mut cur));
+                }
+                paragraphs.push(vec![line]);
+                continue;
+            }
             // A line opening a paragraph that is no sentence, with a sentence starting
             // right under it: a heading set without a blank line around it
             if cur.is_empty() && last_line && looks_like_heading(line) && next_opens_sentence(&lines, li) {
@@ -173,14 +204,39 @@ pub fn segment_pages(pages: &[String]) -> Vec<Segment> {
             if text.is_empty() || is_page_number(&text) {
                 continue;
             }
-            let heading = para.len() == 1 && looks_like_heading(&text);
-            let (kind, prefix) = if heading { (SegKind::Heading { level: 2 }, "## ".to_string()) } else { (SegKind::Para, String::new()) };
+            let aside = is_aside_line(&text);
+            let heading = !aside && para.len() == 1 && looks_like_heading(&text);
+            let (mut kind, mut prefix) = if heading { (SegKind::Heading { level: 2 }, "## ".to_string()) } else { (SegKind::Para, String::new()) };
+            if aside {
+                kind = SegKind::Aside;
+            } else if heading {
+                if is_abstract_heading(&text) {
+                    before_abstract = false;
+                }
+                if !seen_title {
+                    seen_title = true;
+                } else if before_abstract {
+                    // a name set alone on its line, between the title and the abstract
+                    kind = SegKind::Aside;
+                }
+                if is_reference_heading(&text) {
+                    in_refs = true;
+                    kind = SegKind::Aside;
+                } else if kind != SegKind::Aside {
+                    in_refs = false;
+                }
+            } else if in_refs || (before_abstract && seen_title) {
+                kind = SegKind::Aside;
+            }
+            if kind == SegKind::Aside {
+                prefix = String::new();
+            }
             out.push(Segment {
                 id: out.len() as u32,
+                translate: kind != SegKind::Aside,
                 kind,
                 prefix,
                 text,
-                translate: true,
                 private: false,
                 span: 0..0,
                 page: Some(page_no),
@@ -190,11 +246,110 @@ pub fn segment_pages(pages: &[String]) -> Vec<Segment> {
     out
 }
 
+// ---- what is not body text ----
+
+/// A line that is never body text on its own: a caption, a reference entry, a
+/// row of figures, an address, a stamp or a footnote.
+fn is_aside_line(text: &str) -> bool {
+    is_caption(text) || is_reference_entry(text) || is_numeric_row(text) || has_email(text) || is_stamp_or_footnote(text) || is_formula(text)
+}
+
+/// A displayed equation the extractor gave as text: an `=` or an operator glyph
+/// in a short line that is no sentence (`MultiHead(Q, K, V) = Concat(head1, …)`).
+fn is_formula(text: &str) -> bool {
+    let t = text.trim();
+    let symbols = t.chars().filter(|c| matches!(c, '=' | '∑' | '√' | '∈' | '≤' | '≥' | '∫' | '∂' | '∞' | '≈' | '×' | '·' | '⊕' | '→')).count();
+    if symbols == 0 || t.split_whitespace().count() > 14 {
+        return false;
+    }
+    // prose around an `=` reads as words; a formula reads as symbols and names
+    let words = t
+        .split_whitespace()
+        .filter(|w| w.len() >= 3 && w.chars().all(|c| c.is_lowercase() || c == ',' || c == '.'))
+        .count();
+    words < 3
+}
+
+/// `Figure 3:`, `Fig. 2.`, `Table 1`, `图 2`, `表 1`, `Algorithm 1`, `Listing 4`.
+fn is_caption(text: &str) -> bool {
+    let t = text.trim_start();
+    let lower: String = t.chars().take(12).collect::<String>().to_lowercase();
+    let word_then_number = |w: &str| {
+        lower.starts_with(w) && lower[w.len()..].trim_start_matches(['.', ' ']).chars().next().is_some_and(|c| c.is_ascii_digit())
+    };
+    ["figure", "fig", "table", "tab.", "algorithm", "listing"].iter().any(|w| word_then_number(w))
+        || (t.starts_with(['图', '表']) && t.chars().nth(1).is_some_and(|c| c.is_ascii_digit() || c == ' '))
+}
+
+/// A reference list entry: `[12] …`, or `12. Author, …` with a year in it.
+fn is_reference_entry(text: &str) -> bool {
+    let t = text.trim_start();
+    if let Some(rest) = t.strip_prefix('[') {
+        let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        return digits > 0 && digits <= 3 && rest[digits..].starts_with(']');
+    }
+    let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits > 0 && digits <= 3 && t[digits..].starts_with(". ") {
+        return has_year(t);
+    }
+    false
+}
+
+fn has_year(t: &str) -> bool {
+    let b = t.as_bytes();
+    (0..b.len().saturating_sub(3)).any(|i| {
+        (b[i] == b'1' && b[i + 1] == b'9' || b[i] == b'2' && b[i + 1] == b'0')
+            && b[i + 2].is_ascii_digit()
+            && b[i + 3].is_ascii_digit()
+            && (i == 0 || !b[i - 1].is_ascii_digit())
+            && (i + 4 >= b.len() || !b[i + 4].is_ascii_digit())
+    })
+}
+
+/// A heading that opens a list nobody reads for its prose: references, a
+/// bibliography, acknowledgements.
+fn is_reference_heading(text: &str) -> bool {
+    let l = text.trim().trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ').to_lowercase();
+    ["references", "bibliography", "works cited", "acknowledg", "参考文献", "引用文献", "致谢"].iter().any(|w| l.starts_with(w))
+}
+
+fn is_abstract_heading(text: &str) -> bool {
+    let l = text.trim().to_lowercase();
+    l == "abstract" || l == "abstract." || l == "摘要" || l.starts_with("abstract—") || l.starts_with("abstract:")
+}
+
+/// Mostly digits and punctuation: a table row, a figure's axis, a column of results.
+fn is_numeric_row(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if chars.len() < 8 {
+        return false;
+    }
+    let figures = chars.iter().filter(|c| c.is_ascii_digit() || c.is_ascii_punctuation()).count();
+    figures * 10 >= chars.len() * 6
+}
+
+fn has_email(text: &str) -> bool {
+    text.split_whitespace().any(|w| {
+        let w = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '@' && c != '.');
+        w.contains('@') && w.rsplit('@').next().is_some_and(|d| d.contains('.') && !d.ends_with('.'))
+    })
+}
+
+/// A page stamp (`arXiv:…`), a footnote opened by a marker (`∗Equal contribution`),
+/// a line that is only a URL.
+fn is_stamp_or_footnote(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with("arXiv:")
+        || t.starts_with(['∗', '†', '‡', '§', '¶'])
+        || (t.starts_with('*') && !t.starts_with("**"))
+        || ((t.starts_with("http://") || t.starts_with("https://")) && !t.contains(' '))
+}
+
 /// The next non-blank line (if any) starts like a sentence: a capital, a digit, a quote.
 fn next_opens_sentence(lines: &[(String, bool)], at: usize) -> bool {
     match lines[at + 1..].iter().find(|(l, _)| !l.is_empty()) {
         None => true,
-        Some((next, _)) => next.chars().next().is_some_and(|c| c.is_uppercase() || c.is_ascii_digit() || matches!(c, '"' | '“' | '(')),
+        Some((next, _)) => next.chars().next().is_some_and(|c| c.is_uppercase() || c.is_ascii_digit() || matches!(c, '"' | '“' | '(' | '[' | '|')),
     }
 }
 
@@ -420,6 +575,50 @@ mod tests {
         assert!(got[2].1.starts_with("We call our particular attention") && got[2].1.ends_with("dimension dk."), "{}", got[2].1);
         assert_eq!(got[3], (&SegKind::Heading { level: 2 }, "Why scale the dot products"));
         assert_eq!(got[4], (&SegKind::Para, "The two most commonly used attention functions are additive attention, and dot-product attention."));
+    }
+
+    #[test]
+    fn captions_references_and_front_matter_are_asides() {
+        let raw = "# Attention Is All You Need\n\nFigure 1: The Transformer.\n\nBody text here.\n\n## References\n\n[1] Bahdanau et al. 2014.\n\n- [2] Vaswani. Attention. 2017.\n\n## Appendix\n\nMore body.\n\n12. Cho et al. Learning phrase representations, 2014.\n";
+        let v = segs(raw);
+        let kinds: Vec<(&SegKind, &str)> = v.iter().map(|s| (&s.kind, s.text.as_str())).collect();
+        assert_eq!(kinds[0].0, &SegKind::Heading { level: 1 });
+        assert_eq!(kinds[1], (&SegKind::Aside, "Figure 1: The Transformer."));
+        assert_eq!(kinds[2], (&SegKind::Para, "Body text here."));
+        assert_eq!(kinds[3].0, &SegKind::Heading { level: 2 });
+        assert_eq!(kinds[4].0, &SegKind::Aside);
+        assert_eq!(kinds[5].0, &SegKind::Aside);
+        assert_eq!(kinds[6].0, &SegKind::Heading { level: 2 });
+        assert_eq!(kinds[7], (&SegKind::Para, "More body."));
+        assert_eq!(kinds[8].0, &SegKind::Aside);
+        assert!(v.iter().filter(|s| s.kind == SegKind::Aside).all(|s| !s.translate && !s.private));
+
+        // a PDF's front matter: authors and addresses between the title and the abstract
+        let p1 = "Attention Is All You Need\n\nAshish Vaswani∗\n\nGoogle Brain avaswani@google.com\n\nAbstract\n\nThe dominant sequence transduction models are based on complex recurrent networks.\n\n∗Equal contribution.\n\narXiv:1706.03762v7 [cs.CL] 2 Aug 2023\n\n3.2 Attention\n\nAn attention function maps a query to an output.\n\n| 0.1 | 0.2 | 0.3 | 0.4 |\n\nReferences\n\n[1] Jimmy Lei Ba. Layer normalization. 2016.\n".to_string();
+        let v = segment_pages(&[p1]);
+        let kinds: Vec<(&SegKind, &str)> = v.iter().map(|s| (&s.kind, s.text.as_str())).collect();
+        assert_eq!(kinds[0], (&SegKind::Heading { level: 2 }, "Attention Is All You Need"));
+        assert_eq!(kinds[1].0, &SegKind::Aside, "{kinds:?}");
+        assert_eq!(kinds[2].0, &SegKind::Aside, "{kinds:?}");
+        assert_eq!(kinds[3], (&SegKind::Heading { level: 2 }, "Abstract"));
+        assert_eq!(kinds[4].0, &SegKind::Para);
+        assert_eq!(kinds[5].0, &SegKind::Aside, "footnote {kinds:?}");
+        assert_eq!(kinds[6].0, &SegKind::Aside, "stamp {kinds:?}");
+        assert_eq!(kinds[7], (&SegKind::Heading { level: 2 }, "3.2 Attention"));
+        assert_eq!(kinds[8].0, &SegKind::Para);
+        assert_eq!(kinds[9].0, &SegKind::Aside, "numeric {kinds:?}");
+        assert_eq!(kinds[10].0, &SegKind::Aside, "references heading {kinds:?}");
+        assert_eq!(kinds[11].0, &SegKind::Aside, "reference entry {kinds:?}");
+        // a displayed equation on its own line is not a heading and not sent
+        let v = segment_pages(&["Multi-head attention allows the model to attend jointly.\n\nMultiHead(Q, K, V ) = Concat(head1, ..., headh)WO\n\nwhere headi = Attention(QWiQ, KWiK, V WiV )\n".to_string()]);
+        let kinds: Vec<(&SegKind, &str)> = v.iter().map(|s| (&s.kind, s.text.as_str())).collect();
+        assert_eq!(kinds[0].0, &SegKind::Para);
+        assert_eq!(kinds[1].0, &SegKind::Aside, "{kinds:?}");
+        assert_eq!(kinds[2].0, &SegKind::Aside, "{kinds:?}");
+        // a sentence with an `=` in it is prose, and stays with its paragraph
+        let v = segment_pages(&["To facilitate these residual connections, all sub-layers in the model, as well as the embedding\nlayers, produce outputs of dimension dmodel = 512.\n".to_string()]);
+        assert_eq!(v.len(), 1, "{:?}", v.iter().map(|s| (&s.kind, &s.text)).collect::<Vec<_>>());
+        assert_eq!(v[0].kind, SegKind::Para);
     }
 
     #[test]

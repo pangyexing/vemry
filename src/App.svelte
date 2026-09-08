@@ -277,14 +277,6 @@
       await runHostAction(a).catch((e) => toast.push(String(e), "error"));
       return;
     }
-    if (a.kind === "translate-page") {
-      if (!vault.root) {
-        void emitBrowserbarResult({ ok: false, message: t("app.openVaultFirst") }).catch(() => {});
-        return;
-      }
-      await enterTranslation(() => translate.openPage(a.url));
-      return;
-    }
     if (a.kind === "summon-agent") {
       // Summoning the AI from the browser: the detached chat window is opened (or focused) first
       // for immediate feedback, and the current page is then extracted and attached as a page
@@ -1074,14 +1066,16 @@
       await enterTranslation(() => translate.open({ kind: "note", path }));
     },
   });
-  /** The browser's current page: extracted through the reader (the same fetch the projection makes) and translated in the main window. */
+  /** The browser's current page: a translation pane opens inside the tab (or closes when it is open). */
   registerCommand({
     id: "translate-browser-page", group: "research",
     run: async () => {
-      if (!vault.root) return;
-      const url = browser.current?.url;
-      if (!url) return;
-      await enterTranslation(() => translate.openPage(url));
+      if (!browser.current) return;
+      try {
+        await api.browserTranslateToggle(browser.current.label);
+      } catch (e) {
+        toast.push(String(e), "error");
+      }
     },
   });
   // The editor's tabs. On mac ⌘W is dispatched back to close-tab by the native menu's accelerator

@@ -17,7 +17,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 use vemry_core::provenance::fnv1a64;
@@ -314,7 +314,11 @@ struct Inner {
 
 pub struct TranslateJob {
     pub id: String,
-    pub doc: Arc<TranslateDoc>,
+    pub key: String,
+    pub title: String,
+    /// The segments, growable: a web page translated in place keeps producing
+    /// blocks as it scrolls (`extend`); ids keep counting from where they were.
+    segments: RwLock<Vec<Segment>>,
     pub target: String,
     addendum: String,
     provider: ProviderConfig,
@@ -351,7 +355,9 @@ impl TranslateJob {
         }
         Arc::new(TranslateJob {
             id,
-            doc: Arc::new(doc),
+            key: doc.key,
+            title: doc.title,
+            segments: RwLock::new(doc.segments),
             target,
             addendum,
             provider,
@@ -369,6 +375,43 @@ impl TranslateJob {
         &self.provider.model
     }
 
+    /// The segments as they stand (a copy).
+    pub fn segments(&self) -> Vec<Segment> {
+        self.segments.read().unwrap().clone()
+    }
+
+    pub fn len(&self) -> usize {
+        self.segments.read().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Add segments (their ids are reassigned to continue the sequence), take
+    /// what the cache holds for them, and queue the rest. Returns the ids given.
+    pub fn extend(self: &Arc<Self>, more: Vec<Segment>) -> Vec<u32> {
+        let ids: Vec<u32> = {
+            let mut segs = self.segments.write().unwrap();
+            let mut inner = self.inner.lock().unwrap();
+            let cache = self.cache.lock().unwrap();
+            let mut ids = vec![];
+            for mut seg in more {
+                seg.id = segs.len() as u32;
+                if seg.translate && !seg.private {
+                    if let Some(t) = cache.as_ref().and_then(|c| c.get(&seg.text)) {
+                        inner.done.insert(seg.id, t.to_string());
+                    }
+                }
+                ids.push(seg.id);
+                segs.push(seg);
+            }
+            ids
+        };
+        self.request(&ids, false);
+        ids
+    }
+
     /// Every translation known now: the cache hits at open, plus what has landed.
     pub fn translations(&self) -> HashMap<u32, String> {
         self.inner.lock().unwrap().done.clone()
@@ -381,9 +424,10 @@ impl TranslateJob {
     pub fn request(self: &Arc<Self>, ids: &[u32], force: bool) {
         {
             let mut inner = self.inner.lock().unwrap();
+            let segs = self.segments.read().unwrap();
             let mut front: Vec<u32> = vec![];
             for &id in ids {
-                let Some(seg) = self.doc.segments.get(id as usize) else { continue };
+                let Some(seg) = segs.get(id as usize) else { continue };
                 if !seg.translate || seg.private || inner.active.contains(&id) {
                     continue;
                 }
@@ -439,8 +483,9 @@ impl TranslateJob {
                 }
                 let mut ids = vec![];
                 let mut size = 0;
+                let segs = self.segments.read().unwrap();
                 while let Some(&id) = inner.pending.front() {
-                    let n = self.doc.segments[id as usize].text.len();
+                    let n = segs[id as usize].text.len();
                     if !ids.is_empty() && size + n > BATCH_CHARS {
                         break;
                     }
@@ -461,7 +506,11 @@ impl TranslateJob {
     }
 
     async fn run_batch(self: Arc<Self>, ids: Vec<u32>) {
-        let segs: Vec<&Segment> = ids.iter().map(|id| &self.doc.segments[*id as usize]).collect();
+        let owned: Vec<Segment> = {
+            let all = self.segments.read().unwrap();
+            ids.iter().map(|id| all[*id as usize].clone()).collect()
+        };
+        let segs: Vec<&Segment> = owned.iter().collect();
         // Thinking off: a translation is transcription, not reasoning, and on a
         // thinking model the thinking is most of the latency. Sent only where the
         // level is sent at all (a DeepSeek endpoint); elsewhere nothing is sent
@@ -488,7 +537,7 @@ impl TranslateJob {
                     self.emit(TranslateEvent::Segment { id, text, done: false });
                 }
                 Parsed::Done { id, text } if wanted.contains(&id) => {
-                    let seg = &self.doc.segments[id as usize];
+                    let seg = owned.iter().find(|s| s.id == id).expect("a wanted id is in the batch");
                     let retried = self.inner.lock().unwrap().retried.contains(&id);
                     if seg.kind == SegKind::Table && !retried && !table_shape_ok(&seg.text, &text) {
                         reshape.push(id);
@@ -526,8 +575,8 @@ impl TranslateJob {
         let mut cache = self.cache.lock().unwrap();
         for (id, text) in &got {
             inner.done.insert(*id, text.clone());
-            if let Some(c) = cache.as_mut() {
-                c.insert(&self.doc.segments[*id as usize].text, text.clone());
+            if let (Some(c), Some(seg)) = (cache.as_mut(), owned.iter().find(|s| s.id == *id)) {
+                c.insert(&seg.text, text.clone());
             }
         }
         if let Some(c) = cache.as_mut() {

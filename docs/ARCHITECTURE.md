@@ -2207,20 +2207,44 @@ the user presses "save as note".
   "[[source]]"`, `lang`, `translator` (the model) and `vemry.origin: translation`,
   formatted like a clip, through the same `write_note` an ordinary note takes — the
   user's action, no gate.
-- **A web page.** The reading projection's page is a source too (`TranslateSource::Page`):
-  the segments are cut from the Markdown the reader window's cache holds (the same
-  text the projection renders; a page that has left the 32-page cache says so and
-  asks to be reopened), the overlay comes up over the projection and Esc lands back
-  on it. The browser panel's "translate" button extracts the current tab through
-  the same `page_read` the projection uses and then opens the overlay in the main
-  window (the detached bar relays `translate-page`). A page's translations are
-  **never written to disk** — the projection's content is not, and neither is its
-  translation: the cache is an in-memory `TranslationCache` parked in
-  `TranslateState.web_caches` (32 pages, like the reader's) when the overlay
-  closes and taken back when the same page and language open again. Saving clips
-  the original first (or reuses the clip the page already has) and files the
-  translation beside it in `clips/`, with the same `source:` and `domain:` and
-  `translation_of` pointing at the clip.
+- **A web page in the reading projection.** The projection's page is a source too
+  (`TranslateSource::Page`): the segments are cut from the Markdown the reader
+  window's cache holds (the same text the projection renders; a page that has left
+  the 32-page cache says so and asks to be reopened), the overlay comes up over the
+  projection and Esc lands back on it. A page's translations are **never written to
+  disk** — the projection's content is not, and neither is its translation: the
+  cache is an in-memory `TranslationCache` parked in `TranslateState.web_caches`
+  (32 pages, like the reader's) when the overlay closes and taken back when the
+  same page and language open again. Saving clips the original first (or reuses
+  the clip the page already has) and files the translation beside it in `clips/`,
+  with the same `source:` and `domain:` and `translation_of` pointing at the clip.
+- **A browser tab, where it is.** The browser panel's "translate" button does not
+  leave the tab: a pane opens *inside the page* — the page on the left, every
+  text block's translation on the right at the height of its block — docked or
+  detached alike, so the reader's eyes stay where they were (the first version
+  opened the overlay in the main window, and the jump was the complaint).
+  `browser/pagetr.rs`: the tab is a native webview with zero IPC, so everything
+  goes through `eval` — `COLLECT_JS` installs the pane (a fixed element on the
+  right; the document gets a matching right margin so a page that reflows does)
+  and tags the page's text blocks (a block with running text and no block
+  children, outside `nav`/`header`/`footer`/`aside`, captions, tables, reference
+  lists and bylines) with ids, the same `TranslateJob` translates them, and each
+  finished segment is written into its pane entry with `textContent`. The pane
+  lays its entries out from the blocks' positions on every scroll and resize,
+  pushing an entry down when the one above is taller than its block; a poll
+  every 1.5s collects blocks that appeared since (an endless feed; the job's
+  segments are growable, `TranslateJob::extend`), and a new document (the
+  script's `gen` changes) starts over. Clicking an entry scrolls the page to its
+  block. The chrome hears `BrowserEvent::Translate` (on/off, done/total) and the
+  button shows it; pressing again removes the pane. The translations are cached
+  in memory by URL and language across a close and a reopen, never on disk.
+- **What is not body text.** A caption (`Figure 3:`, `表 1`), a reference entry
+  (`[12] …`, a numbered author-year line), everything under a heading named
+  References / Bibliography / Acknowledgements, a paper's author and address
+  lines between the title and the abstract, an e-mail, an arXiv stamp, a footnote
+  opened by a marker, a row of figures — `SegKind::Aside`: shown dimmed on the
+  left, never sent, no cell on the right, copied as it is into a saved
+  translation. The browser pane's collector skips the same things by DOM shape.
 - **A PDF.** The file's text comes page by page from the same extraction and cache
   the agent's `read_file` uses (`context.rs::pdf_pages`), and
   `vemry_core::segment_pages` rebuilds paragraphs from what pdf-extract gives —
@@ -2231,7 +2255,12 @@ the user presses "save as note".
   broken across lines is mended, a bare page number is dropped. The rows are
   **pages**: the page drawn on the left (`PdfPage`, the same pdf.js document the
   preview parsed), its paragraphs as cells on the right, each cell a segment with
-  the same states as a row. A file in a privacy zone is refused whole; the cache
+  the same states as a row, **each cell at the height of its paragraph on the
+  page**: `segmentTops` finds where each segment's text starts among pdf.js's text
+  items (one text-content read per page), and a cell gets the top margin that
+  puts it there, or sits right under the cell above when that one is taller than
+  its paragraph — cells never overlap, and the eye crosses the gutter horizontally.
+  A file in a privacy zone is refused whole; the cache
   is filed by the bytes' hash, like the extraction. Saving groups the translations
   under a heading per page ("第 N 页" / "Page N", in the target language) beside
   the file, `translation_of` naming it. Clicking a translated paragraph lights its

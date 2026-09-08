@@ -88,27 +88,6 @@ class TranslateStore {
     }
   }
 
-  /** A web page: extracted into the reader's cache first (the same fetch the reading
-   *  projection makes), then opened by its final URL. */
-  async openPage(url: string): Promise<boolean> {
-    this.loading = true;
-    this.error = null;
-    try {
-      const page = await api.pageRead(url);
-      if (!page) return false; // superseded by a newer read
-      if (page.fallback && !page.markdown.trim()) {
-        this.error = t("translate.pageFailed");
-        return false;
-      }
-      return await this.open({ kind: "page", url: page.url });
-    } catch (e) {
-      this.error = String(e);
-      return false;
-    } finally {
-      this.loading = false;
-    }
-  }
-
   /** Leave: the job stops streaming; what landed stays in the Rust cache. */
   close() {
     const job = this.doc?.job;
