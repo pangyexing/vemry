@@ -16,6 +16,7 @@ import { foldEffect, foldedRanges, syntaxTree, unfoldEffect } from "@codemirror/
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { type EditorState, StateField, type Transaction } from "@codemirror/state";
 import { selectionTouches } from "./reveal";
+import { renderMathHtml, scanInlineMath } from "$lib/math";
 import { focusEditor } from "./clickguard";
 
 interface Cell {
@@ -69,8 +70,25 @@ function closingParen(text: string, open: number): number {
   return -1;
 }
 
-/** Cell text → DOM, recognising only the frequent inline syntax and never nesting; written through textContent, so there is no injection surface */
+/** Cell text → DOM: the formulas first (`$…$` typeset by KaTeX, the one generated-HTML
+ *  fragment, with trust:false as everywhere), the text between them through
+ *  renderInlineText. Math before markup, or the `_` of a subscript would read as
+ *  emphasis. */
 function renderInline(text: string, into: HTMLElement) {
+  let at = 0;
+  for (const m of scanInlineMath(text)) {
+    if (m.start > at) renderInlineText(text.slice(at, m.start), into);
+    const el = document.createElement("span");
+    el.className = "cm-lp-cell-math";
+    el.innerHTML = renderMathHtml(m.tex, m.display);
+    into.appendChild(el);
+    at = m.end;
+  }
+  if (at < text.length) renderInlineText(text.slice(at), into);
+}
+
+/** Cell text without formulas → DOM, recognising only the frequent inline syntax and never nesting; written through textContent, so there is no injection surface */
+function renderInlineText(text: string, into: HTMLElement) {
   INLINE_RE.lastIndex = 0;
   let last = 0;
   let m: RegExpExecArray | null;

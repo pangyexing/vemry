@@ -569,6 +569,14 @@ function renderBlockList(
       continue;
     }
     if (math) {
+      if (!line.trim()) {
+        // no closer in the paragraph: the lines are ordinary text after all (the same
+        // verdict the editor reaches, so an embed and the editor agree)
+        for (const l of math) para.push(inline(l));
+        math = null;
+        flushAll();
+        continue;
+      }
       math.push(line);
       if (closesMathBlock(line)) emitMath();
       continue;

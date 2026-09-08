@@ -90,8 +90,8 @@ export interface MathBlock {
 }
 
 /** A block may not run on for ever: an opening `$$` with no closer within this many
- *  lines is left as text, so a stray `$$` at the top of a long note does not swallow
- *  it whole. */
+ *  lines (or before the next blank line) is left as text, so a stray `$$` does not
+ *  swallow the note below it. */
 const MAX_BLOCK_LINES = 80;
 
 /** The multi-line display blocks of the document, in order. A `$$` inside code is
@@ -106,6 +106,7 @@ export function mathBlocks(state: EditorState): MathBlock[] {
     let close = -1;
     for (let k = n + 1; k <= Math.min(doc.lines, n + MAX_BLOCK_LINES); k++) {
       const l = doc.line(k);
+      if (l.text.trim() === "") break; // the block ends with its paragraph: an unclosed opener stays text
       lines.push(l.text);
       if (closesMathBlock(l.text)) {
         close = k;

@@ -68,23 +68,32 @@ export function opensMathBlock(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed.startsWith("$$")) return false;
   const after = trimmed.slice(2);
-  return after === "" || !after.trimEnd().endsWith("$$");
+  // `$$x$$` and `$$x$$ ^id` close on their own line: one-line formulas, inline's business
+  return after === "" || !CLOSE_RE.test(after);
 }
 
-/** Whether a line closes a multi-line display block: it ends with `$$`. */
+/** A closing line's tail: `$$`, optionally followed by the block's id (`$$ ^s321p2` —
+ *  the parser wants an id on the block's last line, and a display block's last line
+ *  is its closer). */
+const CLOSE_RE = /\$\$\s*(?:\^[A-Za-z0-9-]+)?\s*$/;
+
+/** Whether a line closes a multi-line display block: it ends with `$$`, with at most
+ *  a block id after it. A blank line never closes one — the callers stop looking at a
+ *  blank line, so an opener with no closer in its paragraph stays text rather than
+ *  swallowing the paragraphs below up to some later formula's closer. */
 export function closesMathBlock(line: string): boolean {
-  return line.trim().endsWith("$$");
+  return CLOSE_RE.test(line);
 }
 
 /** The formula inside a multi-line block: the `$$` fences stripped from the first and
- *  last lines, the lines between kept as written. */
+ *  last lines (a block id after the closer goes with it), the lines between kept as
+ *  written. */
 export function mathBlockTex(lines: string[]): string {
   if (!lines.length) return "";
   const parts = lines.slice();
   parts[0] = parts[0].trim().slice(2);
   const last = parts.length - 1;
-  const end = parts[last].trimEnd();
-  parts[last] = end.endsWith("$$") ? end.slice(0, -2) : end;
+  parts[last] = parts[last].replace(CLOSE_RE, "");
   return parts.join("\n").trim();
 }
 
