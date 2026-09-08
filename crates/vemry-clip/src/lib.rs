@@ -387,6 +387,10 @@ fn soften_escapes(md: &str) -> String {
     let mut line_start = true; // no character other than whitespace/quote markers yet on this line
     let mut fence: Option<(u8, usize)> = None; // fenced code block (character, length)
     let mut in_span: Option<u8> = None; // an inline `code` or $math$ span
+    // Inside a bare URL (from `http(s)://` to the next whitespace or angle bracket): an
+    // escaped `_` or `*` there is part of the address, and the backslash would only
+    // break the link (`attention\_tf.py`)
+    let mut in_url = false;
     while i < b.len() {
         let c = b[i];
         if c == b'\n' {
@@ -394,6 +398,19 @@ fn soften_escapes(md: &str) -> String {
             i += 1;
             line_start = true;
             in_span = None; // an inline span does not cross lines
+            in_url = false;
+            continue;
+        }
+        if in_url && (c == b' ' || c == b'\t' || c == b'<' || c == b'>' || c == b')' || c == b']') {
+            in_url = false;
+        }
+        if !in_url && fence.is_none() && in_span.is_none() && (b[i..].starts_with(b"http://") || b[i..].starts_with(b"https://")) {
+            in_url = true;
+        }
+        if in_url && c == b'\\' && i + 1 < b.len() && (b[i + 1] == b'_' || b[i + 1] == b'*') {
+            out.push(b[i + 1]);
+            i += 2;
+            line_start = false;
             continue;
         }
         // Fence open/close (only at the start of a line): the parser's rule, ≥3 `/~
@@ -1155,6 +1172,12 @@ mod tests {
         assert_eq!(fragment_to_markdown("<p># 不是标题</p>"), "\\# 不是标题");
         // A backslash the source itself carried (htmd turns it into \\) is kept verbatim
         assert_eq!(fragment_to_markdown("<p>正则 \\. 匹配</p>"), "正则 \\\\. 匹配");
+        // An underscore inside a bare URL is part of the address: no backslash there,
+        // while the same escape in prose stays
+        assert_eq!(
+            fragment_to_markdown("<p>见 https://github.com/bojone/attention/blob/master/attention_tf.py 与 snake_case 变量</p>"),
+            "见 https://github.com/bojone/attention/blob/master/attention_tf.py 与 snake\\_case 变量"
+        );
     }
 
     #[test]

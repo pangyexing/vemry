@@ -33,7 +33,8 @@ export function mdLinkAt(state: EditorState, pos: number): LinkHit | null {
     if (inCode(state, pos)) return null;
     const from = line.from + u.index;
     // Punctuation, CJK or otherwise, often sits right against a URL — the same boundary rule as the chat panel
-    return { target: stripTrailingPunct(u[0]), from, to: from + u[0].length };
+    // A clipped page escapes `_` in its text; in a URL the backslash is not part of the address
+    return { target: stripTrailingPunct(u[0]).replace(/\\([_*~#])/g, "$1"), from, to: from + u[0].length };
   }
   return null;
 }

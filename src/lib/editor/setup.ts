@@ -111,6 +111,8 @@ export interface EditorOptions {
   loadAsset?: AssetLoader;
   /** note mode: copy an embedded vault image to the system clipboard */
   copyImage?: ImageCopier;
+  /** A remote image that did not load: its placeholder opens the URL in the browser window. */
+  openUrl?: (url: string) => void;
   /** note mode: vault tag universe for `#` completion (kept fresh by caller) */
   tags?: () => string[];
   /** note mode: inline-field keys and values for `key::` completion (kept fresh by the caller) */
@@ -263,7 +265,7 @@ function buildState(opts: EditorOptions): EditorState {
       markdown({ base: markdownLanguage, extensions: [Highlight], addKeymap: false }),
       listKeymap,
       syntaxHighlighting(mdHighlight),
-      livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage, onFieldChip: opts.onFieldChip }),
+      livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage, onFieldChip: opts.onFieldChip, openUrl: opts.openUrl }),
       foldExtension(),
       blockSelection(),
       flashField,

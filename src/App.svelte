@@ -891,6 +891,27 @@
     },
   });
   registerCommand({
+    id: "clip-localize-images", group: "note",
+    run: async () => {
+      const path = vault.currentPath;
+      const source = path ? (vault.notes.find((n) => n.id === path)?.source ?? null) : null;
+      if (!path || !source) {
+        toast.push(t("clip.localizeNoSource"), "error");
+        return;
+      }
+      try {
+        if (!(await api.settingsGet()).clip_localize_images) {
+          toast.push(t("clip.localizeOff"), "error");
+          return;
+        }
+        await api.clipLocalizeNote(path, source);
+        toast.push(t("clip.localizeStarted"));
+      } catch (e) {
+        toast.push(String(e), "error");
+      }
+    },
+  });
+  registerCommand({
     id: "provenance-accept-vault", group: "note",
     run: () => {
       if (!vault.pendingVault.blocks) {

@@ -34,6 +34,7 @@ import { focusEditor } from "./clickguard";
 import { openImageLightbox } from "$lib/lightbox";
 import { copyText } from "$lib/copytext";
 import { scanInlineMath } from "$lib/math";
+import { domainOf } from "$lib/markdown";
 import { MathWidget, mathBlockField, mathBlocks } from "./math";
 
 /** An image target inside the vault → a displayable URL (a blob); http(s) does not go through it */
@@ -47,6 +48,8 @@ export type ImageCopier = (target: string) => Promise<boolean>;
 // inCode lives in fenced.ts (editor/math.ts needs it without a cycle); the importers here keep their path
 export { inCode };
 const TAG_RE = /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
+/** A bare URL's extent for the escape fold above (the click boundary itself is mdlink's) */
+const BARE_URL_RE = /https?:\/\/[^\s<>]+/g;
 // The character class mirrors Rust's block-id rule (blockid.rs::is_valid_block_id): a badge must never claim an id the parser rejects
 const ANCHOR_RE = /[ \t]\^([A-Za-z0-9-]+)$/gm;
 export const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|tiff?)$/i;
@@ -344,6 +347,7 @@ class ImageWidget extends WidgetType {
     readonly width: number,
     readonly load?: AssetLoader,
     readonly copy?: ImageCopier,
+    readonly openUrl?: (url: string) => void,
   ) {
     super();
   }
@@ -391,7 +395,23 @@ class ImageWidget extends WidgetType {
       // Assigning textContent would clear the copy button along with it — with no image at all, the button should not be there
       img.remove();
       wrap.classList.add("cm-lp-image-missing");
-      wrap.textContent = this.alt || this.target;
+      // The placeholder reads like the projection's chip: the alt, else the host — never
+      // a bare URL across the line; a remote one opens in the browser window on click
+      // (hotlink protection or a host gone is the usual reason it did not load)
+      const remoteMissing = /^https?:\/\//i.test(this.target);
+      const label = this.alt || (remoteMissing ? domainOf(this.target) : this.target);
+      wrap.textContent = `⧉ ${label}`;
+      wrap.title = remoteMissing ? t("editor.imageNotLoaded", { url: this.target }) : this.target;
+      if (remoteMissing && this.openUrl) {
+        const open = this.openUrl;
+        wrap.style.cursor = "pointer";
+        wrap.onmousedown = (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          open(this.target);
+        };
+      }
     };
     // The size changes as it loads, so the editor is asked to measure again and the
     // line height keeps up; the intrinsic size is recorded in passing, so the next
@@ -651,6 +671,14 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
             hide(node.to - 1, node.to); // >
             break;
           }
+          case "Escape": {
+            // `\.` `\_` `\*`: the backslash is syntax and the character it protects is
+            // content — a clipped "2\. Attention…" reads "2. Attention…" until the cursor
+            // is on it (CommonMark's own verdict; the projection renderer folds it too)
+            if (revealedEl(node.from, node.to)) break;
+            hide(node.from, node.from + 1);
+            break;
+          }
           case "Image": {
             // ![alt](target): a vault path goes by its extension, while http(s) is
             // always treated as an embedded image; a non-image target keeps its source
@@ -673,7 +701,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
               from: n.from,
               to: n.to,
               deco: Decoration.replace({
-                widget: new ImageWidget(target, alt, width, opts.loadAsset, opts.copyImage),
+                widget: new ImageWidget(target, alt, width, opts.loadAsset, opts.copyImage, opts.openUrl),
               }),
             });
             break;
@@ -843,7 +871,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
             from: start - 1,
             to: end,
             deco: Decoration.replace({
-              widget: new ImageWidget(target, target, width, opts.loadAsset, opts.copyImage),
+              widget: new ImageWidget(target, target, width, opts.loadAsset, opts.copyImage, opts.openUrl),
             }),
           });
         }
@@ -914,6 +942,18 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
         }
         if (line.to >= range.to) break;
         pos = line.to + 1;
+      }
+    }
+
+    // A backslash escape inside a bare URL (`attention\_tf.py`: a clip's escaping of the
+    // `_` in its text) is not an Escape node — the parser sees a URL — so it is folded
+    // here; the click path drops the backslash the same way (mdlink.ts)
+    if (text.includes("\\_") || text.includes("\\*")) {
+      BARE_URL_RE.lastIndex = 0;
+      while ((m = BARE_URL_RE.exec(text))) {
+        const start = range.from + m.index;
+        if (isCode(start) || revealedEl(start, start + m[0].length)) continue;
+        for (const e of m[0].matchAll(/\\(?=[_*~#])/g)) hide(start + (e.index ?? 0), start + (e.index ?? 0) + 1);
       }
     }
 
@@ -1089,6 +1129,8 @@ const frontmatterField = StateField.define<DecorationSet>({
 export interface LivePreviewOptions {
   loadAsset?: AssetLoader;
   copyImage?: ImageCopier;
+  /** A remote image that did not load: its placeholder opens the URL in the browser window. */
+  openUrl?: (url: string) => void;
   /** A click on a chip: a task's due/scheduled date, or any inline `key:: value` field. */
   onFieldChip?: FieldChipHandler;
 }

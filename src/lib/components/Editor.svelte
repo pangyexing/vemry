@@ -1037,6 +1037,7 @@
       linkSingleClick: () => prefs.clickOpensLinks,
       loadAsset,
       copyImage,
+      openUrl: (url: string) => openMdLink(url, false),
       tags: () => tagList,
       fieldStats: currentFieldStats,
       blockTypes: () => types.enabled,

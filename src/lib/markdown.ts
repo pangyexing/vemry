@@ -148,6 +148,8 @@ function escapeHtml(s: string): string {
  *  Only punctuation escapes are recognised, so a real backslash such as a Windows path
  *  is left alone. */
 const unescapeMd = (s: string) => s.replace(/\\([\\`*_{}[\]()#+.!|~<>-])/g, "$1");
+/** The same escapes, for the inline renderers (which stash the protected character). */
+const ESCAPE_RE = /\\([\\`*_{}[\]()#+.!|~<>-])/g;
 
 /** The plain-text form of a marker's, a source card's or an image chip's title, and of
  *  an Agenda task row: escapes and the emphasis and code markers (**bold**, *italic*,
@@ -237,6 +239,10 @@ function renderInline(raw: string, cite: (url: string, title: string, standalone
   // locally, with trust:false
   s = s.replace(DISPLAY_MATH_RE, (_, tex: string) => stash(renderMathHtml(tex, true)));
   s = s.replace(INLINE_MATH_RE, (m, tex: string) => (/\s$/.test(tex) ? m : stash(renderMathHtml(tex, false))));
+  // Backslash escapes (`2\.`, `\_`, `\*`): the protected character alone, stashed so the
+  // rules below cannot read it as markup. After math (a formula's backslashes are
+  // TeX), before links and emphasis
+  s = s.replace(ESCAPE_RE, (_, ch: string) => stash(escapeHtml(ch)));
   // Images are cut out before links, or MD_LINK would eat [alt](url) and leave a lone
   // "!"; the includes gate is the same idea as in extractCitations — a line with no
   // image should not go through the image regex
@@ -696,6 +702,7 @@ function renderReadingInline(raw: string, base: string): string {
   // the body is not a formula
   s = s.replace(DISPLAY_MATH_RE, (_, tex: string) => stash(renderMathHtml(tex, true)));
   s = s.replace(INLINE_MATH_RE, (m, tex: string) => (/\s$/.test(tex) ? m : stash(renderMathHtml(tex, false))));
+  s = s.replace(ESCAPE_RE, (_, ch: string) => stash(escapeHtml(ch)));
   s = s.replace(READ_IMAGE, (_, alt: string, href: string) => {
     const label = unescapeMd(alt).trim() || t("editor.image");
     // A data: image embedded in the page is rendered directly — it makes no network request anyway, so it needs no proxy

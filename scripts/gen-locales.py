@@ -266,6 +266,10 @@ CMD = {
         ("Mark all AI blocks in this note as reviewed", "本篇 AI 块全部标为已审阅"),
         ("Mark every unreviewed AI block of the current note as reviewed", "把当前笔记所有未审阅的 AI 块标为已审阅"),
     ),
+    "clip-localize-images": (
+        ("Save this clip's remote images into the vault", "把这篇剪藏的远程图片存进库"),
+        ("Download the images a clipped note still loads from the web into clips/assets and point the note at them — for clips made before localisation, or whose images did not load", "把剪藏笔记里仍从网上加载的图片下载到 clips/assets 并改写引用——适合本地化之前的旧剪藏，或图片加载失败的情况"),
+    ),
     "provenance-accept-vault": (
         ("Mark all AI blocks in the vault as reviewed", "全库 AI 块全部标为已审阅"),
         ("Mark every unreviewed AI block in every note as reviewed — after an agent run that wrote many notes", "把每篇笔记里所有未审阅的 AI 块标为已审阅——适合 agent 一次写了很多篇之后"),
@@ -2093,6 +2097,9 @@ add("clip.", {
     # The `> Source:<url>` line at the top of a clipped note. It is written into
     # the vault, so it follows the interface language at the moment of clipping.
     "sourceLabel": ("Source", "来源"),
+    "localizeStarted": ("Fetching the images into clips/assets — the note updates when they land", "正在把图片存进 clips/assets，存好后笔记自动更新"),
+    "localizeNoSource": ("This note has no source: URL to fetch its images with", "这篇笔记没有 source: 来源地址，无法取图"),
+    "localizeOff": ("Image localisation is off in Settings", "设置里关闭了剪藏图片本地化"),
 })
 
 add("ipc.", {
