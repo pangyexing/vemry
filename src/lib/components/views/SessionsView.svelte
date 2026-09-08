@@ -414,7 +414,7 @@
               {/each}
             </div>
           </div>
-        {:else if e.kind === "retry" || e.kind === "edit_resend" || e.kind === "compact" || e.kind === "fork"}
+        {:else if e.kind === "retry" || e.kind === "edit_resend" || e.kind === "compact" || e.kind === "fork" || e.kind === "effort"}
           <div class="row">
             <span class="ts">{hhmmss(e.ts)}</span>
             <div class="privacy">
@@ -424,7 +424,9 @@
                   ? t("sessionsView.markEditResend")
                   : e.kind === "compact"
                     ? t("sessionsView.markCompact", { level: t(e.level === 2 ? "sessionsView.compactSummary" : "sessionsView.compactHandles") })
-                    : t("sessionsView.markFork", { from: e.from, turn: e.before_turn + 1 })}
+                    : e.kind === "effort"
+                      ? t(e.retaken === "answer" ? "sessionsView.markEffortAnswer" : "sessionsView.markEffortWork")
+                      : t("sessionsView.markFork", { from: e.from, turn: e.before_turn + 1 })}
             </div>
           </div>
         {:else if e.kind === "actions"}

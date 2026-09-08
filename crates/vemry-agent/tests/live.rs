@@ -86,6 +86,92 @@ async fn live_agent_creates_note_via_tools() {
     assert_eq!(session_files.len(), 1);
 }
 
+/// The plan phase on the real Responses line: a plan-gated turn at "high" sends its
+/// pre-plan calls at "low" and the rest at "high", with the reasoning items of the
+/// light calls passed back — the provider must accept the level changing
+/// mid-conversation. Asserted through what can be seen from outside: the turn
+/// completed and the notes landed, after a plan (the light calls led to it) or
+/// after the light probe was retaken (the model went to work without one).
+#[tokio::test]
+#[ignore]
+async fn live_plan_phase_lightens_until_the_plan() {
+    let Some(api_key) = std::env::var("VEMRY_TEST_API_KEY").ok().filter(|k| !k.is_empty()) else {
+        eprintln!("VEMRY_TEST_API_KEY not set — skipping live test");
+        return;
+    };
+    let provider = ProviderConfig {
+        base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
+        model: std::env::var("VEMRY_TEST_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into()),
+        api_key,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Apples.md"), "# Apples\n\nApples keep best in a cool, dark place.\n").unwrap();
+    std::fs::write(dir.path().join("Pears.md"), "# Pears\n\nPears ripen at room temperature.\n").unwrap();
+    let vault = Arc::new(Mutex::new(Some(Vault::open(dir.path()).unwrap())));
+    let meta_dir = dir.path().join(".vemry");
+    std::fs::create_dir_all(&meta_dir).unwrap();
+    let log = SessionLog::create(&meta_dir).unwrap();
+    let runner = AgentRunner {
+        transport: Arc::new(ResponsesTransport::new()),
+        gate: Arc::new(AutoAllow),
+        plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
+        actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
+        read_gate: Arc::new(vemry_agent::permission::DenyReads),
+        vault: Arc::clone(&vault),
+        sources: Arc::new(Mutex::new(vec![])),
+        journal: Arc::new(Mutex::new(vec![])),
+    };
+    let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(vec![]));
+    let ev = events.clone();
+    let mut history = vec![];
+    let started = std::time::Instant::now();
+    tokio::time::timeout(
+        Duration::from_secs(300),
+        runner.run(
+            &provider,
+            &RunnerConfig {
+                max_iterations: 12,
+                write_policy: WritePolicy::Allow,
+                plan_confirm: true,
+                reasoning_effort: Some("high".into()),
+                ..Default::default()
+            },
+            &mut history,
+            Some("Read Apples.md and Pears.md, then create Fruit.md with one line about each fruit's storage, then append a line to Apples.md that links [[Fruit]]. Confirm briefly when done.".into()),
+            None,
+            vec![],
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        ),
+    )
+    .await
+    .expect("live plan run timed out")
+    .expect("live plan run failed");
+    let events = events.lock().unwrap();
+    let jsonl = std::fs::read_to_string(std::fs::read_dir(meta_dir.join("sessions")).unwrap().next().unwrap().unwrap().path()).unwrap();
+    let kinds: Vec<String> = jsonl
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .map(|v| {
+            let kind = v["kind"].as_str().unwrap_or("?").to_string();
+            match v["content"]["tool"].as_str().or(v["tool"].as_str()) {
+                Some(t) => format!("{kind}:{t}"),
+                None => kind,
+            }
+        })
+        .collect();
+    eprintln!("live plan phase: {:.0}s, {} events, lines: {kinds:?}", started.elapsed().as_secs_f32(), events.len());
+    // Either the model planned (the light calls led to the plan, the rest ran at high)
+    // or it went to work without one — then the light probe was retaken, the `effort`
+    // line says so, and the writes came from the call at the session's level
+    let planned = events.iter().any(|e| matches!(e, AgentEvent::PlanRequest { .. }));
+    let retaken = kinds.iter().any(|k| k == "effort");
+    assert!(planned || retaken, "neither a plan nor a retake: {kinds:?}");
+    assert!(dir.path().join("Fruit.md").exists(), "Fruit.md was not created");
+}
+
 /// The v0.4 decision points (items 1-3 of the plan's "to verify" list): the
 /// DeepSeek Responses API's `/responses` path, the shape of the streamed citation
 /// fields, and the replay behaviour of web_search_call.

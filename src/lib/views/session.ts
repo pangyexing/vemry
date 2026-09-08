@@ -67,6 +67,8 @@ export type SessionEntry =
   | { kind: "edit_resend"; ts: string }
   /** Context compaction: 1 = old tool results turned into handles, 2 = an LLM summary. */
   | { kind: "compact"; ts: string; level: number; saved_chars?: number }
+  /** The plan phase's light probe was retaken at the session's level: the model answered, or went to work, without a plan. */
+  | { kind: "effort"; ts: string; retaken: "answer" | "work" }
   /** The fork marker (the new session's first line): from is the source session's id;
    *  turn is the fork point's turn id (present only when forking by id; the existing
    *  ordinal-fallback path has before_turn alone). */

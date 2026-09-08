@@ -2048,6 +2048,22 @@ share one projection. Like `web_search` it is a **session-frozen addition to the
 tool table** — a change to the switch takes effect from the next session, because
 the tool table freezes along with the system prompt when a session begins.
 
+The plan phase is also where the thinking level bends. Measured on a real
+turn (2026-09-08, deepseek-v4-flash at high): 96K characters of reasoning
+went into the call that proposed the plan — the whole experiment designed and
+its edits drafted in the model's head — and the user waited four minutes for a
+three-line list. So in a plan-gated turn at high or max, the runner sends the
+calls before the plan is settled at "low" (`light_effort`, the summary's level
+too): reading and naming steps need no deep thinking, and the prompt now says
+the design comes after the decision. A light response is kept only when every
+call in it is a planning move (a read, a skill, the plan itself —
+`planning_move`); one that answers, or goes to work without a plan, is a probe:
+nothing of it enters the history or the UI (its text is withheld until the
+response is known to be kept), an `effort` line records it in the session log,
+and the same request is retaken at the session's level — so no answer and no
+write is ever produced at the light level, and a turn that needed no plan
+costs one short call more.
+
 ### Following a note (the working note)
 
 A session can **follow** a note: the user's "keep your findings in this one"

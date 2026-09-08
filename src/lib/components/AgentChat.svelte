@@ -425,7 +425,11 @@
       }
       if (it.kind === "sources" && it.searching) return t("chat.searching");
     }
-    return t(agent.phase === "text" ? "chat.statusAnswering" : "chat.thinking");
+    if (agent.phase === "text") return t("chat.statusAnswering");
+    // A long think is a visible one: how much reasoning has come in so far, so a
+    // four-minute wait reads as work rather than a hang
+    const n = agent.thinking.length;
+    return n ? t("chat.thinkingCount", { n: n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n) }) : t("chat.thinking");
   };
 
   /** ---- The decision state of the plan gate's (propose_plan) inline card: at most one plan is

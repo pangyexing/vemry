@@ -168,7 +168,8 @@ pub struct RunnerConfig {
     /// the glue layer only sets Some when the endpoint is DeepSeek (the same gating
     /// as stream_options); it is a per-turn request parameter, stays out of the
     /// prompt prefix, and changing it mid-session does not upend the provider's
-    /// cache.
+    /// cache. At high/max in a plan-gated turn (`plan_confirm`), the calls before
+    /// the plan is settled go at "low" — see the plan phase in `run`.
     pub reasoning_effort: Option<String>,
     /// Plan confirmation (the propose_plan tool plus a blocking gate). Like
     /// web_search, an addition to the tool table frozen per session — switching it
@@ -238,15 +239,24 @@ fn effort_fields(effort: Option<&str>) -> (Option<String>, Option<Value>) {
     }
 }
 
-/// The level for a summary request: a summary needs no deep thinking — high/max
-/// are pushed down to "low" to save time and money; a user who turned thinking off
-/// (none) does not get it turned back on; and unconfigured (Zhipu) stays unsent.
-fn summary_effort(config_effort: Option<&str>) -> Option<&'static str> {
+/// The light level: a summary request, and the calls of a plan-gated turn before
+/// the plan is settled, need no deep thinking — high/max are pushed down to "low"
+/// to save time and money; a user who turned thinking off (none) does not get it
+/// turned back on; and unconfigured (Zhipu) stays unsent.
+fn light_effort(config_effort: Option<&str>) -> Option<&'static str> {
     match config_effort {
         None => None,
         Some("none") => Some("none"),
         Some(_) => Some("low"),
     }
+}
+
+/// What a light (pre-plan) response may do and still be kept: read — the vault, a
+/// skill, the sources, a page through its gate — and propose the plan. A write, a
+/// plan update or an action list means the model went to work without a plan, and
+/// the response is retaken at the session's level.
+fn planning_move(name: &str) -> bool {
+    !crate::tools::is_write_tool(name) && !matches!(name, "import_page" | "update_plan" | "propose_actions")
 }
 
 /// Transient errors that are safe to resend: rate limiting, a server error, a
@@ -442,9 +452,15 @@ impl AgentRunner {
         // default, and an unknown parameter risks a 400); the Responses shape
         // ignores the field.
         let stream_options = provider.is_deepseek().then(|| json!({ "include_usage": true }));
-        // Thinking level → the two Chat Completions fields (the gating is already in
-        // the glue layer: config is None unless the endpoint is DeepSeek)
-        let (reasoning_effort, thinking) = effort_fields(config.reasoning_effort.as_deref());
+        // The plan phase. In a plan-gated turn at high or max, the calls before the
+        // plan is settled go at "low": reading and naming the steps need no deep
+        // thinking, and the design belongs after the user's decision (measured on a
+        // real turn: 96K characters of reasoning before propose_plan — the whole
+        // experiment designed and written in the model's head — and four minutes of
+        // the user waiting for a three-line list). A light response that answers, or
+        // goes to work without a plan, is not kept: it is retaken at the session's
+        // level (below), so no answer and no write is ever produced at the light level.
+        let mut planning = config.plan_confirm && matches!(config.reasoning_effort.as_deref(), Some("high") | Some("max"));
 
         let mut iteration = 0usize;
         let mut transient_retries = 0u32;
@@ -510,14 +526,20 @@ impl AgentRunner {
                 // control surface that does not exist
                 tools.push(ToolDef::Raw(json!({ "type": "web_search" })));
             }
+            // Thinking level → the two Chat Completions fields (the gating is already in
+            // the glue layer: config is None unless the endpoint is DeepSeek)
+            let (reasoning_effort, thinking) =
+                effort_fields(if planning { light_effort(config.reasoning_effort.as_deref()) } else { config.reasoning_effort.as_deref() });
+            // A light response's text is held back until it is known to be kept
+            let withhold = planning;
             let request = ChatRequest {
                 model: provider.model.clone(),
                 messages,
                 tools: Some(tools),
                 stream: true,
                 stream_options: stream_options.clone(),
-                reasoning_effort: reasoning_effort.clone(),
-                thinking: thinking.clone(),
+                reasoning_effort,
+                thinking,
             };
 
             let mut text = String::new();
@@ -585,7 +607,9 @@ impl AgentRunner {
                             if !t.is_empty() {
                                 *produced_ref = true;
                                 text_ref.push_str(t);
-                                on_event(AgentEvent::TextDelta { text: t.clone() });
+                                if !withhold {
+                                    on_event(AgentEvent::TextDelta { text: t.clone() });
+                                }
                             }
                         }
                         if let Some(tcs) = &choice.delta.tool_calls {
@@ -652,6 +676,20 @@ impl AgentRunner {
                     max_iterations: config.max_iterations,
                 });
             }
+            if planning {
+                let kept = !tool_calls.is_empty() && tool_calls.iter().all(|c| planning_move(&c.function.name));
+                if !kept {
+                    // The model answered, or went to work, without a plan: the light call
+                    // was a probe, and the same request is retaken at the session's level —
+                    // nothing of the probe enters the history or the UI (its usage did)
+                    planning = false;
+                    log.append("effort", json!({ "retaken": if tool_calls.is_empty() { "answer" } else { "work" } }));
+                    continue;
+                }
+                if withhold && !text.is_empty() {
+                    on_event(AgentEvent::TextDelta { text: text.clone() });
+                }
+            }
             let assistant_text = if text.is_empty() { None } else { Some(text.clone()) };
             log.append("assistant", json!({ "content": &text, "tool_calls": tool_calls.len() }));
             let mut assistant = ChatMessage::assistant(
@@ -709,6 +747,10 @@ impl AgentRunner {
                     Ok(o) => (true, o),
                     Err(e) => (false, format!("ERROR: {e}")),
                 };
+                // The plan is settled: the rest of the turn runs at the session's level
+                if ok && call.function.name == "propose_plan" {
+                    planning = false;
+                }
                 // The backstop gate: the copy entering the model history needs a limit too (events and the audit log have always had a preview)
                 let output = crate::truncate_chars(
                     &output,
@@ -813,7 +855,7 @@ impl AgentRunner {
         messages.push(ChatMessage::user(compact::SUMMARY_INSTRUCTION));
         // The summary is pinned to low (summary_effort): it needs no deep thinking, which saves time and money
         let (reasoning_effort, thinking) =
-            effort_fields(summary_effort(config.reasoning_effort.as_deref()));
+            effort_fields(light_effort(config.reasoning_effort.as_deref()));
         let request = ChatRequest {
             model: provider.model.clone(),
             messages,
@@ -1643,7 +1685,7 @@ mod tests {
     /// (none → thinking disabled) and the summary downgrade (high/max→low, none
     /// kept, unconfigured unsent).
     #[test]
-    fn effort_fields_and_summary_effort_mapping() {
+    fn effort_fields_and_light_effort_mapping() {
         assert_eq!(effort_fields(None), (None, None));
         let (re, th) = effort_fields(Some("none"));
         assert_eq!(re, None);
@@ -1652,10 +1694,10 @@ mod tests {
         assert_eq!(re.as_deref(), Some("max"));
         assert_eq!(th, None);
 
-        assert_eq!(summary_effort(None), None);
-        assert_eq!(summary_effort(Some("none")), Some("none"));
-        assert_eq!(summary_effort(Some("high")), Some("low"));
-        assert_eq!(summary_effort(Some("max")), Some("low"));
+        assert_eq!(light_effort(None), None);
+        assert_eq!(light_effort(Some("none")), Some("none"));
+        assert_eq!(light_effort(Some("high")), Some("low"));
+        assert_eq!(light_effort(Some("max")), Some("low"));
     }
 
     /// The effort setting flows end to end into the request; with nothing configured
@@ -1690,6 +1732,111 @@ mod tests {
             let reqs = transport.requests.lock().unwrap();
             assert_eq!(reqs[0].reasoning_effort, want_re, "cfg={cfg:?}");
             assert_eq!(reqs[0].thinking, want_th, "cfg={cfg:?}");
+        }
+    }
+
+    fn light_config() -> RunnerConfig {
+        RunnerConfig { plan_confirm: true, reasoning_effort: Some("high".into()), ..Default::default() }
+    }
+
+    async fn run_light_turn(r: &AgentRunner, f: &Fixture, history: &mut Vec<ChatMessage>) -> Vec<AgentEvent> {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &light_config(),
+            history,
+            Some("整理".into()),
+            None,
+            vec![],
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        Arc::try_unwrap(events).unwrap().into_inner().unwrap()
+    }
+
+    /// The plan phase: in a plan-gated turn at high, the calls before the plan is
+    /// settled go at "low" and the ones after it at the session's level; the light
+    /// narration reaches the UI once the response is known to be kept.
+    #[tokio::test]
+    async fn plan_phase_runs_light_until_the_plan_is_settled() {
+        let f = fixture();
+        let mut plan = vec![text_chunk("我先看看")];
+        plan.extend(tool_call_chunks("c1", "propose_plan", r#"{"items": ["read-notes", "write-out"]}"#));
+        let transport = Arc::new(MockTransport::new(vec![plan, vec![text_chunk("go"), finish_chunk("stop")]]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let events = run_light_turn(&r, &f, &mut history).await;
+        let reqs = transport.requests.lock().unwrap();
+        assert_eq!(reqs.len(), 2);
+        assert_eq!(reqs[0].reasoning_effort.as_deref(), Some("low"));
+        assert_eq!(reqs[1].reasoning_effort.as_deref(), Some("high"));
+        let texts: Vec<&str> = events.iter().filter_map(|e| if let AgentEvent::TextDelta { text } = e { Some(text.as_str()) } else { None }).collect();
+        assert_eq!(texts, vec!["我先看看", "go"]);
+    }
+
+    /// A light response that answers without a plan is a probe: it enters neither the
+    /// history nor the UI, and the same request is retaken at the session's level.
+    #[tokio::test]
+    async fn a_light_answer_is_retaken_at_the_sessions_level() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            vec![text_chunk("shallow"), finish_chunk("stop")],
+            vec![text_chunk("deep"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let events = run_light_turn(&r, &f, &mut history).await;
+        let reqs = transport.requests.lock().unwrap();
+        assert_eq!(reqs.iter().map(|q| q.reasoning_effort.as_deref()).collect::<Vec<_>>(), vec![Some("low"), Some("high")]);
+        assert_eq!(history.iter().filter(|m| m.role == "assistant").count(), 1);
+        assert_eq!(history.last().unwrap().text().unwrap(), "deep");
+        let texts: Vec<&str> = events.iter().filter_map(|e| if let AgentEvent::TextDelta { text } = e { Some(text.as_str()) } else { None }).collect();
+        assert_eq!(texts, vec!["deep"]);
+    }
+
+    /// A light response that goes to work without a plan (here a plan update) is
+    /// retaken before any of its calls run.
+    #[tokio::test]
+    async fn a_light_write_is_retaken_before_it_runs() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("c1", "update_plan", r#"{"items": [{"status": "doing", "text": "a"}]}"#),
+            vec![text_chunk("done"), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let events = run_light_turn(&r, &f, &mut history).await;
+        let reqs = transport.requests.lock().unwrap();
+        assert_eq!(reqs.iter().map(|q| q.reasoning_effort.as_deref()).collect::<Vec<_>>(), vec![Some("low"), Some("high")]);
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::ToolCallFinished { id, .. } if id == "c1")));
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::PlanUpdated { .. })));
+        assert_eq!(history.last().unwrap().text().unwrap(), "done");
+    }
+
+    /// Without the gate, or below high, nothing is lightened.
+    #[tokio::test]
+    async fn no_plan_phase_without_the_gate_or_below_high() {
+        let f = fixture();
+        for cfg in [
+            RunnerConfig { plan_confirm: false, reasoning_effort: Some("high".into()), ..Default::default() },
+            RunnerConfig { plan_confirm: true, reasoning_effort: Some("low".into()), ..Default::default() },
+        ] {
+            let transport = Arc::new(MockTransport::new(vec![vec![text_chunk("ok"), finish_chunk("stop")]]));
+            let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+            let log = SessionLog::create(f.log_dir.path()).unwrap();
+            let mut history = vec![];
+            r.run(&ProviderConfig::zhipu("test-key".into()), &cfg, &mut history, Some("hi".into()), None, vec![], None, &|_e| {}, &AtomicBool::new(false), &log)
+                .await
+                .unwrap();
+            let reqs = transport.requests.lock().unwrap();
+            assert_eq!(reqs.len(), 1);
+            assert_eq!(reqs[0].reasoning_effort, cfg.reasoning_effort);
         }
     }
 

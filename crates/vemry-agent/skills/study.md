@@ -2,7 +2,7 @@
 name: study
 description: Study a paper or a long text — import it, read it in chapters, check the retelling, cards from the gaps
 triggers: [study, read this paper, work through, deep read, add an experiment, check my retelling, 精读, 研读, 学这篇, 读这篇论文, 带我读, 加实验, 可加的实验, 检查复述]
-version: 1
+version: 2
 ---
 
 # Study
@@ -24,8 +24,10 @@ The first session, verbatim (in the user's language):
 
 A later session on the same paper has a plan of its own: "Check the retelling"
 (one step), "Answer the questions" (one step), or "Add an experiment" (one step).
-Mark each step done with update_plan as it lands — the card is the reader's
-progress bar, not a receipt at the end.
+The plan is proposed before anything is designed: the chapter and its line in
+the hub are all the list needs, and the experiment is worked out after the
+reader has said yes. Mark each step done with update_plan as it lands — the
+card is the reader's progress bar, not a receipt at the end.
 
 ## Inputs
 
@@ -157,7 +159,12 @@ progress bar, not a receipt at the end.
   draws at most two views; it computes the example on a tiny instance (three
   tokens, a 2×2, ten points) so the numbers can be read, and every view has a
   title that says what it shows. Nobody runs the block before the reader clicks
-  Run, so it stays small and plain enough to be right the first time. The API:
+  Run, so it stays small and plain enough to be right the first time. Design it
+  once: the hub's line (or the chapter's idea) already says what to move and
+  what to watch; take the plainest computation that shows it on the tiny
+  instance and write the block in one pass — no weighing of alternative
+  formulations, no study of numerical corner cases; when the plain computation
+  misbehaves at an edge, shrink the instance rather than change the method. The API:
   - controls: `const p = vemry.lab.controls({ name: { slider: [min, max], step, value, label }, flag: { toggle: true }, pick: { select: ["a", "b"] }, try: { presets: { "all keys equal": { name: 1, flag: false } } } })`
     returns `{ name, flag, pick, try }` (`try` is the preset last pressed, else
     null); `const Q = vemry.lab.matrix("Q", [[1, 0], [0, 1]])` returns the

@@ -58,15 +58,18 @@ Skip planning entirely for simple questions; reconcile every item before finishi
 
 const PLAN_RULE_GATE: &str = "\
 - For multi-step tasks (roughly 3+ tool calls expected), FIRST call propose_plan — alone, \
-before any other tool except read_skill when a listed skill matches the request, whose Plan \
-section is then the list — with 3-7 steps in the user's language, and wait for the user's \
-decision. A step is a terse verb phrase of at most about 8 words (20 characters in CJK) — a \
-checklist line, not a sentence: the UI shows the list in a narrow column, and details belong \
-in your prose. If rejected, revise per the reason and call propose_plan again before doing anything \
-else. After approval, track progress with update_plan (the whole list each time: doing when \
-you start a step, done when finished, skipped with the reason in its text). Never restate the \
-plan in your prose — the UI shows it. Skip planning entirely for simple questions; reconcile \
-every item before finishing.";
+after only the reads that naming the steps needs (and read_skill when a listed skill matches \
+the request, whose Plan section is then the list) — with 3-7 steps in the user's language, and \
+wait for the user's decision. Propose before working anything out: the plan is a checklist, \
+not the result of the design — the design, the code and the exact edits come after the \
+decision, once the user has steered; thinking them through first only delays the list. A step \
+is a terse verb phrase of at most about 8 words (20 characters in CJK) — a checklist line, not \
+a sentence: the UI shows the list in a narrow column, and details belong in your prose. If \
+rejected, revise per the reason and call propose_plan again before doing anything else. After \
+approval, track progress with update_plan (the whole list each time: doing when you start a \
+step, done when finished, skipped with the reason in its text). Never restate the plan in \
+your prose — the UI shows it. Skip planning entirely for simple questions; reconcile every \
+item before finishing.";
 
 /// The one fact about the session's tool table a skill cannot know by itself:
 /// whether a web search is there. Fixed per session like the rest of the
@@ -538,6 +541,7 @@ mod tests {
         assert!(!recite.contains("propose_plan"));
         let gated = build_system_prompt(&vault, true, false);
         assert!(gated.contains("FIRST call propose_plan"));
+        assert!(gated.contains("Propose before working anything out"));
         assert!(gated.contains("track progress with update_plan"));
         assert!(!gated.contains("call update_plan FIRST"));
         assert!(recite.contains("Never restate the plan") && gated.contains("Never restate the plan"));
