@@ -89,6 +89,9 @@ progress bar, not a receipt at the end.
 
   (the fence language is `vemry-query`, one key per line; a tag alone matches
   every block of a tagged note, and the text filter keeps the `#chapter` line).
+  After it, `## 可加的实验` when any chapter's experiment was listed rather than
+  written (see the lab block below): one line per experiment — the chapter as a
+  [[link]], what to move, what to watch — so the reader picks the next one.
 - Formulas: `$…$` in a sentence, a table cell, a question or a card, `$$…$$` on a
   line of its own — everywhere, not only in the source note. Bare TeX
   (`QW_i^Q`) and a Unicode stand-in (`√d_k`, `QKᵀ`) stay text on the page; only
@@ -132,24 +135,33 @@ progress bar, not a receipt at the end.
   effect), and which symbol it confused — each point citing the block. The cards
   come from these gaps alone, one per gap, in the tutor's shape; a retelling with
   no gap gets no card.
-- A lab block: a ` ```js ` fence calling `vemry.lab.*`. Which chapters get one
-  follows the goal: understand — two or three in the first session, in the
-  chapters that carry the core mechanism; reproduce — every chapter whose idea
-  is numeric; survey, interview, review — none unless asked. The test for a
-  chapter is that its idea is itself a computation the reader can watch: a
-  formula with a parameter to move, an algorithm run on three tokens. A problem
-  statement, a results table, a limits chapter has nothing to compute and gets
-  none. The reader sees a card, never the code, so the block opens with one
-  `//` line saying what the experiment shows (the card's caption). The
-  parameters the reader will want to move are the controls — at most three —
-  and the block draws at most two views; it computes the example on a tiny
-  instance (three tokens, a 2×2, ten points) so the numbers can be read, and
-  every view has a title that says what it shows. Nobody runs the block before
-  the reader clicks Run, so it stays small and plain enough to be right the
-  first time. The API:
-  - controls: `const p = vemry.lab.controls({ name: { slider: [min, max], step, value, label }, flag: { toggle: true }, pick: { select: ["a", "b"] } })`
-    returns `{ name, flag, pick }`; `const Q = vemry.lab.matrix("Q", [[1, 0], [0, 1]])`
-    returns the current grid.
+- A lab block: a ` ```js ` fence calling `vemry.lab.*`. Whether a chapter has
+  one is decided by its idea alone: an experiment where the idea is itself a
+  computation the reader can watch — a formula with a parameter to move, an
+  algorithm run on three tokens — and none where there is nothing to compute (a
+  problem statement, a results table, a limits chapter). No number decides it.
+  What the first session writes is decided by budget: the experiments of the
+  chapters that carry the core mechanism — the ones that make this paper this
+  paper — are written now; every other chapter that qualifies gets its
+  experiment listed instead, under `## 可加的实验` in the hub (heading in the
+  user's language), one line each: the chapter, what to move, what to watch. A
+  later "add the … experiment" turns one line into a block in its chapter's
+  *try it* section and removes the line. Survey, interview and review goals
+  list, never write, unless asked; reproduce writes them all.
+  The reader sees a card, never the code, so the block opens with one `//` line
+  — the card's caption — that says what to move and what to watch ("drag d_k;
+  the unscaled weights collapse to one-hot"). The parameters the reader will
+  want to move are the controls — at most three, plus one row of presets: two
+  to four named settings that each set several controls at once ("all keys
+  equal", "hide the future"), the guided experiments of the card. The block
+  draws at most two views; it computes the example on a tiny instance (three
+  tokens, a 2×2, ten points) so the numbers can be read, and every view has a
+  title that says what it shows. Nobody runs the block before the reader clicks
+  Run, so it stays small and plain enough to be right the first time. The API:
+  - controls: `const p = vemry.lab.controls({ name: { slider: [min, max], step, value, label }, flag: { toggle: true }, pick: { select: ["a", "b"] }, try: { presets: { "all keys equal": { name: 1, flag: false } } } })`
+    returns `{ name, flag, pick, try }` (`try` is the preset last pressed, else
+    null); `const Q = vemry.lab.matrix("Q", [[1, 0], [0, 1]])` returns the
+    current grid.
   - views: `vemry.lab.heatmap(title, rows, { rows, cols, digits, diverging })`,
     `vemry.lab.line(title, [{ name, y }], { x, xLabel, yLabel })`,
     `vemry.lab.bars(title, { label: value }, { yLabel, horizontal })`,
@@ -207,7 +219,8 @@ each item with its citation, then how many cards were made.
 - A chapter without an embedded source block, or a source note that paraphrases.
 - Cards made from the paper instead of from the reader's gaps.
 - A lab block on a chapter with nothing to compute, or one whose result is
-  narrated in the note.
+  narrated in the note; a caption that says what the card shows instead of what
+  to move and what to watch.
 - Reading the whole paper into the context at once: part by part, the chapters
   of a part written before the next is read.
 - A retelling check that grades without citing the block it checked against.

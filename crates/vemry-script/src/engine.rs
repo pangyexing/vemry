@@ -1442,6 +1442,33 @@ mod tests {
     }
 
     #[test]
+    fn lab_presets_are_buttons_that_set_other_controls() {
+        let (_d, vault) = fixture(&[]);
+        let bridge = TestBridge::new(true);
+        let host = spawn_host(&vault, &bridge, false);
+        let code = r#"
+            const p = vemry.lab.controls({ dk: { slider: [4, 64], value: 16 }, scale: { toggle: true }, preset: { presets: { "no scale": { scale: false, dk: 64 }, "tiny": { dk: 4 } } } });
+            console.log("dk=" + p.dk + " scale=" + p.scale + " preset=" + p.preset);
+        "#;
+        let r = host.eval_block(code, None, None);
+        assert_eq!(r.error, None, "{:?}", r.output);
+        assert_eq!(r.output, "dk=16 scale=true preset=null");
+        let spec = r.lab.expect("a lab spec");
+        assert!(
+            matches!(&spec.controls[2], crate::lab::LabControl::Presets { items, value: None, .. } if items.len() == 2 && items[0].label == "no scale" && items[0].set["dk"] == serde_json::json!(64)),
+            "{:?}",
+            spec.controls[2]
+        );
+        // the card applies a preset by handing the targets' values back, with the preset's own label
+        let r = host.eval_block(code, None, Some(serde_json::json!({ "dk": 64, "scale": false, "preset": "no scale" })));
+        assert_eq!(r.output, "dk=64 scale=false preset=no scale");
+        // a preset that names a control the block never declared is an error by name
+        let bad = r#"vemry.lab.controls({ dk: { slider: [4, 64] }, preset: { presets: [{ label: "x", set: { nothere: 1 } }] } });"#;
+        let r = host.eval_block(bad, None, None);
+        assert!(r.error.as_deref().unwrap_or("").contains("nothere"), "{:?}", r.error);
+    }
+
+    #[test]
     fn demo_vault_lab_block_runs_and_moves() {
         // the chapter the demo vault ships (examples/demo-vault/papers/…) is what a
         // reader presses Run on first: its fence must run clean, declare its

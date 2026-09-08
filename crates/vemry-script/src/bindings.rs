@@ -513,8 +513,21 @@ const GLUE_JS: &str = r#"
         if (!options.includes(value)) value = options[0];
         labState.controls.push({ kind: "select", name, label, options, value });
         values[name] = value;
+      } else if (c.presets != null) {
+        // presets: [{ label, set: { name: value } }] or { label: { name: value } } — buttons that set other controls
+        const raw = Array.isArray(c.presets) ? c.presets : Object.entries(c.presets).map(([label, set]) => ({ label, set }));
+        const items = raw.map((it, i) => {
+          if (!it || typeof it !== "object") throw new Error("lab.controls: `" + name + "`.presets needs { label, set } items");
+          const label = String(it.label ?? it.name ?? i + 1);
+          const set = it.set && typeof it.set === "object" ? it.set : Object.fromEntries(Object.entries(it).filter(([k]) => k !== "label" && k !== "name"));
+          return { label, set };
+        });
+        if (!items.length) throw new Error("lab.controls: `" + name + "`.presets needs at least one item");
+        const value = typeof given === "string" && items.some((it) => it.label === given) ? given : null;
+        labState.controls.push({ kind: "presets", name, label, items, value });
+        values[name] = value;
       } else {
-        throw new Error("lab.controls: `" + name + "` needs slider: [min, max], toggle: true|false, or select: [options]");
+        throw new Error("lab.controls: `" + name + "` needs slider: [min, max], toggle: true|false, select: [options], or presets: [{ label, set }]");
       }
     }
     return values;

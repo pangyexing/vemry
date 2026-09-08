@@ -9,7 +9,7 @@
 // the values live in this object, and "Pin" is the one explicit write, rewriting
 // the declared literals through pin.ts.
 import { t } from "$lib/i18n/i18n.svelte";
-import type { BlockEvalResult, LabControl, LabParams, LabSpec, LabView } from "$lib/api";
+import type { BlockEvalResult, LabControl, LabParams, LabSpec, LabView, LabPreset } from "$lib/api";
 import { buildHeatmap, buildStep, buildTable, drawBars, drawLine, drawScatter, fmt, tableTwin, type TipHost, type TipRow } from "$lib/lab/charts";
 import { pinCode } from "$lib/lab/pin";
 import { toast } from "$lib/stores/toast.svelte";
@@ -73,13 +73,34 @@ function iconButton(cls: string, icon: string, tip: string, onClick: () => void)
 /** The initial params: what every control ran with (so the first move sends the whole set). */
 function paramsOf(controls: LabControl[]): LabParams {
   const p: LabParams = {};
-  for (const c of controls) p[c.name] = c.kind === "matrix" ? c.rows.map((r) => r.slice()) : c.value;
+  for (const c of controls) p[c.name] = c.kind === "matrix" ? c.rows.map((r) => r.slice()) : c.kind === "presets" ? (c.value ?? "") : c.value;
   return p;
+}
+
+/** A control as it would read with `v` as its value (the params' view of the spec). */
+function withValue(c: LabControl, v: LabParams[string] | undefined): LabControl {
+  switch (c.kind) {
+    case "slider":
+      return { ...c, value: typeof v === "number" ? v : c.value };
+    case "toggle":
+      return { ...c, value: typeof v === "boolean" ? v : c.value };
+    case "select":
+      return { ...c, value: typeof v === "string" ? v : c.value };
+    case "matrix":
+      return { ...c, rows: Array.isArray(v) ? (v as number[][]) : c.rows };
+    case "presets":
+      return { ...c, value: typeof v === "string" && v ? v : null };
+  }
 }
 
 /** The identity of the control set: a re-run that changes it rebuilds the controls, one that keeps it updates nothing the user is holding. */
 const controlKey = (controls: LabControl[]) =>
-  controls.map((c) => `${c.kind}:${c.name}${c.kind === "select" ? `:${c.options.join("|")}` : c.kind === "matrix" ? `:${c.rows.length}x${c.rows[0]?.length ?? 0}` : ""}`).join("\n");
+  controls
+    .map(
+      (c) =>
+        `${c.kind}:${c.name}${c.kind === "select" ? `:${c.options.join("|")}` : c.kind === "matrix" ? `:${c.rows.length}x${c.rows[0]?.length ?? 0}` : c.kind === "presets" ? `:${c.items.map((i) => i.label).join("|")}` : ""}`,
+    )
+    .join("\n");
 
 export class LabSession implements TipHost {
   readonly root: HTMLElement;
@@ -196,8 +217,19 @@ export class LabSession implements TipHost {
     this.schedule(RERUN_DEBOUNCE_MS);
   }
 
+  /** A preset sets several controls at once: the params, the widgets (rebuilt from
+   *  the new values so the sliders show them), and one re-run. */
+  private applyPreset(c: Extract<LabControl, { kind: "presets" }>, item: LabPreset) {
+    for (const [k, v] of Object.entries(item.set)) this.params[k] = Array.isArray(v) ? v.map((r) => r.slice()) : v;
+    this.params[c.name] = item.label;
+    this.spec = { ...this.spec, controls: this.spec.controls.map((ctl) => withValue(ctl, this.params[ctl.name])) };
+    this.buildControls();
+    this.schedule(0);
+  }
+
   private buildControl(c: LabControl): HTMLElement {
-    const box = el("label", `cm-lab-ctl cm-lab-ctl-${c.kind}`);
+    // a label element would hand a click on a preset button to its first input
+    const box = el(c.kind === "presets" ? "div" : "label", `cm-lab-ctl cm-lab-ctl-${c.kind}`);
     const stop = (e: Event) => e.stopPropagation();
     box.addEventListener("mousedown", stop);
     box.addEventListener("keydown", stop);
@@ -239,6 +271,22 @@ export class LabSession implements TipHost {
         select.value = c.value;
         select.addEventListener("change", () => this.setParam(c.name, select.value));
         box.append(name, select);
+        break;
+      }
+      case "presets": {
+        box.classList.add("cm-lab-ctl-wide");
+        const row = el("div", "cm-lab-presets");
+        for (const item of c.items) {
+          const b = el("button", "cm-lab-preset", item.label);
+          b.type = "button";
+          if (c.value === item.label) b.setAttribute("aria-pressed", "true");
+          b.addEventListener("click", (e) => {
+            e.preventDefault();
+            this.applyPreset(c, item);
+          });
+          row.appendChild(b);
+        }
+        box.append(name, row);
         break;
       }
       case "matrix": {
@@ -420,19 +468,7 @@ export class LabSession implements TipHost {
       toast.push(t("runBlock.pinNoRange"));
       return;
     }
-    const controls: LabControl[] = this.spec.controls.map((c) => {
-      const v = this.params[c.name];
-      switch (c.kind) {
-        case "slider":
-          return { ...c, value: typeof v === "number" ? v : c.value };
-        case "toggle":
-          return { ...c, value: typeof v === "boolean" ? v : c.value };
-        case "select":
-          return { ...c, value: typeof v === "string" ? v : c.value };
-        case "matrix":
-          return { ...c, rows: Array.isArray(v) ? (v as number[][]) : c.rows };
-      }
-    });
+    const controls: LabControl[] = this.spec.controls.map((c) => withValue(c, this.params[c.name]));
     const r = pinCode(located.code, controls);
     if (!r.pinned.length) {
       toast.push(t("runBlock.pinNothing"));

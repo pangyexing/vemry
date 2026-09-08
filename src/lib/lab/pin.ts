@@ -88,6 +88,8 @@ export function pinCode(code: string, controls: LabControl[]): PinResult {
       pinned.push(c.name);
       continue;
     }
+    // a preset row holds no value of its own; its targets are pinned as themselves
+    if (c.kind === "presets") continue;
     const spec = specOf(code, c.name);
     if (!spec) {
       skipped.push(c.name);

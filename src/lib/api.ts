@@ -349,7 +349,14 @@ export type LabControl =
   | { kind: "slider"; name: string; label: string | null; min: number; max: number; step: number; value: number }
   | { kind: "toggle"; name: string; label: string | null; value: boolean }
   | { kind: "select"; name: string; label: string | null; options: string[]; value: string }
-  | { kind: "matrix"; name: string; label: string | null; rows: number[][]; min: number | null; max: number | null; step: number | null };
+  | { kind: "matrix"; name: string; label: string | null; rows: number[][]; min: number | null; max: number | null; step: number | null }
+  | { kind: "presets"; name: string; label: string | null; items: LabPreset[]; value: string | null };
+
+/** One preset button: its label and the controls it sets, by name. */
+export interface LabPreset {
+  label: string;
+  set: Record<string, number | boolean | string | number[][]>;
+}
 
 export interface LineSeries {
   name: string | null;

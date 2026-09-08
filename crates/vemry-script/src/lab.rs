@@ -29,12 +29,28 @@ pub enum LabControl {
     Select { name: String, label: Option<String>, options: Vec<String>, value: String },
     /// An editable grid of numbers (a Q, K or V matrix, a small dataset).
     Matrix { name: String, label: Option<String>, rows: Vec<Vec<f64>>, min: Option<f64>, max: Option<f64>, step: Option<f64> },
+    /// A row of buttons, each setting several of the other controls at once — the
+    /// guided experiments of a card ("all keys equal", "hide the future"). `value`
+    /// is the label last pressed, if any; the card writes the targets' values into
+    /// `params` itself and re-runs.
+    Presets { name: String, label: Option<String>, items: Vec<LabPreset>, value: Option<String> },
+}
+
+/// One preset: the button's label and the controls it sets, by name.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LabPreset {
+    pub label: String,
+    pub set: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl LabControl {
     pub fn name(&self) -> &str {
         match self {
-            LabControl::Slider { name, .. } | LabControl::Toggle { name, .. } | LabControl::Select { name, .. } | LabControl::Matrix { name, .. } => name,
+            LabControl::Slider { name, .. }
+            | LabControl::Toggle { name, .. }
+            | LabControl::Select { name, .. }
+            | LabControl::Matrix { name, .. }
+            | LabControl::Presets { name, .. } => name,
         }
     }
 }
@@ -153,6 +169,7 @@ impl LabView {
 }
 
 pub const MAX_CONTROLS: usize = 12;
+pub const MAX_PRESETS: usize = 8;
 pub const MAX_VIEWS: usize = 8;
 pub const MAX_OPTIONS: usize = 32;
 pub const MAX_MATRIX: usize = 16;
@@ -191,6 +208,7 @@ pub fn parse(json: &str) -> Result<LabSpec, String> {
     let mut spec: LabSpec = serde_json::from_str(json).map_err(|e| format!("lab: malformed spec: {e}"))?;
     cap("controls", spec.controls.len(), MAX_CONTROLS)?;
     cap("views", spec.views.len(), MAX_VIEWS)?;
+    let declared: std::collections::HashSet<String> = spec.controls.iter().map(|c| c.name().to_string()).collect();
     let mut seen = std::collections::HashSet::new();
     for c in &mut spec.controls {
         if !seen.insert(c.name().to_string()) {
@@ -221,6 +239,31 @@ pub fn parse(json: &str) -> Result<LabSpec, String> {
                 }
                 if !options.contains(value) {
                     *value = options[0].clone();
+                }
+            }
+            LabControl::Presets { name, label, items, value } => {
+                clip(name);
+                clip_opt(label);
+                cap(&format!("the presets `{name}`"), items.len(), MAX_PRESETS)?;
+                if items.is_empty() {
+                    return Err(format!("lab: the presets `{name}` have no items"));
+                }
+                for it in items.iter_mut() {
+                    clip(&mut it.label);
+                    cap(&format!("the preset `{}`", it.label), it.set.len(), MAX_CONTROLS)?;
+                    for (target, v) in &it.set {
+                        // a preset names the controls it sets: one the block never declared is a mistake by name
+                        if target == name || !declared.contains(target) {
+                            return Err(format!("lab: the preset `{}` sets `{target}`, which is not a control of this block", it.label));
+                        }
+                        let grid_ok = v.as_array().is_some_and(|rows| rows.iter().all(|r| r.as_array().is_some_and(|r| r.iter().all(|x| x.as_f64().is_some_and(f64::is_finite)))));
+                        if !(v.is_number() || v.is_boolean() || v.is_string() || grid_ok) {
+                            return Err(format!("lab: the preset `{}` sets `{target}` to a value that is not a number, a boolean, a string or a grid", it.label));
+                        }
+                    }
+                }
+                if value.as_ref().is_some_and(|v| !items.iter().any(|it| &it.label == v)) {
+                    *value = None;
                 }
             }
             LabControl::Matrix { name, label, rows, .. } => {
@@ -330,7 +373,8 @@ mod tests {
             {"kind":"slider","name":"d_k","label":null,"min":4,"max":512,"step":4,"value":9999},
             {"kind":"toggle","name":"scale","label":"scale","value":true},
             {"kind":"select","name":"head","label":null,"options":["a","b"],"value":"zzz"},
-            {"kind":"matrix","name":"Q","label":null,"rows":[[1,0],[0,1]],"min":null,"max":null,"step":null}
+            {"kind":"matrix","name":"Q","label":null,"rows":[[1,0],[0,1]],"min":null,"max":null,"step":null},
+            {"kind":"presets","name":"try","label":"try","items":[{"label":"no scale","set":{"scale":false,"d_k":64}}],"value":"gone"}
           ],"views":[
             {"kind":"heatmap","title":"attention","data":[[0.5,null],[0.25,0.75]],"rows":["a","b"],"cols":null,"min":null,"max":null,"digits":2,"diverging":false},
             {"kind":"line","title":"pe","series":[{"name":"sin","y":[0,1,0],"x":null}],"x":null,"x_label":"pos","y_label":null,"y_min":null,"y_max":null},
@@ -340,7 +384,7 @@ mod tests {
             {"kind":"step","title":"softmax","steps":[{"label":"scores","text":null,"value":[[1,2]]},{"label":"exp","text":"e^x","value":3}]}
           ]}"#;
         let spec = parse(json).unwrap();
-        assert_eq!(spec.controls.len(), 4);
+        assert_eq!(spec.controls.len(), 5);
         match &spec.controls[0] {
             LabControl::Slider { value, .. } => assert_eq!(*value, 512.0),
             _ => panic!(),
@@ -362,9 +406,30 @@ mod tests {
             LabView::Step { steps, .. } => assert_eq!(steps[1].value, Some(StepValue::Number(3.0))),
             _ => panic!(),
         }
+        // a preset's value is the label last pressed; one that names no item is dropped
+        match &spec.controls[4] {
+            LabControl::Presets { items, value, .. } => {
+                assert_eq!(items[0].label, "no scale");
+                assert_eq!(items[0].set["d_k"], serde_json::json!(64));
+                assert_eq!(*value, None);
+            }
+            _ => panic!(),
+        }
         // the round trip is the wire format the editor reads
         let back: LabSpec = serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
         assert_eq!(back, spec);
+    }
+
+    #[test]
+    fn a_preset_names_only_the_block_s_own_controls() {
+        let json = r#"{"controls":[{"kind":"slider","name":"d_k","label":null,"min":4,"max":64,"step":4,"value":16},{"kind":"presets","name":"try","label":null,"items":[{"label":"x","set":{"d_k":64,"nothere":1}}],"value":null}],"views":[]}"#;
+        let err = parse(json).unwrap_err();
+        assert!(err.contains("`x` sets `nothere`"), "{err}");
+        let json = r#"{"controls":[{"kind":"slider","name":"d_k","label":null,"min":4,"max":64,"step":4,"value":16},{"kind":"presets","name":"try","label":null,"items":[{"label":"x","set":{"d_k":{"a":1}}}],"value":null}],"views":[]}"#;
+        let err = parse(json).unwrap_err();
+        assert!(err.contains("not a number"), "{err}");
+        let json = r#"{"controls":[{"kind":"presets","name":"try","label":null,"items":[],"value":null}],"views":[]}"#;
+        assert!(parse(json).unwrap_err().contains("no items"));
     }
 
     #[test]

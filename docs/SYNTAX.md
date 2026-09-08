@@ -375,6 +375,7 @@ const { d_k, scale } = vemry.lab.controls({
   d_k:   { slider: [4, 512], step: 4, value: 64, label: "d_k" },
   scale: { toggle: true, label: "divide by √d_k" },
   head:  { select: ["head 1", "head 2"] },
+  try:   { presets: { "no scaling": { scale: false, d_k: 512 }, "tiny keys": { d_k: 4 } } },
 });
 const Q = vemry.lab.matrix("Q", [[1, 0, 1], [0, 1, 0]]);   // an editable grid
 vemry.lab.heatmap("attention", weights, { rows: tokens, cols: tokens, digits: 2 });
@@ -385,11 +386,15 @@ vemry.lab.table("ablations", [{ variant: "base", heads: 8, BLEU: 25.8 }], { high
 vemry.lab.step("softmax", [{ label: "scores", value: [[2, 0]] }, { label: "divide by $\sqrt{d_k}$", value: [[1, 0]] }]);
 ```
 
-- **Controls** (four): `slider: [min, max]` with `step` and `value`; `toggle: true|false`
+- **Controls** (five): `slider: [min, max]` with `step` and `value`; `toggle: true|false`
   (the value is the default); `select: [options]` with `value`; `matrix(name, rows,
-  { label, min, max, step })`. `controls` returns the current values; `matrix` returns
-  the current grid. The user's moved values come back on the next run, clamped to the
-  declared range (a matrix of a different shape falls back to the declared one).
+  { label, min, max, step })`; `presets: [{ label, set: { name: value } }]` (or
+  `{ label: { name: value } }`) — a row of buttons, each setting several of the other
+  controls at once, the guided experiments of a card ("all keys equal", "hide the
+  future"); its value is the label last pressed. `controls` returns the current values;
+  `matrix` returns the current grid. The user's moved values come back on the next
+  run, clamped to the declared range (a matrix of a different shape falls back to the
+  declared one).
 - **Views** (six): `heatmap(title, rows, { rows, cols, min, max, digits, diverging })` —
   one hue light→dark, or two poles around zero when the data is signed; `line(title,
   series, { x, xLabel, yLabel, yMin, yMax })` where a series is `y[]` or `{ name, y, x }`;
