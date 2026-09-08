@@ -23,6 +23,7 @@ pub mod query;
 pub mod relink;
 pub mod restructure;
 pub mod search;
+pub mod segment;
 pub mod taskedit;
 pub mod types;
 pub mod vault;
@@ -49,6 +50,7 @@ pub use restructure::{block_diff, BlockDiff, OutlineSection};
 pub use query::{parse_field_filter, BlockHit, BlockKindFilter, BlockQuery, FieldFilter, FieldFilterError, FieldOp};
 pub use parser::{set_frontmatter_disabled, set_frontmatter_key, FrontmatterValue};
 pub use search::{InMemorySearch, SearchHit, SearchProvider};
+pub use segment::{segment_markdown, SegKind, Segment, Segmented};
 pub use types::{
     list_block_types, parse_block_type, type_skeleton, BlockType, FieldSpec, BOOK_TYPE_TEMPLATE,
     TYPES_SUBDIR,

@@ -139,6 +139,18 @@ pub struct Settings {
     /// several windows, only the last one closed is recorded).
     #[serde(default)]
     pub browser_window: Option<crate::agent_window::WindowGeom>,
+    /// Side-by-side translation's target language (a BCP 47 tag the prompt names:
+    /// zh-CN, en, ja…); empty = the interface language.
+    #[serde(default)]
+    pub translate_target: String,
+    /// The model translations are sent to; empty = the chat model. The endpoint and
+    /// key are always the chat's.
+    #[serde(default)]
+    pub translate_model: String,
+    /// One line of the user's own instruction appended to the translation prompt's
+    /// rules ("keep technical terms in English", say).
+    #[serde(default)]
+    pub translate_addendum: String,
 }
 
 impl Settings {
@@ -256,6 +268,9 @@ impl Default for Settings {
             agent_window: None,
             browser_docked: true,
             browser_window: None,
+            translate_target: String::new(),
+            translate_model: String::new(),
+            translate_addendum: String::new(),
         }
     }
 }

@@ -14,6 +14,7 @@
   import { types } from "$lib/stores/types.svelte";
   import { browser, MAIN_MIN_BESIDE_PANEL, PANEL_DEFAULT as BROWSER_PANEL_DEFAULT, PANEL_MIN as BROWSER_PANEL_MIN } from "$lib/stores/browser.svelte";
   import { reading } from "$lib/stores/reading.svelte";
+  import { translate } from "$lib/stores/translate.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
@@ -45,6 +46,7 @@
   import SessionsView from "$lib/components/views/SessionsView.svelte";
   import ReviewView from "$lib/components/views/ReviewView.svelte";
   import ReadingView from "$lib/components/views/ReadingView.svelte";
+  import TranslateView from "$lib/components/views/TranslateView.svelte";
 
   let paletteMode = $state<PaletteMode | null>(null);
 
@@ -360,6 +362,8 @@
       void reading.open(e.url);
     }
   });
+  // Leaving the translation overlay — by any path — closes its job
+  vault.onTranslateExit = () => translate.close();
   // Fetched once as a backstop (the host's commands_changed may have been emitted before listen);
   // should a push have arrived in the meantime, this possibly stale snapshot is discarded
   $effect(() => {
@@ -425,6 +429,10 @@
    *  view it came from — so ⌘⌥← always responds inside the projection and never skips past the
    *  note in front of you to the one before it. */
   function navBack() {
+    if (vault.mainView === "translate") {
+      vault.exitTranslate();
+      return;
+    }
     if (vault.mainView === "reading") {
       if (reading.canGoBack) reading.back();
       else if (vault.canGoBack) void vault.goBack();
@@ -1022,11 +1030,35 @@
       else toast.push(t("app.noReaderPageYet"));
     },
   });
+  /** Side-by-side translation of the open note: an overlay over the current view, and the
+   *  same key leaves it. The buffer is flushed first so the note read from disk is current. */
+  registerCommand({
+    id: "translate-toggle", hotkey: k("Mod+Shift+T"), descriptionParams: { key: k("Mod+Shift+T") }, group: "view",
+    run: async () => {
+      if (vault.mainView === "translate") { vault.exitTranslate(); return; }
+      if (!vault.root) return;
+      const path = vault.currentPath;
+      if (!path) { toast.push(t("translate.noSource")); return; }
+      if (vault.currentKind !== "note") { toast.push(t("translate.notANote")); return; }
+      await vault.flushEditor?.();
+      vault.enterTranslate();
+      const ok = await translate.open({ kind: "note", path });
+      if (!ok) {
+        const reason = translate.error;
+        vault.exitTranslate();
+        if (reason) toast.push(reason, "error");
+      }
+    },
+  });
   // The editor's tabs. On mac ⌘W is dispatched back to close-tab by the native menu's accelerator
   // (menu.rs's close_focused_window), and off mac it goes through App's keydown; with no tab it is a no-op
   registerCommand({
     id: "close-tab", descriptionParams: { key: k("Mod+W") }, group: "view",
-    run: async () => { if (vault.activeTabId != null) await vault.closeTab(vault.activeTabId); },
+    run: async () => {
+      // Under the translation overlay ⌘W closes the overlay, not the note it is a view of
+      if (vault.mainView === "translate") { vault.exitTranslate(); return; }
+      if (vault.activeTabId != null) await vault.closeTab(vault.activeTabId);
+    },
   });
   registerCommand({
     id: "next-tab", descriptionParams: { key: `${k("Mod+Shift+]")} / ${k("Ctrl+Tab")}` }, group: "view",
@@ -1115,6 +1147,7 @@
         else if (!settingsOpen && !agent.pendingPermission && vault.mainView !== "editor") {
           if (field) field.blur();
           else if (vault.mainView === "reading") vault.exitReading();
+          else if (vault.mainView === "translate") vault.exitTranslate();
           else void vault.closeActiveView();
         }
       }
@@ -1129,6 +1162,7 @@
     if (key === "p" && !e.shiftKey) { e.preventDefault(); paletteMode = "commands"; }
     else if (!isMac && key === "l" && !e.shiftKey) { e.preventDefault(); paletteMode = "url"; }
     else if (!isMac && key === "t" && !e.shiftKey) { e.preventDefault(); void executeCommand("browser-new-tab"); }
+    else if (!isMac && key === "t" && e.shiftKey) { e.preventDefault(); void executeCommand("translate-toggle"); }
     else if (!isMac && key === "r" && !e.shiftKey) { e.preventDefault(); void executeCommand("browser-reload"); }
     else if (!isMac && key === "o") { e.preventDefault(); paletteMode = "notes"; }
     else if (!isMac && key === "f" && e.shiftKey) { e.preventDefault(); paletteMode = "search"; }
@@ -1270,6 +1304,8 @@
               <ReviewView />
             {:else if vault.mainView === "reading"}
               <ReadingView onPickQuoteTarget={pickNoteForQuote} />
+            {:else if vault.mainView === "translate"}
+              <TranslateView />
             {/if}
           {/key}
         </div>

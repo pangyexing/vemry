@@ -21,6 +21,7 @@ pub mod sources;
 #[doc(hidden)]
 pub mod testing;
 pub mod tools;
+pub mod translate;
 pub mod undo;
 pub mod types;
 
@@ -36,6 +37,7 @@ pub use provider::ProviderConfig;
 pub use runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};
 pub use session::Follow;
 pub use sources::Source;
+pub use translate::{TranslateDoc, TranslateEvent, TranslateJob, TranslationCache};
 pub use undo::{UndoReport, WriteRecord};
 
 #[derive(thiserror::Error, Debug)]

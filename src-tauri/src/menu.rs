@@ -127,6 +127,7 @@ mod imp {
             .item(&item(app, lang, "view-sessions", &cmd("view-sessions"))?)
             .item(&item(app, lang, "view-review", &cmd("view-review"))?)
             .item(&item(app, lang, "view-reading", &cmd("view-reading"))?)
+            .item(&item_key(app, lang, "translate-toggle", &cmd("translate-toggle"), "Cmd+Shift+T")?)
             .separator()
             .item(&item(app, lang, "toggle-left", &cmd("toggle-left"))?)
             .item(&item(app, lang, "toggle-right", &cmd("toggle-right"))?)

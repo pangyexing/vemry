@@ -33,6 +33,8 @@ class PrefsStore {
    *  reasoningEffortActive but is its own field — "the level takes effect" is not used
    *  as a proxy for "this is DeepSeek", since the two may diverge later. */
   providerDeepseek = $state(false);
+  /** Side-by-side translation's target language ("" = the interface language): the status bar's chip asks whether the open note is already in it. */
+  translateTarget = $state("");
 
   /** Returns the full settings it fetched, which the startup path consumes along the way (saving a second IPC). */
   async refresh(): Promise<SettingsView | undefined> {
@@ -49,6 +51,7 @@ class PrefsStore {
       this.reasoningEffort = s.reasoning_effort;
       this.reasoningEffortActive = s.reasoning_effort_active;
       this.providerDeepseek = s.provider_deepseek;
+      this.translateTarget = s.translate_target;
       return s;
     } catch {
       // Failing to fetch keeps the current values

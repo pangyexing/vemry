@@ -291,6 +291,10 @@ export interface SettingsView {
   reasoning_effort_active: boolean;
   /** Derived and read-only: the endpoint is DeepSeek (which is known to have no vision model; the composer warns once when an image is attached). */
   provider_deepseek: boolean;
+  /** Side-by-side translation: the target language ("" = the interface language), the model ("" = the chat model), the user's extra rule. */
+  translate_target: string;
+  translate_model: string;
+  translate_addendum: string;
 }
 
 /** A partial update: a field left out keeps its value. */
@@ -318,6 +322,9 @@ export interface SettingsUpdate {
   note_font_size?: number;
   readable_line_width?: boolean;
   reasoning_effort?: string;
+  translate_target?: string;
+  translate_model?: string;
+  translate_addendum?: string;
 }
 
 export interface WriteRequest {
@@ -812,6 +819,48 @@ export interface ReadPage {
   fallback: boolean;
 }
 
+// ---- side-by-side translation (src-tauri/src/translate.rs) ----
+/** What is being translated. */
+export type TranslateSource = { kind: "note"; path: string };
+/** A segment's kind (vemry_core::segment::SegKind). */
+export type SegKind =
+  | { type: "heading"; level: number }
+  | { type: "para" }
+  | { type: "list_item"; ordered: boolean; task: boolean }
+  | { type: "quote" }
+  | { type: "table" }
+  | { type: "code" }
+  | { type: "math" }
+  | { type: "image" }
+  | { type: "hr" }
+  | { type: "private" };
+export interface TranslateSegment {
+  id: number;
+  kind: SegKind;
+  /** The structural marker (`## `, `- [ ] `); source and translation both render as prefix + text. */
+  prefix: string;
+  text: string;
+  /** False for the kinds copied through untouched (code, maths, images, rules, private). */
+  translate: boolean;
+  private: boolean;
+  /** The block's byte offset in the note (openBlockAt's unit); 0 for a source with no anchors. */
+  byte_start: number;
+  /** The translation the cache already held. */
+  cached: string | null;
+}
+export interface TranslateDocView {
+  job: string;
+  title: string;
+  source: TranslateSource;
+  target: string;
+  model: string;
+  segments: TranslateSegment[];
+}
+export type TranslateEvent =
+  | { job: string; type: "segment"; id: number; text: string; done: boolean }
+  | { job: string; type: "failed"; ids: number[]; message: string }
+  | { job: string; type: "idle" };
+
 /** `reading://event`: the projection request the Reading arm of the url_open funnel sends. */
 export type ReadingEvent = { type: "open"; url: string };
 
@@ -1022,6 +1071,13 @@ export const api = {
   /** A projection selection → quote block text (landed by the frontend's insertAtCursor or capture). */
   readingQuote: (url: string, selection: string, html: string) =>
     invoke<string>("reading_quote", { url, selection, html }),
+  /** Side-by-side translation: cut the source into segments and start translating (one job at a time; a previous job is cancelled). */
+  translateOpen: (source: TranslateSource) => invoke<TranslateDocView>("translate_open", { source }),
+  /** Ask for these segments next, in this order (the visible rows first); force = retranslate. */
+  translateRequest: (job: string, ids: number[], force = false) => invoke<void>("translate_request", { job, ids, force }),
+  translateCancel: (job: string) => invoke<void>("translate_cancel", { job }),
+  /** Save the translations as a note beside the source; resolves with the note's path. */
+  translateSave: (job: string) => invoke<string>("translate_save", { job }),
   /** Downloads every configured subscription; resolves with the per-source failures
    *  (empty = all of them came through). A partial download still counts as success. */
   adblockUpdateRules: () => invoke<string[]>("adblock_update_rules"),
@@ -1206,6 +1262,10 @@ export function onMenuEvent(handler: (id: string) => void): Promise<UnlistenFn> 
 
 export function onReadingEvent(handler: (e: ReadingEvent) => void): Promise<UnlistenFn> {
   return listen<ReadingEvent>("reading://event", (event) => handler(event.payload));
+}
+
+export function onTranslateEvent(handler: (e: TranslateEvent) => void): Promise<UnlistenFn> {
+  return listen<TranslateEvent>("translate://event", (event) => handler(event.payload));
 }
 
 // ---- the cross-window events of the detached AI chat window (emitted by agent_window.rs, directed with emit_to) ----

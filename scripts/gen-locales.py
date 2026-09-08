@@ -56,6 +56,7 @@ add("view.", {
     "sessions": ("Session Replay", "会话回放"),
     "review": ("Review", "复习"),
     "reading": ("Reader", "阅读投影"),
+    "translate": ("Translation", "对照翻译"),
 })
 
 # ---------------------------------------------------------------- commands
@@ -349,6 +350,11 @@ CMD = {
         ("View: Reader", "视图:阅读投影"),
         ("Return to the most recently opened web page", "回到最近打开的网页阅读投影"),
     ),
+    "translate-toggle": (
+        ("Translate side by side", "对照翻译"),
+        ("Read the open note beside its translation, one row per block; press again to leave ({key})",
+         "把当前笔记与译文按段并排对照阅读;再按一次离开 ({key})"),
+    ),
     "close-tab": (
         ("Close tab", "关闭标签页"),
         ("Close the current tab — a document or a projection ({key})",
@@ -414,6 +420,9 @@ add("statusBar.", {
     "selectedLines_other": ("{n} lines", "{n} 行"),
     "words_one": ("{n} word", "{n} 字"),
     "words_other": ("{n} words", "{n} 字"),
+    "translate": ("Translate", "译"),
+    "translateHint": ("This note is not in your language — read it side by side with a translation ({key})",
+                      "这篇不是你的语言——按段对照译文阅读 ({key})"),
 })
 
 # ---------------------------------------------------------------- tab bar
@@ -1076,6 +1085,53 @@ add("reader.", {
               "点击 AI 回答里的引用,或来源卡片,在这里阅读抽取后的正文。"),
 })
 
+# ---------------------------------------------------------------- side-by-side translation
+add("translate.", {
+    "original": ("Original", "原文"),
+    "translation": ("Translation", "译文"),
+    "mode.side": ("Side by side", "并排"),
+    "mode.stack": ("Interleaved", "交错"),
+    "mode.target": ("Translation only", "仅译文"),
+    "modeHint": ("How the two texts are laid out; a narrow pane interleaves on its own", "两栏怎么排;窄窗自动改为交错"),
+    "targetHint": ("Target language", "目标语言"),
+    "lang.zh-CN": ("Chinese (Simplified)", "简体中文"),
+    "lang.zh-TW": ("Chinese (Traditional)", "繁体中文"),
+    "lang.en": ("English", "英语"),
+    "lang.ja": ("Japanese", "日语"),
+    "lang.ko": ("Korean", "韩语"),
+    "lang.other": ("Other…", "其他…"),
+    "langPrompt": ("Target language (a name or a tag such as fr, de-DE):", "目标语言(名称或代码,如 fr、de-DE):"),
+    "modelHint": ("The model translating; change it under Settings › AI", "翻译所用模型;在「设置 › AI」里更换"),
+    "progress": ("{done} / {total}", "{done} / {total}"),
+    "progressHint": ("Segments translated of those to translate", "已译段数 / 需译段数"),
+    "complete": ("Done", "已完成"),
+    "failedCount_one": ("{n} segment failed", "{n} 段失败"),
+    "failedCount_other": ("{n} segments failed", "{n} 段失败"),
+    "retryFailed": ("Retry", "重试"),
+    "retranslate": ("Retranslate", "重译"),
+    "copy": ("Copy", "复制"),
+    "copied": ("Translation copied", "已复制译文"),
+    "copyAll": ("Copy all", "复制全部"),
+    "copiedAll": ("All translations copied", "已复制全部译文"),
+    "save": ("Save as note", "保存为笔记"),
+    "saveHint": ("Write the translation as a note beside the original, linked back through translation_of",
+                 "把译文存成原文旁边的一篇笔记,frontmatter 里 translation_of 反链原文"),
+    "saved": ("Saved → {path}", "已保存 → {path}"),
+    "leave": ("Leave", "离开"),
+    "leaveHint": ("Back to where you came from (Esc)", "回到来处 (Esc)"),
+    "privateSegment": ("Private block — not translated", "私密块——不翻译"),
+    "privateNote": ("This note is in a privacy zone and is not sent anywhere, so it cannot be translated",
+                    "这篇笔记在隐私区,不会发送到任何地方,因此不能翻译"),
+    "nothingToTranslate": ("Nothing here to translate", "没有可翻译的内容"),
+    "noSource": ("Open a note first, then translate it", "先打开一篇笔记,再对照翻译"),
+    "notANote": ("Only a note can be translated for now", "目前只能翻译笔记"),
+    "waiting": ("Waiting…", "等待中…"),
+    "sourceHint": ("Double-click a block to open it in the editor", "双击一段回到编辑器该块"),
+    "openInEditor": ("Open in the editor", "在编辑器中打开"),
+    "untranslated": ("Not translated", "未翻译"),
+    "sendsText": ("The text is sent to the configured model", "正文会发送给所配置的模型"),
+})
+
 # ---------------------------------------------------------------- browser panel chrome (docked panel and the detached bar)
 add("browserPanel.", {
     "closeBrowser": ("Close the browser (all tabs)", "关闭浏览器(所有标签页)"),
@@ -1650,6 +1706,23 @@ add("settings.", {
     "scriptEvents": ("events: {list}", "事件: {list}"),
     "scriptSchedules": ("schedules: {list}", "定时: {list}"),
     "scriptNothing": ("nothing registered", "无注册项"),
+})
+
+# ---------------------------------------------------------------- settings dialog: translation
+add("settings.translate.", {
+    "section": ("Side-by-side translation", "对照翻译"),
+    "disclosure": ("Translating sends the text of the note or page you are reading to the model below. A note in a privacy zone is never sent; private blocks are left out.",
+                   "翻译会把正在读的笔记或页面正文发送给下面的模型。隐私区里的笔记从不发送,私密块会被跳过。"),
+    "target": ("Target language", "目标语言"),
+    "targetAuto": ("Follow the interface language", "跟随界面语言"),
+    "targetCustom": ("Custom (type a tag below)", "自定义(在下方填写代码)"),
+    "targetCustomPlaceholder": ("e.g. fr, de-DE, pt-BR", "如 fr、de-DE、pt-BR"),
+    "model": ("Translation model", "翻译模型"),
+    "modelHint": ("Empty = the chat model above. A fast, cheap model is enough here (the same endpoint and key are used).",
+                  "留空 = 上面的对话模型。翻译用快而便宜的模型即可(端点与密钥沿用对话的)。"),
+    "addendum": ("Extra instruction", "附加要求"),
+    "addendumHint": ("One line added to the translation rules, e.g. “keep technical terms in English”",
+                     "追加一条翻译规则,例如「专业术语保留英文」"),
 })
 
 # ---------------------------------------------------------------- app shell / toasts

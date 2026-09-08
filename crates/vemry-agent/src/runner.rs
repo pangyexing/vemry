@@ -231,7 +231,7 @@ pub struct AgentRunner {
 /// top-level reasoning_effort. The Responses line restores the same ChatRequest
 /// into reasoning:{effort} in responses_request_body (covering all four levels);
 /// both mappings have their own unit test.
-fn effort_fields(effort: Option<&str>) -> (Option<String>, Option<Value>) {
+pub(crate) fn effort_fields(effort: Option<&str>) -> (Option<String>, Option<Value>) {
     match effort {
         None => (None, None),
         Some("none") => (None, Some(json!({ "type": "disabled" }))),
@@ -243,7 +243,7 @@ fn effort_fields(effort: Option<&str>) -> (Option<String>, Option<Value>) {
 /// the plan is settled, need no deep thinking — high/max are pushed down to "low"
 /// to save time and money; a user who turned thinking off (none) does not get it
 /// turned back on; and unconfigured (Zhipu) stays unsent.
-fn light_effort(config_effort: Option<&str>) -> Option<&'static str> {
+pub(crate) fn light_effort(config_effort: Option<&str>) -> Option<&'static str> {
     match config_effort {
         None => None,
         Some("none") => Some("none"),

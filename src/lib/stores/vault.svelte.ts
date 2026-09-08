@@ -20,9 +20,13 @@ import type { ReviewStep } from "$lib/editor/provenance";
  *  "reading" is the web reading projection (v0.5 P2) — its content and page history
  *  come from the reading store; navStack only records the one stop "went to the
  *  projection" (READING_ENTRY) and not each page inside it (following v0.4's position
- *  that browsing history does not mix into document history). */
+ *  that browsing history does not mix into document history).
+ *  "translate" is the side-by-side translation of the open note: an overlay like
+ *  reading (enterTranslate/exitTranslate), with its content in the translate store; it
+ *  records nothing in navStack — it is a way of looking at the current document, not a
+ *  place. */
 export type MainView =
-  | "editor" | "agenda" | "kanban" | "timeline" | "claims" | "evidence" | "graph" | "sessions" | "review" | "reading";
+  | "editor" | "agenda" | "kanban" | "timeline" | "claims" | "evidence" | "graph" | "sessions" | "review" | "reading" | "translate";
 
 /** An editor tab. The id is an incrementing stable identity (the path changes on a
  *  rename, and both the caches and the keyed each go by id); pinned=false means the
@@ -118,7 +122,7 @@ const READING_ENTRY = "\u0000reading";
  *  projection (reading) does not enter the tabs: it is an overlay state with its own way
  *  in and out (enterReading/exitReading). */
 const VIEW_TAB_PREFIX = "\u0000view:";
-export type ProjectionView = Exclude<MainView, "editor" | "reading">;
+export type ProjectionView = Exclude<MainView, "editor" | "reading" | "translate">;
 /** The full set of projection views. Their names are not here — the rail, the tab bar
  *  and the command palette share the catalog's `view.<id>`, so a view has one display
  *  name. */
@@ -449,6 +453,32 @@ class VaultStore {
     if (record) this.recordVisit(READING_ENTRY);
   }
 
+  /** Where the main pane was before the translation overlay (the same return address as readingOrigin). */
+  private translateOrigin: MainView | null = null;
+  /** The translate store's hook: leaving the overlay — by ✕, Esc, or a landing that
+   *  overwrites mainView underneath it — closes the job. Registered by App. */
+  onTranslateExit: (() => void) | null = null;
+
+  /** Show the side-by-side translation over the current view. */
+  enterTranslate() {
+    if (this.mainView === "translate") return;
+    if (this.mainView === "reading") this.exitReading();
+    this.translateOrigin = this.mainView;
+    this.mainView = "translate";
+  }
+
+  /** Leave the translation and return where it came from. Also the one place the job
+   *  is closed from — every path off the overlay comes through here. */
+  exitTranslate() {
+    if (this.mainView !== "translate") return;
+    const origin = this.translateOrigin ?? "editor";
+    const t = this.tabs.find((t) => t.id === this.activeTabId);
+    const backed = t ? viewOfTab(t.path) : null;
+    this.mainView = origin === "editor" || origin === backed ? origin : "editor";
+    this.translateOrigin = null;
+    this.onTranslateExit?.();
+  }
+
   /** Leave the projection and return where it came from (which cannot be "reading", and an empty value falls back to the editor). */
   exitReading() {
     if (this.mainView !== "reading") return;
@@ -481,6 +511,7 @@ class VaultStore {
     const t = this.tabs.find((t) => t.id === this.activeTabId);
     const view = t ? viewOfTab(t.path) : null;
     if (this.mainView === "reading") this.exitReading();
+    if (this.mainView === "translate") this.exitTranslate();
     this.mainView = view ?? "editor";
   }
 
@@ -494,6 +525,7 @@ class VaultStore {
   async closeActiveView() {
     const t = this.tabs.find((t) => t.id === this.activeTabId);
     if (t && viewOfTab(t.path)) await this.closeTab(t.id);
+    else if (this.mainView === "translate") this.exitTranslate();
     else if (this.mainView !== "reading") this.mainView = "editor";
   }
 
@@ -1145,6 +1177,10 @@ class VaultStore {
    *  lined up; `pendingRestore` is settled by the caller before coming in — activateTab
    *  has to pass the validated cached snapshot down, and it must not be cleared here. */
   private settleTab(tab: Tab, payload: { view: ProjectionView } | { content: string; record: boolean }) {
+    // A landing shows a tab's content: the translation overlay (a way of looking at the
+    // document that was current) is left first, so its job is closed rather than
+    // covered over
+    if (this.mainView === "translate") this.exitTranslate();
     if (tab.id !== this.activeTabId) this.stashActive();
     this.tabCaches.delete(tab.id);
     this.activeTabId = tab.id;
@@ -1353,6 +1389,7 @@ class VaultStore {
         // the same lining-up as revealActiveTab, with the reading projection going through
         // exitReading first to get its timeline lined up
         if (this.mainView === "reading") this.exitReading();
+        if (this.mainView === "translate") this.exitTranslate();
         this.mainView = view;
       }
       return;

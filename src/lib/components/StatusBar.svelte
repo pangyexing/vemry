@@ -12,9 +12,17 @@
   import { executeCommand } from "$lib/commands/registry";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { k } from "$lib/shortcut";
+  import { i18n } from "$lib/i18n/i18n.svelte";
+  import { readsForeign } from "$lib/langdetect";
   import PrivacyIcon from "./PrivacyIcon.svelte";
 
   const inPrivate = $derived(vault.currentPath !== null && vault.privatePaths.has(vault.currentPath));
+  /** The open note reads as another language than the translation target: offer the
+   *  side-by-side view (a ratio of scripts, computed locally; nothing is sent). */
+  const foreign = $derived(
+    vault.currentKind === "note" && !inPrivate && vault.mainView !== "translate"
+      && readsForeign(vault.currentContent, prefs.translateTarget || i18n.lang),
+  );
   /** Unreviewed AI blocks in notes other than the open one (the vault chip's count). */
   const others = $derived.by(() => {
     const rest = vault.pendingNotes.filter((p) => p.path !== vault.currentPath);
@@ -52,6 +60,9 @@
       <PrivacyIcon />
       <span>{t("statusBar.privateBlock")}</span>
     </span>
+  {/if}
+  {#if foreign}
+    <button class="pending translate" title={t("statusBar.translateHint", { key: k("Mod+Shift+T") })} onclick={() => void executeCommand("translate-toggle")}>{t("statusBar.translate")}</button>
   {/if}
   {#if vault.editorOrigin && vault.editorOrigin.origin !== "you"}
     <span class="origin origin-{vault.editorOrigin.origin}" title={originLabel(vault.editorOrigin)}>{originLabel(vault.editorOrigin, { withState: false })}</span>
@@ -134,6 +145,10 @@
   }
   .origin-capture {
     color: var(--prov-capture);
+  }
+  .pending.translate {
+    color: var(--accent);
+    border-color: var(--accent);
   }
   .pending {
     padding: 0 8px;

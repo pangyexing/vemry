@@ -926,6 +926,11 @@ pub struct SettingsView {
     /// vision model) — the frontend warns once when the composer attaches an image;
     /// the check is not reimplemented in TS.
     pub provider_deepseek: bool,
+    /// Side-by-side translation: the target language ("" = the interface language),
+    /// the model ("" = the chat model) and the user's extra rule.
+    pub translate_target: String,
+    pub translate_model: String,
+    pub translate_addendum: String,
 }
 
 /// A partial update: `None` = keep the existing value. The frontend fetches
@@ -956,6 +961,9 @@ pub struct SettingsUpdate {
     pub note_font_size: Option<u8>,
     pub readable_line_width: Option<bool>,
     pub reasoning_effort: Option<String>,
+    pub translate_target: Option<String>,
+    pub translate_model: Option<String>,
+    pub translate_addendum: Option<String>,
 }
 
 /// VEMRY.md's starter content in the current language: the shared header plus
@@ -1001,6 +1009,9 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         reasoning_effort: s.reasoning_effort,
         reasoning_effort_active,
         provider_deepseek,
+        translate_target: s.translate_target,
+        translate_model: s.translate_model,
+        translate_addendum: s.translate_addendum,
     }
 }
 
@@ -1079,6 +1090,15 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     if let Some(v) = update.reasoning_effort {
         // The same clamp as note_font_size: an invalid value falls back to the default, so a hand edit or a bad round trip cannot go out of range
         s.reasoning_effort = if settings::is_reasoning_effort(&v) { v } else { "high".into() };
+    }
+    if let Some(v) = update.translate_target {
+        s.translate_target = v.trim().to_string();
+    }
+    if let Some(v) = update.translate_model {
+        s.translate_model = v.trim().to_string();
+    }
+    if let Some(v) = update.translate_addendum {
+        s.translate_addendum = v.trim().to_string();
     }
     settings::save(&app, &s)?;
     if adblock_toggled || adblock_urls_changed {

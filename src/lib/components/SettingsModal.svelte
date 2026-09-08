@@ -9,6 +9,7 @@
   import { scaffold } from "$lib/scaffold";
   import { skillDesc, skillSourceLabel } from "$lib/skills";
   import { setLanguage, t } from "$lib/i18n/i18n.svelte";
+  import { targetLabel } from "$lib/stores/translate.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { browser } from "$lib/stores/browser.svelte";
@@ -54,6 +55,12 @@
   let updaterAutoCheck = $state(false);
   let noteFontSize = $state(16);
   let readableLineWidth = $state(true);
+  /** Side-by-side translation: the target ("" = the interface language, "custom" = the tag typed below), the model, the extra rule. */
+  let translateTarget = $state("");
+  let translateTargetCustom = $state("");
+  let translateModel = $state("");
+  let translateAddendum = $state("");
+  const TRANSLATE_TARGETS = ["zh-CN", "zh-TW", "en", "ja", "ko"];
   let ruleUrls = $state("");
   let updatingRules = $state(false);
   let saved = $state(false);
@@ -116,6 +123,15 @@
       updaterAutoCheck = s.updater_auto_check;
       noteFontSize = s.note_font_size;
       readableLineWidth = s.readable_line_width;
+      if (s.translate_target === "" || TRANSLATE_TARGETS.includes(s.translate_target)) {
+        translateTarget = s.translate_target;
+        translateTargetCustom = "";
+      } else {
+        translateTarget = "custom";
+        translateTargetCustom = s.translate_target;
+      }
+      translateModel = s.translate_model;
+      translateAddendum = s.translate_addendum;
       ruleUrls = s.adblock_rule_urls.join("\n");
     });
     // Opening it allows pasting straight away, and only then does Escape have a focus to land on
@@ -289,6 +305,9 @@
       updater_auto_check: updaterAutoCheck,
       note_font_size: noteFontSize,
       readable_line_width: readableLineWidth,
+      translate_target: translateTarget === "custom" ? translateTargetCustom.trim() : translateTarget,
+      translate_model: translateModel.trim(),
+      translate_addendum: translateAddendum.trim(),
       adblock_rule_urls: ruleUrls.split("\n").map((u) => u.trim()).filter(Boolean),
     });
     // The language takes effect at once (each window's frontend has its own $state; the Rust side already rebuilt the menu inside settings_set)
@@ -511,6 +530,33 @@
                 {t("settings.reasoningHint")}{#if !reasoningActive}{t("settings.reasoningInactive")}{/if}
               </small>
             </div>
+            <section class="privacy">
+              <h3>{t("settings.translate.section")}</h3>
+              <p class="note">{t("settings.translate.disclosure")}</p>
+              <label>
+                <span>{t("settings.translate.target")}</span>
+                <select bind:value={translateTarget} onchange={() => (dirty = true)}>
+                  <option value="">{t("settings.translate.targetAuto")}</option>
+                  {#each TRANSLATE_TARGETS as tag (tag)}
+                    <option value={tag}>{targetLabel(tag)}</option>
+                  {/each}
+                  <option value="custom">{t("settings.translate.targetCustom")}</option>
+                </select>
+                {#if translateTarget === "custom"}
+                  <input bind:value={translateTargetCustom} oninput={() => (dirty = true)} placeholder={t("settings.translate.targetCustomPlaceholder")} spellcheck="false" />
+                {/if}
+              </label>
+              <label>
+                <span>{t("settings.translate.model")}</span>
+                <input bind:value={translateModel} oninput={() => (dirty = true)} placeholder={model || "glm-4.7-flash"} spellcheck="false" list="model-presets" />
+                <small>{t("settings.translate.modelHint")}</small>
+              </label>
+              <label>
+                <span>{t("settings.translate.addendum")}</span>
+                <input bind:value={translateAddendum} oninput={() => (dirty = true)} spellcheck="false" />
+                <small>{t("settings.translate.addendumHint")}</small>
+              </label>
+            </section>
           {:else if tab === "updates"}
             <section class="privacy">
               <h3>{t("settings.appUpdates")}</h3>

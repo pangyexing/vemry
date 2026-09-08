@@ -8,6 +8,7 @@ mod menu;
 mod pasteboard;
 mod script_bridge;
 mod settings;
+mod translate;
 mod type_templates;
 
 use std::sync::{Arc, Mutex};
@@ -35,6 +36,8 @@ pub struct AppState {
     /// Handoff, close handshake and geometry relay for the detached AI chat window
     /// (see agent_window.rs).
     pub agent_window: agent_window::AgentWindowState,
+    /// The one side-by-side translation job at a time (see translate.rs).
+    pub translate: translate::TranslateState,
 }
 
 pub fn run() {
@@ -62,6 +65,7 @@ pub fn run() {
             reader: browser::reader::ReaderState::default(),
             adblock: browser::adblock::AdblockState::default(),
             agent_window: agent_window::AgentWindowState::default(),
+            translate: translate::TranslateState::default(),
         })
         .setup(|app| {
             let settings = settings::load(app.handle());
@@ -257,6 +261,10 @@ pub fn run() {
             browser::reader::page_read,
             browser::reader::reading_clip,
             browser::reader::reading_quote,
+            translate::translate_open,
+            translate::translate_request,
+            translate::translate_cancel,
+            translate::translate_save,
             browser::adblock::adblock_update_rules,
             browser::adblock::adblock_import_rules
         ])

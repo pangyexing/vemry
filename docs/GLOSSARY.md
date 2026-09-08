@@ -48,6 +48,8 @@ three months later, and each translation drifts on its own. A new user-visible t
 | 速记 | quick capture | memo, scratch, inbox |
 | 研究面板 | research panel | chat, assistant |
 | 阅读投影 | Reader (interface) / reading projection (architecture prose) | reader mode, article view |
+| 对照翻译 | side-by-side translation (the view is "Translation") | bilingual mode, immersive translation |
+| 译文 / 原文 | translation / original | target text, source text |
 | 块把手 | block handle | drag handle, gripper, grabber |
 | 转换为 | turn into | convert, change type |
 | 块选择 | block selection | multi-select, block mode |

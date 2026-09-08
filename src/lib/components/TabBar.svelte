@@ -223,7 +223,7 @@
   class="tabbar"
   class:tree-closed={!vault.leftOpen}
   class:panel-closed={!vault.rightOpen}
-  class:projected={vault.mainView === "reading"}
+  class:projected={vault.mainView === "reading" || vault.mainView === "translate"}
 >
   <div class="nav-btns">
     <button title={t("tabBar.backWithKey", { key: k("Mod+Alt+←") })} aria-label={t("common.back")} disabled={!vault.canGoBack} onclick={() => void vault.goBack()}>
@@ -324,7 +324,7 @@
     /* Attached directly to .center's flex column, and never squashed by a projection view */
     flex-shrink: 0;
   }
-  /* Under the reading projection (the one overlay state that does not enter the tabs) the
+  /* Under the reading projection or the translation overlay (the two states that do not enter the tabs) the
      whole bar quietens down — what the main area shows is not any tab's content, so the
      active highlight (the accent bottom border) is withdrawn; clicking any tab lands back on
      its content.
