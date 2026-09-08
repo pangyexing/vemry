@@ -444,16 +444,6 @@ export function runBlockExtension(host: RunHost): Extension {
     },
   });
   const labChanged = (tr: Transaction) => tr.effects.some((e) => e.is(setLab) || e.is(clearLab));
-  // The interaction guard: a selection-only transaction while a pointer is (or just
-  // was) down on a card is the browser's caret settling beside the widget, not the
-  // reader's intent — and one that lands on the fence would reveal the code under
-  // their hand. Dropped whole, so the cursor stays where it was too. The ✎ reveal is
-  // annotated and passes; a doc change (a pin) and an effect (a re-run) pass; keyboard
-  // navigation into the fence happens with no pointer down and passes.
-  const guard = EditorState.transactionFilter.of((tr) => {
-    if (tr.docChanged || !tr.selection || tr.effects.length || tr.annotation(cardReveal) || !labInteracting()) return tr;
-    return [];
-  });
   const cards = StateField.define<DecorationSet>({
     create: (state) => buildCards(state, state.field(labs), host),
     update(value, tr) {
@@ -462,6 +452,29 @@ export function runBlockExtension(host: RunHost): Extension {
       return buildCards(tr.state, tr.state.field(labs), host);
     },
     provide: (f) => EditorView.decorations.from(f),
+  });
+  // The pointer guard, two rules for a selection-only transaction (the ✎ reveal is
+  // annotated and passes; a doc change and an effect pass):
+  // - while a pointer is (or just was) down on a card, it is the browser's caret
+  //   settling beside the widget, not the reader's intent — dropped whole, so the
+  //   cursor stays where it was;
+  // - a click that lands on a fence the card still covers can only have come from the
+  //   margin beside the card (the card swallows its own presses), and goes to the line
+  //   after the card instead of revealing: the card has its ✎ for that. A table has no
+  //   ✎ and keeps the block rule; keyboard navigation onto the fence, a drag across the
+  //   card and a click on code already shown all still reveal.
+  const guard = EditorState.transactionFilter.of((tr) => {
+    if (tr.docChanged || !tr.selection || tr.effects.length || tr.annotation(cardReveal)) return tr;
+    if (labInteracting()) return [];
+    const main = tr.newSelection.main;
+    if (!tr.isUserEvent("select.pointer") || !main.empty) return tr;
+    const doc = tr.startState.doc;
+    let landing: number | null = null;
+    tr.startState.field(cards).between(main.from, main.from, (from, to) => {
+      landing = to < doc.length ? to + 1 : from > 0 ? from - 1 : null;
+      return false;
+    });
+    return landing == null ? tr : { selection: { anchor: landing }, userEvent: "select.pointer" };
   });
   return [buttons, outputs, labs, cards, guard];
 }
