@@ -34,7 +34,7 @@ use super::window::target_webview;
 use super::{emit, BrowserEvent};
 use crate::{settings, AppState};
 
-const POLL_MS: u64 = 1500;
+const POLL_MS: u64 = 1000;
 
 /// Install the pane (once per document) and collect the text blocks not yet
 /// tagged. `gen` is minted when the script first runs in a document, so a
@@ -56,7 +56,47 @@ const COLLECT_JS: &str = r#"
     const inner = document.createElement('div');
     inner.style.cssText = 'all:initial;display:block;position:relative;height:100%;color:inherit;font:inherit;';
     pane.appendChild(inner);
+    // the shimmer of a placeholder and the progress line need a stylesheet: the pane's own, with its own names
+    const style = document.createElement('style');
+    style.textContent = '@keyframes vemryTrShimmer{from{background-position:200% 0}to{background-position:-200% 0}}';
+    pane.appendChild(style);
+    const bar = document.createElement('div');
+    bar.style.cssText = 'all:initial;display:block;position:absolute;left:0;top:0;height:2px;width:0;background:rgba(31,111,116,.9);transition:width .3s,opacity .6s;z-index:1;';
+    pane.appendChild(bar);
+    S.bar = bar;
     document.documentElement.appendChild(pane);
+    S.progress = (done, total) => {
+      const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+      S.bar.style.width = pct + '%';
+      S.bar.style.opacity = total > 0 && done >= total ? '0' : '1';
+    };
+    // Picking a block: it stays lit on the page, its entry lit in the pane, until another is picked or it is picked again
+    S.selected = null;
+    S.select = (id, scroll) => {
+      const prev = S.selected == null ? null : S.items.get(S.selected);
+      if (prev) {
+        prev.el.style.background = prev.saved.bg; prev.el.style.boxShadow = prev.saved.sh; prev.el.style.borderRadius = prev.saved.br;
+        prev.out.style.background = ''; prev.out.style.borderLeftColor = 'rgba(127,127,127,.35)';
+      }
+      if (S.selected === id) { S.selected = null; return; }
+      const it = S.items.get(id);
+      if (!it) { S.selected = null; return; }
+      it.saved = { bg: it.el.style.background, sh: it.el.style.boxShadow, br: it.el.style.borderRadius };
+      it.el.style.background = 'rgba(250,204,21,.28)'; it.el.style.boxShadow = '0 0 0 4px rgba(250,204,21,.28)'; it.el.style.borderRadius = '3px';
+      it.out.style.background = 'rgba(127,127,127,.10)'; it.out.style.borderLeftColor = 'rgba(31,111,116,.95)';
+      S.selected = id;
+      if (scroll) {
+        const r = it.el.getBoundingClientRect();
+        if (r.top < 0 || r.bottom > innerHeight) it.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    };
+    S.onPageClick = (e) => {
+      const t = e.target;
+      if (!(t instanceof Element) || t.closest('a,button,input,select,textarea,[data-vemry-tr-out]')) return;
+      const b = t.closest('[data-vemry-tr]');
+      if (b) S.select(Number(b.getAttribute('data-vemry-tr')), false);
+    };
+    document.addEventListener('click', S.onPageClick, true);
     S.prevMargin = document.documentElement.style.marginRight;
     document.documentElement.style.marginRight = W;
     S.pane = pane; S.inner = inner;
@@ -82,13 +122,20 @@ const COLLECT_JS: &str = r#"
     S.apply = (id, text) => {
       const it = S.items.get(id);
       if (!it) return;
+      it.pending = false;
       it.out.textContent = '';
       // a formula travelled as a placeholder; the page's own rendering of it comes back in its place
       const parts = text.split(/⟦m(\d+)⟧/);
       for (let i = 0; i < parts.length; i++) {
         if (i % 2 === 0) { if (parts[i]) it.out.appendChild(document.createTextNode(parts[i])); continue; }
         const m = it.math[Number(parts[i])];
-        if (m) { const c = m.cloneNode(true); c.removeAttribute('id'); it.out.appendChild(c); }
+        if (m) {
+          const c = m.cloneNode(true);
+          c.removeAttribute('id');
+          it.out.appendChild(c);
+          // a displayed formula wider than the pane is shrunk to fit rather than scrolled
+          if (c instanceof HTMLElement && c.scrollWidth > c.clientWidth && c.clientWidth > 0) { c.style.fontSize = Math.floor((c.clientWidth / c.scrollWidth) * 96) + '%'; c.style.overflow = 'hidden'; }
+        }
       }
       it.out.style.opacity = '';
       it.out.style.borderLeftStyle = 'solid';
@@ -97,7 +144,9 @@ const COLLECT_JS: &str = r#"
     S.clear = () => {
       clearInterval(S.timer);
       document.removeEventListener('scroll', S.schedule, true);
+      document.removeEventListener('click', S.onPageClick, true);
       window.removeEventListener('resize', S.schedule);
+      if (S.selected != null) S.select(S.selected, false);
       S.pane.remove();
       document.documentElement.style.marginRight = S.prevMargin || '';
       for (const it of S.items.values()) { it.el.removeAttribute('data-vemry-tr'); it.el.style.outline = ''; }
@@ -141,16 +190,35 @@ const COLLECT_JS: &str = r#"
     const o = document.createElement('div');
     o.setAttribute('data-vemry-tr-out', String(id));
     o.style.cssText = 'all:initial;display:block;position:absolute;left:0;right:0;box-sizing:border-box;padding:0 14px 0 12px;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:3px dotted rgba(127,127,127,.35);opacity:.45;cursor:pointer;color:inherit;font-family:' + cs.fontFamily + ';font-size:' + cs.fontSize + ';font-weight:' + cs.fontWeight + ';line-height:' + cs.lineHeight + ';';
-    o.textContent = '…';
-    o.addEventListener('click', () => { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.style.outline = '2px solid rgba(250,204,21,.8)'; setTimeout(() => (el.style.outline = ''), 1200); });
+    // the placeholder: as many shimmering lines as the block has, so the pane shows the shape of what is coming
+    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
+    const lines = Math.max(1, Math.min(4, Math.round(r.height / lh)));
+    for (let i = 0; i < lines; i++) {
+      const b = document.createElement('div');
+      b.style.cssText = 'all:initial;display:block;height:.65em;margin:.4em 0;border-radius:4px;background:linear-gradient(90deg,rgba(127,127,127,.14),rgba(127,127,127,.32),rgba(127,127,127,.14));background-size:200% 100%;animation:vemryTrShimmer 1.4s linear infinite;' + (i === lines - 1 && lines > 1 ? 'width:60%;' : '');
+      o.appendChild(b);
+    }
+    o.addEventListener('click', () => S.select(id, true));
     S.inner.appendChild(o);
-    S.items.set(id, { el, out: o, math: maths });
+    S.items.set(id, { el, out: o, math: maths, pending: true });
     out.push({ id, text });
   }
   S.schedule();
-  return { url: location.href, title: document.title, gen: S.gen, blocks: out };
+  // the blocks in and near the viewport still waiting: the reader's place goes to the front of the queue
+  const visible = [];
+  for (const [id, it] of S.items) {
+    if (!it.pending || !it.el.isConnected) continue;
+    const r = it.el.getBoundingClientRect();
+    if (r.bottom > -400 && r.top < innerHeight + 400) visible.push(id);
+  }
+  return { url: location.href, title: document.title, gen: S.gen, blocks: out, visible };
 })()
 "#;
+
+/// Move the pane's progress line.
+fn progress_js(done: usize, total: usize) -> String {
+    format!("(() => {{ const S = window.__vemryTr; if (S) S.progress({done}, {total}); }})()")
+}
 
 /// Remove the pane and untag the blocks.
 const CLEAR_JS: &str = "(() => { if (window.__vemryTr) window.__vemryTr.clear(); return true; })()";
@@ -168,6 +236,9 @@ struct Collected {
     gen: String,
     #[serde(default)]
     blocks: Vec<CollectedBlock>,
+    /// The untranslated blocks in and near the viewport, to be sent first.
+    #[serde(default)]
+    visible: Vec<u32>,
 }
 
 #[derive(Deserialize)]
@@ -299,15 +370,9 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
             TranslateEvent::Segment { .. } => return,
             TranslateEvent::Failed { .. } | TranslateEvent::Idle => {}
         }
-        emit(
-            &ev_app,
-            &BrowserEvent::Translate {
-                label: ev_label.clone(),
-                active: true,
-                done: ev_done.load(Ordering::Relaxed),
-                total: ev_total.load(Ordering::Relaxed),
-            },
-        );
+        let (done, total) = (ev_done.load(Ordering::Relaxed), ev_total.load(Ordering::Relaxed));
+        let _ = ev_webview.eval(progress_js(done, total));
+        emit(&ev_app, &BrowserEvent::Translate { label: ev_label.clone(), active: true, done, total });
     });
     let effort = s.reasoning_active().then(|| s.reasoning_effort.clone());
     let job = TranslateJob::new(job_id, doc, target, s.translate_addendum.clone(), provider, effort, Arc::new(HttpTransport::new()), Some(cache), on_event);
@@ -316,8 +381,13 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
         let _ = webview.eval(apply_js(id, &text));
         done.fetch_add(1, Ordering::Relaxed);
     }
+    // The viewport's blocks first, then the rest in document order — one request, so the
+    // first batches to leave are the reader's
+    let mut order: Vec<u32> = collected.visible.clone();
     let ids: Vec<u32> = job.segments().iter().map(|seg| seg.id).collect();
-    job.request(&ids, false);
+    order.extend(ids.iter().copied().filter(|id| !collected.visible.contains(id)));
+    job.request(&order, false);
+    let _ = webview.eval(progress_js(done.load(Ordering::Relaxed), ids.len()));
     let t = Arc::new(PageTranslation { label: label.clone(), url: collected.url, gen: collected.gen, job, active, done });
     state.browser_translate.tabs.lock().unwrap().insert(label.clone(), Arc::clone(&t));
     progress(app, &t);
@@ -349,6 +419,9 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
                     let _ = e;
                 }
                 break;
+            }
+            if !c.visible.is_empty() {
+                poll_t.job.request(&c.visible, false);
             }
             if c.blocks.is_empty() {
                 continue;

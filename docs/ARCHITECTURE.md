@@ -2235,7 +2235,14 @@ the user presses "save as note".
   every 1.5s collects blocks that appeared since (an endless feed; the job's
   segments are growable, `TranslateJob::extend`), and a new document (the
   script's `gen` changes) starts over. Clicking an entry scrolls the page to its
-  block. A rendered formula (MathML, KaTeX, MathJax) travels as a placeholder
+  block. The rows the reader is looking at come first: every poll reports the
+  untranslated blocks in and near the viewport and the job moves them to the
+  front of its queue. Until a translation lands, an entry is a placeholder of as
+  many shimmering lines as its block has, and a progress line runs along the top
+  of the pane. Picking an entry, or clicking its block in the page, keeps the
+  block lit on the page and the entry lit in the pane until another is picked
+  (the same lit row the PDF view has), scrolling only when the block is off
+  screen. A rendered formula (MathML, KaTeX, MathJax) travels as a placeholder
   (`⟦m0⟧`, which the prompt says to keep) and comes back as a clone of the
   page's own rendering in the translation. Only what the reader can type into
   counts as editable and is skipped — a read-only editor (`contenteditable="false"`,
