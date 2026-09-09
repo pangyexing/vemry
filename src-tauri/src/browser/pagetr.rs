@@ -9,8 +9,10 @@
 //! resize (and once a second, for content that shifts), pushing an entry down
 //! when the one above it is taller than its block; a poll every second and a
 //! half picks up blocks that appeared since (an endless feed, a page rendering as
-//! it scrolls); a new document (a navigation, a reload) starts over. Pressing the
-//! button again removes the pane and stops.
+//! it scrolls). Moving to another page — a navigation, a reload, a single-page
+//! app's route change — ends the translation: the pane is removed and the
+//! button goes back to off, and the next page is translated only when asked.
+//! Pressing the button again removes the pane and stops.
 //!
 //! What is collected is the body: a block with running text and no block
 //! children, outside navigation, headers, footers, asides, figure captions,
@@ -100,6 +102,18 @@ const COLLECT_JS: &str = r#"
     S.prevMargin = document.documentElement.style.marginRight;
     document.documentElement.style.marginRight = W;
     S.pane = pane; S.inner = inner;
+    // The page's real colours are the ones behind its text, not the body's (an app
+    // shell often paints a dark body under a light content column): taken from the
+    // first block's ancestors once there is one
+    S.recolor = (el) => {
+      if (S.recolored) return;
+      S.recolored = true;
+      for (let e = el; e; e = e.parentElement) {
+        const c = getComputedStyle(e).backgroundColor;
+        if (alpha(c) > 0.5) { pane.style.background = c; break; }
+      }
+      pane.style.color = getComputedStyle(el).color;
+    };
     const GAP = 6;
     S.layout = () => {
       S.raf = 0;
@@ -257,6 +271,7 @@ const COLLECT_JS: &str = r#"
     if (r.width === 0 && r.height === 0) continue;
     const id = S.n++;
     el.setAttribute('data-vemry-tr', String(id));
+    S.recolor(el);
     const cs = getComputedStyle(el);
     const o = document.createElement('div');
     o.setAttribute('data-vemry-tr-out', String(id));
@@ -306,6 +321,16 @@ fn pause_js(at: u32) -> String {
 /// Move the pane's progress line.
 fn progress_js(done: usize, total: usize) -> String {
     format!("(() => {{ const S = window.__vemryTr; if (S) S.progress({done}, {total}); }})()")
+}
+
+/// What page the tab is on, without touching it: the pane's document token (null
+/// when this document has no pane — the tab navigated or reloaded) and the URL.
+const PROBE_JS: &str = "(() => { const S = window.__vemryTr; return { gen: S ? S.gen : null, url: location.href }; })()";
+
+/// The page's identity for the poll: the URL without its fragment (an anchor jump
+/// stays on the page; a single-page app's route change does not).
+fn page_key(url: &str) -> &str {
+    url.split('#').next().unwrap_or(url)
 }
 
 /// Remove the pane and untag the blocks.
@@ -506,6 +531,22 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
             if !poll_t.active.load(Ordering::Relaxed) {
                 break;
             }
+            // First a look without touching the page: another page (a navigation, a
+            // reload, a route change — the document token is gone or the URL's path
+            // moved) ends the translation rather than carrying it over
+            let Ok(probe) = eval_json(&webview, PROBE_JS).await else { continue };
+            if !poll_t.active.load(Ordering::Relaxed) {
+                break;
+            }
+            let same_doc = probe.get("gen").and_then(|g| g.as_str()) == Some(poll_t.gen.as_str());
+            let same_page = probe.get("url").and_then(|u| u.as_str()).is_some_and(|u| page_key(u) == page_key(&poll_t.url));
+            if !same_doc || !same_page {
+                let state: State<'_, AppState> = poll_app.state();
+                state.browser_translate.stop(&poll_t.label);
+                let _ = webview.eval(CLEAR_JS);
+                emit(&poll_app, &BrowserEvent::Translate { label: poll_t.label.clone(), active: false, done: 0, total: 0, tokens: 0 });
+                break;
+            }
             let Ok(data) = eval_json(&webview, COLLECT_JS).await else { continue };
             // Stopped while the eval was out: the collect just re-installed the pane the
             // clear removed, so it is cleared again and nothing is restarted
@@ -514,17 +555,6 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
                 break;
             }
             let Ok(c) = serde_json::from_value::<Collected>(data) else { continue };
-            if c.gen != poll_t.gen {
-                // another document: the pane went with the old one, and this one has a fresh pane
-                let state: State<'_, AppState> = poll_app.state();
-                state.browser_translate.stop(&poll_t.label);
-                if let Err(e) = start(&poll_app, &state, poll_t.label.clone(), webview.clone(), c) {
-                    let _ = webview.eval(CLEAR_JS);
-                    emit(&poll_app, &BrowserEvent::Translate { label: poll_t.label.clone(), active: false, done: 0, total: 0, tokens: 0 });
-                    let _ = e;
-                }
-                break;
-            }
             match c.wants.as_deref() {
                 Some("all") => poll_t.job.continue_background(None),
                 Some("more") => poll_t.job.continue_background(Some(vemry_agent::translate::BACKGROUND_BUDGET_CHARS)),

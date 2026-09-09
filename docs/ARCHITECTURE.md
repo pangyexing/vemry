@@ -2253,8 +2253,13 @@ the user presses "save as note".
   than accumulated down the page; a placeholder is as tall as its block, so a
   translation landing above the reader does not push the rows below it; a poll
   every second collects blocks that appeared since (an endless feed; the job's
-  segments are growable, `TranslateJob::extend`), and a new document (the
-  script's `gen` changes) starts over. Clicking an entry scrolls the page to its
+  segments are growable, `TranslateJob::extend`); moving to another page — a
+  navigation, a reload, a single-page app's route change (the poll looks first,
+  without touching the page: the pane's document token is gone, or the URL's
+  path moved; an anchor jump stays) — ends the translation rather than carrying
+  it over, and the next page is translated only when asked. The pane takes its
+  colours from the first block's ancestors, not the body (an app shell often
+  paints a dark body under a light column). Clicking an entry scrolls the page to its
   block. The rows the reader is looking at come first: every poll reports the
   untranslated blocks in and near the viewport and the job moves them to the
   front of its queue; the rest is the same budgeted background work, and the
