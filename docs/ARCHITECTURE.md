@@ -2243,7 +2243,8 @@ the user presses "save as note".
   paragraph ends — and an entry is set a touch smaller and tighter than its
   block) and tags the page's text blocks (a block with running text and no block
   children, outside `nav`/`header`/`footer`/`aside`, captions, tables, reference
-  lists and bylines) with ids, the same `TranslateJob` translates them, and each
+  lists and bylines, and not under the pane — a page's right-hand column and its
+  promoted items are not what is being read) with ids, the same `TranslateJob` translates them, and each
   finished segment is written into its pane entry with `textContent`. The pane
   lays its entries out from the blocks' positions on every scroll and resize: a
   forward pass puts each entry at its block or under the one above, and a

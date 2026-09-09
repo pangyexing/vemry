@@ -118,10 +118,11 @@ const COLLECT_JS: &str = r#"
     S.layout = () => {
       S.raf = 0;
       const rows = [];
+      const paneLeft = S.pane.getBoundingClientRect().left;
       for (const it of S.items.values()) {
         if (!it.el.isConnected) { it.out.remove(); continue; }
         const r = it.el.getBoundingClientRect();
-        if (r.width === 0 && r.height === 0) { it.out.style.display = 'none'; continue; }
+        if ((r.width === 0 && r.height === 0) || r.left + r.width / 2 >= paneLeft) { it.out.style.display = 'none'; continue; }
         it.out.style.display = '';
         rows.push({ it, r, t: r.top, hb: r.height, h: it.out.offsetHeight, y: 0 });
       }
@@ -269,6 +270,9 @@ const COLLECT_JS: &str = r#"
     if (covered) continue;
     const r = el.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) continue;
+    // What sits under the pane — a page's right-hand column, its promoted items — is not
+    // what the reader is reading, and its translation would float beside nothing
+    if (r.left + r.width / 2 >= S.pane.getBoundingClientRect().left) continue;
     const id = S.n++;
     el.setAttribute('data-vemry-tr', String(id));
     S.recolor(el);
