@@ -108,7 +108,10 @@ pub fn segment_markdown(raw: &str) -> Segmented {
             continue;
         }
         // a numbered item's number is its prefix: `12. Cho et al. … 2014` is one entry
-        let not_body = |text: &str| in_refs || is_caption(text) || is_reference_entry(text) || is_reference_entry(&format!("{prefix}{text}"));
+        // the prefixed form only differs when there is a prefix — without the guard this
+        // copies every paragraph of the document to ask the same question twice
+        let not_body =
+            |text: &str| in_refs || is_caption(text) || is_reference_entry(text) || (!prefix.is_empty() && is_reference_entry(&format!("{prefix}{text}")));
         match kind {
             SegKind::Heading { .. } => in_refs = is_reference_heading(&text),
             SegKind::Para | SegKind::ListItem { .. } | SegKind::Quote | SegKind::Table if not_body(&text) => kind = SegKind::Aside,
@@ -401,7 +404,7 @@ fn classify_paragraph(source: &str) -> SegKind {
     if first.starts_with("$$") {
         return SegKind::Math;
     }
-    if is_thematic_break(first) && source.lines().count() == 1 {
+    if crate::parser::is_thematic_break(first) && source.lines().count() == 1 {
         return SegKind::Hr;
     }
     if is_lone_image(source) {
@@ -414,12 +417,6 @@ fn classify_paragraph(source: &str) -> SegKind {
         return SegKind::Table;
     }
     SegKind::Para
-}
-
-/// `---` / `***` / `___`, three or more, spaces allowed between.
-fn is_thematic_break(line: &str) -> bool {
-    let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-    compact.len() >= 3 && ["-", "*", "_"].iter().any(|m| compact.chars().all(|c| c.to_string() == *m))
 }
 
 /// One line that is only an image or an embed (`![alt](url)`, `![[file]]`), with

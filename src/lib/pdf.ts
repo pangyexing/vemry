@@ -67,20 +67,32 @@ export interface PageRect {
   height: number;
 }
 
+const squash = (s: string) => s.replace(/\s+/g, "");
+
+/** A page's text items and their whitespace-free concatenation — what both searches
+ *  below run over. pdf.js breaks lines and words differently from the extraction the
+ *  text came from, so nothing is compared with its spaces in. */
+async function flatText(page: PDFPageProxy) {
+  const content = await page.getTextContent();
+  const items = content.items.filter((i): i is TextItem => "str" in i);
+  const parts = items.map((i) => squash(i.str));
+  return { base: page.getViewport({ scale: 1 }), items, parts, flat: parts.join("") };
+}
+
+/** An item's height, and its top as a fraction of the page (PDF space counts up from
+ *  the bottom, the page's boxes count down from the top). */
+const heightOf = (it: TextItem) => it.height || Math.hypot((it.transform as number[])[2], (it.transform as number[])[3]);
+const topOf = (it: TextItem, base: { height: number }) => (base.height - (it.transform as number[])[5] - heightOf(it)) / base.height;
+
 /** Where `needle` sits on `page`: the boxes of the text items it spans, as
  *  fractions of the page. Whitespace is ignored on both sides (extraction and
  *  pdf.js break lines and words differently); when the whole text is not found
  *  as one run, its head and its tail are looked for and everything between them
  *  is taken. Empty when nothing matches. */
 export async function textRects(page: PDFPageProxy, needle: string): Promise<PageRect[]> {
-  const squash = (s: string) => s.replace(/\s+/g, "");
   const target = squash(needle);
   if (!target) return [];
-  const content = await page.getTextContent();
-  const base = page.getViewport({ scale: 1 });
-  const items = content.items.filter((i): i is TextItem => "str" in i);
-  const parts = items.map((i) => squash(i.str));
-  const flat = parts.join("");
+  const { base, items, parts, flat } = await flatText(page);
   let at = flat.indexOf(target);
   let end = at + target.length;
   if (at < 0) {
@@ -99,9 +111,8 @@ export async function textRects(page: PDFPageProxy, needle: string): Promise<Pag
     pos = e;
     if (e <= s || e <= at || s >= end) continue;
     const it = items[k];
-    const [, , c, d, x, y] = it.transform as number[];
-    const h = it.height || Math.hypot(c, d);
-    rects.push({ left: x / base.width, top: (base.height - y - h) / base.height, width: it.width / base.width, height: h / base.height });
+    const x = (it.transform as number[])[4];
+    rects.push({ left: x / base.width, top: topOf(it, base), width: it.width / base.width, height: heightOf(it) / base.height });
   }
   return rects;
 }
@@ -110,18 +121,13 @@ export async function textRects(page: PDFPageProxy, needle: string): Promise<Pag
  *  the top (null when not found). One text-content read for all of them, searched
  *  in order so a repeated sentence lands on its next occurrence. */
 export async function segmentTops(page: PDFPageProxy, texts: string[]): Promise<(number | null)[]> {
-  const squash = (s: string) => s.replace(/\s+/g, "");
-  const content = await page.getTextContent();
-  const base = page.getViewport({ scale: 1 });
-  const items = content.items.filter((i): i is TextItem => "str" in i);
-  const parts = items.map((i) => squash(i.str));
+  const { base, items, parts, flat } = await flatText(page);
   const starts: number[] = [];
   let pos = 0;
   for (const p of parts) {
     starts.push(pos);
     pos += p.length;
   }
-  const flat = parts.join("");
   let cursor = 0;
   return texts.map((t) => {
     const head = squash(t).slice(0, 32);
@@ -133,10 +139,7 @@ export async function segmentTops(page: PDFPageProxy, texts: string[]): Promise<
     // the item the match starts in
     let k = starts.findIndex((s, i) => at >= s && at < s + parts[i].length);
     if (k < 0) k = 0;
-    const it = items[k];
-    const [, , c, d, , y] = it.transform as number[];
-    const h = it.height || Math.hypot(c, d);
-    return (base.height - y - h) / base.height;
+    return topOf(items[k], base);
   });
 }
 

@@ -413,31 +413,18 @@ pub struct PageTranslations {
     /// A page's translations by `url + target`, kept in memory across closing and
     /// reopening the pane on the same page (the same parking the reading
     /// projection's translation has; never on disk).
-    caches: Mutex<Vec<(String, TranslationCache)>>,
+    caches: crate::translate::ParkedCaches,
 }
-
-const CACHE_CAP: usize = 32;
 
 impl PageTranslations {
     fn park(&self, url: &str, target: &str, cache: Option<TranslationCache>) {
-        let Some(cache) = cache else { return };
-        if cache.is_empty() {
-            return;
-        }
-        let key = format!("{url}\u{0}{target}");
-        let mut caches = self.caches.lock().unwrap();
-        caches.retain(|(k, _)| *k != key);
-        caches.push((key, cache));
-        while caches.len() > CACHE_CAP {
-            caches.remove(0);
+        if let Some(cache) = cache {
+            self.caches.park(url, target, cache);
         }
     }
 
     fn take(&self, url: &str, target: &str) -> Option<TranslationCache> {
-        let key = format!("{url}\u{0}{target}");
-        let mut caches = self.caches.lock().unwrap();
-        let at = caches.iter().position(|(k, _)| *k == key)?;
-        Some(caches.remove(at).1)
+        self.caches.take(url, target)
     }
 
     /// Stop a tab's translation (the job, the poll) without touching the page;
@@ -484,14 +471,7 @@ fn progress(app: &AppHandle, t: &PageTranslation) {
 /// Start translating a collected document and poll it for more.
 fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: tauri::Webview, collected: Collected) -> Result<Arc<PageTranslation>, String> {
     let s = settings::load(app);
-    let mut provider = s.provider_config();
-    if provider.api_key.is_empty() {
-        return Err(crate::i18n::t(crate::i18n::current(), "ipc.noApiKey"));
-    }
-    let m = s.translate_model.trim();
-    if !m.is_empty() {
-        provider.model = m.to_string();
-    }
+    let provider = crate::translate::provider_of(&s)?;
     let target = crate::translate::target_of(&s);
     let cache = state.browser_translate.take(&collected.url, &target).unwrap_or_else(|| TranslationCache::in_memory(&provider.model));
     let active = Arc::new(AtomicBool::new(true));

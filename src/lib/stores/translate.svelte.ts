@@ -49,16 +49,14 @@ class TranslateStore {
   usage = $state({ prompt: 0, completion: 0 });
   private listening = false;
 
-  /** The segments the model has to translate (the count line's denominator). */
-  get toTranslate(): TranslateSegment[] {
-    return (this.doc?.segments ?? []).filter((s) => s.translate && !s.private);
-  }
-  get doneCount(): number {
-    return this.toTranslate.filter((s) => this.rows[s.id]?.done).length;
-  }
-  get failedIds(): number[] {
-    return this.toTranslate.filter((s) => this.rows[s.id]?.error).map((s) => s.id);
-  }
+  /** The segments the model has to translate (the count line's denominator). Derived
+   *  rather than a getter: the counters below and the view read it on every streamed
+   *  token, and a document runs to thousands of segments. */
+  toTranslate: TranslateSegment[] = $derived((this.doc?.segments ?? []).filter((s) => s.translate && !s.private));
+  /** Derived, not getters: the view reads all three on every render, and a render
+   *  happens on every streamed token. */
+  doneCount: number = $derived(this.toTranslate.filter((s) => this.rows[s.id]?.done).length);
+  failedIds: number[] = $derived(this.toTranslate.filter((s) => this.rows[s.id]?.error).map((s) => s.id));
 
   setMode(mode: TranslateMode) {
     this.mode = mode;
@@ -124,9 +122,7 @@ class TranslateStore {
     if (force) {
       for (const id of ids) this.rows[id] = { text: null, done: false, error: null };
     }
-    const req = { ...this.requested };
-    for (const id of ids) req[id] = true;
-    this.requested = req;
+    for (const id of ids) this.requested[id] = true;
     this.idle = false;
     void api.translateRequest(job, ids, force).catch((e) => (this.error = String(e)));
   }

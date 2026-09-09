@@ -39,7 +39,7 @@ pub struct TranslateState {
     /// A web page's translations, by `url + target`, kept only in memory: the
     /// projection's content never lands on disk, and neither does its translation.
     /// Newest last; the oldest is dropped past the cap.
-    web_caches: Mutex<Vec<(String, TranslationCache)>>,
+    web_caches: ParkedCaches,
 }
 
 /// What is being translated. The wire shape is the frontend's `TranslateSource`.
@@ -55,22 +55,25 @@ pub enum TranslateSource {
     Pdf { path: String },
 }
 
-fn web_cache_key(url: &str, target: &str) -> String {
-    format!("{url}\u{0}{target}")
-}
+/// A page's translations have no file to live in, so the cache is kept in memory and
+/// put away when the page closes: opening the same page again finds it. The most
+/// recent WEB_CACHE_CAP pages, oldest out first. Two pools use this — the reading
+/// view's and the in-page pane's — because the two hash different text (Markdown
+/// blocks against the DOM's own), so an entry of one would never match the other.
+#[derive(Default)]
+pub struct ParkedCaches(Mutex<Vec<(String, TranslationCache)>>);
 
-impl TranslateState {
-    /// Put a page's in-memory cache away for the next opening of the same page.
-    fn park_web_cache(&self, job: &TranslateJob) {
-        let TranslateSource::Page { url } = self.sources.lock().unwrap().get(&job.id).cloned().unwrap_or(TranslateSource::Note { path: String::new() }) else {
-            return;
-        };
-        let Some(cache) = job.take_cache() else { return };
+impl ParkedCaches {
+    fn key(url: &str, target: &str) -> String {
+        format!("{url}\u{0}{target}")
+    }
+
+    pub fn park(&self, url: &str, target: &str, cache: TranslationCache) {
         if cache.is_empty() {
             return;
         }
-        let key = web_cache_key(&url, &job.target);
-        let mut caches = self.web_caches.lock().unwrap();
+        let key = Self::key(url, target);
+        let mut caches = self.0.lock().unwrap();
         caches.retain(|(k, _)| *k != key);
         caches.push((key, cache));
         while caches.len() > WEB_CACHE_CAP {
@@ -78,11 +81,26 @@ impl TranslateState {
         }
     }
 
-    fn take_web_cache(&self, url: &str, target: &str) -> Option<TranslationCache> {
-        let key = web_cache_key(url, target);
-        let mut caches = self.web_caches.lock().unwrap();
+    pub fn take(&self, url: &str, target: &str) -> Option<TranslationCache> {
+        let key = Self::key(url, target);
+        let mut caches = self.0.lock().unwrap();
         let at = caches.iter().position(|(k, _)| *k == key)?;
         Some(caches.remove(at).1)
+    }
+}
+
+impl TranslateState {
+    /// Put a page's in-memory cache away for the next opening of the same page.
+    fn park_web_cache(&self, job: &TranslateJob) {
+        let Some(TranslateSource::Page { url }) = self.sources.lock().unwrap().get(&job.id).cloned() else {
+            return;
+        };
+        let Some(cache) = job.take_cache() else { return };
+        self.web_caches.park(&url, &job.target, cache);
+    }
+
+    fn take_web_cache(&self, url: &str, target: &str) -> Option<TranslationCache> {
+        self.web_caches.take(url, target)
     }
 
     /// Drop the current job: it stops streaming, and a page's cache is parked.
@@ -140,13 +158,16 @@ pub fn target_of(s: &settings::Settings) -> String {
 
 /// The provider for a translation: the chat endpoint and key, with the
 /// translation model when one is set.
-fn provider_of(s: &settings::Settings) -> vemry_agent::ProviderConfig {
+pub(crate) fn provider_of(s: &settings::Settings) -> Result<vemry_agent::ProviderConfig, String> {
     let mut p = s.provider_config();
+    if p.api_key.is_empty() {
+        return Err(t("ipc.noApiKey"));
+    }
     let m = s.translate_model.trim();
     if !m.is_empty() {
         p.model = m.to_string();
     }
-    p
+    Ok(p)
 }
 
 fn t(key: &str) -> String {
@@ -160,10 +181,7 @@ pub async fn translate_open(
     source: TranslateSource,
 ) -> Result<TranslateDocView, String> {
     let s = settings::load(&app);
-    let provider = provider_of(&s);
-    if provider.api_key.is_empty() {
-        return Err(t("ipc.noApiKey"));
-    }
+    let provider = provider_of(&s)?;
     let target = target_of(&s);
     let (doc, cache) = match &source {
         TranslateSource::Page { url } => {
@@ -183,13 +201,18 @@ pub async fn translate_open(
             (doc, cache)
         }
         TranslateSource::Pdf { path } => with_vault(&state, |v| {
+            // The verdict and the read must be taken on one spelling: the read trims and
+            // NoteId::new does not, so judging the raw path and opening the trimmed one
+            // would let a leading space walk around the gate
+            let rel = NoteId::new(path.trim());
+            let rel = rel.as_str();
             // The whole file is in the privacy zone: nothing of it may be sent
-            if v.is_private_rel(path, false) {
+            if v.is_private_rel(rel, false) {
                 return Err(t("translate.privateFile"));
             }
-            let (key, pages) = vemry_agent::context::pdf_pages(v, path, path)?;
+            let (key, pages) = vemry_agent::context::pdf_pages(v, rel, rel)?;
             let segments = vemry_core::segment_pages(&pages);
-            let title = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
+            let title = std::path::Path::new(rel).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| rel.to_string());
             let doc = TranslateDoc { key, title, segments };
             let cache = TranslationCache::open(&v.meta_dir().join(CACHE_SUBDIR), &doc.key, &target, &provider.model);
             Ok((doc, cache))
@@ -300,13 +323,7 @@ pub async fn translate_continue(state: State<'_, AppState>, job: String, all: bo
 
 #[tauri::command]
 pub async fn translate_cancel(state: State<'_, AppState>, job: String) -> Result<(), String> {
-    let taken = {
-        let mut slot = state.translate.job.lock().unwrap();
-        match slot.as_ref() {
-            Some(j) if j.id == job => slot.take(),
-            _ => None,
-        }
-    };
+    let taken = state.translate.job.lock().unwrap().take_if(|j| j.id == job);
     if let Some(j) = taken {
         state.translate.drop_job(&j);
     }
@@ -324,26 +341,31 @@ fn link_to(id: &NoteId) -> String {
 /// The name a saved translation carries: the source's title plus the target
 /// language, in that language.
 pub fn translated_title(title: &str, target: &str) -> String {
-    let tag = match target {
-        "zh-CN" | "zh" => "中译",
-        "zh-TW" | "zh-HK" => "中譯",
-        "en" => "English",
-        "ja" => "日本語訳",
-        "ko" => "한국어 번역",
-        other => other,
-    };
+    let tag = words_of(target).map(|w| w.0).unwrap_or(target);
     format!("{title} ({tag})")
 }
 
 /// The heading a page's translations sit under in a saved PDF translation, in the
 /// target language.
 pub fn page_heading(page: u32, target: &str) -> String {
+    match words_of(target).map(|w| w.1) {
+        Some("页") => format!("## 第 {page} 页"),
+        Some("頁") => format!("## 第 {page} 頁"),
+        Some(word) => format!("## {page} {word}"),
+        None => format!("## Page {page}"),
+    }
+}
+
+/// What a saved translation is called in the target language, and the word its page
+/// headings use: one table, so a new language is one row rather than two match arms.
+fn words_of(target: &str) -> Option<(&'static str, &'static str)> {
     match target {
-        "zh-CN" | "zh" => format!("## 第 {page} 页"),
-        "zh-TW" | "zh-HK" => format!("## 第 {page} 頁"),
-        "ja" => format!("## {page} ページ"),
-        "ko" => format!("## {page}쪽"),
-        _ => format!("## Page {page}"),
+        "zh-CN" | "zh" => Some(("中译", "页")),
+        "zh-TW" | "zh-HK" => Some(("中譯", "頁")),
+        "en" => Some(("English", "Page")),
+        "ja" => Some(("日本語訳", "ページ")),
+        "ko" => Some(("한국어 번역", "쪽")),
+        _ => None,
     }
 }
 
@@ -427,9 +449,8 @@ pub async fn translate_save(app: AppHandle, state: State<'_, AppState>, job: Str
         // A PDF: the translation sits beside the file, pointing at it by name
         TranslateSource::Pdf { path } => {
             let id = NoteId::new(path);
-            let name = path.rsplit('/').next().unwrap_or(path);
-            let of = if name.contains(['[', ']', '|', '#']) { path.clone() } else { format!("[[{name}]]") };
-            (id.folder().to_string(), of)
+            // stem() strips only `.md`, so a PDF's stem is its file name — link_to's rule
+            (id.folder().to_string(), link_to(&id))
         }
     };
     fm.extra.insert("translation_of".into(), of.into());
@@ -441,12 +462,8 @@ pub async fn translate_save(app: AppHandle, state: State<'_, AppState>, job: Str
     let (rel, event) = with_vault_mut(&state, |v| {
         let safe = sanitize_filename(&title);
         let folder = folder.trim_matches('/');
-        let mut candidate = if folder.is_empty() { format!("{safe}.md") } else { format!("{folder}/{safe}.md") };
-        let mut n = 1;
-        while v.abs_path(&NoteId::new(&candidate)).exists() {
-            candidate = if folder.is_empty() { format!("{safe} {n}.md") } else { format!("{folder}/{safe} {n}.md") };
-            n += 1;
-        }
+        // the vault's own "a name already taken gets a suffix" rule, as clips use it
+        let candidate = v.dedup_rel(&if folder.is_empty() { format!("{safe}.md") } else { format!("{folder}/{safe}.md") });
         let id = NoteId::new(&candidate);
         let event = v.write_note(&id, &content).map_err(crate::i18n::err)?;
         Ok((candidate, event))

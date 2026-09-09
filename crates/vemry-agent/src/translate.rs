@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use vemry_core::provenance::fnv1a64;
@@ -39,6 +40,12 @@ pub const FIRST_BATCH_CHARS: usize = 600;
 /// Requests in flight at once. Two keeps the model busy while the first batch's
 /// text is still streaming, without burning a rate limit on a long document.
 pub const MAX_IN_FLIGHT: usize = 2;
+
+/// How often a segment still streaming reports itself. A partial carries the whole
+/// segment so far rather than the new characters, and every reader of one re-renders
+/// that whole text, so one per chunk is quadratic in the segment's length. Well under
+/// what reading can follow; `done` is never held back.
+const PARTIAL_MS: Duration = Duration::from_millis(60);
 /// How much of a document is translated ahead of the reader on its own (bytes of
 /// segment text). What the reader looks at is never limited; this bounds the
 /// background work on a long document — a book, a thread of five hundred
@@ -193,27 +200,6 @@ pub fn user_message(segs: &[&Segment]) -> String {
         s.push_str(&format!("<s id={}>\n{}\n</s>\n", seg.id, seg.text.trim()));
     }
     s
-}
-
-/// Cut the segments into batches of about `budget` bytes, at segment boundaries;
-/// a segment over the budget goes alone.
-pub fn plan_batches(segs: &[&Segment], budget: usize) -> Vec<Vec<u32>> {
-    let mut out: Vec<Vec<u32>> = vec![];
-    let mut cur: Vec<u32> = vec![];
-    let mut size = 0;
-    for seg in segs {
-        let n = seg.text.len();
-        if !cur.is_empty() && size + n > budget {
-            out.push(std::mem::take(&mut cur));
-            size = 0;
-        }
-        cur.push(seg.id);
-        size += n;
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
 }
 
 // ---- the stream parser ----
@@ -665,9 +651,19 @@ impl TranslateJob {
         let mut parser = StreamParser::new();
         let mut got: Vec<(u32, String)> = vec![];
         let mut reshape: Vec<u32> = vec![];
+        // A partial carries the segment's whole text so far, not the new characters, so
+        // one event per chunk sends the segment over and over — and every reader of it
+        // re-renders that whole text. Held to PARTIAL_MS, which is still well under a
+        // frame's worth of reading; `done` is never held back.
+        let mut last_partial: HashMap<u32, Instant> = HashMap::new();
         let result = {
             let mut handle = |ev: Parsed| match ev {
                 Parsed::Partial { id, text } if wanted.contains(&id) => {
+                    let now = Instant::now();
+                    if last_partial.get(&id).is_some_and(|t| now.duration_since(*t) < PARTIAL_MS) {
+                        return;
+                    }
+                    last_partial.insert(id, now);
                     self.emit(TranslateEvent::Segment { id, text, done: false });
                 }
                 Parsed::Done { id, text } if wanted.contains(&id) => {
@@ -709,22 +705,28 @@ impl TranslateJob {
             r
         };
 
+        // The cache write ends in a file write, so it happens before the job's lock is
+        // taken rather than under it — request() waits on that lock from the view's
+        // scroll batches
+        {
+            let mut cache = self.cache.lock().unwrap();
+            if let Some(c) = cache.as_mut() {
+                for (id, text) in &got {
+                    if let Some(seg) = owned.iter().find(|s| s.id == *id) {
+                        c.insert(&seg.text, text.clone());
+                    }
+                }
+                let _ = c.save();
+            }
+        }
         let mut inner = self.inner.lock().unwrap();
         inner.in_flight -= 1;
         for id in &ids {
             inner.active.remove(id);
         }
-        let mut cache = self.cache.lock().unwrap();
         for (id, text) in &got {
             inner.done.insert(*id, text.clone());
-            if let (Some(c), Some(seg)) = (cache.as_mut(), owned.iter().find(|s| s.id == *id)) {
-                c.insert(&seg.text, text.clone());
-            }
         }
-        if let Some(c) = cache.as_mut() {
-            let _ = c.save();
-        }
-        drop(cache);
         let landed: HashSet<u32> = got.iter().map(|(id, _)| *id).collect();
         let missing: Vec<u32> = ids.iter().copied().filter(|id| !landed.contains(id)).collect();
         match result {
@@ -800,16 +802,6 @@ mod tests {
         let mut p = StreamParser::new();
         let out = p.push("Sure! ```xml\n<s id=7>\n**bold** text\n</s>\n```\nDone.");
         assert_eq!(out, vec![Parsed::Done { id: 7, text: "**bold** text".into() }]);
-    }
-
-    #[test]
-    fn batches_cut_at_segment_boundaries() {
-        let a = seg(0, SegKind::Para, &"a".repeat(600), true, false);
-        let b = seg(1, SegKind::Para, &"b".repeat(600), true, false);
-        let c = seg(2, SegKind::Para, &"c".repeat(2500), true, false);
-        let d = seg(3, SegKind::Para, "d", true, false);
-        assert_eq!(plan_batches(&[&a, &b, &c, &d], 1000), vec![vec![0], vec![1], vec![2], vec![3]]);
-        assert_eq!(plan_batches(&[&a, &b, &d], 2000), vec![vec![0, 1, 3]]);
     }
 
     fn events_channel() -> (Box<dyn Fn(TranslateEvent) + Send + Sync>, tokio::sync::mpsc::UnboundedReceiver<TranslateEvent>) {

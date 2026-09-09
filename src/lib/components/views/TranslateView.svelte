@@ -235,7 +235,7 @@
     }
   }
   /** How many translatable segments have no translation yet (the save button says so while it translates them). */
-  const remaining = $derived(translate.toTranslate.filter((s) => !translate.rows[s.id]?.done).length);
+  const remaining = $derived(total - done);
   async function changeTarget(tag: string) {
     if (!doc || tag === doc.target) return;
     try {

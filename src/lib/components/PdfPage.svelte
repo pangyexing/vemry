@@ -32,7 +32,6 @@
   let drawnWidth = 0;
   let drawing: Promise<unknown> | null = null;
   let rects = $state<PageRect[]>([]);
-  let first = $state<HTMLDivElement | null>(null);
 
   // The passage to light up: its boxes are looked up by text, and the first one is brought into view
   $effect(() => {
@@ -42,7 +41,7 @@
     void doc.getPage(n).then((p) => textRects(p, text)).then((r) => {
       if (stale) return;
       rects = r;
-      queueMicrotask(() => first?.scrollIntoView({ block: "nearest" }));
+      queueMicrotask(() => host?.querySelector(".hl")?.scrollIntoView({ block: "nearest" }));
     });
     return () => { stale = true; };
   });
@@ -89,11 +88,7 @@
     <div class="textLayer" bind:this={layer}></div>
   {/if}
   {#each rects as r, i (i)}
-    {#if i === 0}
-      <div class="hl" bind:this={first} style:left={`${r.left * 100}%`} style:top={`${r.top * 100}%`} style:width={`${r.width * 100}%`} style:height={`${r.height * 100}%`}></div>
-    {:else}
-      <div class="hl" style:left={`${r.left * 100}%`} style:top={`${r.top * 100}%`} style:width={`${r.width * 100}%`} style:height={`${r.height * 100}%`}></div>
-    {/if}
+    <div class="hl" style:left={`${r.left * 100}%`} style:top={`${r.top * 100}%`} style:width={`${r.width * 100}%`} style:height={`${r.height * 100}%`}></div>
   {/each}
 </div>
 

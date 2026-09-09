@@ -9,6 +9,7 @@ const MIN_LETTERS = 300;
 
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const LATIN = /\p{Script=Latin}/u;
+const OTHER_LETTER = /\p{L}/u;
 
 /** The script most of the letters belong to, or null when the text is too short. */
 export function dominantScript(text: string): Script | null {
@@ -18,7 +19,9 @@ export function dominantScript(text: string): Script | null {
   for (const ch of text) {
     if (CJK.test(ch)) cjk++;
     else if (LATIN.test(ch)) latin++;
-    else if (/\p{L}/u.test(ch)) other++;
+    else if (OTHER_LETTER.test(ch)) other++;
+    // the ratio has long settled by here, and this runs over a whole note on every save
+    if (cjk + latin + other >= MIN_LETTERS * 4) break;
   }
   // A CJK character is a word; a Latin letter is a fifth of one — weighed so a
   // Chinese note with English terms in it still reads as Chinese

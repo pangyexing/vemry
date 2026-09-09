@@ -91,11 +91,7 @@ class BrowserStore {
     } else if (e.type === "closed") {
       this.tabs = this.tabs.filter((w) => w.label !== e.label);
       if (this.active === e.label) this.active = null;
-      if (e.label in this.translating) {
-        const next = { ...this.translating };
-        delete next[e.label];
-        this.translating = next;
-      }
+      delete this.translating[e.label];
     } else if (e.type === "shape_changed") {
       this.shape = e.shape;
     } else if (e.type === "adblock_status") {
@@ -103,10 +99,8 @@ class BrowserStore {
     } else if (e.type === "bookmarks_changed") {
       this.bookmarks = e.bookmarks;
     } else if (e.type === "translate") {
-      const next = { ...this.translating };
-      if (e.active) next[e.label] = { done: e.done, total: e.total, tokens: e.tokens };
-      else delete next[e.label];
-      this.translating = next;
+      if (e.active) this.translating[e.label] = { done: e.done, total: e.total, tokens: e.tokens };
+      else delete this.translating[e.label];
     }
   }
 
