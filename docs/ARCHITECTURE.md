@@ -2243,8 +2243,11 @@ the user presses "save as note".
   paragraph ends — and an entry is set a touch smaller and tighter than its
   block) and tags the page's text blocks (a block with running text and no block
   children, outside `nav`/`header`/`footer`/`aside`, captions, tables, reference
-  lists and bylines, and not under the pane — a page's right-hand column and its
-  promoted items are not what is being read) with ids, the same `TranslateJob` translates them, and each
+  lists and bylines, not under the pane — a page's right-hand column and its
+  promoted items are not what is being read — and not already in the target
+  language: for a CJK target by the text's own script, for any target by a lang
+  attribute below the document root, since the root's lang is the interface's
+  and says nothing about a quoted post) with ids, the same `TranslateJob` translates them, and each
   finished segment is written into its pane entry with `textContent`. The pane
   lays its entries out from the blocks' positions on every scroll and resize: a
   forward pass puts each entry at its block or under the one above, and a

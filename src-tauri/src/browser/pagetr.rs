@@ -40,9 +40,12 @@ const POLL_MS: u64 = 1000;
 
 /// Install the pane (once per document) and collect the text blocks not yet
 /// tagged. `gen` is minted when the script first runs in a document, so a
-/// different value on the next poll means a different document.
+/// different value on the next poll means a different document. `TARGET` (the
+/// translation's target language) is filled in by `collect_js`: a block already
+/// in that language is not collected.
 const COLLECT_JS: &str = r#"
 (() => {
+  const TARGET = "__TARGET__";
   let S = window.__vemryTr;
   if (!S) {
     S = window.__vemryTr = { n: 0, gen: Math.random().toString(36).slice(2), items: new Map(), pane: null, inner: null, raf: 0, timer: 0 };
@@ -244,6 +247,27 @@ const COLLECT_JS: &str = r#"
   const SKIP = 'script,style,noscript,textarea,input,select,button,code,pre,nav,header,footer,aside,figcaption,caption,cite,time,address,sup,table,[contenteditable=""],[contenteditable="true"],[contenteditable="plaintext-only"],[aria-hidden="true"],[role="navigation"],[role="banner"],[role="contentinfo"],[role="doc-bibliography"],[role="doc-footnote"],.references,.reference,.refs,#references,.bibliography,.citation,.byline,.author,[rel="author"],[itemprop="author"],[data-vemry-tr-out]';
   // A rendered formula (MathML, KaTeX, MathJax): sent as a placeholder, put back as a clone
   const MATH = 'math,.mwe-math-element,.katex,.katex-display,mjx-container,.MathJax,.MathJax_Display,.MathJax_Preview';
+  // Already in the target language: a CJK target goes by the text itself (half the
+  // letters or more in that script); any target goes by a lang attribute on the block
+  // or an ancestor below the document root (the root's lang is the interface's, and
+  // says nothing about a quoted post)
+  const primary = TARGET.split('-')[0].toLowerCase();
+  const inTarget = (el, text) => {
+    const tagged = el.closest('[lang]');
+    if (tagged && tagged !== document.documentElement && tagged !== document.body) {
+      const l = (tagged.getAttribute('lang') || '').split('-')[0].toLowerCase();
+      if (l) return l === primary;
+    }
+    if (primary === 'zh' || primary === 'ja' || primary === 'ko') {
+      let cjk = 0, latin = 0;
+      for (const ch of text) {
+        if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(ch)) cjk++;
+        else if (/\p{Script=Latin}/u.test(ch)) latin++;
+      }
+      return cjk > 0 && cjk * 5 >= (cjk * 5 + latin) * 0.5;
+    }
+    return false;
+  };
   const textOf = (el) => {
     const maths = [...el.querySelectorAll(MATH)].filter((m) => !m.parentElement || !m.parentElement.closest(MATH));
     if (!maths.length) return { text: (el.innerText || '').replace(/\s+/g, ' ').trim(), maths: [] };
@@ -265,6 +289,7 @@ const COLLECT_JS: &str = r#"
     if (hasBlockChild) continue;
     const { text, maths } = textOf(el);
     if (text.length < 20 || !/\p{L}{3}/u.test(text)) continue;
+    if (inTarget(el, text)) continue;
     let covered = false;
     for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) { if (p.hasAttribute('data-vemry-tr')) { covered = true; break; } }
     if (covered) continue;
@@ -325,6 +350,11 @@ fn pause_js(at: u32) -> String {
 /// Move the pane's progress line.
 fn progress_js(done: usize, total: usize) -> String {
     format!("(() => {{ const S = window.__vemryTr; if (S) S.progress({done}, {total}); }})()")
+}
+
+/// The collect script for a target language.
+fn collect_js(target: &str) -> String {
+    COLLECT_JS.replace("__TARGET__", &target.replace(['"', '\\'], ""))
 }
 
 /// What page the tab is on, without touching it: the pane's document token (null
@@ -551,7 +581,7 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
                 emit(&poll_app, &BrowserEvent::Translate { label: poll_t.label.clone(), active: false, done: 0, total: 0, tokens: 0 });
                 break;
             }
-            let Ok(data) = eval_json(&webview, COLLECT_JS).await else { continue };
+            let Ok(data) = eval_json(&webview, &collect_js(&poll_t.job.target)).await else { continue };
             // Stopped while the eval was out: the collect just re-installed the pane the
             // clear removed, so it is cleared again and nothing is restarted
             if !poll_t.active.load(Ordering::Relaxed) {
@@ -599,7 +629,8 @@ pub async fn browser_translate_toggle(
         emit(&app, &BrowserEvent::Translate { label: t.label.clone(), active: false, done: 0, total: 0, tokens: 0 });
         return Ok(false);
     }
-    let data = eval_json(&webview, COLLECT_JS).await?;
+    let target = crate::translate::target_of(&settings::load(&app));
+    let data = eval_json(&webview, &collect_js(&target)).await?;
     let collected: Collected = serde_json::from_value(data).map_err(|e| e.to_string())?;
     if collected.blocks.is_empty() {
         let _ = webview.eval(CLEAR_JS);
