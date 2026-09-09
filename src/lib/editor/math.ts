@@ -14,7 +14,7 @@
 import { mathBlockTex, opensMathBlock, closesMathBlock, renderMathHtml } from "$lib/math";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import { type EditorState, StateField } from "@codemirror/state";
+import { type EditorState, StateField, type Text } from "@codemirror/state";
 import { blockRoot } from "./blockwidget";
 import { focusEditor } from "./clickguard";
 import { inCode } from "./fenced";
@@ -94,9 +94,18 @@ export interface MathBlock {
  *  swallow the note below it. */
 const MAX_BLOCK_LINES = 80;
 
+/** Whether the document holds a `$$` at all — the common note does not, and this cheap
+ *  answer spares it the line walk. Chunk by chunk, so no copy of the whole document is
+ *  made; a `$$` never straddles two chunks, which are lines and line breaks. */
+function hasMathFence(doc: Text): boolean {
+  const iter = doc.iter();
+  while (!iter.next().done) if (iter.value.includes("$$")) return true;
+  return false;
+}
+
 /** The multi-line display blocks of the document, in order. A `$$` inside code is
  *  code, and an unclosed opener is not a block. */
-export function mathBlocks(state: EditorState): MathBlock[] {
+function mathBlocks(state: EditorState): MathBlock[] {
   const doc = state.doc;
   const out: MathBlock[] = [];
   for (let n = 1; n <= doc.lines; n++) {
@@ -122,20 +131,25 @@ export function mathBlocks(state: EditorState): MathBlock[] {
 
 interface Built {
   decos: DecorationSet;
-  /** Whether the document holds a `$$` at all: without one, a cursor move needs no rescan. */
-  has: boolean;
+  /** The blocks the document holds, drawn or not: a revealed or folded one keeps its
+   *  place here, because the inline scan must skip its lines either way (mathBlocksOf). */
+  blocks: MathBlock[];
 }
 
-function build(state: EditorState): Built {
-  // A cheap gate before the line walk: the common note has no display block
-  const has = state.sliceDoc().includes("$$");
-  if (!has) return { decos: Decoration.none, has };
+/** Which of the blocks are drawn as widgets — the selection's and the folds' business,
+ *  and the only part of the answer a cursor move can change. */
+function decorate(state: EditorState, blocks: MathBlock[]): DecorationSet {
   const decos: ReturnType<Decoration["range"]>[] = [];
-  for (const b of mathBlocks(state)) {
+  for (const b of blocks) {
     if (selectionTouches(state, b.from, b.to) || insideFold(state, b.from, b.to)) continue;
     decos.push(Decoration.replace({ widget: new MathBlockWidget(b.tex), block: true }).range(b.from, b.to));
   }
-  return { decos: Decoration.set(decos, true), has };
+  return Decoration.set(decos, true);
+}
+
+function build(state: EditorState): Built {
+  const blocks = hasMathFence(state.doc) ? mathBlocks(state) : [];
+  return { decos: blocks.length ? decorate(state, blocks) : Decoration.none, blocks };
 }
 
 /** Registered by livePreview() alongside the table field. */
@@ -145,9 +159,18 @@ export const mathBlockField = StateField.define<Built>({
     const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
     const foldChanged = foldRangesOf(tr).length > 0;
     if (!tr.docChanged && !tr.selection && !treeChanged && !foldChanged) return value;
-    // No `$$` anywhere and no edit: a cursor move cannot change the output
-    if (!value.has && !tr.docChanged) return value;
+    // Where the blocks are is the document's and the tree's answer (a `$$` inside code is
+    // code); a cursor move or a fold only changes which of them are drawn, so the walk is
+    // not repeated for one
+    if (!tr.docChanged && !treeChanged) return value.blocks.length ? { decos: decorate(tr.state, value.blocks), blocks: value.blocks } : value;
     return build(tr.state);
   },
   provide: (f) => EditorView.decorations.from(f, (v) => v.decos),
 });
+
+/** The display blocks of the document as the field found them: the one answer to "is
+ *  this line inside a display block", which the inline scan needs for every block,
+ *  including the ones left as source because the selection touches them. */
+export function mathBlocksOf(state: EditorState): MathBlock[] {
+  return state.field(mathBlockField, false)?.blocks ?? [];
+}

@@ -20,7 +20,7 @@
 
 import { t } from "$lib/i18n/i18n.svelte";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { closesMathBlock, DISPLAY_MATH_RE, foldMath, INLINE_MATH_RE, mathBlockTex, opensMathBlock, renderMathHtml } from "$lib/math";
+import { closesMathBlock, foldMath, mathBlockTex, opensMathBlock, renderMathHtml, replaceMath } from "$lib/math";
 import { toast } from "$lib/stores/toast.svelte";
 import { CALLOUT_GROUP, CALLOUT_HEAD_RE, calloutDefaultTitle, calloutIconSvg } from "$lib/callout";
 import { scanFields, stateStepOf } from "$lib/fields";
@@ -212,17 +212,29 @@ function foldFields(s: string): string {
   return out + s.slice(at);
 }
 
-/** The plain label of a wikilink target: the alias when there is one, else the note's
- *  stem — alone, with `› heading`, or with `¶` for a block. The same shape the editor's
- *  folded link shows. */
-export function wikiLabel(target: string, alias?: string): string {
-  if (alias) return alias;
+/** A wikilink target read apart: the note before the `#`, the fragment after it, the
+ *  note's stem (last path segment, no `.md`), and whether the fragment names a block
+ *  rather than a heading. The label and the anchor below both turn on this. */
+function splitWikiTarget(target: string) {
   const hash = target.indexOf("#");
   const note = hash < 0 ? target : target.slice(0, hash).trim();
   const frag = hash < 0 ? "" : target.slice(hash + 1).trim();
-  const stem = (note.split("/").pop() ?? note).replace(/\.md$/i, "");
+  return {
+    note,
+    frag,
+    stem: (note.split("/").pop() ?? note).replace(/\.md$/i, ""),
+    isBlock: frag.startsWith("^") || POSITIONAL_RE.test(frag),
+  };
+}
+
+/** The plain label of a wikilink target: the alias when there is one, else the note's
+ *  stem — alone, with `› heading`, or with `¶` for a block. The same shape the editor's
+ *  folded link shows. */
+function wikiLabel(target: string, alias?: string): string {
+  if (alias) return alias;
+  const { frag, stem, isBlock } = splitWikiTarget(target);
   if (!frag) return stem || target;
-  if (frag.startsWith("^") || POSITIONAL_RE.test(frag)) return stem ? `${stem} ¶` : "¶";
+  if (isBlock) return stem ? `${stem} ¶` : "¶";
   return stem ? `${stem} › ${frag}` : frag;
 }
 
@@ -250,8 +262,7 @@ function renderInline(
   // Formulas before images and links (the same pair of rules as renderReadingInline):
   // a $E=mc^2$ the model wrote used to be plain text in chat — KaTeX renders it
   // locally, with trust:false
-  s = s.replace(DISPLAY_MATH_RE, (_, tex: string) => stash(renderMathHtml(tex, true)));
-  s = s.replace(INLINE_MATH_RE, (m, tex: string) => (/\s$/.test(tex) ? m : stash(renderMathHtml(tex, false))));
+  s = replaceMath(s, (f) => stash(renderMathHtml(f.tex, f.display)));
   // Backslash escapes (`2\.`, `\_`, `\*`): the protected character alone, stashed so the
   // rules below cannot read it as markup. After math (a formula's backslashes are
   // TeX), before links and emphasis
@@ -335,10 +346,7 @@ export function renderNoteMarkdown(text: string): string {
 export function wikiAnchor(target: string, alias?: string): string {
   const hash = target.indexOf("#");
   if (hash < 0) return `<a class="md-wiki" data-wiki="${escapeHtml(target)}">${escapeHtml(alias ?? target)}</a>`;
-  const note = target.slice(0, hash).trim();
-  const frag = target.slice(hash + 1).trim();
-  const isBlock = frag.startsWith("^") || POSITIONAL_RE.test(frag);
-  const stem = (note.split("/").pop() ?? note).replace(/\.md$/i, "");
+  const { note, frag, stem, isBlock } = splitWikiTarget(target);
   const label = alias ?? (isBlock ? stem || t("chat.thisNote") : `${stem ? `${stem} › ` : ""}${frag}`);
   return (
     `<a class="md-wiki md-blockref" data-wiki="${escapeHtml(target)}" data-note="${escapeHtml(note)}" data-frag="${escapeHtml(frag)}" title="${escapeHtml(target)}">` +
@@ -720,11 +728,8 @@ function renderReadingInline(raw: string, base: string): string {
   let s = raw.replace(/[]/g, "");
   s = s.replace(/`([^`\n]+)`/g, (_, code: string) => stash(`<code>${escapeHtml(code)}</code>`));
   // Formulas before images and links: the subscripts and braces inside $…$ must not be
-  // touched by the later rules. Block level ($$) comes first; inline requires
-  // non-whitespace at both ends and no digit after the closing $ — a dollar amount in
-  // the body is not a formula
-  s = s.replace(DISPLAY_MATH_RE, (_, tex: string) => stash(renderMathHtml(tex, true)));
-  s = s.replace(INLINE_MATH_RE, (m, tex: string) => (/\s$/.test(tex) ? m : stash(renderMathHtml(tex, false))));
+  // touched by the later rules (scanInlineMath states the order and the rules)
+  s = replaceMath(s, (f) => stash(renderMathHtml(f.tex, f.display)));
   s = s.replace(ESCAPE_RE, (_, ch: string) => stash(escapeHtml(ch)));
   s = s.replace(READ_IMAGE, (_, alt: string, href: string) => {
     const label = unescapeMd(alt).trim() || t("editor.image");

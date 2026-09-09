@@ -868,12 +868,12 @@ mod tests {
             hunks: vec![Hunk { before: "a\n\n".into(), old: "old\n".into(), new: "## H\n\nP\n".into(), after: String::new() }],
         };
         let lookup = |h: &str| stamps.iter().any(|s| s.hash == h).then_some(&rec);
-        let both = plan_revert_ids(text, &lookup, Some(&["b1", "b2"][..])).unwrap();
+        let both = plan_revert_ids(text, lookup, Some(&["b1", "b2"][..])).unwrap();
         assert_eq!(both.replacements, vec![Replacement { from: 3, to: 11, insert: "old\n".into() }]);
         // either block alone names the same hunk, so the same replacement
-        assert_eq!(plan_revert_ids(text, &lookup, Some(&["b2"][..])).unwrap().replacements, both.replacements);
+        assert_eq!(plan_revert_ids(text, lookup, Some(&["b2"][..])).unwrap().replacements, both.replacements);
         // an id that names no block is an error, not a skipped one
-        assert!(plan_revert_ids(text, &lookup, Some(&["b1", "b9"][..])).is_err());
+        assert!(plan_revert_ids(text, lookup, Some(&["b1", "b9"][..])).is_err());
     }
 
     #[test]

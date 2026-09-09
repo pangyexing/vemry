@@ -71,6 +71,12 @@ interface CacheEntry {
 const resolved = new Map<string, CacheEntry>();
 const heights = new Map<string, number>();
 
+/** A placeholder body's height, held until the real one is measured: the widget's last
+ *  measured height less the chrome (the crumb row and the borders) that sits outside
+ *  the body. Both placeholders — the unresolved one and the one waiting on its images —
+ *  reserve the same space. */
+const bodyMinHeight = (known: number) => `${Math.max(0, known - 40)}px`;
+
 /** Invalidated when the vault changes (the same trap as the image size cache). */
 export function clearEmbedCaches() {
   resolved.clear();
@@ -244,7 +250,7 @@ class EmbedWidget extends WidgetType {
           // measures the figure again (the note stays blank until a scroll)
           const imgs = [...body.querySelectorAll<HTMLImageElement>("img[data-asset]")];
           const known = heights.get(this.key);
-          if (imgs.length && known) body.style.minHeight = `${Math.max(0, known - 40)}px`;
+          if (imgs.length && known) body.style.minHeight = bodyMinHeight(known);
           let loading = imgs.length;
           const settled = () => {
             if (--loading > 0) return;
@@ -289,7 +295,7 @@ class EmbedWidget extends WidgetType {
       });
     } else {
       const known = heights.get(this.key);
-      if (known) body.style.minHeight = `${Math.max(0, known - 40)}px`;
+      if (known) body.style.minHeight = bodyMinHeight(known);
       const finish = (r: RefResolution) => {
         if (!wrap.isConnected) return; // dropped before the source arrived
         fill(r);

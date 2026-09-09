@@ -30,9 +30,14 @@ type SyntaxNode = ReturnType<ReturnType<typeof syntaxTree>["resolveInner"]>;
  *  single answer. Lives here rather than in livepreview.ts so editor/math.ts can ask
  *  without importing the module that imports it. */
 export function inCode(state: EditorState, pos: number): boolean {
-  const tree = syntaxTree(state);
-  for (let n: SyntaxNode | null = tree.resolveInner(pos, 1); n; n = n.parent)
-    if (n.name === "InlineCode" || n.name === "FencedCode" || n.name === "CodeBlock") return true;
+  return ancestorNamed(state, pos, "InlineCode", "FencedCode", "CodeBlock");
+}
+
+/** Whether any node covering pos is one of `names` — the ancestor walk `inCode` and the
+ *  emphasis rescue both make, stopping at the first hit. */
+export function ancestorNamed(state: EditorState, pos: number, ...names: string[]): boolean {
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent)
+    if (names.includes(n.name)) return true;
   return false;
 }
 

@@ -211,7 +211,9 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
                     let l = lines[i];
                     block.push(l.to_string());
                     i += 1;
-                    if l.trim().ends_with("$$") {
+                    // the closer may carry the block's id (`$$ ^s321p2`), as
+                    // closesMathBlock in src/lib/math.ts reads it
+                    if crate::blockid::strip_anchor(l.trim_end()).trim().ends_with("$$") {
                         break;
                     }
                 }

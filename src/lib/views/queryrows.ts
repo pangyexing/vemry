@@ -4,6 +4,7 @@
 // sees them and BlockQuery is unchanged. Pure: no CodeMirror, no i18n (labels are
 // passed in), so the batch's harness can replay it.
 import type { BlockHit } from "$lib/api";
+import { stateIndex } from "$lib/fields";
 
 export type GroupKey = { by: "note" } | { by: "kind" } | { by: "field"; key: string };
 export type SortKey = { by: "note" } | { by: "kind" } | { by: "text" } | { by: "field"; key: string };
@@ -60,17 +61,12 @@ export const byNote = (a: BlockHit, b: BlockHit) => a.note.localeCompare(b.note)
  *  case-insensitively. A value the vocabulary does not name sorts after every named
  *  one, and two unnamed values fall back to cmpValue, so the order is still total. */
 export function cmpDeclared(a: string, b: string, declared: string[]): number {
-  const ia = declaredIndex(declared, a);
-  const ib = declaredIndex(declared, b);
+  const ia = stateIndex(declared, a);
+  const ib = stateIndex(declared, b);
   if (ia < 0 && ib < 0) return cmpValue(a, b);
   if (ia < 0) return 1;
   if (ib < 0) return -1;
   return ia - ib;
-}
-
-function declaredIndex(declared: string[], value: string): number {
-  const lower = value.toLowerCase();
-  return declared.findIndex((v) => v.toLowerCase() === lower);
 }
 
 /** The one `sort` convention, read by a query block's hits and by the board's cards: a row
@@ -132,7 +128,7 @@ export function groupHits(
   const none: BlockHit[] = [];
   const lower = group.by === "field" ? group.key.toLowerCase() : "";
   // A value's spelling in the group's title is the declared one, whatever case a block wrote
-  const canonical = (v: string) => (declared ? (declared[declaredIndex(declared, v)] ?? v) : v);
+  const canonical = (v: string) => (declared ? (declared[stateIndex(declared, v)] ?? v) : v);
   if (group.by === "field" && declared) for (const v of declared) groups.set(v, { key: v, title: v, hits: [] });
   for (const h of hits) {
     let key: string | undefined;

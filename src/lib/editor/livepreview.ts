@@ -22,13 +22,15 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import { type EditorState, type Extension, RangeSetBuilder, StateField } from "@codemirror/state";
-import { contentStart, fencedCodeAt, fencedCodeText, inCode } from "./fenced";
+import { ancestorNamed, contentStart, fencedCodeAt, fencedCodeText, inCode } from "./fenced";
+import { CLIP_ESCAPE_RE } from "./mdlink";
 import { revealArmed, revealRanges, selectionReveals, selectionTouches } from "./reveal";
 import { tableField } from "./table";
 import { LINK_RE as WIKI_RE } from "./wikilink";
 import {
   attrIconSvg,
   type AttrKind,
+  checkboxState,
   completeTaskSlice,
   DATE_FIELDS,
   dateFieldLabel,
@@ -37,6 +39,7 @@ import {
   type EditField,
   formatEstimate,
   isClosed,
+  isUrgent,
   localDate,
   parseEstimate,
   type Priority,
@@ -44,6 +47,7 @@ import {
   ATTR_KEY_NAME,
   isUnitMark,
   markerGlyphLength,
+  nextTaskState,
   restOffset,
   scanTaskAttrs,
   STAMP_RE,
@@ -62,7 +66,7 @@ import { openImageLightbox } from "$lib/lightbox";
 import { copyText } from "$lib/copytext";
 import { scanInlineMath } from "$lib/math";
 import { domainOf } from "$lib/markdown";
-import { MathWidget, mathBlockField, mathBlocks } from "./math";
+import { MathWidget, mathBlockField, mathBlocksOf } from "./math";
 
 /** An image target inside the vault → a displayable URL (a blob); http(s) does not go through it */
 export type AssetLoader = (target: string) => Promise<string | null>;
@@ -78,6 +82,9 @@ const TAG_RE = /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
 /** An emphasis span the parser may have refused: `**…**` or `*…*` on one line, no `*` inside */
 const CJK_EMPH_RE = /(\*\*|\*)([^*\n]+?)\1/g;
 const CJK_PUNCT = /[。，、；：！？）」』】》〉…—～（「『【《〈]/;
+/** What may not sit outside the delimiter for the rescue to apply: the span has to run
+ *  into a word, or CommonMark's flanking rule would have taken it already. */
+const WORD_OUTSIDE = /[\s\p{P}\p{S}]/u;
 const cjkStrongDeco = Decoration.mark({ class: "cm-lp-cjk-strong" });
 const cjkEmDeco = Decoration.mark({ class: "cm-lp-cjk-em" });
 /** A bare URL's extent for the escape fold above (the click boundary itself is mdlink's) */
@@ -265,6 +272,10 @@ class MarkerAtomWidget extends WidgetType {
   }
 }
 
+/** The handler a chip or atom gets, for the attributes a click may set and no others. */
+const chipHandler = (kind: AttrKind, onFieldChip?: FieldChipHandler) =>
+  EDIT_FIELDS.includes(kind as EditField) ? onFieldChip : undefined;
+
 /** The atom for a mark's glyph, or null for the bracketed spelling (already words). A
  *  settable date's atom opens its menu on a click, like its chip. */
 function markerAtom(am: TaskAttrMark, text: string, from: number, onFieldChip?: FieldChipHandler): Entry | null {
@@ -272,8 +283,8 @@ function markerAtom(am: TaskAttrMark, text: string, from: number, onFieldChip?: 
   if (!n) return null;
   const p = am.kind === "priority" ? (am.value as Priority) : undefined;
   const label = p ? `${ATTR_KEY_NAME.priority} ${p}` : ATTR_KEY_NAME[am.kind];
-  const cls = p ? (p === "highest" || p === "high" ? "cm-lp-attr-urgent" : "cm-lp-attr-faint") : "";
-  const onChip = EDIT_FIELDS.includes(am.kind as EditField) ? onFieldChip : undefined;
+  const cls = p ? (isUrgent(p) ? "cm-lp-attr-urgent" : "cm-lp-attr-faint") : "";
+  const onChip = chipHandler(am.kind, onFieldChip);
   return { from, to: from + n, deco: Decoration.replace({ widget: new MarkerAtomWidget(am.kind, label, cls, attrIconSvg(am.kind, p), onChip, am.date ?? "") }) };
 }
 
@@ -301,29 +312,37 @@ export const deleteTaskMarkerBackward: Command = (view) => {
   return false;
 };
 
+interface ChipParts {
+  text: string;
+  cls: string;
+  title: string;
+  icon: string;
+}
+
 /** The text, tone class, tooltip and icon of a non-date attribute chip. */
-function attrChipParts(am: TaskAttrMark): [string, string, string, string] {
+function attrChipParts(am: TaskAttrMark): ChipParts {
+  const parts = (text: string, cls: string, title: string, icon: string): ChipParts => ({ text, cls, title, icon });
   switch (am.kind) {
     case "priority": {
       const p = am.value as Priority;
-      return ["", p === "highest" || p === "high" ? "cm-lp-attr-urgent" : "cm-lp-attr-faint", priorityLabel(p), attrIconSvg("priority", p)];
+      return parts("", isUrgent(p) ? "cm-lp-attr-urgent" : "cm-lp-attr-faint", priorityLabel(p), attrIconSvg("priority", p));
     }
     case "repeat":
-      return [am.value, "", t("task.chip.repeat", { rule: am.value }), attrIconSvg("repeat")];
+      return parts(am.value, "", t("task.chip.repeat", { rule: am.value }), attrIconSvg("repeat"));
     case "delete":
-      return ["", "", t("task.chip.deleteOnDone"), attrIconSvg("delete")];
+      return parts("", "", t("task.chip.deleteOnDone"), attrIconSvg("delete"));
     case "id":
-      return [am.value, "", t("task.chip.id", { id: am.value }), attrIconSvg("id")];
+      return parts(am.value, "", t("task.chip.id", { id: am.value }), attrIconSvg("id"));
     case "depends": {
       const ids = am.value.split(",").join(", ");
-      return [ids, "cm-lp-attr-urgent", t("task.chip.blockedBy", { ids }), attrIconSvg("depends")];
+      return parts(ids, "cm-lp-attr-urgent", t("task.chip.blockedBy", { ids }), attrIconSvg("depends"));
     }
     case "estimate": {
       const v = formatEstimate(parseEstimate(am.value) ?? 0);
-      return [v, "", t("task.chip.estimate", { v }), attrIconSvg("estimate")];
+      return parts(v, "", t("task.chip.estimate", { v }), attrIconSvg("estimate"));
     }
     default:
-      return [am.value, "", "", ""];
+      return parts(am.value, "", "", "");
   }
 }
 
@@ -681,22 +700,14 @@ class CopyWidget extends WidgetType {
 // side -1: with the fence line hidden by a replace, the button is only rendered when it sits before the hidden range
 const copyDeco = Decoration.widget({ widget: new CopyWidget(), side: -1 });
 
-/** The checkbox character after a click: a plain click flips done (todo or doing → done,
- *  done or cancelled → todo), ⌥ flips "in progress" (todo or done → doing, doing → todo). */
-export function nextCheckbox(ch: string, alt: boolean): string {
-  const state = stateOfChar(ch);
-  if (alt) return state === "doing" ? " " : "/";
-  return isClosed(state) ? " " : "x";
-}
-
 /** A click on the checkbox rewrites the whole line, as the task views do: a closing
  *  state leaves its ✅ / ❌ stamp, a repeating task ticked gets its next occurrence above
  *  it, and a 🚮 task ticked goes, its line break with it. */
 function toggleTaskAt(view: EditorView, pos: number, alt = false) {
   const line = view.state.doc.lineAt(pos);
-  const m = /^(?:(?:[-*+]|\d+[.)])\s+)?\[( |x|X|\/|-)\]/.exec(line.text.slice(pos - line.from));
-  if (!m) return;
-  const out = completeTaskSlice(line.text, stateOfChar(nextCheckbox(m[1], alt)), localDate());
+  const state = checkboxState(line.text);
+  if (state === null) return;
+  const out = completeTaskSlice(line.text, nextTaskState(state, alt), localDate());
   if (out === "") {
     const from = line.from > 0 ? line.from - 1 : line.from;
     const to = line.from > 0 ? line.to : Math.min(line.to + 1, view.state.doc.length);
@@ -722,6 +733,9 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
   const revealedEl = (from: number, to: number) => selectionReveals(state, from, to);
 
   const isCode = (pos: number) => inCode(state, pos);
+  // The display blocks the field already found: the inline scan skips their lines, the
+  // ones left as source included, so their `$$` fences never read as inline delimiters
+  const mathBlocks = mathBlocksOf(state);
 
   const hides: Entry[] = [];
   const marks: Entry[] = [];
@@ -910,8 +924,8 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
                     continue;
                   }
                   const isDate = am.kind in DATE_FIELDS;
-                  const onChip = isDate && EDIT_FIELDS.includes(am.kind as EditField) ? opts.onFieldChip : undefined;
-                  const title = isDate ? dateFieldLabel(am.kind as DateField) : attrChipParts(am)[2];
+                  const onChip = isDate ? chipHandler(am.kind, opts.onFieldChip) : undefined;
+                  const title = isDate ? dateFieldLabel(am.kind as DateField) : attrChipParts(am).title;
                   hides.push({ from: aFrom, to: aTo, deco: Decoration.replace({ widget: new AttrChipWidget(am.kind, "", "", title, attrIconSvg(am.kind), onChip, "") }) });
                   continue;
                 }
@@ -947,7 +961,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
                 const field = am.kind as DateField;
                 const overdue = field === "due" && !closed && am.date! < today;
                 // the dates a person sets open their menu on a click; a stamp does not
-                const onChip = EDIT_FIELDS.includes(field as EditField) ? opts.onFieldChip : undefined;
+                const onChip = chipHandler(field, opts.onFieldChip);
                 hides.push({
                   from: aFrom,
                   to: aTo,
@@ -957,8 +971,8 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
                 });
                 continue;
               }
-              const [text, cls, title, icon] = attrChipParts(am);
-              hides.push({ from: aFrom, to: aTo, deco: Decoration.replace({ widget: new AttrChipWidget(am.kind, text, cls, title, icon) }) });
+              const c = attrChipParts(am);
+              hides.push({ from: aFrom, to: aTo, deco: Decoration.replace({ widget: new AttrChipWidget(am.kind, c.text, c.cls, c.title, c.icon) }) });
             }
             if (revealedEl(bulletFrom, node.to)) break;
             hides.push({
@@ -1136,10 +1150,9 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
     // its `$$` fences would otherwise read as inline delimiters once the block is
     // revealed
     if (text.includes("$")) {
-      const blocks = text.includes("$$") ? mathBlocks(state) : [];
       for (let pos = range.from; pos <= range.to; ) {
         const line = doc.lineAt(pos);
-        if (line.text.includes("$") && !blocks.some((b) => line.from >= b.from && line.to <= b.to)) {
+        if (line.text.includes("$") && !mathBlocks.some((b) => line.from >= b.from && line.to <= b.to)) {
           for (const f of scanInlineMath(line.text)) {
             const start = line.from + f.start;
             const end = line.from + f.end;
@@ -1164,7 +1177,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
       while ((m = BARE_URL_RE.exec(text))) {
         const start = range.from + m.index;
         if (isCode(start) || revealedEl(start, start + m[0].length)) continue;
-        for (const e of m[0].matchAll(/\\(?=[_*~#])/g)) hide(start + (e.index ?? 0), start + (e.index ?? 0) + 1);
+        for (const e of m[0].matchAll(CLIP_ESCAPE_RE)) hide(start + e.index, start + e.index + 1);
       }
     }
 
@@ -1178,18 +1191,16 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
         const start = range.from + m.index;
         const end = start + m[0].length;
         const run = m[1].length;
-        if (isCode(start)) continue;
-        // the parser took it: nothing to do here
-        let n: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(start + run, 1);
-        let parsed = false;
-        for (; n; n = n.parent) if (n.name === "Emphasis" || n.name === "StrongEmphasis") parsed = true;
-        if (parsed) continue;
+        // The character test first: it rejects every span in a document without CJK
+        // punctuation, and the two tree walks below cost a resolveInner each
         const inner = m[2];
         const after = text[m.index + m[0].length] ?? "";
         const before = m.index > 0 ? text[m.index - 1] : "";
-        const cjkTail = CJK_PUNCT.test(inner[inner.length - 1]) && after !== "" && !/[\s\p{P}\p{S}]/u.test(after);
-        const cjkHead = CJK_PUNCT.test(inner[0]) && before !== "" && !/[\s\p{P}\p{S}]/u.test(before);
+        const cjkTail = CJK_PUNCT.test(inner[inner.length - 1]) && after !== "" && !WORD_OUTSIDE.test(after);
+        const cjkHead = CJK_PUNCT.test(inner[0]) && before !== "" && !WORD_OUTSIDE.test(before);
         if (!cjkTail && !cjkHead) continue;
+        if (isCode(start)) continue;
+        if (ancestorNamed(state, start + run, "Emphasis", "StrongEmphasis")) continue; // the parser took it: nothing to do here
         marks.push({ from: start + run, to: end - run, deco: run === 2 ? cjkStrongDeco : cjkEmDeco });
         if (revealedEl(start, end)) continue;
         hide(start, start + run);

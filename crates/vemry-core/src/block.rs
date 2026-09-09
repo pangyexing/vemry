@@ -13,13 +13,6 @@ pub enum TaskState {
     Cancelled,
 }
 
-impl TaskState {
-    /// Done or cancelled: the task is closed and leaves every list of open work.
-    pub fn is_closed(self) -> bool {
-        matches!(self, TaskState::Done | TaskState::Cancelled)
-    }
-}
-
 /// A task's priority: four steps around the unwritten default. Ordered, so a list sorts
 /// by it (`Highest` first when descending).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -36,16 +29,6 @@ pub enum Priority {
 impl Priority {
     pub fn is_normal(&self) -> bool {
         *self == Priority::Normal
-    }
-    /// The `priority::` spelling of the value.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Priority::Lowest => "lowest",
-            Priority::Low => "low",
-            Priority::Normal => "normal",
-            Priority::High => "high",
-            Priority::Highest => "highest",
-        }
     }
 }
 

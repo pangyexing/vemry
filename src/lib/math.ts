@@ -5,30 +5,47 @@
 // consumers must agree on what is a formula, or a `$` folds in the editor and shows
 // as text in an embed of the same note (docs/SYNTAX.md, "Math").
 import katex from "katex";
+import { stripAnchor } from "$lib/fields";
 
 /** LaTeX → KaTeX HTML. The renderer's only third-party HTML injection point: called
  *  on recognised formula fragments alone, with trust:false forbidding dangerous
  *  commands such as \href; a syntax error renders as the source in red
  *  (throwOnError:false) rather than throwing and taking the whole document down. */
 export function renderMathHtml(tex: string, display: boolean): string {
+  const src = tex.trim();
+  const key = (display ? "d" : "i") + src;
+  const seen = MATH_HTML.get(key);
+  if (seen !== undefined) return seen;
+  let html: string;
   try {
-    return katex.renderToString(tex.trim(), {
+    html = katex.renderToString(src, {
       displayMode: display,
       throwOnError: false,
       trust: false,
       output: "html",
     });
   } catch {
-    return `<code>${tex.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code>`;
+    html = `<code>${src.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code>`;
   }
+  if (MATH_HTML.size >= MATH_HTML_MAX) MATH_HTML.delete(MATH_HTML.keys().next().value!);
+  MATH_HTML.set(key, html);
+  return html;
 }
 
+/** The same formula is typeset over and over — a note scrolled back through the
+ *  viewport rebuilds its widgets, a streaming answer re-renders its tail on every
+ *  token, a translation its segment on every update — and each call is KaTeX parsing
+ *  the source again. Keyed on the mode and the trimmed source; bounded, oldest out
+ *  first, so a long session does not hold every formula it has ever drawn. */
+const MATH_HTML = new Map<string, string>();
+const MATH_HTML_MAX = 400;
+
 /** A single-line display formula, `$$…$$` with the content on the same line. */
-export const DISPLAY_MATH_RE = /\$\$([^$\n]+?)\$\$/g;
+const DISPLAY_MATH_RE = /\$\$([^$\n]+?)\$\$/g;
 /** An inline formula: non-whitespace at both ends and no digit after the closing `$`
  *  — a dollar amount in the body is not a formula. A backslash escapes the next
  *  character inside, so `\$` never closes. */
-export const INLINE_MATH_RE = /\$(?![\s$])((?:\\.|[^$\n\\])+?)\$(?!\d)/g;
+const INLINE_MATH_RE = /\$(?![\s$])((?:\\.|[^$\n\\])+?)\$(?!\d)/g;
 
 export interface MathSpan {
   /** Offsets into the scanned text, the `$` delimiters included. */
@@ -71,17 +88,12 @@ export function opensMathBlock(line: string): boolean {
   return !trimmed.slice(2).includes("$$");
 }
 
-/** A closing line's tail: `$$`, optionally followed by the block's id (`$$ ^s321p2` —
- *  the parser wants an id on the block's last line, and a display block's last line
- *  is its closer). */
-const CLOSE_RE = /\$\$\s*(?:\^[A-Za-z0-9-]+)?\s*$/;
-
 /** Whether a line closes a multi-line display block: it ends with `$$`, with at most
  *  a block id after it. A blank line never closes one — the callers stop looking at a
  *  blank line, so an opener with no closer in its paragraph stays text rather than
  *  swallowing the paragraphs below up to some later formula's closer. */
 export function closesMathBlock(line: string): boolean {
-  return CLOSE_RE.test(line);
+  return /\$\$$/.test(stripAnchor(line));
 }
 
 /** The formula inside a multi-line block: the `$$` fences stripped from the first and
@@ -92,7 +104,7 @@ export function mathBlockTex(lines: string[]): string {
   const parts = lines.slice();
   parts[0] = parts[0].trim().slice(2);
   const last = parts.length - 1;
-  parts[last] = parts[last].replace(CLOSE_RE, "");
+  parts[last] = stripAnchor(parts[last]).replace(/\$\$$/, "");
   return parts.join("\n").trim();
 }
 
@@ -123,14 +135,21 @@ export function mathPlain(tex: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-/** Every formula in `text` replaced by its plain form (the `$` delimiters go with it). */
-export function foldMath(text: string): string {
+/** Every formula in `text` replaced by what `render` makes of it (the `$` delimiters go
+ *  with it). The one walk behind both the plain-text fold and the renderers' stashing,
+ *  so "what is a formula" stays scanInlineMath's single answer. */
+export function replaceMath(text: string, render: (span: MathSpan) => string): string {
   if (!text.includes("$")) return text;
   let out = "";
   let at = 0;
   for (const m of scanInlineMath(text)) {
-    out += text.slice(at, m.start) + mathPlain(m.tex);
+    out += text.slice(at, m.start) + render(m);
     at = m.end;
   }
   return out + text.slice(at);
+}
+
+/** Every formula in `text` replaced by its plain form. */
+export function foldMath(text: string): string {
+  return replaceMath(text, (m) => mathPlain(m.tex));
 }

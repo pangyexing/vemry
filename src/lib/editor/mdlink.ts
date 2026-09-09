@@ -6,7 +6,7 @@
 // aliases); markdown links are literal references to vault files or URLs.
 import { type EditorState } from "@codemirror/state";
 import { stripTrailingPunct } from "$lib/markdown";
-import { inCode } from "./livepreview";
+import { inCode } from "./fenced";
 import { linkClickHandlers, matchAt, type LinkHit } from "./clickopen";
 
 const MD_LINK_RE = /!?\[[^\]\n]*\]\(([^)\n]+)\)/g;
@@ -17,6 +17,11 @@ const MD_LINK_RE = /!?\[[^\]\n]*\]\(([^)\n]+)\)/g;
 // disambiguation page; a ')' that ends a sentence is left to stripTrailingPunct).
 // The difference is deliberate, and a change to the boundary rule goes through both
 const URL_RE = /https?:\/\/(?:\([^\s<>()]*\)?|[^\s<>()]+)+/g;
+
+/** The escape a clipped page writes before a character of its text (`attention\_tf.py`):
+ *  inside a URL the backslash is not part of the address. The click below drops it and
+ *  the live preview hides it, so the two must name the same characters. */
+export const CLIP_ESCAPE_RE = /\\([_*~#])/g;
 
 /** The Markdown link or bare URL at pos (an inline scan). Mod-Enter uses it too. */
 export function mdLinkAt(state: EditorState, pos: number): LinkHit | null {
@@ -34,7 +39,7 @@ export function mdLinkAt(state: EditorState, pos: number): LinkHit | null {
     const from = line.from + u.index;
     // Punctuation, CJK or otherwise, often sits right against a URL — the same boundary rule as the chat panel
     // A clipped page escapes `_` in its text; in a URL the backslash is not part of the address
-    return { target: stripTrailingPunct(u[0]).replace(/\\([_*~#])/g, "$1"), from, to: from + u[0].length };
+    return { target: stripTrailingPunct(u[0]).replace(CLIP_ESCAPE_RE, "$1"), from, to: from + u[0].length };
   }
   return null;
 }

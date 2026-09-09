@@ -20,7 +20,7 @@ import type { BlockHit, BlockQuery, BlockType, TaskState } from "$lib/api";
 import { fencedCodeText } from "./fenced";
 import { selectionTouches } from "./reveal";
 import { foldRangesOf, insideFold } from "./table";
-import { isClosed, dateFieldLabel, dateIconSvg, dueLabel, localDate } from "$lib/views/tasks";
+import { dateFieldLabel, dateIconSvg, dueLabel, localDate, nextTaskState } from "$lib/views/tasks";
 import { stateField } from "$lib/fields";
 import { dateChip, fieldChip, stateGlyph, stateGlyphSvg, stateTone, tagChip } from "$lib/chips";
 import { type BlockRow, blockRowOf, rowStep, stateSummary } from "$lib/views/blockrow";
@@ -190,7 +190,7 @@ class QueryWidget extends WidgetType {
    *  state is drawn once per row), and the note — unless the words are the note's title
    *  already (a marker line such as `#chapter [status:: unread]`), or the group says
    *  which note. */
-  private rowEl(row: BlockRow, today: string, inNoteGroup: boolean): HTMLElement {
+  private rowEl(row: BlockRow, inNoteGroup: boolean): HTMLElement {
     const host = this.host;
     const el = document.createElement("div");
     el.className = "cm-queryblock-row";
@@ -334,11 +334,11 @@ class QueryWidget extends WidgetType {
             count.textContent = String(g.hits.length);
             summary.append(title, count);
             details.appendChild(summary);
-            for (const hit of g.hits) details.appendChild(this.rowEl(byRow.get(hit)!, today, parsed.group.by === "note"));
+            for (const hit of g.hits) details.appendChild(this.rowEl(byRow.get(hit)!, parsed.group.by === "note"));
             wrap.appendChild(details);
           }
         } else {
-          for (const row of rows) wrap.appendChild(this.rowEl(row, today, false));
+          for (const row of rows) wrap.appendChild(this.rowEl(row, false));
         }
         if (!hits.length) {
           const empty = document.createElement("div");
@@ -355,13 +355,6 @@ class QueryWidget extends WidgetType {
       });
     return blockRoot(wrap);
   }
-}
-
-/** The state a click on a task row's glyph sets: a plain click flips done, ⌥ flips "in
- *  progress" — the same two gestures as the editor's checkbox. */
-export function nextTaskState(state: TaskState, alt: boolean): TaskState {
-  if (alt) return state === "doing" ? "todo" : "doing";
-  return isClosed(state) ? "todo" : "done";
 }
 
 const HEAD_RE = /^\s*(`{3,}|~{3,})\s*vemry-query\s*$/;

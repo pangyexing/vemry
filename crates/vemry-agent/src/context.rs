@@ -336,7 +336,7 @@ fn resolve_view(vault: &Vault, label: &str, query: &serde_json::Value, filtered:
                 vemry_core::TaskState::Cancelled => " [cancelled]",
             });
             if !priority.is_normal() {
-                meta.push_str(&format!(" priority {}", priority.as_str()));
+                meta.push_str(&format!(" priority {}", vemry_core::taskattrs::priority_name(*priority)));
             }
             if let Some(d) = start {
                 meta.push_str(&format!(" start {d}"));

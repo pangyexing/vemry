@@ -39,6 +39,21 @@ export function stateOfChar(ch: string): TaskState {
   return ch === "x" || ch === "X" ? "done" : ch === "/" ? "doing" : ch === "-" ? "cancelled" : "todo";
 }
 
+/** The state of the checkbox a line opens with, or null when it has none — read against
+ *  the same regex the writers use, so a line this accepts is one they can rewrite. */
+export function checkboxState(line: string): TaskState | null {
+  const m = ANY_CHECKBOX_RE.exec(line);
+  return m ? stateOfChar(m[2]) : null;
+}
+
+/** The state a click sets: a plain click flips done (todo or doing → done, done or
+ *  cancelled → todo), ⌥ flips "in progress" (todo or done → doing, doing → todo). The
+ *  editor's checkbox, a query row's glyph and a card all turn on this one rule. */
+export function nextTaskState(state: TaskState, alt = false): TaskState {
+  if (alt) return state === "doing" ? "todo" : "doing";
+  return isClosed(state) ? "todo" : "done";
+}
+
 /* ---------------------------------------------------------------- the attribute table */
 
 export type DateField = "due" | "scheduled" | "start" | "created" | "done" | "cancelled";
@@ -811,8 +826,7 @@ export async function deleteTask(hit: BlockHit): Promise<boolean> {
 export async function toggleTask(hit: BlockHit): Promise<boolean> {
   return writeTaskSpan(hit, (slice) => {
     const m = slice.match(CHECKBOX_RE)!;
-    const next: TaskState = isClosed(stateOfChar(m[2])) ? "todo" : "done";
-    return completeTaskSlice(slice, next, localDate());
+    return completeTaskSlice(slice, nextTaskState(stateOfChar(m[2])), localDate());
   });
 }
 
@@ -1113,4 +1127,10 @@ export function dateFieldLabel(field: DateField): string {
 /** A priority's display name ("urgent" / "important" / "later" / "someday"); normal has none. */
 export function priorityLabel(p: Priority): string {
   return p === "normal" ? "" : t(`task.priority.${p}`);
+}
+
+/** The two priorities a list draws attention to: the ones above the default. Every
+ *  surface that tints a priority chip asks this, so they tint the same two. */
+export function isUrgent(p: Priority): boolean {
+  return p === "highest" || p === "high";
 }
