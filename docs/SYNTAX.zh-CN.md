@@ -141,7 +141,7 @@ author:: Ursula K. Le Guin
 ```
 
 - `[!类型]` 大小写不敏感、类型内不能有空白；后面可跟 `+`/`-` 折叠记号——编辑器里 `-` 打开时默认折叠，`+` 或不写则展开；折叠状态永远不写回文件
-- 识别的类型：`note`/`info`/`todo`/`abstract`/`summary`/`tldr`、`tip`/`hint`/`important`、`success`/`check`/`done`、`question`/`help`/`faq`、`warning`/`caution`/`attention`、`danger`/`error`/`failure`/`fail`/`missing`/`bug`、`example`、`quote`/`cite`，以及 vemry 自有的 `claim`/`decision`/`evidence`
+- 识别的类型：`note`/`info`/`todo`/`abstract`/`summary`/`tldr`、`tip`/`hint`/`important`、`success`/`check`/`done`、`question`/`help`/`faq`、`warning`/`caution`/`attention`、`danger`/`error`/`failure`/`fail`/`missing`/`bug`、`example`、`quote`/`cite`、`card`，以及 vemry 自有的 `claim`/`decision`/`evidence`
 - 不写标题时显示类型名在界面语言里的译名（中文界面下 `[!warning]` 显示为「警告」）；文件里只保留类型
 - `claim`、`evidence`、`private` 进块索引成为独立块类型；`decision` 按 claim 索引（决策就是关于「做什么」的断言：evidence 同样用 `supports:` 支撑它，断言视图也列出它）；其余按段落索引
 - `card` 对解析器而言就是「其余」之一（段落），带 `#card` 标签时对复习视图而言是一张卡片：首行是问题，下面的引用行是答案，排程字段（`due` / `interval` / `ease` / `reviews`）落在最后一行——评分就地改写这些字段，笔记本身就是卡组

@@ -29,16 +29,21 @@
   --diff-del-bg: rgba(185, 28, 28, 0.07);
 
   --mark-bg: rgba(250, 204, 21, 0.35);
-  --co-info: #3b82f6;
+  /* Callout tints. Each is the head's text colour at body size and 600 weight, so
+     every light value clears 4.5:1 on --bg (the lightest, --co-warn, is 4.8:1); the
+     hues keep to the conventional meanings, and the four warm ones (question, warn,
+     danger, claim) are held a step apart in lightness since they sit within 45° of
+     hue. --co-danger is the app's one red and --co-quote the muted ink, by reference */
+  --co-info: #2563eb;
   --co-tip: #457b0e;
-  --co-success: #16a34a;
-  --co-question: #ea580c;
-  --co-warn: #d97706;
-  --co-danger: #dc2626;
-  --co-example: #9333ea;
-  --co-quote: #78716c;
-  --co-claim: #e11d48;
-  --co-evidence: #0891b2;
+  --co-success: #15803d;
+  --co-question: #c2410c;
+  --co-warn: #b45309;
+  --co-danger: var(--danger);
+  --co-example: #7e22ce;
+  --co-quote: var(--fg-muted);
+  --co-claim: #be123c;
+  --co-evidence: #0e7490;
   /* The lab's chart colours (editor/lab.ts, lab/charts.ts). Eight categorical slots
      in a fixed order that clears the colour-vision checks on this surface; one hue
      light→dark for magnitude; two poles around a neutral midpoint for signed values.
@@ -119,14 +124,16 @@
     --diff-add-bg: rgba(56, 178, 163, 0.1);
     --diff-del-bg: rgba(224, 108, 108, 0.09);
     --mark-bg: rgba(250, 204, 21, 0.22);
+    /* every dark tint clears 5.5:1 on --bg; --co-warn is a step yellower than the
+       light theme's amber so it stays apart from question's orange */
     --co-info: #60a5fa;
     --co-tip: #8ccb4d;
     --co-success: #4ade80;
     --co-question: #fb923c;
-    --co-warn: #fbbf24;
-    --co-danger: #f87171;
+    --co-warn: #fcd34d;
+    --co-danger: var(--danger);
     --co-example: #c084fc;
-    --co-quote: #98948b;
+    --co-quote: var(--fg-muted);
     --co-claim: #fb7185;
     --co-evidence: #22d3ee;
     --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
@@ -2283,6 +2290,20 @@ button:focus-visible,
 .md-body .md-co-head {
   color: var(--co-color);
   font-weight: 600;
+}
+/* the same 15px head icon the editor's widget draws (callout.ts) */
+.md-body .md-co-icon {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -3px;
+  margin-right: 6px;
+}
+.md-body .md-co-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.md-body .md-co-quote .md-co-icon {
+  color: var(--co-color);
 }
 .md-body code {
   font-family: var(--font-mono);

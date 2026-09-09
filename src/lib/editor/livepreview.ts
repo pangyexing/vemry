@@ -10,7 +10,6 @@
 // the cursor or selection touches shows its source (block-level markers such as
 // headings and quotes reveal by whole line).
 import { t } from "$lib/i18n/i18n.svelte";
-import { privacyGlyphSvg } from "$lib/privacyGlyph";
 import { CALLOUT_RE, frontmatterEnd } from "./blocks";
 import { syntaxTree } from "@codemirror/language";
 import {
@@ -77,25 +76,9 @@ const tableSrcLine = Decoration.line({ class: "cm-lp-tablesrc" });
 /** The vertical rhythm of a heading line (the space above; the values live in app.css's .cm-lp-h1..h6); the index is the level minus 1 */
 const headingLines = [1, 2, 3, 4, 5, 6].map((n) => Decoration.line({ class: `cm-lp-h${n}` }));
 
-// callout type → colour and icon group (the common alias table plus vemry's
-// claim/evidence)
-// exported: the completion source uses it as the list of callout type candidates
-import { CALLOUT_GROUP, calloutDefaultTitle } from "$lib/callout";
-
-// lucide-style stroke icons (a 24 viewBox)
-const CALLOUT_ICONS: Record<string, string> = {
-  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
-  tip: '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
-  success: '<path d="M20 6 9 17l-5-5"/>',
-  question: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>',
-  warn: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2ZM12 9v4M12 17h.01"/>',
-  danger: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
-  example: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
-  quote: '<path d="M17 6H3M21 12H8M21 18H8"/>',
-  claim: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7"/>',
-  evidence:
-    '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1ZM2 16l3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1ZM7 21h10M12 3v18M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
-};
+// callout type → colour group and head icon: one vocabulary with the read-only
+// renderers (callout.ts), so a `[!tip]` looks the same wherever it appears
+import { CALLOUT_GROUP, calloutDefaultTitle, calloutIconSvg } from "$lib/callout";
 
 interface Entry {
   from: number;
@@ -130,22 +113,22 @@ class CheckboxWidget extends WidgetType {
 
 /** The icon the `[!type]` marker is replaced with; with an empty title the type name stands in as one */
 class CalloutIconWidget extends WidgetType {
-  constructor(readonly group: string, readonly label: string) {
+  constructor(
+    readonly type: string,
+    readonly group: string,
+    readonly label: string,
+  ) {
     super();
   }
   eq(other: CalloutIconWidget) {
-    return other.group === this.group && other.label === this.label;
+    return other.type === this.type && other.group === this.group && other.label === this.label;
   }
   toDOM() {
     const el = document.createElement("span");
     el.className = "cm-lp-co-icon";
-    if (this.group === "private") {
-      // the same struck-out sparkle as every other privacy badge (privacyGlyph.ts)
-      el.innerHTML = privacyGlyphSvg(15);
-      el.title = t("editor.privateBlockHint");
-    } else {
-      el.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CALLOUT_ICONS[this.group] ?? CALLOUT_ICONS.info}</svg>`;
-    }
+    el.innerHTML = calloutIconSvg(this.type, this.group);
+    // the private block's badge explains itself on hover, like every other privacy badge
+    if (this.group === "private") el.title = t("editor.privateBlockHint");
     if (this.label) el.append(this.label);
     return el;
   }
@@ -779,7 +762,8 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
               break;
             }
             // > [!type] title → a callout: the whole block is coloured and the first line is the title line
-            const group = CALLOUT_GROUP[co[3].toLowerCase()] ?? "info";
+            const type = co[3].toLowerCase();
+            const group = CALLOUT_GROUP[type] ?? "info";
             const title = first.text.slice(co[0].length).trim();
             const from = Math.max(n.from, range.from);
             // A private block's tint stops where the index's block stops: privateblock.ts
@@ -803,7 +787,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
                 from: first.from + co[1].length,
                 to: first.from + co[0].length,
                 deco: Decoration.replace({
-                  widget: new CalloutIconWidget(group, title ? "" : calloutDefaultTitle(co[3])),
+                  widget: new CalloutIconWidget(type, group, title ? "" : calloutDefaultTitle(co[3])),
                 }),
               });
             break;
