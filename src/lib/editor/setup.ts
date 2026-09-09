@@ -13,8 +13,8 @@ import { tags } from "@lezer/highlight";
 import { wikilinkExtension, type WikilinkHost } from "./wikilink";
 import { mdlinkExtension } from "./mdlink";
 import { linkAt } from "./linkat";
-import { livePreview, type AssetLoader, type ImageCopier, type FieldChipHandler, type LivePreviewOptions } from "./livepreview";
-import { tagCompletions, calloutCompletions, atCompletions, fieldCompletions, imeCompletionGuard, acceptWithTab } from "./completions";
+import { livePreview, type AssetLoader, type ImageCopier, type FieldChipHandler, type LivePreviewOptions, deleteTaskMarkerBackward } from "./livepreview";
+import { tagCompletions, calloutCompletions, atCompletions, attrIconOption, fieldCompletions, imeCompletionGuard, acceptWithTab } from "./completions";
 import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
 import { embedAt, embedExtension, openEmbedSource, type EmbedHost } from "./embed";
@@ -242,6 +242,8 @@ const continueListTight: Command = (view) =>
 const listKeymap = Prec.high(
   keymap.of([
     { key: "Enter", run: continueListTight },
+    // a task attribute without a value goes as one unit, before the list markup rule sees the key
+    { key: "Backspace", run: deleteTaskMarkerBackward },
     { key: "Backspace", run: deleteMarkupBackward },
   ]),
 );
@@ -276,13 +278,15 @@ function buildState(opts: EditorOptions): EditorState {
         override: [
           refCompletions(host),
           wikilink.completions,
-          atCompletions(host.targets),
+          atCompletions(host.targets, opts.onFieldChip),
           slashCompletions(opts.blockTypes ?? (() => [])),
           fieldCompletions(opts.fieldStats ?? (() => []), opts.blockTypes ?? (() => []), opts.onFieldChip),
           tagCompletions(opts.tags ?? (() => [])),
           calloutCompletions,
         ],
         icons: false,
+        // the `@` palette's task attributes carry their drawn icon
+        addToOptions: [attrIconOption],
         // a picked `@note` chains into the heading/block stage
         activateOnCompletion: (c) => c.type === "chain",
       }),

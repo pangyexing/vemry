@@ -22,8 +22,13 @@
     onpick: (date: string | null) => void;
     /** Cancelled by a click outside or Escape — in the kanban drop usage, cancelling cancels the whole drop and nothing is written */
     onclose: () => void;
+    /** Raised by a keyboard pick (`@due` in the editor, "Pick a date…"): the menu takes
+     *  focus at once — ↑↓ move between the entries and into the date input, Enter picks,
+     *  Escape closes — so the hands never leave the keyboard. A menu raised by a click
+     *  leaves focus where it was */
+    keyboard?: boolean;
   }
-  let { x, y, field, title, current, onpick, onclose }: Props = $props();
+  let { x, y, field, title, current, onpick, onclose, keyboard = false }: Props = $props();
 
   let el = $state<HTMLElement | null>(null);
   /** The landing point: rendered at the raw coordinates first, then pulled inside the
@@ -36,11 +41,25 @@
     });
   });
   const dismiss = dismissOn(() => el, () => onclose());
+  $effect(() => {
+    if (keyboard && el) queueMicrotask(() => el?.querySelector<HTMLElement>("button")?.focus());
+  });
+  /** ↑↓ move the focus through the entries and the date input; inside the input the
+   *  arrows keep their native meaning (stepping the day), Tab leaves it. */
+  function onkeydown(e: KeyboardEvent) {
+    if ((e.key !== "ArrowDown" && e.key !== "ArrowUp") || !el) return;
+    const items = [...el.querySelectorAll<HTMLElement>("button, input")];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    if (at >= 0 && items[at] instanceof HTMLInputElement) return;
+    const next = e.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+    items[next].focus();
+    e.preventDefault();
+  }
 </script>
 
 <svelte:window onpointerdowncapture={dismiss.onpointerdowncapture} onkeydowncapture={dismiss.onkeydowncapture} />
 
-<div class="menu" bind:this={el} style:left="{clamped.x}px" style:top="{clamped.y}px" role="menu" tabindex="-1">
+<div class="menu" bind:this={el} style:left="{clamped.x}px" style:top="{clamped.y}px" role="menu" tabindex="-1" onkeydown={onkeydown}>
   <div class="menu-title">{@html dateIconSvg(field)}{title ?? dateFieldLabel(field)}</div>
   <button role="menuitem" onclick={() => onpick(localDate())}>{t("dateMenu.today")}</button>
   <button role="menuitem" onclick={() => onpick(localDate(1))}>{t("dateMenu.tomorrow")}</button>
@@ -50,6 +69,12 @@
     title={t("dateMenu.pickDate")}
     value={current ?? localDate()}
     onchange={(e) => {
+      const v = e.currentTarget.value;
+      if (v) onpick(v);
+    }}
+    onkeydown={(e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
       const v = e.currentTarget.value;
       if (v) onpick(v);
     }}
@@ -98,8 +123,14 @@
     border-radius: 5px;
     font-size: var(--fs-sm);
   }
-  .menu button:hover {
+  .menu button:hover,
+  .menu button:focus-visible {
     background: var(--bg-hover);
+    outline: none;
+  }
+  .menu input[type="date"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
   }
   .menu button.danger {
     color: var(--danger);

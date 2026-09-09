@@ -20,6 +20,6 @@
     "tools_ok": true,
     "max_tool_calls": 3,
     "tool_output_contains": [ { "id": "u1", "text": "wrote projects/Gateway.md" } ],
-    "note_contains": [ { "path": "projects/Gateway.md", "text": "- [ ] write the load test plan 📅 2026-09-01 ⏳ 2026-09-06 ^g1" } ]
+    "note_contains": [ { "path": "projects/Gateway.md", "text": "- [ ] write the load test plan ⏳ 2026-09-06 📅 2026-09-01 ^g1" } ]
   }
 }

@@ -116,8 +116,8 @@ CommonMark on that.
 - The checkbox is the one truth of the state; the ✅ / ❌ dates only record when.
   Ticking a task writes `✅ today`, `[-]` writes `❌ today`, reopening removes the
   stamp — in the editor, in Agenda, on the board and through the agent alike
-- Every attribute after the text has an emoji spelling and a `key::` spelling. The
-  two read the same; when both are present the emoji wins:
+- Every attribute after the text has an emoji spelling and a bracketed `[key:: value]`
+  spelling. The two read the same:
 
 | Attribute | Emoji | `key::` | Value |
 |---|---|---|---|
@@ -134,9 +134,27 @@ CommonMark on that.
 | Depends on | `⛔` | `dependsOn::` | ids, comma-separated |
 | Estimate | `🕐` | `estimate::` | `30m` `2h` `1d` (a day is 8h) |
 
-- Dates are always `YYYY-MM-DD` (an unpadded month or day is accepted). A marker
-  whose token is not a date is plain text: `⏳ waiting for a reply` is nothing to the
-  parser. The space after an emoji is optional; a `[key:: value]` closes at its bracket
+- The attributes are the line's trailing run, read from the end backwards: an
+  attribute, a `#tag`, a `[key:: value]` field or the `^anchor` continues the run, and
+  the first token that is none of these ends it — everything before is the text, and a
+  `📅` in the text is a word. The same attribute twice in the run reads as the last one.
+  A bare `key:: value` is an ordinary field, not an attribute
+- Dates are `YYYY-MM-DD` exactly. A marker whose token is not a date is plain text:
+  `⏳ waiting for a reply` is nothing to the parser (and, at the end of the line, it
+  ends the run). The space after an emoji is optional, and an emoji glued to the word
+  before it (`写周报📅 2026-09-15`) still opens an attribute; a `[key:: value]` closes
+  at its bracket
+- vemry writes an attribute it adds in this order, the anchor last:
+  `🆔 ⛔ ❗ 🔁 🚮 🕐 ➕ ⏩ ⏳ 📅 ❌ ✅ ^id` — a date set from a menu lands in its place, an
+  existing one is rewritten where it stands, whichever spelling it has. A task
+  created from a view (the board's quick add) carries `➕ today`; a hand-written line
+  may leave it out
+- Typing them: on a task line `@` lists the attributes — `@due` (and `@scheduled`,
+  `@start`) inserts the marker and opens the date menu, `@urgent` … `@someday` a
+  priority, `@every week` a repeat rule, `@estimate 2h`, `@removed once done`, `@id` a
+  fresh id, `@depends on` a `⛔` to paste an id after; `@today` and the other dates
+  insert a due date. After `[priority::`, `[repeat::`, `[estimate::` the completion
+  lists the values. Nothing has to be typed as an emoji
 - Priority: one `❗` is important, two are urgent; one `❕` is later, two are someday;
   without a mark a task is normal. The two are not mixed on one line
 - Repeat: ticking the task writes its next occurrence above it, every date moved by
@@ -148,7 +166,9 @@ CommonMark on that.
 - `🚮`: ticking removes the line; with a repeat, the next occurrence takes its place
 - Depends on: while any listed id belongs to an open task, the task is blocked —
   Agenda greys it and names what it waits on. The id is the task's own, not a block
-  id: `^anchor` addresses a block, `🆔` addresses a task
+  id: `^anchor` addresses a block, `🆔` addresses a task. An id exists only once
+  something needs it: "Copy task id" in a task's menu (Agenda, the board) mints six of
+  `[a-z0-9]`, writes it onto the line and copies it, ready to paste after a `⛔`
 - Spellings other tools write are read as well, and rewritten in place when the line
   is edited: `🛫` as start, `⌛` as scheduled, `🔺 ⏫ 🔼 🔽 ⏬` as priorities, `🏁` as
   removed once done, `priority:: medium` as high. vemry writes the first spelling only
@@ -157,8 +177,15 @@ CommonMark on that.
   query row's checkbox takes too. The attributes draw as chips, each in its tone: a
   start date and a done stamp in the go colour, the scheduled day in the accent, what
   presses — an urgent priority, a lock still shut, an overdue due date — in the danger
-  colour, the rest muted. The cursor's line shows the source; a malformed date is
-  underlined on every line
+  colour, the rest muted. An attribute the cursor touches shows its source for
+  editing — the emoji itself drawn as the icon with the attribute's name (`due`,
+  `repeat`, `priority high`), the value after it plain text. A mark that is one unit — a
+  priority, `🚮`, a marker still waiting for its value (`📅` with the date menu open) —
+  shows as that atom while the cursor sits at it or just past its space, as the bare
+  icon when the cursor is elsewhere, and one Backspace at it removes it whole. What the parser does
+  not read is underlined on every line, with the reason in the tooltip: a malformed
+  date, an attribute in the text rather than the run, the earlier of two of a kind.
+  The emoji spelling on disk is never on screen
 
 **Fallback**: `[ ]` and `[x]` are standard GFM task list items and render as
 checkboxes. `[/]` and `[-]` are not GFM markers (GFM accepts only a space or `x`/`X`),
@@ -224,8 +251,9 @@ whitespace, a digit or the end of the line — so `std::vector`, `C++::foo`,
 - Every block keeps its fields (key, value as written, position); values are
   interpreted by whoever reads them — a date, a number, a `[[link]]`, a list
   `a, b` — not by the parser
-- A task's `due::` / `scheduled::` are ordinary fields as well as task dates;
-  the emoji spellings (`📅` / `⏳` / `⏩` …) are task attributes only
+- A task's bracketed `[due:: …]` / `[scheduled:: …]` is a task date as well as an
+  ordinary field; the bare `due:: …` is a field only, and the emoji spellings
+  (`📅` / `⏳` / `⏩` …) are task attributes only
 - Not scanned inside inline code, `[[wikilinks]]`, fenced code or frontmatter
 - Frontmatter scalars (and `created`) are the note's fields: a field filter
   falls back to them when a block has no field of that key (`title`, `tags`,

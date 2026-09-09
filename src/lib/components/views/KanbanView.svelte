@@ -18,7 +18,9 @@
     taskMenuEntries,
     taskStateIconSvg,
     isClosed,
+    assignTaskId,
     attrIconSvg,
+    newTaskId,
     priorityLabel,
     updateTask,
     type TaskEdit,
@@ -47,6 +49,7 @@
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
   import { toast } from "$lib/stores/toast.svelte";
+  import { copyText } from "$lib/copytext";
   import { loadBucketMap, saveBucket } from "$lib/persist";
   import { noteKey } from "$lib/pickNote";
   // The list sorts by its own contract (cardComparator inside columnsOf), so the order-preserving
@@ -270,10 +273,19 @@
         open: () => void openCard(card),
         editDate: (field, current) => (menu = { mode: "chip", ...at, card, field, current }),
         setState: (state, act) => void applyEdit(card.hit, { state }, act),
+        copyId: () => void copyTaskId(card),
         remove: () => void commit(card.hit, t("task.act.remove"), () => deleteTask(card.hit)),
       }),
       taskKey(card),
     );
+  }
+
+  /** The card's task id to the clipboard — minted and written onto its line first when it
+   *  has none (the same funnel as Agenda's entry). */
+  async function copyTaskId(card: Card) {
+    const id = card.taskId ?? newTaskId();
+    const ok = card.taskId ? true : await commit(card.hit, t("task.act.id"), () => assignTaskId(card.hit, id));
+    if (ok && (await copyText(id))) toast.push(t("task.copiedId", { id }));
   }
 
   // ---- Column collapsing plus the quick-create destination: persisted per vault (persist.ts's

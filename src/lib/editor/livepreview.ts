@@ -13,6 +13,7 @@ import { t } from "$lib/i18n/i18n.svelte";
 import { CALLOUT_RE, frontmatterEnd } from "./blocks";
 import { syntaxTree } from "@codemirror/language";
 import {
+  type Command,
   Decoration,
   type DecorationSet,
   EditorView,
@@ -40,6 +41,10 @@ import {
   parseEstimate,
   type Priority,
   priorityLabel,
+  ATTR_KEY_NAME,
+  isUnitMark,
+  markerGlyphLength,
+  restOffset,
   scanTaskAttrs,
   STAMP_RE,
   stateOfChar,
@@ -93,6 +98,11 @@ const badDateDeco = Decoration.mark({
   class: "cm-lp-baddate",
   attributes: { title: t("editor.badDate") },
 });
+/** A valid attribute the parser does not read: one in the description (the trailing run
+ *  is read from the end of the line), or the earlier of two of a kind (the last counts).
+ *  Underlined with the reason, so a missing chip is never a mystery. */
+const attrOutsideDeco = Decoration.mark({ class: "cm-lp-attr-unread", attributes: { title: t("editor.attrOutside") } });
+const attrDuplicateDeco = Decoration.mark({ class: "cm-lp-attr-unread", attributes: { title: t("editor.attrDuplicate") } });
 const stampDeco = Decoration.mark({ class: "cm-lp-stamp" });
 const quoteLine = Decoration.line({ class: "cm-lp-quote" });
 const codeLine = Decoration.line({ class: "cm-lp-code" });
@@ -223,6 +233,74 @@ class AttrChipWidget extends WidgetType {
   }
 }
 
+/** The emoji of an attribute while its source is being edited (the cursor touches the
+ *  chip, or the attribute is one the parser does not read): the glyph alone is replaced
+ *  by the icon and the attribute's key name — `due`, `repeat`, `priority high` — and the
+ *  value after it stays plain editable text. So the emoji spelling on disk is never on
+ *  screen, and the source reads as words; Backspace over the atom removes the emoji. */
+class MarkerAtomWidget extends WidgetType {
+  constructor(
+    readonly kind: AttrKind,
+    readonly label: string,
+    readonly cls: string,
+    readonly icon: string,
+    readonly onChip?: FieldChipHandler,
+    readonly chipValue = "",
+  ) {
+    super();
+  }
+  eq(other: MarkerAtomWidget) {
+    return other.kind === this.kind && other.label === this.label && other.cls === this.cls && other.chipValue === this.chipValue;
+  }
+  toDOM(view: EditorView) {
+    const el = document.createElement("span");
+    el.className = `cm-lp-attr-atom cm-lp-attr-${this.kind} ${this.cls}${this.onChip ? " cm-lp-chip-click" : ""}`;
+    el.innerHTML = this.icon;
+    el.append(this.label);
+    wireChipClick(el, view, this.onChip, this.kind, this.chipValue);
+    return el;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+/** The atom for a mark's glyph, or null for the bracketed spelling (already words). A
+ *  settable date's atom opens its menu on a click, like its chip. */
+function markerAtom(am: TaskAttrMark, text: string, from: number, onFieldChip?: FieldChipHandler): Entry | null {
+  const n = markerGlyphLength(am.kind, text);
+  if (!n) return null;
+  const p = am.kind === "priority" ? (am.value as Priority) : undefined;
+  const label = p ? `${ATTR_KEY_NAME.priority} ${p}` : ATTR_KEY_NAME[am.kind];
+  const cls = p ? (p === "highest" || p === "high" ? "cm-lp-attr-urgent" : "cm-lp-attr-faint") : "";
+  const onChip = EDIT_FIELDS.includes(am.kind as EditField) ? onFieldChip : undefined;
+  return { from, to: from + n, deco: Decoration.replace({ widget: new MarkerAtomWidget(am.kind, label, cls, attrIconSvg(am.kind, p), onChip, am.date ?? "") }) };
+}
+
+/** Backspace right after a unit mark (`📅 ` awaiting its date, `❗❗ `, `🚮`) — at its end
+ *  or past the one space after it — removes the whole mark and that space in one
+ *  stroke, the way a chip reads as one thing: char by char the emoji would first
+ *  become its atom and then vanish, two keystrokes with nothing visibly deleted by the
+ *  first. A marker with a value is left to the ordinary Backspace, which eats the value
+ *  first. */
+export const deleteTaskMarkerBackward: Command = (view) => {
+  const { state } = view;
+  const sel = state.selection.main;
+  if (!sel.empty) return false;
+  const line = state.doc.lineAt(sel.head);
+  if (!TASK_LINE_RE.test(line.text)) return false;
+  const at0 = line.from + restOffset(line.text);
+  const rest = line.text.slice(at0 - line.from);
+  const caret = sel.head - at0;
+  for (const am of scanTaskAttrs(rest)) {
+    if (!isUnitMark(am) || am.end > caret) continue;
+    if (!/^[ \t]?$/.test(rest.slice(am.end, caret))) continue;
+    view.dispatch({ changes: { from: at0 + am.start, to: sel.head }, userEvent: "delete.backward" });
+    return true;
+  }
+  return false;
+};
+
 /** The text, tone class, tooltip and icon of a non-date attribute chip. */
 function attrChipParts(am: TaskAttrMark): [string, string, string, string] {
   switch (am.kind) {
@@ -252,7 +330,7 @@ function attrChipParts(am: TaskAttrMark): [string, string, string, string] {
 /** A chip's click: the host opens the menu for the field at that position (`pos` is
  *  where the field's source starts; `value` is "" for an empty placeholder; `at` is
  *  where the menu anchors — the click, or the caret for a typed close). */
-export type FieldChipHandler = (view: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }) => void;
+export type FieldChipHandler = (view: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }, opts?: { keyboard?: boolean }) => void;
 
 function wireChipClick(el: HTMLElement, view: EditorView, onChip: FieldChipHandler | undefined, key: string, value: string) {
   if (!onChip) return;
@@ -807,37 +885,78 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
             for (const am of scanTaskAttrs(rest)) {
               const aFrom = node.to + am.start;
               const aTo = node.to + am.end;
-              if (am.kind in DATE_FIELDS) {
-                if (am.date === null) {
-                  // A malformed date (starting with a digit, or an explicit attr::): the
-                  // parser ignores it silently and the task vanishes from Agenda with
-                  // nothing to see — so a warning is drawn (on the cursor's line too: a
-                  // typo should be visible the moment it is made). A decorative emoji (⏳
-                  // and the like) draws no warning: the parser is just as silent about
-                  // it, and a warning would only be a false alarm
-                  if (am.attempted) marks.push({ from: aFrom, to: aTo, deco: badDateDeco });
+              // Wherever the source is on screen — the cursor in the chip, an attribute
+              // the parser does not read, a malformed value — the emoji glyph itself is
+              // still drawn as the icon with the attribute's name (markerAtom); only the
+              // value is raw text
+              const atom = () => {
+                const a = markerAtom(am, rest.slice(am.start, am.end), aFrom, opts.onFieldChip);
+                if (a) hides.push(a);
+              };
+              // A unit mark (a priority, 🚮, a marker still without its value) counts the
+              // one space after it as its own: the cursor just past that space is at the
+              // mark, the atom shows, and Backspace there takes the whole mark
+              // (deleteTaskMarkerBackward) — otherwise the mark would flip between chip
+              // and atom as the cursor crosses an invisible space
+              const revealed = revealedEl(aFrom, isUnitMark(am) && rest[am.end] === " " ? aTo + 1 : aTo);
+              if (!am.valid) {
+                // A marker with nothing after it yet — the `📅 ` an `@due` pick leaves
+                // while its date menu is open, a `⛔ ` awaiting the id to paste — draws as
+                // the bare chip, the icon alone; a date's bare chip opens its menu like a
+                // full one
+                if (am.value === "" && am.kind !== "priority" && am.kind !== "delete") {
+                  if (revealed) {
+                    atom();
+                    continue;
+                  }
+                  const isDate = am.kind in DATE_FIELDS;
+                  const onChip = isDate && EDIT_FIELDS.includes(am.kind as EditField) ? opts.onFieldChip : undefined;
+                  const title = isDate ? dateFieldLabel(am.kind as DateField) : attrChipParts(am)[2];
+                  hides.push({ from: aFrom, to: aTo, deco: Decoration.replace({ widget: new AttrChipWidget(am.kind, "", "", title, attrIconSvg(am.kind), onChip, "") }) });
                   continue;
                 }
+                // A malformed date (starting with a digit, or the explicit `[key:: …]`
+                // syntax): the parser ignores it silently and the task vanishes from
+                // Agenda with nothing to see — so a warning is drawn (on the cursor's
+                // line too: a typo should be visible the moment it is made). A decorative
+                // emoji (⏳ and the like) draws no warning: the parser is just as silent
+                // about it, and a warning would only be a false alarm
+                if (am.attempted) {
+                  atom();
+                  marks.push({ from: aFrom, to: aTo, deco: badDateDeco });
+                }
+                continue;
+              }
+              if (!am.active) {
                 // Only the winner the parser actually read renders a chip (looking
-                // exactly like Agenda's); a valid date that is not the winner is ordinary
-                // text, and a chip there would misreport the index. The source is only
-                // shown for editing when the cursor touches the chip's range (clicking a
-                // chip folds to its boundary)
-                if (!am.active || revealedEl(aFrom, aTo)) continue;
+                // exactly like Agenda's); a valid attribute it does not read — one in
+                // the description, or the earlier of two of a kind — is ordinary text,
+                // and a chip there would misreport the index, so it is underlined with
+                // the reason instead
+                atom();
+                marks.push({ from: aFrom, to: aTo, deco: am.tail ? attrDuplicateDeco : attrOutsideDeco });
+                continue;
+              }
+              // The source is only shown for editing when the cursor touches the chip's
+              // range (clicking a chip folds to its boundary)
+              if (revealed) {
+                atom();
+                continue;
+              }
+              if (am.kind in DATE_FIELDS) {
                 const field = am.kind as DateField;
-                const overdue = field === "due" && !closed && am.date < today;
+                const overdue = field === "due" && !closed && am.date! < today;
                 // the dates a person sets open their menu on a click; a stamp does not
                 const onChip = EDIT_FIELDS.includes(field as EditField) ? opts.onFieldChip : undefined;
                 hides.push({
                   from: aFrom,
                   to: aTo,
                   deco: Decoration.replace({
-                    widget: new AttrChipWidget(field, am.date, overdue ? "cm-lp-datechip-overdue" : "", dateFieldLabel(field), attrIconSvg(field), onChip, am.date),
+                    widget: new AttrChipWidget(field, am.date!, overdue ? "cm-lp-datechip-overdue" : "", dateFieldLabel(field), attrIconSvg(field), onChip, am.date!),
                   }),
                 });
                 continue;
               }
-              if (!am.active || revealedEl(aFrom, aTo)) continue;
               const [text, cls, title, icon] = attrChipParts(am);
               hides.push({ from: aFrom, to: aTo, deco: Decoration.replace({ widget: new AttrChipWidget(am.kind, text, cls, title, icon) }) });
             }

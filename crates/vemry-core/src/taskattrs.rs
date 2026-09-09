@@ -1,56 +1,131 @@
 //! The attributes a task line carries after its text, and how they are read.
 //!
-//! Every attribute has an emoji spelling and a `key::` spelling; both parse to the same
-//! value, and the emoji is read first (a line carrying both takes the emoji's). A few
-//! spellings other tools write are read as well (the "also read" column) so that a
-//! vault written elsewhere opens as is; vemry itself writes the first spelling only.
-//! The frontend mirrors this table in `views/tasks.ts` (TASK_ATTRS) for the editor's
-//! chips and the views' rewrites — change the two together.
+//! Every attribute has an emoji spelling and a bracketed `[key:: value]` spelling; both
+//! parse to the same value. The attributes are the line's trailing run: read from the
+//! end backwards, a token that is an attribute, a `#tag`, a `[key:: value]` field or the
+//! `^anchor` continues the run, and the first token that is none of these ends it —
+//! everything before is the description, and a `📅` in the description is a word.
+//! Within the run the same attribute twice reads as the last one (the editor underlines
+//! the other). An attribute vemry adds to a line goes into the order of `AttrKind`'s
+//! declaration — id, depends on, priority, repeat, removed once done, estimate,
+//! created, start, scheduled, due, cancelled, done — and the anchor stays last.
+//! The frontend mirrors this file in `views/tasks.ts` (scanTaskAttrs, insertAttr) for
+//! the editor's chips and the views' rewrites — change the two together.
 //!
-//! | attribute        | emoji | also read      | key::          | value                                   |
-//! |------------------|-------|----------------|----------------|-----------------------------------------|
-//! | due              | 📅    |                | `due::`        | `YYYY-MM-DD`                            |
-//! | scheduled        | ⏳    | ⌛             | `scheduled::`  | `YYYY-MM-DD`                            |
-//! | start            | ⏩    | 🛫             | `start::`      | `YYYY-MM-DD`                            |
-//! | created          | ➕    |                | `created::`    | `YYYY-MM-DD`                            |
-//! | done             | ✅    |                | `completion::` | `YYYY-MM-DD`                            |
-//! | cancelled        | ❌    |                | `cancelled::`  | `YYYY-MM-DD`                            |
-//! | priority         | ❗❗ ❗ ❕ ❕❕ | 🔺 ⏫ 🔼 🔽 ⏬ | `priority::` | `highest` `high` `low` `lowest` (`medium` reads as high) |
-//! | repeat           | 🔁    |                | `repeat::`     | the rule's text, see `repeat.rs`         |
-//! | delete when done | 🚮    | 🏁             | `onCompletion::` | `delete` / `keep`                     |
-//! | id               | 🆔    |                | `id::`         | one token                               |
-//! | depends on       | ⛔    |                | `dependsOn::`  | ids, comma-separated                    |
-//! | estimate         | 🕐    |                | `estimate::`   | `30m` `2h` `1d` (`d` = 8h)              |
+//! | attribute        | emoji | `[key:: v]`      | value                                   |
+//! |------------------|-------|------------------|-----------------------------------------|
+//! | id               | 🆔    | `id::`           | one token                               |
+//! | depends on       | ⛔    | `dependsOn::`    | ids, comma-separated                    |
+//! | priority         | ❗❗ ❗ ❕ ❕❕ | `priority::` | `highest` `high` `low` `lowest`   |
+//! | repeat           | 🔁    | `repeat::`       | the rule's text, see `repeat.rs`        |
+//! | delete when done | 🚮    | `onCompletion::` | `delete`                                |
+//! | estimate         | 🕐    | `estimate::`     | `30m` `2h` `1d` (`d` = 8h)              |
+//! | created          | ➕    | `created::`      | `YYYY-MM-DD`                            |
+//! | start            | ⏩    | `start::`        | `YYYY-MM-DD`                            |
+//! | scheduled        | ⏳    | `scheduled::`    | `YYYY-MM-DD`                            |
+//! | due              | 📅    | `due::`          | `YYYY-MM-DD`                            |
+//! | cancelled        | ❌    | `cancelled::`    | `YYYY-MM-DD`                            |
+//! | done             | ✅    | `completion::`   | `YYYY-MM-DD`                            |
 //!
-//! Reading rules, the same for every attribute: U+FE0F variation selectors are stripped
-//! first; a date is `YYYY-MM-DD` (an unpadded month or day accepted) and the first
-//! spelling that carries a valid date wins; a marker whose token is not a date is plain
-//! text (a decorative `⏳ waiting` is nothing to the parser); the space between an emoji
-//! and its value is optional; a `[key:: value]` closes at its bracket; a repeat rule's
-//! text runs until the next attribute, field, tag or anchor.
+//! Reading rules, the same for every attribute: a U+FE0F after an emoji is ignored; a
+//! date is `YYYY-MM-DD` exactly; a marker whose token is not a value (`⏳ waiting`) is
+//! text; the space between an emoji and its value is optional, and an emoji glued to
+//! the word before it (`写周报📅 …`) still opens an attribute; a bare `key:: value` is an
+//! ordinary field, not an attribute; a repeat rule's text runs to the next attribute,
+//! field, tag or anchor. The second and later entries of `AttrKind::emoji` and the
+//! `medium` priority word are read as well; nothing writes them, and they are test
+//! material rather than a promise.
 
 use crate::block::{BlockKind, Priority, TaskState};
 use crate::parser::scan_fields;
 use chrono::NaiveDate;
+use std::ops::Range;
 
-/// The spellings of each date attribute, in read order (the written form first).
-pub const DUE_MARKERS: &[&str] = &["📅", "due::"];
-pub const SCHEDULED_MARKERS: &[&str] = &["⏳", "⌛", "scheduled::"];
-pub const START_MARKERS: &[&str] = &["⏩", "🛫", "start::"];
-pub const CREATED_MARKERS: &[&str] = &["➕", "created::"];
-pub const DONE_MARKERS: &[&str] = &["✅", "completion::"];
-pub const CANCELLED_MARKERS: &[&str] = &["❌", "cancelled::"];
+/// The attributes, in the order vemry writes them onto a line (`Ord` is that order).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AttrKind {
+    Id,
+    Depends,
+    Priority,
+    Repeat,
+    Delete,
+    Estimate,
+    Created,
+    Start,
+    Scheduled,
+    Due,
+    Cancelled,
+    Done,
+}
 
-/// Every emoji that opens an attribute: where a repeat rule's text stops, and what
-/// `taskText` strips for display.
+impl AttrKind {
+    pub const ALL: [AttrKind; 12] = [
+        AttrKind::Id,
+        AttrKind::Depends,
+        AttrKind::Priority,
+        AttrKind::Repeat,
+        AttrKind::Delete,
+        AttrKind::Estimate,
+        AttrKind::Created,
+        AttrKind::Start,
+        AttrKind::Scheduled,
+        AttrKind::Due,
+        AttrKind::Cancelled,
+        AttrKind::Done,
+    ];
+    const DATES: [AttrKind; 6] = [AttrKind::Created, AttrKind::Start, AttrKind::Scheduled, AttrKind::Due, AttrKind::Cancelled, AttrKind::Done];
+
+    /// The emoji spellings: the first is the one written, the rest are read as well.
+    pub fn emoji(self) -> &'static [&'static str] {
+        match self {
+            AttrKind::Id => &["🆔"],
+            AttrKind::Depends => &["⛔"],
+            AttrKind::Priority => &["❗", "❕", "🔺", "⏫", "🔼", "🔽", "⏬"],
+            AttrKind::Repeat => &["🔁"],
+            AttrKind::Delete => &["🚮", "🏁"],
+            AttrKind::Estimate => &["🕐"],
+            AttrKind::Created => &["➕"],
+            AttrKind::Start => &["⏩", "🛫"],
+            AttrKind::Scheduled => &["⏳", "⌛"],
+            AttrKind::Due => &["📅"],
+            AttrKind::Cancelled => &["❌"],
+            AttrKind::Done => &["✅"],
+        }
+    }
+
+    /// The `key::` name, lowercase (`completion` for the done date).
+    pub fn key(self) -> &'static str {
+        match self {
+            AttrKind::Id => "id",
+            AttrKind::Depends => "dependson",
+            AttrKind::Priority => "priority",
+            AttrKind::Repeat => "repeat",
+            AttrKind::Delete => "oncompletion",
+            AttrKind::Estimate => "estimate",
+            AttrKind::Created => "created",
+            AttrKind::Start => "start",
+            AttrKind::Scheduled => "scheduled",
+            AttrKind::Due => "due",
+            AttrKind::Cancelled => "cancelled",
+            AttrKind::Done => "completion",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<AttrKind> {
+        let lower = key.to_ascii_lowercase();
+        AttrKind::ALL.into_iter().find(|k| k.key() == lower)
+    }
+
+    pub fn is_date(self) -> bool {
+        AttrKind::DATES.contains(&self)
+    }
+}
+
+/// Every emoji that opens an attribute: where a token splits, and where a repeat
+/// rule's text stops.
 pub const EMOJI_MARKERS: &[&str] = &[
     "📅", "⏳", "⌛", "⏩", "🛫", "➕", "✅", "❌", "❗", "❕", "🔺", "⏫", "🔼", "🔽", "⏬", "🔁", "🚮", "🏁", "🆔", "⛔", "🕐",
 ];
-
-/// The `key::` names that are task attributes: a field chip is not drawn for them on a
-/// task line, and `set_block_field` routes the dates to `reschedule_line`.
-pub const ATTR_KEYS: &[&str] =
-    &["due", "scheduled", "start", "created", "completion", "cancelled", "priority", "repeat", "oncompletion", "id", "dependson", "estimate"];
 
 /// Minutes in an estimate's `d`: a working day.
 pub const DAY_MINUTES: u32 = 8 * 60;
@@ -117,25 +192,36 @@ impl TaskAttrs {
     }
 }
 
+/// One attribute occurrence on a line, as the scanner found it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttrMark {
+    pub kind: AttrKind,
+    /// Byte range within the scanned text: the marker through its value, a bracketed
+    /// field with its brackets.
+    pub span: Range<usize>,
+    /// The value as read: a date as written, a priority word, a rule's text, an id, ids
+    /// joined by `,`, an estimate token; empty for 🚮.
+    pub value: String,
+    /// The value reads: a real date, a priority word, a duration, a non-empty id or rule.
+    pub valid: bool,
+    /// In the trailing run, where an attribute counts (implies `valid`).
+    pub tail: bool,
+    /// What the parser reads: in the tail, and the last of its kind there.
+    pub active: bool,
+}
+
 /// Without U+FE0F: an emoji typed with the variation selector reads as the bare one.
 pub fn strip_vs16(s: &str) -> String {
     s.chars().filter(|&c| c != '\u{FE0F}').collect()
 }
 
-/// The date after the first of `markers` that carries one: the token after the marker
-/// (up to whitespace or a closing bracket) as `%Y-%m-%d`. Emoji before `key::` is the
-/// order of the tables above.
-pub fn date_attr(text: &str, markers: &[&str]) -> Option<NaiveDate> {
-    for marker in markers {
-        if let Some(p) = text.find(marker) {
-            let after = text[p + marker.len()..].trim_start();
-            let token: String = after.chars().take_while(|c| !c.is_whitespace() && *c != ']' && *c != ')').collect();
-            if let Ok(d) = NaiveDate::parse_from_str(&token, "%Y-%m-%d") {
-                return Some(d);
-            }
-        }
+/// `YYYY-MM-DD` exactly, and a real calendar date.
+pub fn parse_date(s: &str) -> Option<NaiveDate> {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' || !b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) {
+        return None;
     }
-    None
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
 }
 
 /// A token that is a priority by itself.
@@ -169,6 +255,17 @@ pub fn priority_word(s: &str) -> Option<Priority> {
         "low" => Some(Priority::Low),
         "lowest" => Some(Priority::Lowest),
         _ => None,
+    }
+}
+
+/// The word of a priority, as `priority::` writes it.
+pub fn priority_name(p: Priority) -> &'static str {
+    match p {
+        Priority::Highest => "highest",
+        Priority::High => "high",
+        Priority::Normal => "normal",
+        Priority::Low => "low",
+        Priority::Lowest => "lowest",
     }
 }
 
@@ -225,125 +322,231 @@ fn split_ids(s: &str) -> Vec<String> {
     s.split([',', ' ', '\t']).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect()
 }
 
-/// A token that ends a repeat rule's text: the next attribute, a field, a tag or an anchor.
+/// A token that ends a repeat rule's text and that a marker takes no value from: the
+/// next attribute, a field, a tag or an anchor.
 fn is_stop(tok: &str) -> bool {
-    EMOJI_MARKERS.iter().any(|m| tok.starts_with(m)) || tok.starts_with(['[', '(', '^', '#']) || tok.contains("::")
+    let bare = strip_vs16(tok);
+    starts_marker(&bare) || bare.starts_with(['[', '(', '^', '#']) || bare.contains("::")
+}
+
+fn starts_marker(s: &str) -> bool {
+    EMOJI_MARKERS.iter().any(|m| s.starts_with(m))
+}
+
+/// A `key::` or emoji value read for a kind: (the value kept, whether it reads).
+fn read_value(kind: AttrKind, raw: &str) -> (String, bool) {
+    let raw = raw.trim();
+    if kind.is_date() {
+        return (raw.to_string(), parse_date(raw).is_some());
+    }
+    match kind {
+        AttrKind::Created | AttrKind::Start | AttrKind::Scheduled | AttrKind::Due | AttrKind::Cancelled | AttrKind::Done => unreachable!(),
+        AttrKind::Priority => match priority_word(raw) {
+            Some(p) if p != Priority::Normal => (priority_name(p).to_string(), true),
+            _ => (raw.to_string(), false),
+        },
+        AttrKind::Repeat => (raw.to_string(), !raw.is_empty()),
+        AttrKind::Delete => (String::new(), raw.eq_ignore_ascii_case("delete")),
+        AttrKind::Id => (raw.to_string(), !raw.is_empty() && !raw.contains(char::is_whitespace)),
+        AttrKind::Depends => {
+            let ids = split_ids(raw);
+            (ids.join(","), !ids.is_empty())
+        }
+        AttrKind::Estimate => (raw.to_string(), parse_estimate(raw).is_some()),
+    }
+}
+
+struct Tok<'a> {
+    text: &'a str,
+    at: usize,
+}
+
+/// `❗❗`: a second mark right after the same one (a U+FE0F between them ignored)
+/// continues the first rather than opening a new token.
+fn same_mark_run(text: &str, start: usize, at: usize) -> bool {
+    let c = text[at..].chars().next().unwrap_or(' ');
+    (c == '❗' || c == '❕') && text[start..at].chars().rev().find(|&x| x != '\u{FE0F}') == Some(c)
+}
+
+/// Whitespace-separated tokens, each split again where an attribute emoji starts
+/// inside it (`写周报📅` is a word and a marker), so a marker needs no space before it.
+fn tokenize(text: &str) -> Vec<Tok<'_>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        let c = text[i..].chars().next().unwrap();
+        if c.is_whitespace() {
+            i += c.len_utf8();
+            continue;
+        }
+        let end = text[i..].find(char::is_whitespace).map(|e| i + e).unwrap_or(text.len());
+        let mut start = i;
+        let mut j = i;
+        while j < end {
+            if j > start && starts_marker(&text[j..end]) && !same_mark_run(text, start, j) {
+                out.push(Tok { text: &text[start..j], at: start });
+                start = j;
+            }
+            j += text[j..].chars().next().unwrap().len_utf8();
+        }
+        out.push(Tok { text: &text[start..end], at: start });
+        i = end;
+    }
+    out
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Unit {
+    /// A word of the description: ends the trailing run.
+    Plain,
+    /// A tag, a field, the anchor, or a marker with nothing after it yet (`📅` awaiting
+    /// its date from the menu): the run continues through it.
+    Through,
+    /// An attribute that reads.
+    Attr,
+}
+
+/// Every attribute occurrence of a task line's text (the part after the checkbox), in
+/// line order, with the trailing run and the winners marked.
+pub fn scan_task_attrs(text: &str) -> Vec<AttrMark> {
+    let toks = tokenize(text);
+    let fields = scan_fields(text, 0);
+    // anchor_start is the offset of the space before the caret; the token starts at the caret
+    let anchor_caret = crate::blockid::anchor_start(text).map(|a| a + (text[a..].len() - text[a..].trim_start_matches([' ', '\t']).len()));
+    let mut marks: Vec<AttrMark> = Vec::new();
+    let mut mark_unit: Vec<usize> = Vec::new();
+    let mut units: Vec<Unit> = Vec::new();
+    let tok_end = |i: usize| toks[i].at + toks[i].text.len();
+    // A marker's value: the rest of its token, or the next token when that is not a stop.
+    let value_of = |i: usize, marker: &str| -> Option<(String, usize, usize)> {
+        let bare = strip_vs16(toks[i].text);
+        let rem = bare.strip_prefix(marker)?;
+        if !rem.is_empty() {
+            return Some((rem.to_string(), i + 1, tok_end(i)));
+        }
+        match toks.get(i + 1) {
+            Some(next) if !is_stop(next.text) => Some((strip_vs16(next.text), i + 2, tok_end(i + 1))),
+            _ => Some((String::new(), i + 1, tok_end(i))),
+        }
+    };
+    let mut push = |marks: &mut Vec<AttrMark>, units: &mut Vec<Unit>, kind: AttrKind, span: Range<usize>, raw: &str| {
+        let (value, valid) = read_value(kind, raw);
+        let bare = raw.is_empty();
+        marks.push(AttrMark { kind, span, value, valid, tail: false, active: false });
+        mark_unit.push(units.len());
+        units.push(if valid { Unit::Attr } else if bare { Unit::Through } else { Unit::Plain });
+    };
+    let mut i = 0;
+    while i < toks.len() {
+        let tok = &toks[i];
+        // a field is one unit through its close; the bracketed spelling of an attribute key is that attribute
+        if let Some(f) = fields.iter().find(|f| f.span.start <= tok.at && tok.at < f.span.end) {
+            let bracketed = text[f.span.start..].starts_with(['[', '(']);
+            match AttrKind::from_key(&f.key).filter(|_| bracketed) {
+                Some(kind) => push(&mut marks, &mut units, kind, f.span.clone(), &f.value),
+                None => units.push(Unit::Through),
+            }
+            while i < toks.len() && toks[i].at < f.span.end {
+                i += 1;
+            }
+            continue;
+        }
+        let bare = strip_vs16(tok.text);
+        if let Some(p) = priority_token(&bare) {
+            push(&mut marks, &mut units, AttrKind::Priority, tok.at..tok_end(i), priority_name(p));
+            i += 1;
+            continue;
+        }
+        if let Some((kind, marker)) = AttrKind::DATES.into_iter().find_map(|k| k.emoji().iter().find(|m| bare.starts_with(*m)).map(|m| (k, *m))) {
+            let (v, next, end) = value_of(i, marker).unwrap();
+            push(&mut marks, &mut units, kind, tok.at..end, &v);
+            i = next;
+            continue;
+        }
+        if let Some(rem) = bare.strip_prefix("🔁") {
+            let mut parts: Vec<String> = Vec::new();
+            if !rem.is_empty() {
+                parts.push(rem.to_string());
+            }
+            let mut j = i + 1;
+            let mut end = tok_end(i);
+            while j < toks.len() && !is_stop(toks[j].text) {
+                parts.push(toks[j].text.to_string());
+                end = tok_end(j);
+                j += 1;
+            }
+            push(&mut marks, &mut units, AttrKind::Repeat, tok.at..end, &parts.join(" "));
+            i = j;
+            continue;
+        }
+        if bare == "🚮" {
+            push(&mut marks, &mut units, AttrKind::Delete, tok.at..tok_end(i), "delete");
+            i += 1;
+            continue;
+        }
+        if bare.starts_with("🏁") {
+            let (v, next, end) = value_of(i, "🏁").unwrap();
+            push(&mut marks, &mut units, AttrKind::Delete, tok.at..end, if v.eq_ignore_ascii_case("keep") { "keep" } else { "delete" });
+            i = next;
+            continue;
+        }
+        if let Some((v, next, end)) = value_of(i, "🆔") {
+            push(&mut marks, &mut units, AttrKind::Id, tok.at..end, &v);
+            i = next;
+            continue;
+        }
+        if let Some((v, mut next, mut end)) = value_of(i, "⛔") {
+            let mut ids = split_ids(&v);
+            let mut last = v;
+            // `⛔ a, b`: a trailing comma carries on to the next token
+            while last.ends_with(',') && next < toks.len() && !is_stop(toks[next].text) {
+                last = toks[next].text.to_string();
+                ids.extend(split_ids(&last));
+                end = tok_end(next);
+                next += 1;
+            }
+            push(&mut marks, &mut units, AttrKind::Depends, tok.at..end, &ids.join(","));
+            i = next;
+            continue;
+        }
+        if let Some((v, next, end)) = value_of(i, "🕐") {
+            push(&mut marks, &mut units, AttrKind::Estimate, tok.at..end, &v);
+            i = next;
+            continue;
+        }
+        let through = (bare.starts_with('#') && bare.len() > 1) || anchor_caret == Some(tok.at);
+        units.push(if through { Unit::Through } else { Unit::Plain });
+        i += 1;
+    }
+    let tail_start = units.iter().rposition(|u| *u == Unit::Plain).map(|p| p + 1).unwrap_or(0);
+    let mut seen: Vec<AttrKind> = Vec::new();
+    for (idx, m) in marks.iter_mut().enumerate().rev() {
+        m.tail = m.valid && mark_unit[idx] >= tail_start;
+        m.active = m.tail && !seen.contains(&m.kind);
+        if m.active {
+            seen.push(m.kind);
+        }
+    }
+    marks
 }
 
 /// Read every attribute of a task line's text (the part after the checkbox).
 pub fn parse_task_attrs(rest: &str) -> TaskAttrs {
-    let text = strip_vs16(rest);
-    let mut a = TaskAttrs {
-        due: date_attr(&text, DUE_MARKERS),
-        scheduled: date_attr(&text, SCHEDULED_MARKERS),
-        start: date_attr(&text, START_MARKERS),
-        created: date_attr(&text, CREATED_MARKERS),
-        done: date_attr(&text, DONE_MARKERS),
-        cancelled: date_attr(&text, CANCELLED_MARKERS),
-        ..Default::default()
-    };
-
-    // The emoji spellings, token by token. A value glued to its emoji (`🕐45m`) is the
-    // same as a spaced one; a marker's value is the rest of its token or the next token.
-    let tokens: Vec<&str> = text.split_whitespace().collect();
-    let value_of = |i: usize, marker: &str| -> Option<(String, usize)> {
-        let rem = tokens[i].strip_prefix(marker)?;
-        if !rem.is_empty() {
-            return Some((rem.to_string(), i + 1));
-        }
-        match tokens.get(i + 1) {
-            Some(next) if !is_stop(next) => Some((next.to_string(), i + 2)),
-            _ => Some((String::new(), i + 1)),
-        }
-    };
-    let mut i = 0;
-    while i < tokens.len() {
-        let tok = tokens[i];
-        if a.priority == Priority::Normal {
-            if let Some(p) = priority_token(tok) {
-                a.priority = p;
-                i += 1;
-                continue;
-            }
-        }
-        if a.repeat.is_none() && tok.starts_with("🔁") {
-            let mut parts: Vec<&str> = Vec::new();
-            let rem = &tok["🔁".len()..];
-            if !rem.is_empty() {
-                parts.push(rem);
-            }
-            let mut j = i + 1;
-            while j < tokens.len() && !is_stop(tokens[j]) {
-                parts.push(tokens[j]);
-                j += 1;
-            }
-            let rule = parts.join(" ");
-            if !rule.is_empty() {
-                a.repeat = Some(rule);
-            }
-            i = j;
-            continue;
-        }
-        if tok == "🚮" {
-            a.delete_on_done = true;
-            i += 1;
-            continue;
-        }
-        if tok.starts_with("🏁") {
-            let (v, next) = value_of(i, "🏁").unwrap_or_default();
-            a.delete_on_done = !v.eq_ignore_ascii_case("keep");
-            i = next.max(i + 1);
-            continue;
-        }
-        if a.task_id.is_none() {
-            if let Some((v, next)) = value_of(i, "🆔") {
-                if !v.is_empty() {
-                    a.task_id = Some(v);
-                }
-                i = next;
-                continue;
-            }
-        }
-        if a.depends_on.is_empty() {
-            if let Some((v, mut next)) = value_of(i, "⛔") {
-                let mut ids = split_ids(&v);
-                let mut last = v;
-                // `⛔ a, b`: a trailing comma carries on to the next token
-                while last.ends_with(',') && next < tokens.len() && !is_stop(tokens[next]) {
-                    last = tokens[next].to_string();
-                    ids.extend(split_ids(&last));
-                    next += 1;
-                }
-                a.depends_on = ids;
-                i = next;
-                continue;
-            }
-        }
-        if a.estimate.is_none() {
-            if let Some((v, next)) = value_of(i, "🕐") {
-                a.estimate = parse_estimate(&v);
-                i = next;
-                continue;
-            }
-        }
-        i += 1;
-    }
-
-    // The `key::` spellings fill what no emoji set (the dates were read both ways above)
-    for f in scan_fields(&text, 0) {
-        let value = f.value.trim();
-        match f.key.to_ascii_lowercase().as_str() {
-            "priority" if a.priority == Priority::Normal => {
-                if let Some(p) = priority_word(value) {
-                    a.priority = p;
-                }
-            }
-            "repeat" if a.repeat.is_none() && !value.is_empty() => a.repeat = Some(value.to_string()),
-            "oncompletion" if !a.delete_on_done => a.delete_on_done = value.eq_ignore_ascii_case("delete"),
-            "id" if a.task_id.is_none() && !value.is_empty() => a.task_id = Some(value.to_string()),
-            "dependson" if a.depends_on.is_empty() => a.depends_on = split_ids(value),
-            "estimate" if a.estimate.is_none() => a.estimate = parse_estimate(value),
-            _ => {}
+    let mut a = TaskAttrs::default();
+    for m in scan_task_attrs(rest).into_iter().filter(|m| m.active) {
+        match m.kind {
+            AttrKind::Due => a.due = parse_date(&m.value),
+            AttrKind::Scheduled => a.scheduled = parse_date(&m.value),
+            AttrKind::Start => a.start = parse_date(&m.value),
+            AttrKind::Created => a.created = parse_date(&m.value),
+            AttrKind::Done => a.done = parse_date(&m.value),
+            AttrKind::Cancelled => a.cancelled = parse_date(&m.value),
+            AttrKind::Priority => a.priority = priority_word(&m.value).unwrap_or_default(),
+            AttrKind::Repeat => a.repeat = Some(m.value),
+            AttrKind::Delete => a.delete_on_done = true,
+            AttrKind::Id => a.task_id = Some(m.value),
+            AttrKind::Depends => a.depends_on = m.value.split(',').map(str::to_string).collect(),
+            AttrKind::Estimate => a.estimate = parse_estimate(&m.value),
         }
     }
     a
@@ -371,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn the_key_spellings_read_the_same() {
+    fn the_bracketed_key_spellings_read_the_same_and_the_bare_one_is_a_field() {
         let a = parse_task_attrs("x [id:: scan01] [priority:: high] [repeat:: every week] [estimate:: 45m] [start:: 2026-09-10] [scheduled:: 2026-09-12] [due:: 2026-09-15] [onCompletion:: delete] [dependsOn:: a, b]");
         assert_eq!(a.task_id.as_deref(), Some("scan01"));
         assert_eq!(a.priority, Priority::High);
@@ -382,27 +585,28 @@ mod tests {
         assert_eq!(a.due, d("2026-09-15"));
         assert!(a.delete_on_done);
         assert_eq!(a.depends_on, vec!["a", "b"]);
-        // the bare spelling reads one token, and the unbracketed date reads too
-        let b = parse_task_attrs("x due::2026-8-5 priority:: lowest");
-        assert_eq!(b.due, d("2026-08-05"));
-        assert_eq!(b.priority, Priority::Lowest);
+        assert_eq!(parse_task_attrs("x (due:: 2026-09-15)").due, d("2026-09-15"));
+        // a bare `key:: value` is an ordinary field, not an attribute
+        let b = parse_task_attrs("x due:: 2026-09-15 priority:: lowest");
+        assert!(b.due.is_none() && b.priority == Priority::Normal);
     }
 
     #[test]
-    fn priority_steps_and_the_forms_read_for_compatibility() {
+    fn priority_steps_and_the_other_spellings_read() {
         assert_eq!(parse_task_attrs("a ❗❗").priority, Priority::Highest);
         assert_eq!(parse_task_attrs("a ❕").priority, Priority::Low);
         assert_eq!(parse_task_attrs("a ❕❕").priority, Priority::Lowest);
         assert_eq!(parse_task_attrs("a ❗\u{FE0F}").priority, Priority::High);
+        assert_eq!(parse_task_attrs("a ❗\u{FE0F}❗\u{FE0F}").priority, Priority::Highest);
         assert_eq!(parse_task_attrs("a 🔺").priority, Priority::Highest);
         assert_eq!(parse_task_attrs("a 🔼").priority, Priority::High);
         assert_eq!(parse_task_attrs("a ⏬").priority, Priority::Lowest);
         assert_eq!(parse_task_attrs("a [priority:: medium]").priority, Priority::High);
         assert_eq!(parse_task_attrs("a [priority:: 3]").priority, Priority::Normal);
-        let legacy = parse_task_attrs("a 🛫 2026-09-10 ⌛ 2026-09-12 🏁 delete");
-        assert_eq!(legacy.start, d("2026-09-10"));
-        assert_eq!(legacy.scheduled, d("2026-09-12"));
-        assert!(legacy.delete_on_done);
+        let other = parse_task_attrs("a 🛫 2026-09-10 ⌛ 2026-09-12 🏁 delete");
+        assert_eq!(other.start, d("2026-09-10"));
+        assert_eq!(other.scheduled, d("2026-09-12"));
+        assert!(other.delete_on_done);
         assert!(!parse_task_attrs("a 🏁 keep").delete_on_done);
         assert!(parse_task_attrs("a 🚮").delete_on_done);
     }
@@ -443,13 +647,47 @@ mod tests {
     }
 
     #[test]
-    fn a_marker_without_a_date_is_text_and_the_first_valid_one_wins() {
-        let a = parse_task_attrs("a ⏳ waiting for a reply 📅 2026-09-15 due:: 2026-09-16");
-        assert!(a.scheduled.is_none());
+    fn only_the_trailing_run_counts_and_the_last_of_a_kind_wins() {
+        // a marker in the description is a word
+        assert!(parse_task_attrs("call 📅 2026-09-15 about the invoice").due.is_none());
+        assert_eq!(parse_task_attrs("a ❗❗ b").priority, Priority::Normal);
+        // tags, fields and the anchor carry the run through
+        let a = parse_task_attrs("a #t 📅 2026-09-15 [owner:: me] ✅ 2026-09-16 ^k1");
         assert_eq!(a.due, d("2026-09-15"));
+        assert_eq!(a.done, d("2026-09-16"));
+        // the last of a kind wins, whichever spelling
+        let b = parse_task_attrs("a ⏳ waiting for a reply 📅 2026-09-15 [due:: 2026-09-16]");
+        assert!(b.scheduled.is_none());
+        assert_eq!(b.due, d("2026-09-16"));
+        assert_eq!(parse_task_attrs("a 📅 2026-09-15 📅 2026-09-20").due, d("2026-09-20"));
+        // a marker glued to the word before it still opens an attribute
+        assert_eq!(parse_task_attrs("写周报📅 2026-09-15").due, d("2026-09-15"));
+        assert_eq!(parse_task_attrs("买菜❗").priority, Priority::High);
+        // a bad token is a word (and it ends the run)
         assert!(parse_task_attrs("a 📅 2026-02-30").due.is_none());
+        assert!(parse_task_attrs("a 📅 2026-9-5").due.is_none());
+        assert!(parse_task_attrs("a ✅ 2026-09-14 📅 next Friday").done.is_none());
         assert_eq!(parse_task_attrs("a ✅ 2026-09-14 ❌ 2026-09-13").done, d("2026-09-14"));
         assert_eq!(parse_task_attrs("a ✅ 2026-09-14 ❌ 2026-09-13").cancelled, d("2026-09-13"));
         assert_eq!(parse_task_attrs("a ➕ 2026-09-01").created, d("2026-09-01"));
+    }
+
+    #[test]
+    fn the_marks_say_what_was_read_and_what_was_not() {
+        let text = "call 📅 2026-09-15 later ⏳ soon 📅 2026-09-16 📅 2026-09-17";
+        let marks = scan_task_attrs(text);
+        let flags: Vec<(bool, bool, bool)> = marks.iter().map(|m| (m.valid, m.tail, m.active)).collect();
+        // the first is in the description, the ⏳ a bad token (a word), the third a duplicate, the last the winner
+        assert_eq!(flags, vec![(true, false, false), (false, false, false), (true, true, false), (true, true, true)]);
+        assert_eq!(&text[marks[1].span.clone()], "⏳ soon");
+        assert_eq!(&text[marks[3].span.clone()], "📅 2026-09-17");
+        // a bad token at the end ends the run: what stands before it is description
+        assert!(scan_task_attrs("a 📅 2026-09-15 ⏳ soon").iter().all(|m| !m.tail));
+        // a bare marker awaiting its value does not: the attributes before it still read
+        assert_eq!(parse_task_attrs("a ⏳ 2026-09-12 📅").scheduled, d("2026-09-12"));
+        assert_eq!(parse_task_attrs("a 📅 2026-09-15 ⛔ ^k1").due, d("2026-09-15"));
+        let m = scan_task_attrs("x [dependsOn:: a, b] ^k1");
+        assert_eq!((m[0].kind, m[0].value.as_str(), m[0].active), (AttrKind::Depends, "a,b", true));
+        assert_eq!(&"x [dependsOn:: a, b] ^k1"[m[0].span.clone()], "[dependsOn:: a, b]");
     }
 }

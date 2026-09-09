@@ -5,7 +5,9 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
-  import { attrIconSvg, byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, estimateSum, formatEstimate, isBlocked, isClosed, localDate, openIds, priorityLabel, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
+  import { assignTaskId, attrIconSvg, byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, estimateSum, formatEstimate, isBlocked, isClosed, localDate, newTaskId, openIds, priorityLabel, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
+  import { copyText } from "$lib/copytext";
+  import { toast } from "$lib/stores/toast.svelte";
   import { fieldChipsOf } from "$lib/views/blockrow";
   import { stateGlyphSvg, stateTone } from "$lib/chips";
   import { types } from "$lib/stores/types.svelte";
@@ -86,20 +88,24 @@
     void hits;
     return localDate();
   });
-  /** The groups: overdue / today / the next 7 days / later / not started yet / doing / no date / done (cancelled included) */
+  /** The groups: overdue / today / the next 7 days / later / not started yet / doing / no date / done (cancelled included).
+   *  In the default view the three dates cut a task's life into four spans: before the
+   *  start day it is not to be done yet; from the scheduled day to the due day it is
+   *  today's work; past the due day it is overdue; and a task with neither a scheduled
+   *  nor a due day sits by its state. The start day alone places nothing under a date —
+   *  a started task with no other date is simply available. With a date kind pressed
+   *  every task sits by that one date instead. */
   const groups = $derived.by(() => {
     const weekEnd = localDate(7);
     const kind = dateKind;
     const g = { overdue: [] as Row[], today: [] as Row[], week: [] as Row[], later: [] as Row[], future: [] as Row[], doing: [] as Row[], nodate: [] as Row[], done: [] as Row[] };
     for (const r of shown) {
-      const when = whenOf(r, kind);
+      const when = kind ? r[kind] : (r.due ?? r.scheduled);
       if (isClosed(r.state)) g.done.push(r);
-      // A task whose ⏩ start day has not come is not to be done yet, whatever its other
-      // dates say — in the default view only: with a date kind pressed every task sits by that one date
       else if (!kind && r.start && r.start > today) g.future.push(r);
-      else if (when && when < today) g.overdue.push(r);
-      // A task planned for today with ⏳ belongs under "today" even when its due date is later
-      else if (when === today || (!kind && r.scheduled === today)) g.today.push(r);
+      // only a due day passes: a task scheduled last week with no due day is still today's work
+      else if (kind ? when && when < today : r.due && r.due < today) g.overdue.push(r);
+      else if (kind ? when === today : r.due === today || (r.scheduled && r.scheduled <= today)) g.today.push(r);
       else if (when && when <= weekEnd) g.week.push(r);
       else if (when) g.later.push(r);
       else if (r.state === "doing") g.doing.push(r);
@@ -179,10 +185,19 @@
         open: () => void openTask(r.hit),
         editDate: (field, current) => (dateMenu = { ...at, key, hit: r.hit, field, current }),
         setState: (state, act) => void commit(r.hit, act, () => updateTask(r.hit, { state })),
+        copyId: () => void copyTaskId(r),
         remove: () => void commit(r.hit, t("task.act.remove"), () => deleteTask(r.hit)),
       }),
       key,
     );
+  }
+
+  /** The task's id to the clipboard — minted and written onto its line first when it has
+   *  none (what a `⛔` on another task names; an id exists only once something needs it). */
+  async function copyTaskId(r: Row) {
+    const id = r.taskId ?? newTaskId();
+    const ok = r.taskId ? true : await commit(r.hit, t("task.act.id"), () => assignTaskId(r.hit, id));
+    if (ok && (await copyText(id))) toast.push(t("task.copiedId", { id }));
   }
 
   /** Clicking a task jumps to its line. The kanban uses the same vault.openBlockAt — the

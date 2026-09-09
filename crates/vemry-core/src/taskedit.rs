@@ -1,20 +1,19 @@
 //! Line-level rewrites of a task or a block's first line: the checkbox state (with the
-//! ✅ / ❌ stamp a closing state leaves), a date marker (`📅 2026-09-10` /
-//! `due:: 2026-09-10`, and every other date of `taskattrs.rs`) and an inline
-//! `[key:: value]` field. The frontend's `views/tasks.ts` (rescheduleLine, setStateLine,
-//! completeTaskSlice, updateTask) and `fields.ts` (setFieldValue) implement the same
-//! rules for the editor and the task views; this is the agent's copy, so a task the AI
-//! ticks or reschedules lands on disk byte for byte as one the user dragged on the
-//! board. Change the rules in both places together.
+//! ✅ / ❌ stamp a closing state leaves), a date attribute (`📅 2026-09-10` /
+//! `[due:: 2026-09-10]`, and every other date of `taskattrs.rs`) and an inline
+//! `[key:: value]` field. The frontend's `views/tasks.ts` (rescheduleLine, insertAttr,
+//! setStateLine, completeTaskSlice, updateTask) and `fields.ts` (setFieldValue)
+//! implement the same rules for the editor and the task views; this is the agent's
+//! copy, so a task the AI ticks or reschedules lands on disk byte for byte as one the
+//! user dragged on the board. Change the rules in both places together.
 
 use crate::parser::{is_field_key, parse_list_marker, parse_task_line, scan_fields};
 use crate::repeat::next_occurrence;
-use crate::taskattrs::{self, parse_task_attrs};
+use crate::taskattrs::{parse_date, parse_task_attrs, scan_task_attrs, AttrKind};
 use crate::TaskState;
 use chrono::NaiveDate;
 
-/// The date attributes a task line carries, each with its spellings (emoji first: the
-/// parse priority of `taskattrs::date_attr`; the first spelling is the written one).
+/// The date attributes a task line carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DateField {
     Due,
@@ -26,14 +25,14 @@ pub enum DateField {
 }
 
 impl DateField {
-    pub fn markers(self) -> &'static [&'static str] {
+    pub fn kind(self) -> AttrKind {
         match self {
-            DateField::Due => taskattrs::DUE_MARKERS,
-            DateField::Scheduled => taskattrs::SCHEDULED_MARKERS,
-            DateField::Start => taskattrs::START_MARKERS,
-            DateField::Created => taskattrs::CREATED_MARKERS,
-            DateField::Done => taskattrs::DONE_MARKERS,
-            DateField::Cancelled => taskattrs::CANCELLED_MARKERS,
+            DateField::Due => AttrKind::Due,
+            DateField::Scheduled => AttrKind::Scheduled,
+            DateField::Start => AttrKind::Start,
+            DateField::Created => AttrKind::Created,
+            DateField::Done => AttrKind::Done,
+            DateField::Cancelled => AttrKind::Cancelled,
         }
     }
     /// The `key::` name of the field (`completion` for the done date: the spelling other
@@ -51,18 +50,9 @@ impl DateField {
     }
 }
 
-/// `YYYY-M-D` with an unpadded month or day accepted (chrono's `%m`/`%d` do), but a
-/// real calendar date.
+/// `YYYY-MM-DD` exactly, and a real calendar date (the one date spelling a task attribute takes).
 pub fn is_date_token(s: &str) -> bool {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 3 || parts[0].len() != 4 || parts[1].is_empty() || parts[1].len() > 2 || parts[2].is_empty() || parts[2].len() > 2 {
-        return false;
-    }
-    if !parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit())) {
-        return false;
-    }
-    let (y, m, d) = (parts[0].parse::<i32>().ok(), parts[1].parse::<u32>().ok(), parts[2].parse::<u32>().ok());
-    matches!((y, m, d), (Some(y), Some(m), Some(d)) if chrono::NaiveDate::from_ymd_opt(y, m, d).is_some())
+    parse_date(s).is_some()
 }
 
 /// Append `piece` (with its own leading space) to a line before any trailing anchor.
@@ -83,68 +73,60 @@ fn cut(line: &str, from: usize, to: usize) -> String {
     format!("{before}{after}")
 }
 
-/// The next token after `at` (skipping horizontal space), ending at whitespace or at a
-/// closing bracket (a `[key:: value]`'s): (start, end) offsets, possibly empty.
-fn next_token(line: &str, at: usize) -> (usize, usize) {
-    let mut start = at;
-    while line[start..].starts_with([' ', '\t']) {
-        start += 1;
-    }
-    let end = line[start..].find(|c: char| c.is_whitespace() || c == ']' || c == ')').map(|i| start + i).unwrap_or(line.len());
-    (start, end)
+/// Where the scanner's text starts on a line: after the checkbox of a task line, at the
+/// start of any other.
+fn rest_offset(line: &str) -> usize {
+    parse_task_line(line).map(|(_, rest)| line.len() - rest.len()).unwrap_or(0)
 }
 
-/// The bracket pair around a `[key:: value]` occurrence, when the marker sits just
-/// inside one: the widened (from, to) to cut.
-fn widen_to_brackets(line: &str, from: usize, to: usize) -> (usize, usize) {
-    for (open, close) in [('[', ']'), ('(', ')')] {
-        if line[..from].ends_with(open) && line[to..].starts_with(close) {
-            return (from - 1, to + 1);
-        }
+/// Insert a fresh attribute (`piece`, e.g. `📅 2026-09-10`) into the trailing run at
+/// its place in the written order: before the first attribute that comes later in the
+/// order, else at the end of the line before any `^anchor`. The mirror of `insertAttr`.
+pub fn insert_attr(line: &str, kind: AttrKind, piece: &str) -> String {
+    let at0 = rest_offset(line);
+    let marks = scan_task_attrs(&line[at0..]);
+    if let Some(m) = marks.iter().find(|m| m.tail && m.kind > kind) {
+        let at = at0 + m.span.start;
+        return format!("{}{piece} {}", &line[..at], &line[at..]);
     }
-    (from, to)
+    append_before_anchor(line, &format!(" {piece}"))
 }
 
-/// Set, replace or (`None`) remove a task line's date marker, keeping the marker
-/// spelling the user wrote (emoji or `attr::`); a fresh marker is inserted
-/// emoji-style before any trailing `^anchor`. The mirror of `rescheduleLine`.
+/// A marker of `kind` typed at the end of the line with nothing after it (an `@`
+/// palette pick, `📅` awaiting its date): where its value goes.
+fn bare_marker_end(line: &str, kind: AttrKind) -> Option<usize> {
+    let end = crate::blockid::anchor_start(line).unwrap_or(line.len());
+    let body = line[..end].trim_end_matches([' ', '\t']);
+    let stripped = body.trim_end_matches('\u{FE0F}');
+    kind.emoji().iter().any(|e| stripped.ends_with(e)).then_some(body.len())
+}
+
+/// Set, replace or (`None`) remove a task line's date attribute. The attribute the
+/// parser reads (the last of its kind in the trailing run) is rewritten in place, its
+/// spelling kept; a bare marker left at the end of the line is given the date; a
+/// fresh attribute is written emoji-style at its place in the order. Removing takes
+/// every occurrence in the run (a duplicate would otherwise become the date); a marker
+/// in the description is a word and is left alone. The mirror of `rescheduleLine`.
 pub fn reschedule_line(line: &str, field: DateField, date: Option<&str>) -> String {
+    let kind = field.kind();
+    let at0 = rest_offset(line);
+    let marks = scan_task_attrs(&line[at0..]);
     let Some(date) = date else {
-        // Both spellings may be present (the parser falls back from emoji to attr::):
-        // every one carrying a date is removed, or the date would silently move
         let mut out = line.to_string();
-        for marker in field.markers() {
-            let mut pos = 0;
-            while let Some(at) = out[pos..].find(marker) {
-                let start = pos + at;
-                let (ts, te) = next_token(&out, start + marker.len());
-                if is_date_token(&out[ts..te]) {
-                    let (from, to) = if marker.ends_with("::") { widen_to_brackets(&out, start, te) } else { (start, te) };
-                    out = cut(&out, from, to);
-                    // the cut may have trimmed the space before it, leaving the line shorter than `from`
-                    pos = from.min(out.len());
-                } else {
-                    pos = start + marker.len();
-                }
-            }
+        for m in marks.iter().rev().filter(|m| m.tail && m.kind == kind) {
+            out = cut(&out, at0 + m.span.start, at0 + m.span.end);
         }
         return out;
     };
-    // The rewrite lands on the token the parser reads (each marker's first occurrence,
-    // emoji first): a date-shaped token is replaced in place; a bad token gets the
-    // date inserted after the marker and is demoted to ordinary text
-    for marker in field.markers() {
-        let Some(start) = line.find(marker) else { continue };
-        let after_marker = start + marker.len();
-        let (ts, te) = next_token(line, after_marker);
-        if is_date_token(&line[ts..te]) {
-            return format!("{}{date}{}", &line[..ts], &line[te..]);
-        }
-        let sep = if line[after_marker..ts].is_empty() { " " } else { "" };
-        let trail = if ts < te { " " } else { "" };
-        return format!("{}{sep}{date}{trail}{}", &line[..ts], &line[ts..]);
+    if let Some(m) = marks.iter().find(|m| m.active && m.kind == kind) {
+        let (s, e) = (at0 + m.span.start, at0 + m.span.end);
+        let at = s + line[s..e].rfind(&m.value).expect("a date mark carries its value");
+        return format!("{}{date}{}", &line[..at], &line[at + m.value.len()..]);
     }
-    append_before_anchor(line, &format!(" {} {date}", field.markers()[0]))
+    if let Some(at) = bare_marker_end(line, kind) {
+        return format!("{} {date}{}", &line[..at], &line[at..]);
+    }
+    insert_attr(line, kind, &format!("{} {date}", kind.emoji()[0]))
 }
 
 /// Set the checkbox of a task's first line (`[ ]` / `[/]` / `[x]` / `[-]`); a line with
@@ -281,20 +263,36 @@ mod tests {
     #[test]
     fn reschedule_replaces_inserts_and_removes_like_the_frontend() {
         assert_eq!(reschedule_line("- [ ] a 📅 2026-08-01", DateField::Due, Some("2026-09-10")), "- [ ] a 📅 2026-09-10");
-        assert_eq!(reschedule_line("- [ ] a due::2026-8-1 ^k1", DateField::Due, Some("2026-09-10")), "- [ ] a due::2026-09-10 ^k1");
+        assert_eq!(reschedule_line("- [ ] a [due:: 2026-08-01] ^k1", DateField::Due, Some("2026-09-10")), "- [ ] a [due:: 2026-09-10] ^k1");
         assert_eq!(reschedule_line("- [ ] a ^k1", DateField::Due, Some("2026-09-10")), "- [ ] a 📅 2026-09-10 ^k1");
         assert_eq!(reschedule_line("- [ ] a", DateField::Scheduled, Some("2026-09-10")), "- [ ] a ⏳ 2026-09-10");
         assert_eq!(reschedule_line("- [ ] a", DateField::Start, Some("2026-09-10")), "- [ ] a ⏩ 2026-09-10");
-        // a bad token: the date goes after the marker and the token is demoted to text
-        assert_eq!(reschedule_line("- [ ] a 📅 next Friday", DateField::Due, Some("2026-09-10")), "- [ ] a 📅 2026-09-10 next Friday");
-        assert_eq!(reschedule_line("- [ ] a 📅 2026-08-01 due:: 2026-08-02 b", DateField::Due, None), "- [ ] a b");
+        // a marker in the description is a word: the date is written fresh, at the end
+        assert_eq!(reschedule_line("- [ ] a 📅 next Friday", DateField::Due, Some("2026-09-10")), "- [ ] a 📅 next Friday 📅 2026-09-10");
+        assert_eq!(reschedule_line("- [ ] call 📅 2026-08-01 about it", DateField::Due, None), "- [ ] call 📅 2026-08-01 about it");
+        // removing takes every occurrence in the run
+        assert_eq!(reschedule_line("- [ ] a 📅 2026-08-01 [due:: 2026-08-02]", DateField::Due, None), "- [ ] a");
         assert_eq!(reschedule_line("- [ ] a ⏳ 2026-08-01", DateField::Due, None), "- [ ] a ⏳ 2026-08-01");
         // a bracketed field: replaced inside its brackets, removed with them
-        assert_eq!(reschedule_line("- [ ] a [due:: 2026-08-01] b", DateField::Due, Some("2026-09-10")), "- [ ] a [due:: 2026-09-10] b");
-        assert_eq!(reschedule_line("- [ ] a [due:: 2026-08-01] b", DateField::Due, None), "- [ ] a b");
-        // the spellings read for compatibility are rewritten in place too
+        assert_eq!(reschedule_line("- [ ] a [due:: 2026-08-01] #b", DateField::Due, Some("2026-09-10")), "- [ ] a [due:: 2026-09-10] #b");
+        assert_eq!(reschedule_line("- [ ] a [due:: 2026-08-01] #b", DateField::Due, None), "- [ ] a #b");
+        // the other spellings are rewritten in place too
         assert_eq!(reschedule_line("- [ ] a 🛫 2026-08-01", DateField::Start, Some("2026-09-10")), "- [ ] a 🛫 2026-09-10");
-        assert!(is_date_token("2026-9-5") && !is_date_token("2026-02-30") && !is_date_token("tomorrow"));
+        // a bare marker at the end gets its date
+        assert_eq!(reschedule_line("- [ ] a 📅", DateField::Due, Some("2026-09-10")), "- [ ] a 📅 2026-09-10");
+        assert_eq!(reschedule_line("- [ ] a ⏳ ^k1", DateField::Scheduled, Some("2026-09-10")), "- [ ] a ⏳ 2026-09-10 ^k1");
+        assert!(is_date_token("2026-09-05") && !is_date_token("2026-9-5") && !is_date_token("2026-02-30") && !is_date_token("tomorrow"));
+    }
+
+    #[test]
+    fn a_fresh_attribute_lands_in_the_written_order() {
+        assert_eq!(reschedule_line("- [ ] a 📅 2026-09-15 ^k1", DateField::Start, Some("2026-09-10")), "- [ ] a ⏩ 2026-09-10 📅 2026-09-15 ^k1");
+        assert_eq!(reschedule_line("- [ ] a #t 🔁 every week 📅 2026-09-15", DateField::Scheduled, Some("2026-09-12")), "- [ ] a #t 🔁 every week ⏳ 2026-09-12 📅 2026-09-15");
+        assert_eq!(reschedule_line("- [ ] a ⏩ 2026-09-10 📅 2026-09-15", DateField::Created, Some("2026-09-01")), "- [ ] a ➕ 2026-09-01 ⏩ 2026-09-10 📅 2026-09-15");
+        assert_eq!(reschedule_line("- [ ] a ❗ 📅 2026-09-15 #t", DateField::Done, Some("2026-09-16")), "- [ ] a ❗ 📅 2026-09-15 #t ✅ 2026-09-16");
+        assert_eq!(insert_attr("- [ ] a ❗ 📅 2026-09-15", AttrKind::Id, "🆔 k3x9pa"), "- [ ] a 🆔 k3x9pa ❗ 📅 2026-09-15");
+        assert_eq!(insert_attr("- [ ] 买菜📅 2026-09-15", AttrKind::Estimate, "🕐 30m"), "- [ ] 买菜🕐 30m 📅 2026-09-15");
+        assert_eq!(insert_attr("- [ ] a ^k1", AttrKind::Depends, "⛔ k3x9pa"), "- [ ] a ⛔ k3x9pa ^k1");
     }
 
     #[test]

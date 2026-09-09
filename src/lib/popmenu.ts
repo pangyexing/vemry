@@ -29,7 +29,11 @@ export function clampToViewport(el: HTMLElement, x: number, y: number): { x: num
  *  date input inside it does not affect the contains check either); the component is
  *  only mounted while the menu is open and the interaction that opened it precedes the
  *  mount, so it does not close by mistake. Escape is stopped and prevented, or App's
- *  layered Escape would close the projection view carrying the menu along with it. */
+ *  layered Escape would close the projection view carrying the menu along with it.
+ *  Typing outside the panel closes it too, and the keystroke goes on to the editor:
+ *  a menu raised beside a chip, or by an `@due` pick that left a bare marker awaiting
+ *  its date, is stale the moment the writer types past it — left open it would sit
+ *  over the next line the writer is looking at. */
 export function dismissOn(panel: () => HTMLElement | null, onclose: () => void) {
   return {
     onpointerdowncapture(e: PointerEvent) {
@@ -38,10 +42,16 @@ export function dismissOn(panel: () => HTMLElement | null, onclose: () => void) 
       onclose();
     },
     onkeydowncapture(e: KeyboardEvent) {
-      if (e.key !== "Escape") return;
-      e.stopPropagation();
-      e.preventDefault();
-      onclose();
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        e.preventDefault();
+        onclose();
+        return;
+      }
+      const el = panel();
+      if (el && e.target instanceof Node && el.contains(e.target)) return;
+      // a character, Enter or Backspace with no command modifier: the writer is typing
+      if ((e.key.length === 1 || e.key === "Enter" || e.key === "Backspace") && !e.metaKey && !e.ctrlKey && !e.altKey) onclose();
     },
   };
 }

@@ -958,8 +958,12 @@ mod tests {
 
     #[test]
     fn task_due_is_both_a_date_and_a_field() {
-        let blocks = parse_note("- [ ] x due::2026-08-20\n").blocks;
+        // the bracketed spelling is the task's due date and a field; the bare one is a field only
+        let blocks = parse_note("- [ ] x [due:: 2026-08-20]\n").blocks;
         assert!(matches!(blocks[0].kind, BlockKind::Task { due: Some(_), .. }));
+        assert_eq!(blocks[0].fields[0].key, "due");
+        let blocks = parse_note("- [ ] x due::2026-08-20\n").blocks;
+        assert!(matches!(blocks[0].kind, BlockKind::Task { due: None, .. }));
         assert_eq!(blocks[0].fields[0].key, "due");
     }
 
@@ -1061,7 +1065,7 @@ mod tests {
 
     #[test]
     fn task_parsing_with_dates() {
-        let raw = "- [ ] write spec 📅 2026-08-10 #work\n- [/] doing it scheduled::2026-08-07\n- [x] done thing\n";
+        let raw = "- [ ] write spec 📅 2026-08-10 #work\n- [/] doing it [scheduled:: 2026-08-07]\n- [x] done thing\n";
         let parsed = parse_note(raw);
         assert_eq!(parsed.blocks.len(), 3);
         match &parsed.blocks[0].kind {

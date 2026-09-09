@@ -2129,11 +2129,12 @@ mod tests {
         let vault = Vault::open(vault.root()).unwrap();
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         let req = prepare_write(&vault, "u1".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "state": "done", "due": "2026-09-10", "scheduled": "2026-09-08"}), None, None).unwrap();
-        assert!(req.new_content.contains(&format!("- [x] write spec 📅 2026-09-10 ⏳ 2026-09-08 ✅ {today} ^t1\n  - sub note\n- plain item\n")), "{}", req.new_content);
+        // the due date is rewritten in place, the scheduled day added lands before it (the written order), the stamp last
+        assert!(req.new_content.contains(&format!("- [x] write spec ⏳ 2026-09-08 📅 2026-09-10 ✅ {today} ^t1\n  - sub note\n- plain item\n")), "{}", req.new_content);
         assert_eq!(req.kind, WriteKind::Edit);
         // cancelled leaves its own stamp; a start date has its own marker
         let req = prepare_write(&vault, "u1b".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "state": "cancelled", "start": "2026-09-05"}), None, None).unwrap();
-        assert!(req.new_content.contains(&format!("- [-] write spec 📅 2026-09-01 ⏩ 2026-09-05 ❌ {today} ^t1\n")), "{}", req.new_content);
+        assert!(req.new_content.contains(&format!("- [-] write spec ⏩ 2026-09-05 📅 2026-09-01 ❌ {today} ^t1\n")), "{}", req.new_content);
         let req = prepare_write(&vault, "u2".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "due": null}), None, None).unwrap();
         assert!(req.new_content.contains("- [ ] write spec ^t1\n"), "{}", req.new_content);
         let e = prepare_write(&vault, "u3".into(), "update_task", &json!({"path": "Todo.md", "block": "b2", "state": "done"}), None, None).unwrap_err();

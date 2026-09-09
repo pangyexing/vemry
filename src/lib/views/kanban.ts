@@ -129,20 +129,23 @@ export function fieldKeysOf(cards: Card[]): string[] {
 
 /** The task-line payload of a quick create inside a column: it carries what the column
  *  means — the date marker in state mode (a create always writes due, mirroring
- *  activeField's "with neither, set due"), the field in field mode.
+ *  activeField's "with neither, set due"), the field in field mode — and the `➕`
+ *  created stamp a task made from a view gets (a hand-written line may leave it out),
+ *  the attributes in their written order.
  *  null = the text is empty or that column does not support creating. */
 export function quickTaskPayload(col: string, text: string, today: string, date?: string, mode: GroupMode = { by: "state" }): string | null {
   const t = text.trim();
   if (!t) return null;
-  if (mode.by === "field") return col === NONE_COL ? `- [ ] ${t}` : `- [ ] ${t} [${mode.key}:: ${col}]`;
-  const due = (d: string) => `- [ ] ${t} ${DATE_FIELDS.due.emoji[0]} ${d}`;
+  const created = `${DATE_FIELDS.created.emoji[0]} ${today}`;
+  if (mode.by === "field") return col === NONE_COL ? `- [ ] ${t} ${created}` : `- [ ] ${t} [${mode.key}:: ${col}] ${created}`;
+  const due = (d: string) => `- [ ] ${t} ${created} ${DATE_FIELDS.due.emoji[0]} ${d}`;
   switch (col) {
     case "today":
       return due(today);
     case "scheduled":
       return date ? due(date) : null;
     case "unscheduled":
-      return `- [ ] ${t}`;
+      return `- [ ] ${t} ${created}`;
     default:
       return null;
   }

@@ -16,7 +16,8 @@ import {
 import { type Command, EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { t } from "$lib/i18n/i18n.svelte";
-import { localDate } from "$lib/views/tasks";
+import { type AttrKind, attrIconSvg, DATE_FIELDS, type EditField, localDate, newTaskId, priorityLabel } from "$lib/views/tasks";
+import type { Priority } from "$lib/api";
 import type { BlockType, FieldStat } from "$lib/api";
 import { blockAt, frontmatterEnd } from "./blocks";
 import { type FieldChipHandler, inCode } from "./livepreview";
@@ -53,11 +54,39 @@ function nextMonday(): string {
   return localDate(delta);
 }
 
+/** A completion entry that carries a drawn attribute icon (the `@` palette's task
+ *  attributes): the icon's svg (attrIconSvg) and its tone class (app.css's
+ *  cm-lp-attr-* — the chip's colours), rendered after the label by attrIconOption. */
+interface AttrCompletion extends Completion {
+  attrIcon?: string;
+  attrTone?: string;
+}
+
+/** The option renderer that draws an attribute entry's icon between the label and the
+ *  detail (autocompletion's addToOptions; label is 50, detail 80): the same stroke
+ *  icon as the chip the pick produces, not the file's emoji. */
+export const attrIconOption = {
+  render(completion: Completion): Node | null {
+    const c = completion as AttrCompletion;
+    if (!c.attrIcon) return null;
+    const el = document.createElement("span");
+    el.className = `cm-completionAttrIcon ${c.attrTone ?? ""}`;
+    el.innerHTML = c.attrIcon;
+    return el;
+  },
+  position: 60,
+};
+
 /** The `@` reference picker: notes (picking one turns `@name` into `[[name#]]` and
  *  reopens the completion on the heading/block stage), and dates (today, tomorrow,
  *  the day after, next Monday, or a `YYYY-MM-DD` typed out) — a date on a task line
- *  is inserted as its due date `📅 …`, elsewhere as plain text. */
-export function atCompletions(targets: () => string[]): CompletionSource {
+ *  is inserted as its due date `📅 …`, elsewhere as plain text. On a task line the
+ *  picker is also the way the attributes are typed: each entry inserts its marker
+ *  (`@due` a `📅` and the date menu, `@urgent` a `❗❗`, `@every week` a `🔁` rule,
+ *  `@estimate 2h`, `@id` a fresh id, `@depends on` a `⛔` to paste an id after).
+ *  The labels are English like the `/` menu's, so that typing after `@` filters them
+ *  in any locale; the emoji goes in the detail column. */
+export function atCompletions(targets: () => string[], onFieldChip?: FieldChipHandler): CompletionSource {
   return (context: CompletionContext): CompletionResult | null => {
     const before = context.matchBefore(AT_RE);
     if (!before) return null;
@@ -104,6 +133,41 @@ export function atCompletions(targets: () => string[]): CompletionSource {
         },
       });
     }
+    if (blockAt(context.state, atPos)?.kind === "task") {
+      const section = { name: t("wikilink.sectionTaskAttrs"), rank: 1 };
+      // The entry shows the drawn icon of the chip the pick produces (the file gets the emoji)
+      const item = (label: string, kind: AttrKind, text: string, detail = "", priority?: Priority, then?: (view: EditorView) => void): AttrCompletion => ({
+        label,
+        detail,
+        type: "text",
+        section,
+        attrIcon: attrIconSvg(kind, priority),
+        attrTone: `cm-lp-attr-${kind}${priority === "highest" || priority === "high" ? " cm-lp-attr-urgent" : priority ? " cm-lp-attr-faint" : ""}`,
+        apply: (view: EditorView, _c, _applyFrom: number, applyTo: number) => {
+          view.dispatch({ changes: { from: atPos, to: applyTo, insert: text }, selection: { anchor: atPos + text.length } });
+          then?.(view);
+        },
+      });
+      // a date: the bare marker, then the date menu under it — its pick fills the marker in (rescheduleLine)
+      const dateItem = (field: EditField) =>
+        item(field, field, `${DATE_FIELDS[field].emoji[0]} `, "…", undefined, (view) => {
+          const c = onFieldChip && view.coordsAtPos(atPos);
+          if (c) onFieldChip(view, atPos, field, "", { x: c.left, y: c.bottom + 2 }, { keyboard: true });
+        });
+      options.push(dateItem("due"), dateItem("scheduled"), dateItem("start"));
+      for (const [label, p, mark] of [
+        ["urgent", "highest", "❗❗"],
+        ["important", "high", "❗"],
+        ["later", "low", "❕"],
+        ["someday", "lowest", "❕❕"],
+      ] as const)
+        options.push(item(label, "priority", `${mark} `, priorityLabel(p), p));
+      for (const unit of ["day", "week", "month", "year"]) options.push(item(`every ${unit}`, "repeat", `🔁 every ${unit} `));
+      for (const v of ["30m", "1h", "2h", "1d"]) options.push(item(`estimate ${v}`, "estimate", `🕐 ${v} `));
+      options.push(item("removed once done", "delete", "🚮 "));
+      options.push(item("id", "id", `🆔 ${newTaskId()} `));
+      options.push(item("depends on", "depends", "⛔ ", "id"));
+    }
     return { from: atPos + 1, options, validFor: /^[^\s@]*$/ };
   };
 }
@@ -124,6 +188,13 @@ export function fieldCompletions(
   onFieldChip?: FieldChipHandler,
 ): CompletionSource {
   const DATE_KEYS = new Set(["due", "scheduled", "date", "start", "end", "created", "deadline"]);
+  /** The values a task attribute's `[key:: …]` takes (taskattrs.rs), offered on a task line. */
+  const TASK_KEY_VALUES: Record<string, string[]> = {
+    priority: ["highest", "high", "low", "lowest"],
+    repeat: ["every day", "every week", "every month", "every year"],
+    estimate: ["30m", "1h", "2h", "1d"],
+    oncompletion: ["delete"],
+  };
   // The vault's stats are fetched on demand (a promise the first time after an index
   // update, the cached list afterwards); the cheap guards run before asking for them,
   // so the plain keystrokes that produce nothing never wait
@@ -163,6 +234,9 @@ export function fieldCompletions(
       };
       const decl = declaredField(blockTypes(), key);
       for (const d of decl.values) push(d.value, t("field.fromType", { name: d.type }), 3);
+      // a task attribute's `key::` on a task line: the values it takes
+      const canned = TASK_KEY_VALUES[key.toLowerCase()];
+      if (canned && blockAt(context.state, context.pos)?.kind === "task") for (const v of canned) push(v, undefined, 2.5);
       const dateKey = decl.kind === "date" || DATE_KEYS.has(key.toLowerCase()) || (stat?.values.some((v) => fieldValueKind(v) === "date") ?? false);
       if (dateKey) {
         push(localDate(0), t("field.today"), 2);
@@ -195,7 +269,7 @@ export function fieldCompletions(
               if (!mark) return;
             }
             const c = view.coordsAtPos(mark.from);
-            if (c) open(view, mark.from, mark.key, "", { x: c.left, y: c.bottom + 2 });
+            if (c) open(view, mark.from, mark.key, "", { x: c.left, y: c.bottom + 2 }, { keyboard: true });
           },
         });
       }

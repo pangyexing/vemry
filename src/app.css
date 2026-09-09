@@ -1540,6 +1540,34 @@ button:focus-visible,
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
+/* The emoji of a task attribute while its source is on screen (the cursor in the chip, or
+   an attribute the parser does not read): the glyph is drawn as the icon with the attribute's
+   key name — a token of the source line, monospace and flat, not a chip — and the value after
+   it is plain editable text. Its tone comes from the same cm-lp-attr-* classes as the chip */
+.cm-lp-attr-atom {
+  display: inline;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--fg-muted);
+  background: var(--bg-hover);
+  border-radius: 3px;
+  padding: 0 4px 1px;
+}
+.cm-lp-attr-atom svg {
+  width: 0.9em;
+  height: 0.9em;
+  vertical-align: -0.08em;
+  margin-right: 3px;
+}
+/* A valid attribute the parser does not read — one in the description (the trailing run is
+   read from the end of the line), or the earlier of two of a kind: a quiet dotted underline,
+   the reason in the tooltip; not the danger colour, nothing is malformed */
+.cm-lp-attr-unread {
+  text-decoration: underline dotted var(--fg-faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
 /* The task date chip: a capsule of the same family as the #tag and Agenda chips, coloured
    danger when overdue and unfinished.
    inline rather than inline-flex+text-bottom: the chip's text shares the baseline with the
@@ -2305,6 +2333,20 @@ button:focus-visible,
   margin-left: 10px;
   color: var(--fg-faint);
   font-style: normal;
+}
+/* The drawn icon of a task attribute entry in the @ palette (completions.ts attrIconOption):
+   the chip's icon in the chip's tone, sitting between the label and the detail */
+.cm-tooltip-autocomplete .cm-completionAttrIcon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-left: 10px;
+  vertical-align: -0.15em;
+}
+.cm-tooltip-autocomplete .cm-completionAttrIcon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* ---- The hover block handle (blockhandle.ts): one grip in the editor's left padding,

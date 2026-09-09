@@ -89,7 +89,7 @@
     return fieldStatsPending;
   }
   /** The date menu raised by a chip: which line and key it edits. */
-  let fieldMenu = $state<{ x: number; y: number; pos: number; key: string; current?: string; field: DateField } | null>(null);
+  let fieldMenu = $state<{ x: number; y: number; pos: number; key: string; current?: string; field: DateField; keyboard?: boolean } | null>(null);
   /** The value menu raised by any other chip: the candidates (the block types' declared
    *  values first, then the vault's), whether the input is numeric, and the vocabulary
    *  when the key is a state field. `pos` is the chip's line in this editor; a chip on a
@@ -149,6 +149,13 @@
     const m = fieldMenu;
     fieldMenu = null;
     if (m) writeField(m, date);
+  }
+  /** The date menu closed without a pick: a menu that had taken the keyboard gives the
+   *  focus back to the editor at the line it was raised on, so typing goes on there. */
+  function closeFieldMenu() {
+    const m = fieldMenu;
+    fieldMenu = null;
+    if (m?.keyboard && view && !view.hasFocus) focusEditor(view, Math.min(m.pos, view.state.doc.length));
   }
   function applyFieldValue(value: string | null) {
     const m = valueMenu;
@@ -1192,10 +1199,10 @@
       // A chip's click: a date (a task date, a date-typed key, a YYYY-MM-DD value) gets the
       // date menu; everything else the value menu — the declared values first, then the
       // vault's, deduplicated, and a numeric input when the type says number or the value is one
-      onFieldChip: async (_v: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }) => {
+      onFieldChip: async (_v: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }, opts?: { keyboard?: boolean }) => {
         const spec = declaredField(types.enabled, key);
         if (key in DATE_FIELDS || spec.kind === "date" || fieldValueKind(value) === "date") {
-          fieldMenu = { x: at.x, y: at.y, pos, key, current: value || undefined, field: (key in DATE_FIELDS ? key : "due") as DateField };
+          fieldMenu = { x: at.x, y: at.y, pos, key, current: value || undefined, field: (key in DATE_FIELDS ? key : "due") as DateField, keyboard: opts?.keyboard };
           return;
         }
         valueMenu = { ...(await valueMenuFor(key, value, at)), pos };
@@ -1384,8 +1391,9 @@
     field={fieldMenu.field}
     title={fieldMenu.key in DATE_FIELDS ? undefined : fieldMenu.key}
     current={fieldMenu.current}
+    keyboard={fieldMenu.keyboard}
     onpick={applyFieldDate}
-    onclose={() => (fieldMenu = null)}
+    onclose={closeFieldMenu}
   />
 {/if}
 {#if valueMenu}

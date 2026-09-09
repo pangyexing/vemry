@@ -4,7 +4,7 @@
 // menus Agenda and the board share. The Rust side is the agent's copy of the same rules;
 // change the two together.
 import { t, tn } from "$lib/i18n/i18n.svelte";
-import { scanFields, setFieldValue, stripAnchor, stripFields } from "$lib/fields";
+import { ANCHOR_TAIL_RE, scanFields, setFieldValue, stripAnchor, stripFields } from "$lib/fields";
 import { api, type BlockHit, type Priority, type TaskState } from "$lib/api";
 import { byNote } from "$lib/views/queryrows";
 import { readBlockSpan } from "$lib/views/blockspan";
@@ -133,25 +133,82 @@ export const TASK_ATTR_KEYS = new Set([
   "due", "scheduled", "start", "created", "completion", "cancelled", "priority", "repeat", "oncompletion", "id", "dependson", "estimate",
 ]);
 
-/** Every emoji that opens an attribute: where a repeat rule's text stops. */
+/** Every emoji that opens an attribute: where a token splits, and where a repeat rule's
+ *  text stops (taskattrs.rs EMOJI_MARKERS). */
 const EMOJI_MARKERS = ["📅", "⏳", "⌛", "⏩", "🛫", "➕", "✅", "❌", "❗", "❕", "🔺", "⏫", "🔼", "🔽", "⏬", "🔁", "🚮", "🏁", "🆔", "⛔", "🕐"];
+
+/** The emoji spellings of the attributes that are not dates: the first is the one
+ *  written, the rest are read as well (taskattrs.rs AttrKind::emoji). */
+const ATTR_EMOJI: Record<Exclude<AttrKind, DateField>, string[]> = {
+  id: ["🆔"],
+  depends: ["⛔"],
+  priority: ["❗", "❕", "🔺", "⏫", "🔼", "🔽", "⏬"],
+  repeat: ["🔁"],
+  delete: ["🚮", "🏁"],
+  estimate: ["🕐"],
+};
+const emojiOf = (kind: AttrKind): string[] => (kind in DATE_FIELDS ? DATE_FIELDS[kind as DateField].emoji : ATTR_EMOJI[kind as Exclude<AttrKind, DateField>]);
+
+/** The order vemry writes attributes onto a line (taskattrs.rs AttrKind's declaration
+ *  order): a fresh one goes before the first that comes later in it. */
+const ATTR_ORDER: AttrKind[] = ["id", "depends", "priority", "repeat", "delete", "estimate", "created", "start", "scheduled", "due", "cancelled", "done"];
+const rankOf = (kind: AttrKind) => ATTR_ORDER.indexOf(kind);
+
+/** The `key::` name of each attribute (lowercase): the bracketed `[key:: value]`
+ *  spelling is the attribute; a bare `key:: value` is an ordinary field. */
+const ATTR_BY_KEY: Record<string, AttrKind> = {
+  due: "due",
+  scheduled: "scheduled",
+  start: "start",
+  created: "created",
+  completion: "done",
+  cancelled: "cancelled",
+  priority: "priority",
+  repeat: "repeat",
+  oncompletion: "delete",
+  id: "id",
+  dependson: "depends",
+  estimate: "estimate",
+};
+
+/** The `key::` name of an attribute, the word the editor shows in place of the emoji
+ *  while the source is being edited (a priority adds its value, being the whole mark). */
+export const ATTR_KEY_NAME: Record<AttrKind, string> = {
+  due: "due",
+  scheduled: "scheduled",
+  start: "start",
+  created: "created",
+  done: "completion",
+  cancelled: "cancelled",
+  priority: "priority",
+  repeat: "repeat",
+  delete: "onCompletion",
+  id: "id",
+  depends: "dependsOn",
+  estimate: "estimate",
+};
+
+/** How many UTF-16 units of a mark's text are its emoji glyph (U+FE0F included, and a
+ *  priority's whole run of marks): what the editor replaces with the drawn icon while
+ *  the source is edited. 0 for the bracketed `[key:: value]` spelling, which is words. */
+export function markerGlyphLength(kind: AttrKind, text: string): number {
+  if (/^[[(]/.test(text)) return 0;
+  const e = emojiOf(kind).find((e) => text.startsWith(e));
+  if (!e) return 0;
+  let n = e.length;
+  for (;;) {
+    if (text[n] === "\uFE0F") n += 1;
+    else if (kind === "priority" && text.startsWith(e, n)) n += e.length;
+    else break;
+  }
+  return n;
+}
 
 /** Minutes in an estimate's `d`: a working day (taskattrs.rs DAY_MINUTES). */
 const DAY_MINUTES = 8 * 60;
 
 /** Without U+FE0F: an emoji typed with the variation selector reads as the bare one. */
 const stripVs = (s: string) => s.replace(/\uFE0F/g, "");
-
-/** The shape of a date token. `\d{1,2}` is deliberately tolerant: chrono's `%m`/`%d`
- *  accept unpadded numbers, so `📅 2026-8-5` is a live date rather than junk. */
-const DATE_SRC = String.raw`\d{4}-\d{1,2}-\d{1,2}`;
-const DATE_ONLY_RE = new RegExp(`^${DATE_SRC}$`);
-
-const FIELDS = Object.keys(DATE_FIELDS) as DateField[];
-const markerTokens = (f: DateField) => [...DATE_FIELDS[f].emoji, DATE_FIELDS[f].attr];
-/** A marker with an optional variation selector and the space after it, then its token
- *  (up to whitespace or a closing bracket — a `[key:: value]` closes at its bracket). */
-const markerRe = (marker: string) => new RegExp(`(${marker}\\uFE0F?[ \\t]*)([^\\s\\])]*)`, "gu");
 
 /** A `priority::` value or a priority token (Rust's priority_word / priority_token). */
 function priorityWord(s: string): Priority | null {
@@ -213,213 +270,231 @@ export function formatEstimate(minutes: number): string {
 
 const splitIds = (s: string) => s.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 
-/** A token that ends a repeat rule's text: the next attribute, a field, a tag or an anchor. */
+const startsMarker = (s: string) => EMOJI_MARKERS.some((m) => s.startsWith(m));
+
+/** A token that ends a repeat rule's text and that a marker takes no value from: the
+ *  next attribute, a field, a tag or an anchor. */
 const isStop = (tok: string) => {
   const bare = stripVs(tok);
-  return EMOJI_MARKERS.some((m) => bare.startsWith(m)) || /^[[(^#]/.test(tok) || tok.includes("::");
+  return startsMarker(bare) || /^[[(^#]/.test(bare) || bare.includes("::");
 };
+
+/** A `key::` or emoji value read for a kind (taskattrs.rs read_value): the value kept,
+ *  and whether it reads. */
+function readValue(kind: AttrKind, raw: string): { value: string; valid: boolean } {
+  raw = raw.trim();
+  if (kind in DATE_FIELDS) return { value: raw, valid: parseYmd(raw) !== null };
+  switch (kind) {
+    case "priority": {
+      const p = priorityWord(raw);
+      return p && p !== "normal" ? { value: p, valid: true } : { value: raw, valid: false };
+    }
+    case "repeat":
+      return { value: raw, valid: raw !== "" };
+    case "delete":
+      return { value: "", valid: raw.toLowerCase() === "delete" };
+    case "id":
+      return { value: raw, valid: raw !== "" && !/\s/.test(raw) };
+    case "depends": {
+      const ids = splitIds(raw);
+      return { value: ids.join(","), valid: ids.length > 0 };
+    }
+    default:
+      return { value: raw, valid: parseEstimate(raw) !== null };
+  }
+}
+
+interface Tok {
+  text: string;
+  at: number;
+}
+
+/** `❗❗`: a second mark right after the same one (a U+FE0F between them ignored)
+ *  continues the first rather than opening a new token. */
+function sameMarkRun(tok: string, start: number, at: number): boolean {
+  const c = tok[at];
+  return (c === "❗" || c === "❕") && stripVs(tok.slice(start, at)).endsWith(c);
+}
+
+/** Whitespace-separated tokens, each split again where an attribute emoji starts
+ *  inside it (`写周报📅` is a word and a marker), so a marker needs no space before it.
+ *  Offsets are UTF-16 units into `text` (the editor's coordinates). */
+function tokenize(text: string): Tok[] {
+  const out: Tok[] = [];
+  const re = /\S+/gu;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const tok = m[0];
+    let start = 0;
+    for (let j = 0; j < tok.length; ) {
+      if (j > start && startsMarker(tok.slice(j)) && !sameMarkRun(tok, start, j)) {
+        out.push({ text: tok.slice(start, j), at: m.index + start });
+        start = j;
+      }
+      j += (tok.codePointAt(j) ?? 0) > 0xffff ? 2 : 1;
+    }
+    out.push({ text: tok.slice(start), at: m.index + start });
+  }
+  return out;
+}
 
 /** One attribute occurrence on a task's first line: offsets relative to the text scanned. */
 export interface TaskAttrMark {
   start: number;
   end: number;
   kind: AttrKind;
-  /** The value as read: a normalised priority, a repeat rule, an id, an id list, an
-   *  estimate as written, "" for a flag. */
+  /** The value as read: a date as written, a normalised priority, a repeat rule, an
+   *  id, an id list joined by `,`, an estimate as written, "" for a flag. */
   value: string;
-  /** A date kind: a zero-padded `YYYY-MM-DD` when the token is valid, otherwise null. */
+  /** A date kind: `YYYY-MM-DD` when the token is valid, otherwise null. */
   date: string | null;
-  /** This occurrence is the one the parser actually reads (a field's winner): only the
-   *  **first** occurrence of each marker counts, the emoji spellings come first, and a
-   *  failed date falls through to the next spelling. A non-winner is ordinary text to the
-   *  parser even when its token is valid — so a chip is only drawn for the winner, or the
-   *  editor would display something that does not exist in the index. */
+  /** The value reads: a real date, a priority word, a duration, a non-empty id or rule. */
+  valid: boolean;
+  /** In the trailing run of the line, where an attribute counts (implies valid). A valid
+   *  attribute outside the run — a `📅` in the description — is a word to the parser,
+   *  and the editor underlines it so the writer sees why no chip appeared. */
+  tail: boolean;
+  /** What the parser reads: in the run, and the last of its kind there. A duplicate in
+   *  the run is not active; the editor underlines it too. */
   active: boolean;
   /** The parse failed and it visibly was an attempt at a date (starting with a digit,
-   *  or explicit attr:: syntax) — only that draws a bad-date warning; a decorative use
-   *  such as `⏳ waiting for a reply` is silent to the parser, and a warning would only
-   *  be a false alarm. */
+   *  or the explicit `[key:: …]` syntax) — only that draws a bad-date warning; a
+   *  decorative use such as `⏳ waiting for a reply` is silent to the parser, and a
+   *  warning would only be a false alarm. */
   attempted: boolean;
 }
 
-/** Scan a task's **first line** the way Rust's parse_task_attrs reads it: every
- *  attribute occurrence, each field's winner marked. The editor's chips and warnings, the
- *  display text and the rewrites all derive from this one scan — so there can be only
- *  this one point of divergence from the parser. */
+/** Scan a task's **first line** the way Rust's scan_task_attrs reads it: every
+ *  attribute occurrence, the trailing run and each kind's winner marked. The run is read
+ *  from the end backwards: an attribute, a `#tag`, a `[key:: value]` field or the
+ *  `^anchor` continues it, and the first token that is none of these ends it — what
+ *  stands before is the description. The editor's chips and warnings, the display text
+ *  and the rewrites all derive from this one scan — so there can be only this one point
+ *  of divergence from the parser. */
 export function scanTaskAttrs(text: string): TaskAttrMark[] {
+  const toks = tokenize(text);
+  const fields = scanFields(text, 0);
+  const anchorM = ANCHOR_TAIL_RE.exec(text.replace(/[ \t]+$/, ""));
+  const anchorCaret = anchorM ? anchorM.index + 1 : -1;
   const marks: TaskAttrMark[] = [];
-  // The dates: every occurrence of every spelling, the winner per field
-  for (const f of FIELDS) {
-    let won = false;
-    for (const marker of markerTokens(f)) {
-      const re = markerRe(marker);
-      let first = true;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(text))) {
-        let start = m.index;
-        let end = m.index + m[0].length;
-        // a `[key:: value]` is one construct with its brackets
-        if (marker.endsWith("::")) {
-          const open = text[start - 1];
-          const close = text[end];
-          if ((open === "[" && close === "]") || (open === "(" && close === ")")) {
-            start -= 1;
-            end += 1;
-          }
-        }
-        const date = parseYmd(m[2]);
-        const active = !won && first && date !== null;
-        if (active) won = true;
-        marks.push({ start, end, kind: f, value: m[2], date, active, attempted: date === null && (marker.endsWith("::") || /^\d/.test(m[2])) });
-        first = false;
-        if (m[0].length === 0) re.lastIndex++;
-      }
-      if (won) break;
-    }
-  }
-  // The emoji spellings of the rest, token by token (Rust: the same walk)
-  const tokens: { tok: string; at: number }[] = [];
-  const TOKEN_RE = /\S+/gu;
-  let tm: RegExpExecArray | null;
-  while ((tm = TOKEN_RE.exec(text))) tokens.push({ tok: tm[0], at: tm.index });
-  const have = { priority: false, repeat: false, delete: false, id: false, depends: false, estimate: false };
-  const push = (kind: AttrKind, from: number, to: number, value: string) => marks.push({ start: from, end: to, kind, value, date: null, active: true, attempted: false });
-  /** The value of a marker: the rest of its token, or the next token when it is not a stop. */
+  const markUnit: number[] = [];
+  // plain: a word of the description, ends the run; through: a tag, a field, the anchor or a bare marker; attr: an attribute that reads
+  const units: ("plain" | "through" | "attr")[] = [];
+  const tokEnd = (i: number) => toks[i].at + toks[i].text.length;
+  /** A marker's value: the rest of its token, or the next token when that is not a stop. */
   const valueOf = (i: number, marker: string): { value: string; next: number; end: number } | null => {
-    const bare = stripVs(tokens[i].tok);
+    const bare = stripVs(toks[i].text);
     if (!bare.startsWith(marker)) return null;
     const rem = bare.slice(marker.length);
-    const tokEnd = tokens[i].at + tokens[i].tok.length;
-    if (rem) return { value: rem, next: i + 1, end: tokEnd };
-    const n = tokens[i + 1];
-    if (n && !isStop(n.tok)) return { value: n.tok, next: i + 2, end: n.at + n.tok.length };
-    return { value: "", next: i + 1, end: tokEnd };
+    if (rem) return { value: rem, next: i + 1, end: tokEnd(i) };
+    const n = toks[i + 1];
+    if (n && !isStop(n.text)) return { value: stripVs(n.text), next: i + 2, end: tokEnd(i + 1) };
+    return { value: "", next: i + 1, end: tokEnd(i) };
   };
-  for (let i = 0; i < tokens.length; ) {
-    const { tok, at } = tokens[i];
-    const bare = stripVs(tok);
-    const tokEnd = at + tok.length;
-    if (!have.priority) {
-      const p = priorityToken(bare);
-      if (p) {
-        have.priority = true;
-        push("priority", at, tokEnd, p);
-        i++;
-        continue;
-      }
+  const push = (kind: AttrKind, start: number, end: number, raw: string, field = false) => {
+    const { value, valid } = readValue(kind, raw);
+    const isDate = kind in DATE_FIELDS;
+    marks.push({ start, end, kind, value, date: isDate && valid ? value : null, valid, tail: false, active: false, attempted: isDate && !valid && (field || /^\d/.test(value)) });
+    markUnit.push(units.length);
+    // a marker with nothing after it yet (`📅` awaiting its date) is an attribute in progress: the run continues through it
+    units.push(valid ? "attr" : raw.trim() === "" ? "through" : "plain");
+  };
+  for (let i = 0; i < toks.length; ) {
+    const { text: tok, at } = toks[i];
+    // a field is one unit through its close; the bracketed spelling of an attribute key is that attribute
+    const f = fields.find((f) => f.from <= at && at < f.to);
+    if (f) {
+      const kind = f.form === "bracket" || f.form === "paren" ? ATTR_BY_KEY[f.key.toLowerCase()] : undefined;
+      if (kind) push(kind, f.from, f.to, f.value, true);
+      else units.push("through");
+      while (i < toks.length && toks[i].at < f.to) i++;
+      continue;
     }
-    if (!have.repeat && bare.startsWith("🔁")) {
+    const bare = stripVs(tok);
+    const p = priorityToken(bare);
+    if (p) {
+      push("priority", at, tokEnd(i), p);
+      i++;
+      continue;
+    }
+    let dated = false;
+    for (const field of Object.keys(DATE_FIELDS) as DateField[]) {
+      const marker = DATE_FIELDS[field].emoji.find((e) => bare.startsWith(e));
+      if (!marker) continue;
+      const v = valueOf(i, marker)!;
+      push(field, at, v.end, v.value);
+      i = v.next;
+      dated = true;
+      break;
+    }
+    if (dated) continue;
+    if (bare.startsWith("🔁")) {
       const rem = bare.slice("🔁".length);
       const parts: string[] = rem ? [rem] : [];
       let j = i + 1;
-      let end = tokEnd;
-      while (j < tokens.length && !isStop(tokens[j].tok)) {
-        parts.push(tokens[j].tok);
-        end = tokens[j].at + tokens[j].tok.length;
+      let end = tokEnd(i);
+      while (j < toks.length && !isStop(toks[j].text)) {
+        parts.push(toks[j].text);
+        end = tokEnd(j);
         j++;
       }
-      if (parts.length) {
-        have.repeat = true;
-        push("repeat", at, end, parts.join(" "));
-      }
+      push("repeat", at, end, parts.join(" "));
       i = j;
       continue;
     }
     if (bare === "🚮") {
-      have.delete = true;
-      push("delete", at, tokEnd, "");
+      push("delete", at, tokEnd(i), "delete");
       i++;
       continue;
     }
     if (bare.startsWith("🏁")) {
       const v = valueOf(i, "🏁")!;
-      const del = v.value.toLowerCase() !== "keep";
-      if (del) have.delete = true;
-      marks.push({ start: at, end: v.end, kind: "delete", value: v.value, date: null, active: del, attempted: false });
-      i = Math.max(v.next, i + 1);
+      push("delete", at, v.end, v.value.toLowerCase() === "keep" ? "keep" : "delete");
+      i = v.next;
       continue;
     }
-    if (!have.id) {
-      const v = valueOf(i, "🆔");
-      if (v) {
-        if (v.value) {
-          have.id = true;
-          push("id", at, v.end, v.value);
-        }
-        i = v.next;
-        continue;
-      }
+    const id = valueOf(i, "🆔");
+    if (id) {
+      push("id", at, id.end, id.value);
+      i = id.next;
+      continue;
     }
-    if (!have.depends) {
-      const v = valueOf(i, "⛔");
-      if (v) {
-        let ids = splitIds(v.value);
-        let last = v.value;
-        let next = v.next;
-        let end = v.end;
-        // `⛔ a, b`: a trailing comma carries on to the next token
-        while (last.endsWith(",") && next < tokens.length && !isStop(tokens[next].tok)) {
-          last = tokens[next].tok;
-          ids = ids.concat(splitIds(last));
-          end = tokens[next].at + last.length;
-          next++;
-        }
-        if (ids.length) {
-          have.depends = true;
-          push("depends", at, end, ids.join(","));
-        }
-        i = next;
-        continue;
+    const dep = valueOf(i, "⛔");
+    if (dep) {
+      let ids = splitIds(dep.value);
+      let last = dep.value;
+      let next = dep.next;
+      let end = dep.end;
+      // `⛔ a, b`: a trailing comma carries on to the next token
+      while (last.endsWith(",") && next < toks.length && !isStop(toks[next].text)) {
+        last = toks[next].text;
+        ids = ids.concat(splitIds(last));
+        end = tokEnd(next);
+        next++;
       }
+      push("depends", at, end, ids.join(","));
+      i = next;
+      continue;
     }
-    if (!have.estimate) {
-      const v = valueOf(i, "🕐");
-      if (v) {
-        const min = parseEstimate(v.value);
-        if (min !== null) have.estimate = true;
-        marks.push({ start: at, end: v.end, kind: "estimate", value: v.value, date: null, active: min !== null, attempted: false });
-        i = v.next;
-        continue;
-      }
+    const est = valueOf(i, "🕐");
+    if (est) {
+      push("estimate", at, est.end, est.value);
+      i = est.next;
+      continue;
     }
+    const through = (bare.startsWith("#") && bare.length > 1) || at === anchorCaret;
+    units.push(through ? "through" : "plain");
     i++;
   }
-  // The `key::` spellings fill what no emoji set (the dates were read both ways above)
-  for (const f of scanFields(text, 0)) {
-    const key = f.key.toLowerCase();
-    const value = f.value.trim();
-    const mark = (kind: AttrKind, active: boolean, v = value) => marks.push({ start: f.from, end: f.to, kind, value: v, date: null, active, attempted: false });
-    switch (key) {
-      case "priority": {
-        const p = priorityWord(value);
-        mark("priority", !have.priority && p !== null && p !== "normal", p ?? value);
-        if (p && !have.priority) have.priority = true;
-        break;
-      }
-      case "repeat":
-        mark("repeat", !have.repeat && value !== "");
-        if (value) have.repeat = true;
-        break;
-      case "oncompletion":
-        mark("delete", !have.delete && value.toLowerCase() === "delete");
-        break;
-      case "id":
-        mark("id", !have.id && value !== "");
-        if (value) have.id = true;
-        break;
-      case "dependson":
-        mark("depends", !have.depends && value !== "", splitIds(value).join(","));
-        if (value) have.depends = true;
-        break;
-      case "estimate": {
-        const min = parseEstimate(value);
-        mark("estimate", !have.estimate && min !== null);
-        if (min !== null) have.estimate = true;
-        break;
-      }
-    }
+  const tailStart = units.lastIndexOf("plain") + 1;
+  const seen = new Set<AttrKind>();
+  for (let idx = marks.length - 1; idx >= 0; idx--) {
+    const m = marks[idx];
+    m.tail = m.valid && markUnit[idx] >= tailStart;
+    m.active = m.tail && !seen.has(m.kind);
+    if (m.active) seen.add(m.kind);
   }
-  return marks.sort((a, b) => a.start - b.start);
+  return marks;
 }
 
 /** What a task's first line says, read off its marks (the winners only). */
@@ -459,16 +534,14 @@ export function lineAttrs(line: string): LineAttrs {
  *  share this one. */
 export const STAMP_RE = /\*\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)\*/g;
 
-/** Date parsing as tolerant as chrono's `%Y-%m-%d`: the month and day may be unpadded,
- *  but it has to be a real calendar date (chrono rejects 2026-02-30, so this has to as
- *  well, or the editor's warning would fall out of step with the parser). Returns a
- *  zero-padded `YYYY-MM-DD` when valid (the chip's display and every string comparison
- *  need it — comparing `2026-8-5` directly sorts wrongly), otherwise null. */
+/** `YYYY-MM-DD` exactly, and a real calendar date (the one spelling a task attribute
+ *  takes — taskattrs.rs parse_date; the two must agree, or the editor's warning would
+ *  fall out of step with the parser). Returns the token when valid, otherwise null. */
 export function parseYmd(token: string): string | null {
-  if (!DATE_ONLY_RE.test(token)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(token)) return null;
   const [y, mo, d] = token.split("-").map(Number);
   const dt = new Date(y, mo - 1, d);
-  return dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d ? ymd(dt) : null;
+  return dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d ? token : null;
 }
 
 /* ---------------------------------------------------------------- the rewrites */
@@ -481,63 +554,73 @@ function cut(line: string, from: number, to: number): string {
   return before + after;
 }
 
+/** Where the scanner's text starts on a line: after the checkbox of a task line, at the
+ *  start of any other (Rust's rest_offset). */
+export const restOffset = (line: string) => ANY_CHECKBOX_RE.exec(line)?.[0].length ?? 0;
+
+/** A mark that is one unit rather than a marker with an editable value: a priority
+ *  or 🚮 (the mark is the whole attribute), or any marker with nothing after it yet.
+ *  The editor shows it as the atom while the cursor sits at it or just past its space,
+ *  and Backspace there removes it whole. */
+export const isUnitMark = (m: TaskAttrMark) => m.kind === "priority" || m.kind === "delete" || m.value === "";
+
+/** Append `piece` (with its own leading space) before any trailing `^anchor` (appending
+ *  after it would silently kill the block anchor). */
+function appendBeforeAnchor(line: string, piece: string): string {
+  const anchor = /[ \t]\^[\w-]+[ \t]*$/.exec(line);
+  if (anchor) return line.slice(0, anchor.index).replace(/[ \t]+$/, "") + piece + line.slice(anchor.index);
+  return line.replace(/[ \t]+$/, "") + piece;
+}
+
+/** Insert a fresh attribute (`piece`, e.g. `📅 2026-09-10`) into the trailing run at
+ *  its place in the written order: before the first attribute that comes later in the
+ *  order, else at the end of the line before any `^anchor`. The mirror of Rust's
+ *  insert_attr. */
+export function insertAttr(line: string, kind: AttrKind, piece: string): string {
+  const at0 = restOffset(line);
+  const later = scanTaskAttrs(line.slice(at0)).find((m) => m.tail && rankOf(m.kind) > rankOf(kind));
+  if (later) {
+    const at = at0 + later.start;
+    return line.slice(0, at) + piece + " " + line.slice(at);
+  }
+  return appendBeforeAnchor(line, " " + piece);
+}
+
+/** A marker of `kind` typed at the end of the line with nothing after it (an `@`
+ *  palette pick, `📅` awaiting its date): where its value goes, or -1. */
+function bareMarkerEnd(line: string, kind: AttrKind): number {
+  const anchor = /[ \t]\^[\w-]+[ \t]*$/.exec(line);
+  const body = line.slice(0, anchor ? anchor.index : line.length).replace(/[ \t]+$/, "");
+  const stripped = body.replace(/\uFE0F+$/, "");
+  return emojiOf(kind).some((e) => stripped.endsWith(e)) ? body.length : -1;
+}
+
 /**
- * Set / replace / remove (`date === null`) a task line's date marker.
- * Keeps the marker style the user wrote (📅 vs due::, a bracketed field with its
- * brackets); a fresh marker is inserted emoji-style before any trailing `^anchor`
- * (appending after it would silently kill the block anchor). The mirror of Rust's
- * reschedule_line.
+ * Set / replace / remove (`date === null`) a task line's date attribute. The attribute
+ * the parser reads (the last of its kind in the trailing run) is rewritten in place,
+ * its spelling kept (📅 vs `[due:: …]`); a bare marker left at the end of the line is
+ * given the date; a fresh attribute is written emoji-style at its place in the order.
+ * Removing takes every occurrence in the run (a duplicate would otherwise become the
+ * date); a marker in the description is a word and is left alone. The mirror of
+ * Rust's reschedule_line.
  */
 export function rescheduleLine(line: string, field: DateField, date: string | null): string {
+  const at0 = restOffset(line);
+  const marks = scanTaskAttrs(line.slice(at0));
   if (date === null) {
-    // The spellings may all be present (the parser falls back from emoji to attr::), so
-    // removing only one would not make the date disappear but quietly move it onto the
-    // other marker — every one carrying a date is removed
     let out = line;
-    for (const marker of markerTokens(field)) {
-      const re = markerRe(marker);
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(out))) {
-        if (!DATE_ONLY_RE.test(m[2])) continue;
-        let from = m.index;
-        let to = m.index + m[0].length;
-        if (marker.endsWith("::")) {
-          const open = out[from - 1];
-          const close = out[to];
-          if ((open === "[" && close === "]") || (open === "(" && close === ")")) {
-            from -= 1;
-            to += 1;
-          }
-        }
-        out = cut(out, from, to);
-        re.lastIndex = Math.min(from, out.length);
-      }
-    }
+    for (let i = marks.length - 1; i >= 0; i--) if (marks[i].tail && marks[i].kind === field) out = cut(out, at0 + marks[i].start, at0 + marks[i].end);
     return out;
   }
-  // The rewrite has to land on the token the parser reads (each marker's first
-  // occurrence, emoji first — the same winner rule as scanTaskAttrs). A token shaped
-  // like a date is replaced in place; a bad token (📅 next Friday) has the new date
-  // inserted after the marker and the bad token demoted to ordinary text — appending a
-  // second marker would be ignored forever by the parser's "first marker" reading, and
-  // rescheduling would silently do nothing
-  for (const marker of markerTokens(field)) {
-    const re = markerRe(marker);
-    re.lastIndex = 0;
-    const m = re.exec(line);
-    if (!m) continue;
-    const tokenAt = m.index + m[1].length;
-    const token = m[2];
-    if (DATE_ONLY_RE.test(token)) return line.slice(0, tokenAt) + date + line.slice(tokenAt + token.length);
-    const sep = /[ \t]$/.test(m[1]) ? "" : " ";
-    const trail = token !== "" ? " " : "";
-    return line.slice(0, tokenAt) + sep + date + trail + line.slice(tokenAt);
+  const win = marks.find((m) => m.active && m.kind === field);
+  if (win) {
+    const s = at0 + win.start;
+    const at = s + line.slice(s, at0 + win.end).lastIndexOf(win.value);
+    return line.slice(0, at) + date + line.slice(at + win.value.length);
   }
-  const marker = DATE_FIELDS[field].emoji[0];
-  const anchor = /[ \t]\^[\w-]+[ \t]*$/.exec(line);
-  if (anchor)
-    return line.slice(0, anchor.index).replace(/[ \t]+$/, "") + ` ${marker} ${date}` + line.slice(anchor.index);
-  return line.replace(/[ \t]+$/, "") + ` ${marker} ${date}`;
+  const bare = bareMarkerEnd(line, field);
+  if (bare >= 0) return line.slice(0, bare) + " " + date + line.slice(bare);
+  return insertAttr(line, field, `${DATE_FIELDS[field].emoji[0]} ${date}`);
 }
 
 /** The checkbox of a task's first line set to a state; a line with no checkbox is unchanged. */
@@ -698,6 +781,25 @@ async function writeTaskSpan(hit: BlockHit, edit: (slice: string) => string): Pr
   return true;
 }
 
+/** A fresh task id: six of `[a-z0-9]`, the alphabet and length of a minted block id
+ *  (blockid.rs MINTED_LEN), random so two tasks never collide on their text. */
+export function newTaskId(): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+}
+
+/** Give a task its `🆔` on disk — written into the attribute order on its first line.
+ *  false = a stale span, and the caller requeries. */
+export async function assignTaskId(hit: BlockHit, id: string): Promise<boolean> {
+  return writeTaskSpan(hit, (slice) => {
+    const nl = slice.indexOf("\n");
+    const head = nl < 0 ? slice : slice.slice(0, nl);
+    return insertAttr(head, "id", `🆔 ${id}`) + (nl < 0 ? "" : slice.slice(nl));
+  });
+}
+
 /** Delete one task block from disk (the whole span: a multi-line task's sub-content
  *  goes with it). false = a stale span, and the caller requeries. */
 export async function deleteTask(hit: BlockHit): Promise<boolean> {
@@ -760,8 +862,8 @@ export async function updateTask(hit: BlockHit, edit: TaskEdit): Promise<boolean
  *  with the claim and evidence cards), so "the plain-text form" has one rule only. */
 export function taskText(content: string): string {
   let s = content.replace(/^\s*[-*+]\s+\[.\]\s*/, "");
-  // every attribute occurrence, a decorative `⏳ waiting` (no date, no attempt) left as words
-  const marks = scanTaskAttrs(s).filter((m) => (m.kind in DATE_FIELDS ? m.date !== null || m.attempted : m.active));
+  // the attributes of the trailing run; a `📅` in the description and a decorative `⏳ waiting` are words
+  const marks = scanTaskAttrs(s).filter((m) => m.tail);
   for (let i = marks.length - 1; i >= 0; i--) s = cut(s, marks[i].start, marks[i].end);
   return plainText(
     stripAnchor(
@@ -967,6 +1069,8 @@ export interface TaskMenuActions {
   editDate: (field: DateField, current?: string) => void;
   /** Set the task's state; `act` is the wording of the action for the dirty guard's message. */
   setState: (state: TaskState, act: string) => void;
+  /** Copy the task's id, giving it one first when it has none (what a `⛔` names). */
+  copyId: () => void;
   remove: () => void;
 }
 
@@ -976,7 +1080,7 @@ export interface TaskMenuActions {
  *  "mark / reopen" by what the task is now; and removing deletes the line from the
  *  note's source, so it takes ContextMenu's second confirmation. */
 export function taskMenuEntries(task: Pick<TaskRow, "state" | "due" | "scheduled" | "start">, act: TaskMenuActions): MenuEntry[] {
-  const entries: MenuEntry[] = [{ label: t("task.menu.jumpToSource"), action: act.open }, { separator: true }];
+  const entries: MenuEntry[] = [{ label: t("task.menu.jumpToSource"), action: act.open }, { label: t("task.menu.copyId"), action: act.copyId }, { separator: true }];
   const closed = isClosed(task.state);
   for (const field of EDIT_FIELDS) {
     const current = task[field];
