@@ -748,16 +748,16 @@ pub fn block_id_plan(source: String, selector: BlockSelector) -> Result<BlockIdP
 /// setting, and a note with nothing remote is left alone (the rewrite comes back
 /// through here once more and finds nothing to do).
 fn localize_agent_figures(app: &AppHandle, rel: &str) {
-    if !rel.ends_with(".md") {
+    if !rel.ends_with(".md") || !crate::settings::load(app).clip_localize_images {
         return;
     }
     let state = app.state::<AppState>();
+    // The index already holds the frontmatter `source:` — this runs on every agent write,
+    // on the event drain, so it must not read and parse the note to learn it. Whether the
+    // note actually references anything remote is localize_clip_images' own first question
     let source = with_vault(&state, |v| {
         let id = v.note_id(rel).map_err(crate::i18n::err)?;
-        let raw = v.read_note(&id).map_err(crate::i18n::err)?;
-        let parsed = vemry_core::parser::parse_note(&raw);
-        let source = parsed.frontmatter.extra.get("source").and_then(|s| s.as_str()).map(str::to_string);
-        Ok(source.filter(|u| u.starts_with("http") && !vemry_clip::image_refs(&raw, u).is_empty()))
+        Ok(v.index().summary_ref(&id).and_then(|s| s.source.clone()).filter(|u| u.starts_with("http")))
     });
     if let Ok(Some(url)) = source {
         crate::browser::clip::maybe_localize(app, rel.to_string(), url);
@@ -775,13 +775,12 @@ pub fn provenance_get(state: State<'_, AppState>, path: String) -> Result<Vec<Bl
 
 /// Accept the pending agent blocks of a note (those with these local ids — a
 /// run — or all of them); returns how many are still pending. Not broadcast:
-/// accepting is not a note event.
+/// accepting is not a note event. Answers with how many blocks it accepted.
 #[tauri::command]
 pub fn provenance_accept(state: State<'_, AppState>, path: String, local_ids: Option<Vec<String>>) -> Result<usize, String> {
     with_vault_mut(&state, |v| {
         let id = v.note_id(&path).map_err(crate::i18n::err)?;
-        let ids: Option<Vec<&str>> = local_ids.as_ref().map(|l| l.iter().map(String::as_str).collect());
-        v.accept_provenance_ids(&id, ids.as_deref()).map_err(crate::i18n::err)
+        v.accept_provenance_ids(&id, local_ids.as_deref()).map_err(crate::i18n::err)
     })
 }
 
@@ -824,8 +823,7 @@ pub fn provenance_accept_notes(state: State<'_, AppState>, paths: Option<Vec<Str
 #[tauri::command]
 pub fn provenance_revert_plan(state: State<'_, AppState>, text: String, local_ids: Option<Vec<String>>) -> Result<RevertPlan, String> {
     with_vault(&state, |v| {
-        let ids: Option<Vec<&str>> = local_ids.as_ref().map(|l| l.iter().map(String::as_str).collect());
-        v.revert_plan_ids(&text, ids.as_deref()).map_err(crate::i18n::err)
+        v.revert_plan_ids(&text, local_ids.as_deref()).map_err(crate::i18n::err)
     })
 }
 

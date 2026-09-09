@@ -3,6 +3,7 @@
 // sending. The view renders rows from it; switching mainView is the caller's
 // job (vault.enterTranslate / exitTranslate), the same division of labour as the
 // reading store — this never imports vault, which avoids a module cycle.
+import { fmtCount } from "$lib/stats";
 import { api, onTranslateEvent, type TranslateDocView, type TranslateSegment, type TranslateSource } from "$lib/api";
 import { t, type MessageKey } from "$lib/i18n/i18n.svelte";
 
@@ -204,9 +205,7 @@ export function targetLabel(tag: string): string {
 }
 
 /** A token count in thousands past 1000 ("12.3k", "45k"), the same shape as the chat's gauge. */
-export function fmtTokens(n: number): string {
-  return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-}
+export const fmtTokens = fmtCount;
 
 /** The target languages the header offers; a custom tag typed in Settings is shown in addition. */
 export const TARGET_TAGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;

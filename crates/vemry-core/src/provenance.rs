@@ -300,16 +300,6 @@ pub fn hunk_of_block<'a>(
     })
 }
 
-/// The revert plan for `text`: the pending block with `local_id`, or every
-/// pending block when None (`plan_revert_ids` for a set of blocks).
-pub fn plan_revert<'a>(
-    text: &str,
-    lookup: impl Fn(&str) -> Option<&'a ProvRecord>,
-    local_id: Option<&str>,
-) -> crate::Result<RevertPlan> {
-    plan_revert_ids(text, lookup, local_id.map(|l| vec![l]).as_deref())
-}
-
 /// The revert plan for `text`: the pending blocks with these local ids (a run
 /// the editor reviews as one), or every pending block when None. A block's
 /// write is the ledger hunk whose added lines hold the block; the plan puts
@@ -319,7 +309,7 @@ pub fn plan_revert<'a>(
 pub fn plan_revert_ids<'a>(
     text: &str,
     lookup: impl Fn(&str) -> Option<&'a ProvRecord>,
-    local_ids: Option<&[&str]>,
+    local_ids: Option<&[String]>,
 ) -> crate::Result<RevertPlan> {
     let parsed = parse_note(text);
     let targets: Vec<&Block> = match local_ids {
@@ -846,11 +836,11 @@ mod tests {
         let ext = rec(Hunk { before: "TEST4\n".into(), old: String::new(), new: "TEST6\n".into(), after: String::new() });
         let (r, _) = hunk_of_block(text, &ext, &(0..11)).unwrap();
         assert_eq!(r, 6..12);
-        let plan = plan_revert(text, |_| Some(&ext), None).unwrap();
+        let plan = plan_revert_ids(text, |_| Some(&ext), None).unwrap();
         assert_eq!(plan.replacements, vec![Replacement { from: 6, to: 12, insert: String::new() }]);
         // a line deleted inside a block is restored at the point its context meets
         let del = rec(Hunk { before: "a\n".into(), old: "gone\n".into(), new: String::new(), after: "b\n".into() });
-        let plan = plan_revert("a\nb\n", |_| Some(&del), None).unwrap();
+        let plan = plan_revert_ids("a\nb\n", |_| Some(&del), None).unwrap();
         assert_eq!(plan.replacements, vec![Replacement { from: 2, to: 2, insert: "gone\n".into() }]);
         // a hunk elsewhere in the note does not belong to this block
         assert!(hunk_of_block("x\n\nTEST6\n", &ext, &(0..1)).is_none());
@@ -868,12 +858,12 @@ mod tests {
             hunks: vec![Hunk { before: "a\n\n".into(), old: "old\n".into(), new: "## H\n\nP\n".into(), after: String::new() }],
         };
         let lookup = |h: &str| stamps.iter().any(|s| s.hash == h).then_some(&rec);
-        let both = plan_revert_ids(text, lookup, Some(&["b1", "b2"][..])).unwrap();
+        let both = plan_revert_ids(text, lookup, Some(&["b1".to_string(), "b2".to_string()][..])).unwrap();
         assert_eq!(both.replacements, vec![Replacement { from: 3, to: 11, insert: "old\n".into() }]);
         // either block alone names the same hunk, so the same replacement
-        assert_eq!(plan_revert_ids(text, lookup, Some(&["b2"][..])).unwrap().replacements, both.replacements);
+        assert_eq!(plan_revert_ids(text, lookup, Some(&["b2".to_string()][..])).unwrap().replacements, both.replacements);
         // an id that names no block is an error, not a skipped one
-        assert!(plan_revert_ids(text, lookup, Some(&["b1", "b9"][..])).is_err());
+        assert!(plan_revert_ids(text, lookup, Some(&["b1".to_string(), "b9".to_string()][..])).is_err());
     }
 
     #[test]
@@ -896,10 +886,10 @@ mod tests {
         // the hunks survive the file
         let ledger = ProvenanceLedger::load(root, HashSet::new);
         assert_eq!(ledger.lookup(&stamps[1].hash).unwrap().hunks.len(), 2);
-        let plan = plan_revert(text, |h| ledger.lookup(h), Some("b1")).unwrap();
+        let plan = plan_revert_ids(text, |h| ledger.lookup(h), Some(&["b1".to_string()][..])).unwrap();
         assert_eq!(plan.replacements, vec![Replacement { from: 3, to: 12, insert: "old one\n\n".into() }]);
         assert_eq!(plan.missed, 0);
-        let all = plan_revert(text, |h| ledger.lookup(h), None).unwrap();
+        let all = plan_revert_ids(text, |h| ledger.lookup(h), None).unwrap();
         assert_eq!(all.replacements.len(), 2);
         let mut out = text.to_string();
         for r in all.replacements.iter().rev() {
@@ -907,12 +897,12 @@ mod tests {
         }
         assert_eq!(out, "a\n\nold one\n\nb\n\n");
         // a user block plans nothing; an unknown local id is an error
-        assert!(plan_revert(text, |h| ledger.lookup(h), Some("b0")).unwrap().replacements.is_empty());
-        assert!(plan_revert(text, |h| ledger.lookup(h), Some("b9")).is_err());
+        assert!(plan_revert_ids(text, |h| ledger.lookup(h), Some(&["b0".to_string()][..])).unwrap().replacements.is_empty());
+        assert!(plan_revert_ids(text, |h| ledger.lookup(h), Some(&["b9".to_string()][..])).is_err());
         // accepted blocks are out of the plan
         let mut ledger = ledger;
         ledger.append(ProvenanceEntry::Accept { ts: "t".into(), hashes: vec![stamps[3].hash.clone()] });
-        assert_eq!(plan_revert(text, |h| ledger.lookup(h), None).unwrap().replacements.len(), 1);
+        assert_eq!(plan_revert_ids(text, |h| ledger.lookup(h), None).unwrap().replacements.len(), 1);
         // a line older than the hunks: pending, but not revertible
         ledger.append(ProvenanceEntry::Agent {
             ts: "t".into(),
@@ -921,7 +911,7 @@ mod tests {
             blocks: vec![stamps[1].clone()],
             hunks: vec![],
         });
-        let p = plan_revert(text, |h| ledger.lookup(h), Some("b1")).unwrap();
+        let p = plan_revert_ids(text, |h| ledger.lookup(h), Some(&["b1".to_string()][..])).unwrap();
         assert!(p.replacements.is_empty() && p.missed == 1);
     }
 

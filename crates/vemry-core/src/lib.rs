@@ -44,7 +44,7 @@ pub use privacy::{
     redact_private_blocks, PrivacyScope, Redacted,
 };
 pub use provenance::{
-    added_blocks, plan_revert, stamps_of, BlockProvenance, BlockStamp, Hunk, InsertOrigin, Origin, ProvenanceEntry,
+    added_blocks, stamps_of, BlockProvenance, BlockStamp, Hunk, InsertOrigin, Origin, ProvenanceEntry,
     ProvenanceLedger, Replacement, RevertPlan,
 };
 pub use relink::Relink;

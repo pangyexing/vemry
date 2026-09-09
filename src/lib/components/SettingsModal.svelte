@@ -9,7 +9,7 @@
   import { scaffold } from "$lib/scaffold";
   import { skillDesc, skillSourceLabel } from "$lib/skills";
   import { setLanguage, t } from "$lib/i18n/i18n.svelte";
-  import { targetLabel } from "$lib/stores/translate.svelte";
+  import { targetLabel, TARGET_TAGS } from "$lib/stores/translate.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { browser } from "$lib/stores/browser.svelte";
@@ -60,7 +60,6 @@
   let translateTargetCustom = $state("");
   let translateModel = $state("");
   let translateAddendum = $state("");
-  const TRANSLATE_TARGETS = ["zh-CN", "zh-TW", "en", "ja", "ko"];
   let ruleUrls = $state("");
   let updatingRules = $state(false);
   let saved = $state(false);
@@ -123,7 +122,7 @@
       updaterAutoCheck = s.updater_auto_check;
       noteFontSize = s.note_font_size;
       readableLineWidth = s.readable_line_width;
-      if (s.translate_target === "" || TRANSLATE_TARGETS.includes(s.translate_target)) {
+      if (s.translate_target === "" || (TARGET_TAGS as readonly string[]).includes(s.translate_target)) {
         translateTarget = s.translate_target;
         translateTargetCustom = "";
       } else {
@@ -537,7 +536,7 @@
                 <span>{t("settings.translate.target")}</span>
                 <select bind:value={translateTarget} onchange={() => (dirty = true)}>
                   <option value="">{t("settings.translate.targetAuto")}</option>
-                  {#each TRANSLATE_TARGETS as tag (tag)}
+                  {#each TARGET_TAGS as tag (tag)}
                     <option value={tag}>{targetLabel(tag)}</option>
                   {/each}
                   <option value="custom">{t("settings.translate.targetCustom")}</option>

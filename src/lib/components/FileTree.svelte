@@ -549,6 +549,7 @@
       {@render editRow(depth)}
     {:else}
       {@const priv = vault.privacyStatus(note.id)}
+      {@const pend = vault.pendingIn(note.id)}
       <button
         class="row file-row"
         class:active={vault.currentPath === note.id}
@@ -575,7 +576,7 @@
         <span class="gutter"></span>
         <span class="name">{stemOf(note.id)}</span>
         {#if priv.kind === "root"}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
-        {#if vault.pendingIn(note.id)}<span class="pend" title={t("prov.pendingCount", { n: vault.pendingIn(note.id) })}></span>{/if}
+        {#if pend}<span class="pend" title={t("prov.pendingCount", { n: pend })}></span>{/if}
       </button>
     {/if}
   {/each}

@@ -858,12 +858,6 @@ impl Vault {
             .collect()
     }
 
-    /// Agent-written blocks awaiting review across the vault: (blocks, notes).
-    pub fn pending_total(&self) -> (usize, usize) {
-        let notes = self.pending_notes();
-        (notes.iter().map(|(_, n)| n).sum(), notes.len())
-    }
-
     /// Accept every pending agent block in these notes (every note with one, when
     /// None — the whole vault); returns (blocks accepted, notes touched). A note that
     /// cannot be read is skipped, not fatal.
@@ -875,14 +869,12 @@ impl Vault {
         let mut blocks = 0;
         let mut notes = 0;
         for p in paths {
-            let id = NoteId::new(&p);
-            let before = self.pending_count(&id);
-            if before == 0 {
-                continue;
-            }
-            if let Ok(after) = self.accept_provenance(&id, None) {
-                blocks += before.saturating_sub(after);
-                notes += 1;
+            match self.accept_provenance_ids(&NoteId::new(&p), None) {
+                Ok(n) if n > 0 => {
+                    blocks += n;
+                    notes += 1;
+                }
+                _ => {}
             }
         }
         (blocks, notes)
@@ -893,18 +885,11 @@ impl Vault {
         self.provenance.append(entry);
     }
 
-    /// Accept the pending agent blocks of a note — one by local id, or all of
-    /// them — and return how many are still pending (`accept_provenance_ids`
-    /// for a set of blocks).
-    pub fn accept_provenance(&mut self, id: &NoteId, local_id: Option<&str>) -> Result<usize> {
-        self.accept_provenance_ids(id, local_id.map(|l| vec![l]).as_deref())
-    }
-
     /// Accept the pending agent blocks of a note — those with these local ids
     /// (a run the editor reviews as one), or all of them — and return how many
-    /// are still pending. A block already reviewed is passed over; an id that
-    /// names no block is an error.
-    pub fn accept_provenance_ids(&mut self, id: &NoteId, local_ids: Option<&[&str]>) -> Result<usize> {
+    /// were accepted. A block already reviewed is passed over; an id that names
+    /// no block is an error.
+    pub fn accept_provenance_ids(&mut self, id: &NoteId, local_ids: Option<&[String]>) -> Result<usize> {
         let prov = self.provenance(id)?;
         let pending = |p: &BlockProvenance| matches!(p.origin, Origin::Agent { pending: true, .. });
         let hashes: Vec<String> = match local_ids {
@@ -926,22 +911,17 @@ impl Vault {
                 hashes
             }
         };
+        let accepted = hashes.len();
         if !hashes.is_empty() {
             self.provenance.append(ProvenanceEntry::Accept { ts: provenance::now_ts(), hashes });
         }
-        Ok(self.pending_count(id))
+        Ok(accepted)
     }
 
-    /// How to undo the agent writes behind the pending blocks of the note in
-    /// `text` (the editor's buffer) — one block by local id, or all of them —
-    /// as byte replacements in that text (`provenance::plan_revert`). Nothing
-    /// is written here.
-    pub fn revert_plan(&self, text: &str, local_id: Option<&str>) -> Result<provenance::RevertPlan> {
-        provenance::plan_revert(text, |h| self.provenance.lookup(h), local_id)
-    }
-
-    /// `revert_plan` for a set of blocks (a run), or all of them when None.
-    pub fn revert_plan_ids(&self, text: &str, local_ids: Option<&[&str]>) -> Result<provenance::RevertPlan> {
+    /// How to undo the agent writes behind the pending blocks of the note in `text`
+    /// (the editor's buffer) — those with these local ids (a run), or all of them — as
+    /// byte replacements in that text. Nothing is written here.
+    pub fn revert_plan_ids(&self, text: &str, local_ids: Option<&[String]>) -> Result<provenance::RevertPlan> {
         provenance::plan_revert_ids(text, |h| self.provenance.lookup(h), local_ids)
     }
 
@@ -1816,9 +1796,10 @@ mod tests {
         vault.write_note(&n, &format!("- agent added\n\n{old}")).unwrap();
         assert!(matches!(vault.provenance(&n).unwrap()[0].origin, Origin::Agent { pending: true, .. }));
         // accepting one by local id, then reloading the vault keeps the state
-        let remaining = vault.accept_provenance(&n, Some("b0")).unwrap();
-        assert_eq!(remaining, 0);
-        assert!(matches!(vault.accept_provenance(&n, Some("b99")), Err(VemryError::BlockNotFound { .. })));
+        let accepted = vault.accept_provenance_ids(&n, Some(&["b0".to_string()][..])).unwrap();
+        assert_eq!(accepted, 1);
+        assert_eq!(vault.pending_count(&n), 0);
+        assert!(matches!(vault.accept_provenance_ids(&n, Some(&["b99".to_string()][..])), Err(VemryError::BlockNotFound { .. })));
         // a hand-written `^b1` is looked up by the one rule: explicit before positional
         let old = vault.read_note(&n).unwrap();
         vault.write_note(&n, &format!("{old}\nlate agent ^b1\n")).unwrap();
@@ -1839,14 +1820,14 @@ agent here too
 agent here too
 ");
         vault.record_provenance(ProvenanceEntry::Agent { ts: "t3".into(), session: None, path: "m.md".into(), blocks: added_m, hunks: vec![] });
-        assert_eq!(vault.pending_total(), (2, 2));
+        assert_eq!(vault.pending_notes().len(), 2);
         // the note list is what a review walks: path order, each with its count
         assert_eq!(vault.pending_notes(), vec![("m.md".to_string(), 1), (n.to_string(), 1)]);
         // a note-level accept takes the notes named and leaves the rest
         assert_eq!(vault.accept_provenance_notes(Some(&["m.md".to_string()])), (1, 1));
         assert_eq!(vault.pending_notes(), vec![(n.to_string(), 1)]);
         assert_eq!(vault.accept_provenance_notes(None), (1, 1));
-        assert_eq!(vault.pending_total(), (0, 0));
+        assert!(vault.pending_notes().is_empty());
         assert_eq!(vault.pending_count(&n), 0);
         // (the rest of the test continues on n: its late block is accepted now, so re-add one to keep the story)
         let old2 = vault.read_note(&n).unwrap();
@@ -1856,7 +1837,7 @@ later still ^b2
         let added2 = crate::provenance::added_blocks(&old2, &vault.read_note(&n).unwrap());
         vault.record_provenance(ProvenanceEntry::Agent { ts: "t4".into(), session: None, path: "n.md".into(), blocks: added2, hunks: vec![] });
         assert_eq!(vault.pending_count(&n), 1);
-        assert_eq!(vault.accept_provenance(&n, Some("b2")).unwrap(), 0);
+        assert_eq!(vault.accept_provenance_ids(&n, Some(&["b2".to_string()][..])).unwrap(), 1);
         let reopened = Vault::open(root).unwrap();
         assert!(matches!(reopened.provenance(&n).unwrap()[0].origin, Origin::Agent { pending: false, .. }));
         // editing the words turns the block into the user's

@@ -435,7 +435,9 @@
   vault.blockCommand = blockCommand;
   /** Land the cursor on a pending run (its first line) and bring it into view. */
   function landOn(v: EditorView, pos: number) {
-    v.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+    // annotated like every other programmatic landing: the review steps onto a run, which
+    // is not the reader asking to see its source (reveal.ts's suppressReveal)
+    v.dispatch({ selection: { anchor: pos }, scrollIntoView: true, annotations: suppressReveal.of(true) });
     focusEditor(v);
   }
   const stepPending = (which: ReviewStep): boolean => {
@@ -446,7 +448,6 @@
     return true;
   };
   vault.stepPending = stepPending;
-  vault.pendingAtCursor = () => (view ? (runAt(view.state, view.state.selection.main.head)?.ids ?? null) : null);
   /** Where the review goes on after acting on these blocks: the start of the next run
    *  below the ones they belong to, else the note's first run still unreviewed (a review
    *  begun mid-note wraps before leaving it), else null — the note's end. Null ids (the
@@ -1004,6 +1005,7 @@
     v.dispatch({
       ...(held ? {} : { selection: { anchor } }),
       effects: EditorView.scrollIntoView(start, { y: "center" }),
+      annotations: suppressReveal.of(true), // an external write landing in view is not a request to see its source
     });
     if (end > start) flashRange(v, start, end);
   }
@@ -1069,18 +1071,18 @@
     }
     if (!view || docPath !== path || view.composing) return;
     const text = view.state.doc.toString();
-    const ranges = byteSpansToChar(
-      text,
-      items.map((p) => p.span),
-    );
-    const changed = byteSpansToChar(
-      text,
-      items.map((p) => p.changed ?? p.span),
-    );
-    const hunks = byteSpansToChar(
-      text,
-      items.map((p) => p.hunk ?? p.span),
-    );
+    // One pass for all three lists: byteSpansToChar dedupes and resolves an arbitrary set
+    // of spans in a single walk, and a source note runs to hundreds of thousands of
+    // characters — three calls walk it three times
+    const n = items.length;
+    const all = byteSpansToChar(text, [
+      ...items.map((p) => p.span),
+      ...items.map((p) => p.changed ?? p.span),
+      ...items.map((p) => p.hunk ?? p.span),
+    ]);
+    const ranges = all.slice(0, n);
+    const changed = all.slice(n, n * 2);
+    const hunks = all.slice(n * 2);
     const rows = items.map((p, i) => ({
       ...ranges[i],
       local_id: p.local_id,
@@ -1351,7 +1353,6 @@
     if (vault.revealPos === revealPos) vault.revealPos = null;
     vault.blockCommand = null;
     vault.stepPending = null;
-    vault.pendingAtCursor = null;
     vault.reviewRun = null;
     vault.rejectProvenance = null;
     vault.locateText = null;

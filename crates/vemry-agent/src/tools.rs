@@ -2632,7 +2632,7 @@ mod tests {
         .unwrap();
         execute_write(&mut vault, &req, None, Some("s1"), false).unwrap();
         assert_eq!(std::fs::read_to_string(vault.root().join("Tail.md")).unwrap(), "test2\n\nTEST3\n\nTEST4");
-        let plan = vault.revert_plan("test2\n\n\nTEST4", None).unwrap();
+        let plan = vault.revert_plan_ids("test2\n\n\nTEST4", None).unwrap();
         assert_eq!(plan.missed, 0);
         assert_eq!(plan.replacements, vec![vemry_core::Replacement { from: 6, to: 13, insert: String::new() }]);
     }
@@ -2652,7 +2652,7 @@ mod tests {
         execute_write(&mut vault, &req, None, Some("s1"), false).unwrap();
         let text = std::fs::read_to_string(vault.root().join("Plain.md")).unwrap();
         assert_eq!(text, "plain\n\nadded by the model\n");
-        let plan = vault.revert_plan(&text, None).unwrap();
+        let plan = vault.revert_plan_ids(&text, None).unwrap();
         assert_eq!(plan.missed, 0);
         let mut out = text.clone();
         for r in plan.replacements.iter().rev() {
@@ -2663,7 +2663,7 @@ mod tests {
         let req = prepare_write(&vault, "r".into(), "edit_note", &json!({"path": "Plain.md", "old_str": "model", "new_str": "MODEL"}), Some("s1"), None).unwrap();
         execute_write(&mut vault, &req, Some("plain\n\nadded by the user\n"), Some("s1"), false).unwrap();
         let text = std::fs::read_to_string(vault.root().join("Plain.md")).unwrap();
-        let plan = vault.revert_plan(&text, Some("b1")).unwrap();
+        let plan = vault.revert_plan_ids(&text, Some(&["b1".to_string()][..])).unwrap();
         assert_eq!(plan.replacements.len(), 1);
         assert_eq!(plan.replacements[0].insert, "added by the model\n");
     }
@@ -2685,7 +2685,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(matches!(rows[0].origin, vemry_core::Origin::Agent { pending: true, .. }));
         assert_eq!(rows[0].changed, Some(6..10));
-        let plan = vault.revert_plan("plain\nmore\n", None).unwrap();
+        let plan = vault.revert_plan_ids("plain\nmore\n", None).unwrap();
         assert_eq!(plan.replacements, vec![vemry_core::Replacement { from: 6, to: 11, insert: String::new() }]);
     }
 

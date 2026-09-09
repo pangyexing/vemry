@@ -48,3 +48,9 @@ export function countWords(text: string): number {
   }
   return n;
 }
+
+/** A count as a gauge shows it: `847`, `1.2k`, `124k`. The chat's usage gauge, its
+ *  thinking counter and the translation's token count read this one rule. */
+export function fmtCount(n: number): string {
+  return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}

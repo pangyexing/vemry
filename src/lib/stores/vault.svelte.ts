@@ -373,8 +373,6 @@ class VaultStore {
   /** Editor hook: move the cursor to a pending run of the open note (the next or previous
    *  from the cursor, the first or last of the note); false when there is none that way. */
   stepPending: ((which: ReviewStep) => boolean) | null = null;
-  /** Editor hook: the pending run under the cursor (its blocks' local ids), or null. */
-  pendingAtCursor: (() => string[] | null) | null = null;
   /** Editor hook: act on the run under the cursor and step on; false when the cursor is not on one. */
   reviewRun: ((act: "accept" | "reject") => boolean) | null = null;
   /** Put the write behind unreviewed blocks (local ids) or, with null, every one of the current note back (set by the editor). */
@@ -468,14 +466,23 @@ class VaultStore {
     this.mainView = "translate";
   }
 
+  /** Where an overlay returns to: the view it was entered from, if that is still a
+   *  place to land — a projection view needs its tab to still be there, since a ⌘W
+   *  underneath may have closed it — and the editor otherwise. Only the translation may
+   *  land back on the reading projection, which it can sit over. */
+  private returnTo(origin: MainView | null, allowReading = false): MainView {
+    const from = origin ?? "editor";
+    const t = this.tabs.find((t) => t.id === this.activeTabId);
+    const backed = t ? viewOfTab(t.path) : null;
+    if (from === "editor" || from === backed || (allowReading && from === "reading")) return from;
+    return "editor";
+  }
+
   /** Leave the translation and return where it came from. Also the one place the job
    *  is closed from — every path off the overlay comes through here. */
   exitTranslate() {
     if (this.mainView !== "translate") return;
-    const origin = this.translateOrigin ?? "editor";
-    const t = this.tabs.find((t) => t.id === this.activeTabId);
-    const backed = t ? viewOfTab(t.path) : null;
-    this.mainView = origin === "editor" || origin === "reading" || origin === backed ? origin : "editor";
+    this.mainView = this.returnTo(this.translateOrigin, true);
     this.translateOrigin = null;
     this.onTranslateExit?.();
   }
@@ -487,10 +494,7 @@ class VaultStore {
     // a ⌘W while reading may have closed it (the close-to-empty branch leaves reading
     // alone). When they do not line up it returns to the editor's empty view rather than
     // producing the residue of "a view with no tab"
-    const origin = this.readingOrigin ?? "editor";
-    const t = this.tabs.find((t) => t.id === this.activeTabId);
-    const backed = t ? viewOfTab(t.path) : null;
-    this.mainView = origin === "editor" || origin === backed ? origin : "editor";
+    this.mainView = this.returnTo(this.readingOrigin);
     this.readingOrigin = null;
     // Lining up the timeline: Esc and ✕ leave a mode rather than moving through history,
     // but what is shown is already the current document — so when the index still sits on
@@ -511,7 +515,7 @@ class VaultStore {
   revealActiveTab() {
     const t = this.tabs.find((t) => t.id === this.activeTabId);
     const view = t ? viewOfTab(t.path) : null;
-    if (this.mainView === "translate") this.exitTranslate();
+    this.exitTranslate();
     if (this.mainView === "reading") this.exitReading();
     this.mainView = view ?? "editor";
   }
@@ -1181,7 +1185,7 @@ class VaultStore {
     // A landing shows a tab's content: the translation overlay (a way of looking at the
     // document that was current) is left first, so its job is closed rather than
     // covered over
-    if (this.mainView === "translate") this.exitTranslate();
+    this.exitTranslate();
     if (tab.id !== this.activeTabId) this.stashActive();
     this.tabCaches.delete(tab.id);
     this.activeTabId = tab.id;
@@ -1389,7 +1393,7 @@ class VaultStore {
         // mainView having come apart): pressing the rail or ⌘P again says "show me this" —
         // the same lining-up as revealActiveTab, with the reading projection going through
         // exitReading first to get its timeline lined up
-        if (this.mainView === "translate") this.exitTranslate();
+        this.exitTranslate();
         if (this.mainView === "reading") this.exitReading();
         this.mainView = view;
       }
@@ -1657,11 +1661,7 @@ class VaultStore {
     if (!path) return 0;
     try {
       if (this.dirty) await this.flushEditor?.();
-      const before = this.pendingCount;
-      const remaining = await api.provenanceAccept(path, ids ?? undefined);
-      // what the receipt counts: the note's drop in pending blocks (the editor's count is
-      // disk's after the flush), the ids' number only when no count was known
-      const n = before > 0 ? Math.max(before - remaining, 0) : (ids?.length ?? 0);
+      const n = await api.provenanceAccept(path, ids ?? undefined);
       this.provenanceEpoch++;
       toast.push(n === 1 ? t("prov.accepted") : t("prov.acceptedAll", { n }));
       void this.refreshPendingVault();

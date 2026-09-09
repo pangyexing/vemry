@@ -7,6 +7,7 @@
   // current note" comes from the editor in the main window and from the main window's push in
   // the chat window (agent.hostNote); anything that has to happen in the main window goes
   // through host.ts.
+  import { fmtCount } from "$lib/stats";
   import { api, type SkillEntry, AGENT_IMAGE_EXTS, EFFORT_OPTIONS, type EffortValue, isAgentImage, type WebSearchResult } from "$lib/api";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { agent, blockHandle, type ComposerHandle, type DraftRef, type TimelineItem } from "$lib/stores/agent.svelte";
@@ -429,7 +430,7 @@
     // A long think is a visible one: how much reasoning has come in so far, so a
     // four-minute wait reads as work rather than a hang
     const n = agent.thinking.length;
-    return n ? t("chat.thinkingCount", { n: n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n) }) : t("chat.thinking");
+    return n ? t("chat.thinkingCount", { n: fmtCount(n) }) : t("chat.thinking");
   };
 
   /** ---- The decision state of the plan gate's (propose_plan) inline card: at most one plan is
@@ -577,11 +578,6 @@
     return t("chat.readDeclined");
   }
 
-  /** The thousands abbreviation (for the usage gauge). */
-  function fmtK(n: number): string {
-    return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-  }
-
   /** m:ss, h:mm:ss past an hour — the strip's clock. */
   function fmtDuration(ms: number): string {
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -612,7 +608,7 @@
   const usageIdleText = $derived.by(() => {
     const u = agent.usage;
     if (!u) return "";
-    const context = t("chat.usageContext", { tokens: fmtK(u.prompt) });
+    const context = t("chat.usageContext", { tokens: fmtCount(u.prompt) });
     return agent.lastTurnMs != null ? t("chat.usageIdle", { t: fmtDuration(agent.lastTurnMs), context }) : context;
   });
   const usageIdleHint = $derived.by(() => {

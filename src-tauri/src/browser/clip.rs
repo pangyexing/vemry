@@ -575,8 +575,18 @@ async fn localize_clip_images(app: AppHandle, rel: String, page_url: String) {
     };
 
     // One image referenced in several places is downloaded once: resolved URL → the literals it appeared as
+    // A privacy zone's content is nonexistent to everything the agent set in motion, and
+    // localize_agent_figures reaches notes the agent wrote into — which may hold private
+    // blocks beside them. An image inside one is neither fetched nor rewritten.
+    let private = {
+        let blocks = vemry_core::parser::parse_note(&content).blocks;
+        vemry_core::privacy::private_lines(&content, &blocks).iter().map(|s| s.to_string()).collect::<std::collections::HashSet<_>>()
+    };
     let mut groups: Vec<(String, Vec<String>)> = Vec::new();
     for r in vemry_clip::image_refs(&content, &page_url) {
+        if private.iter().any(|l| l.contains(&r.literal)) {
+            continue;
+        }
         match groups.iter_mut().find(|g| g.0 == r.resolved) {
             Some(g) => {
                 if !g.1.contains(&r.literal) {

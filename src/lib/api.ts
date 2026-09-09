@@ -254,7 +254,6 @@ export interface AcceptedTotal {
 
 /** How to undo the agent writes behind unreviewed blocks (mirrors vemry-core's `RevertPlan`):
  *  byte ranges of the text the plan was made for. */
-
 export interface RevertPlan {
   replacements: { from: number; to: number; insert: string }[];
   /** Unreviewed blocks whose write could not be located (a ledger line older than the hunks, or surroundings that moved on). */
@@ -1137,7 +1136,7 @@ export const api = {
   blockIdPlan: (source: string, selector: BlockSelector) => invoke<BlockIdPlan>("block_id_plan", { source, selector }),
   /** Who authored each block of a note. */
   provenanceGet: (path: string) => invoke<BlockProvenance[]>("provenance_get", { path }),
-  /** Accept pending agent blocks (those with these local ids — a run — or all); resolves to the count still pending. */
+  /** Accept pending agent blocks (those with these local ids — a run — or all); resolves to how many were accepted. */
   provenanceAccept: (path: string, localIds?: string[]) => invoke<number>("provenance_accept", { path, localIds }),
   /** The notes with unreviewed AI blocks across the vault, in path order (the status bar's list, the file tree's marks, the review's note-to-note step). */
   provenancePendingNotes: () => invoke<PendingNote[]>("provenance_pending_notes"),

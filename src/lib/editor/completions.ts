@@ -16,7 +16,7 @@ import {
 import { type Command, EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { t } from "$lib/i18n/i18n.svelte";
-import { type AttrKind, attrIconSvg, DATE_FIELDS, type EditField, localDate, newTaskId, priorityLabel } from "$lib/views/tasks";
+import { type AttrKind, ATTR_KEY_NAME, attrIconSvg, DATE_FIELDS, type EditField, isUrgent, localDate, newTaskId, priorityLabel } from "$lib/views/tasks";
 import type { Priority } from "$lib/api";
 import type { BlockType, FieldStat } from "$lib/api";
 import { blockAt, frontmatterEnd } from "./blocks";
@@ -86,6 +86,17 @@ export const attrIconOption = {
  *  `@estimate 2h`, `@id` a fresh id, `@depends on` a `⛔` to paste an id after).
  *  The labels are English like the `/` menu's, so that typing after `@` filters them
  *  in any locale; the emoji goes in the detail column. */
+/** The vocabularies the `@` palette offers and `[key:: …]` completes: one declaration,
+ *  so the two palettes cannot come to know different words. */
+const REPEAT_RULES = ["every day", "every week", "every month", "every year"] as const;
+const ESTIMATES = ["30m", "1h", "2h", "1d"] as const;
+const PRIORITY_PICKS = [
+  ["urgent", "highest", "❗❗"],
+  ["important", "high", "❗"],
+  ["later", "low", "❕"],
+  ["someday", "lowest", "❕❕"],
+] as const;
+
 export function atCompletions(targets: () => string[], onFieldChip?: FieldChipHandler): CompletionSource {
   return (context: CompletionContext): CompletionResult | null => {
     const before = context.matchBefore(AT_RE);
@@ -142,7 +153,7 @@ export function atCompletions(targets: () => string[], onFieldChip?: FieldChipHa
         type: "text",
         section,
         attrIcon: attrIconSvg(kind, priority),
-        attrTone: `cm-lp-attr-${kind}${priority === "highest" || priority === "high" ? " cm-lp-attr-urgent" : priority ? " cm-lp-attr-faint" : ""}`,
+        attrTone: `cm-lp-attr-${kind}${priority ? (isUrgent(priority) ? " cm-lp-attr-urgent" : " cm-lp-attr-faint") : ""}`,
         apply: (view: EditorView, _c, _applyFrom: number, applyTo: number) => {
           view.dispatch({ changes: { from: atPos, to: applyTo, insert: text }, selection: { anchor: atPos + text.length } });
           then?.(view);
@@ -155,15 +166,9 @@ export function atCompletions(targets: () => string[], onFieldChip?: FieldChipHa
           if (c) onFieldChip(view, atPos, field, "", { x: c.left, y: c.bottom + 2 }, { keyboard: true });
         });
       options.push(dateItem("due"), dateItem("scheduled"), dateItem("start"));
-      for (const [label, p, mark] of [
-        ["urgent", "highest", "❗❗"],
-        ["important", "high", "❗"],
-        ["later", "low", "❕"],
-        ["someday", "lowest", "❕❕"],
-      ] as const)
-        options.push(item(label, "priority", `${mark} `, priorityLabel(p), p));
-      for (const unit of ["day", "week", "month", "year"]) options.push(item(`every ${unit}`, "repeat", `🔁 every ${unit} `));
-      for (const v of ["30m", "1h", "2h", "1d"]) options.push(item(`estimate ${v}`, "estimate", `🕐 ${v} `));
+      for (const [label, p, mark] of PRIORITY_PICKS) options.push(item(label, "priority", `${mark} `, priorityLabel(p), p));
+      for (const rule of REPEAT_RULES) options.push(item(rule, "repeat", `🔁 ${rule} `));
+      for (const v of ESTIMATES) options.push(item(`estimate ${v}`, "estimate", `🕐 ${v} `));
       options.push(item("removed once done", "delete", "🚮 "));
       options.push(item("id", "id", `🆔 ${newTaskId()} `));
       options.push(item("depends on", "depends", "⛔ ", "id"));
@@ -189,11 +194,11 @@ export function fieldCompletions(
 ): CompletionSource {
   const DATE_KEYS = new Set(["due", "scheduled", "date", "start", "end", "created", "deadline"]);
   /** The values a task attribute's `[key:: …]` takes (taskattrs.rs), offered on a task line. */
-  const TASK_KEY_VALUES: Record<string, string[]> = {
-    priority: ["highest", "high", "low", "lowest"],
-    repeat: ["every day", "every week", "every month", "every year"],
-    estimate: ["30m", "1h", "2h", "1d"],
-    oncompletion: ["delete"],
+  const TASK_KEY_VALUES: Record<string, readonly string[]> = {
+    [ATTR_KEY_NAME.priority.toLowerCase()]: PRIORITY_PICKS.map(([, p]) => p),
+    [ATTR_KEY_NAME.repeat.toLowerCase()]: REPEAT_RULES,
+    [ATTR_KEY_NAME.estimate.toLowerCase()]: ESTIMATES,
+    [ATTR_KEY_NAME.delete.toLowerCase()]: ["delete"],
   };
   // The vault's stats are fetched on demand (a promise the first time after an index
   // update, the cached list afterwards); the cheap guards run before asking for them,
