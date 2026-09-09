@@ -323,7 +323,6 @@ struct Inner {
     /// is a failure.
     retried: HashSet<u32>,
     done: HashMap<u32, String>,
-    failed: HashSet<u32>,
 }
 
 pub struct TranslateJob {
@@ -417,8 +416,11 @@ impl TranslateJob {
     /// what the cache holds for them, and queue the rest. Returns the ids given.
     pub fn extend(self: &Arc<Self>, more: Vec<Segment>) -> Vec<u32> {
         let ids: Vec<u32> = {
-            let mut segs = self.segments.write().unwrap();
+            // inner before segments before cache, the one order every path takes:
+            // `pump` holds inner while it reads the segments, so taking the write
+            // lock first here would let the two wait on each other
             let mut inner = self.inner.lock().unwrap();
+            let mut segs = self.segments.write().unwrap();
             let cache = self.cache.lock().unwrap();
             let mut ids = vec![];
             for mut seg in more {
@@ -518,7 +520,6 @@ impl TranslateJob {
                 } else if inner.done.contains_key(&id) {
                     continue;
                 }
-                inner.failed.remove(&id);
                 inner.wanted.retain(|p| *p != id);
                 inner.background.retain(|p| *p != id);
                 if !front.contains(&id) {
@@ -730,9 +731,11 @@ impl TranslateJob {
         let landed: HashSet<u32> = got.iter().map(|(id, _)| *id).collect();
         let missing: Vec<u32> = ids.iter().copied().filter(|id| !landed.contains(id)).collect();
         match result {
-            Err(AgentError::Cancelled) => return,
+            // Torn down mid-stream: the queues are already cleared and nothing is
+            // reported, but the batch still has to give its slot back (`pump` returns
+            // at once while the job is cancelled, and lets a resumed one go on)
+            Err(AgentError::Cancelled) => drop(inner),
             Err(e) => {
-                inner.failed.extend(missing.iter().copied());
                 drop(inner);
                 if !missing.is_empty() {
                     self.emit(TranslateEvent::Failed { ids: missing, message: e.to_string() });
@@ -747,7 +750,6 @@ impl TranslateJob {
                         inner.retried.insert(*id);
                         inner.wanted.push_front(*id);
                     } else {
-                        inner.failed.insert(*id);
                         failed.push(*id);
                     }
                 }

@@ -6,6 +6,7 @@
 import { fmtCount } from "$lib/stats";
 import { api, onTranslateEvent, type TranslateDocView, type TranslateSegment, type TranslateSource } from "$lib/api";
 import { t, type MessageKey } from "$lib/i18n/i18n.svelte";
+import { toast } from "$lib/stores/toast.svelte";
 
 /** How the two texts are laid out. Presentational, kept in localStorage. */
 export type TranslateMode = "side" | "stack" | "target";
@@ -33,6 +34,8 @@ class TranslateStore {
   doc = $state<TranslateDocView | null>(null);
   /** The source being cut and sent, before the document arrives. */
   loading = $state(false);
+  /** Why the document could not be opened — the view shows this in place of it, so
+   *  only `open` writes it: a failed request is a toast, not the loss of the page. */
   error = $state<string | null>(null);
   rows = $state<Record<number, RowState>>({});
   /** Whether the job has nothing pending and nothing in flight. */
@@ -125,7 +128,7 @@ class TranslateStore {
     }
     for (const id of ids) this.requested[id] = true;
     this.idle = false;
-    void api.translateRequest(job, ids, force).catch((e) => (this.error = String(e)));
+    void api.translateRequest(job, ids, force).catch((e) => toast.push(String(e), "error"));
   }
 
   /** Past the stop: another budget's worth of the document, or all of it. */
@@ -134,7 +137,7 @@ class TranslateStore {
     if (!job) return;
     this.pausedAt = null;
     this.idle = false;
-    void api.translateContinue(job, all).catch((e) => (this.error = String(e)));
+    void api.translateContinue(job, all).catch((e) => toast.push(String(e), "error"));
   }
 
   /** Save as a note: what is left is translated first (the engine does it), then the note lands. */
@@ -143,6 +146,9 @@ class TranslateStore {
     if (!job) throw new Error("no document");
     this.saving = true;
     this.pausedAt = null;
+    // the engine translates what is left before it writes: the rows still waiting are
+    // on their way, not standing still
+    this.idle = false;
     try {
       return await api.translateSave(job);
     } finally {

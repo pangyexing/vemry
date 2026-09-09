@@ -44,7 +44,9 @@ export function scriptOf(lang: string): Script {
  *  status bar shows its chip on this alone. Frontmatter is left out — its keys
  *  are always Latin. */
 export function readsForeign(text: string, target: string): boolean {
-  const body = text.startsWith("---\n") ? text.slice(text.indexOf("\n---", 4) + 4) : text;
+  // an unclosed opening fence is not frontmatter: the whole text is the body
+  const close = text.startsWith("---\n") ? text.indexOf("\n---", 4) : -1;
+  const body = close < 0 ? text : text.slice(close + 4);
   const script = dominantScript(body);
   return script !== null && script !== scriptOf(target);
 }

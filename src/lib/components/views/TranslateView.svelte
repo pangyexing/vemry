@@ -133,7 +133,11 @@
       p = api
         .fileReadBinary(target)
         .then((buf) => URL.createObjectURL(new Blob([buf], { type: mimeOf(target) })))
-        .catch(() => null);
+        .catch(() => {
+          // one transient read failure should not nail this image as "missing" for the view's life
+          assetUrls.delete(target);
+          return null;
+        });
       assetUrls.set(target, p);
     }
     return p;
@@ -177,8 +181,22 @@
     }, REPORT_MS);
   }
   let io: IntersectionObserver | null = null;
+  /** The rows on screen right now, so a rebuilt observer picks them all up again. */
+  const observed = new Set<HTMLElement>();
   function observe(node: HTMLElement, id: number) {
-    io ??= new IntersectionObserver(
+    observed.add(node);
+    io?.observe(node);
+    return { destroy: () => { observed.delete(node); io?.unobserve(node); visible.delete(id); } };
+  }
+  // The observer measures against the scroller, so it is built here rather than in the
+  // action: reopening the document (a changed target language) mounts a new scroller,
+  // and an observer left on the old, detached one never reports an intersection again —
+  // the rows on screen would stop being asked for first.
+  $effect(() => {
+    const scroller = root;
+    if (!scroller) return;
+    visible.clear();
+    io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           const sid = Number((e.target as HTMLElement).dataset.id);
@@ -188,13 +206,12 @@
         scheduleReport();
       },
       // the prefetch window: a screen behind the reader, two ahead
-      { root, rootMargin: "100% 0px 200% 0px" },
+      { root: scroller, rootMargin: "100% 0px 200% 0px" },
     );
-    node.dataset.id = String(id);
-    io.observe(node);
-    return { destroy: () => { io?.unobserve(node); visible.delete(id); } };
-  }
-  $effect(() => () => { io?.disconnect(); io = null; if (reportTimer) clearTimeout(reportTimer); });
+    for (const node of observed) io.observe(node);
+    return () => { io?.disconnect(); io = null; };
+  });
+  $effect(() => () => { if (reportTimer) clearTimeout(reportTimer); });
 
   $effect(() => {
     if (!root) return;

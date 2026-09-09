@@ -1471,6 +1471,7 @@
   "translate.modeHint": "How the two texts are laid out; a narrow pane interleaves on its own",
   "translate.modelHint": "The model translating; change it under Settings › AI",
   "translate.noSource": "Open a note first, then translate it",
+  "translate.noSuchJob": "This translation is no longer open",
   "translate.notANote": "Only a note or a PDF can be translated",
   "translate.notYet": "Translated when it comes into view, or with “translate everything”",
   "translate.nothingToTranslate": "Nothing here to translate",

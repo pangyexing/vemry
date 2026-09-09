@@ -1157,6 +1157,7 @@ add("translate.", {
                 "左边是页面,右边是该页各段的译文;正文取自 PDF 抽取的文本"),
     "pdfEmpty": ("No text could be extracted from this PDF — it may be a scan", "这份 PDF 抽不出文本——可能是扫描件"),
     "nothingToTranslate": ("Nothing here to translate", "没有可翻译的内容"),
+    "noSuchJob": ("This translation is no longer open", "这次翻译已经不在了"),
     "pageExpired": ("The page is no longer in the reader's cache — open it in the reader again, then translate",
                     "这一页已不在阅读投影的缓存里——重新在投影里打开后再翻译"),
     "asideHint": ("Not body text (a caption, a reference, a byline) — left as it is", "非正文(题注、参考文献、署名)——保持原样"),

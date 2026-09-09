@@ -41,11 +41,14 @@ const POLL_MS: u64 = 1000;
 /// Install the pane (once per document) and collect the text blocks not yet
 /// tagged. `gen` is minted when the script first runs in a document, so a
 /// different value on the next poll means a different document. `TARGET` (the
-/// translation's target language) is filled in by `collect_js`: a block already
-/// in that language is not collected.
+/// translation's target language) and `KNOWN` (how many blocks the job already
+/// holds) are filled in by `collect_js`: a block already in the target language is
+/// not collected, and a block the job never received — a poll whose answer was
+/// lost on the way back — is sent again, so the two sides keep numbering alike.
 const COLLECT_JS: &str = r#"
 (() => {
   const TARGET = "__TARGET__";
+  const KNOWN = __KNOWN__;
   let S = window.__vemryTr;
   if (!S) {
     S = window.__vemryTr = { n: 0, gen: Math.random().toString(36).slice(2), items: new Map(), pane: null, inner: null, raf: 0, timer: 0 };
@@ -120,15 +123,22 @@ const COLLECT_JS: &str = r#"
     const GAP = 6;
     S.layout = () => {
       S.raf = 0;
+      // Every measurement first, then every style change: a rect read between two
+      // writes makes the browser lay the page out again, once per entry per frame
       const rows = [];
+      const gone = [];
+      const hidden = [];
       const paneLeft = S.pane.getBoundingClientRect().left;
       for (const it of S.items.values()) {
-        if (!it.el.isConnected) { it.out.remove(); continue; }
+        if (!it.el.isConnected) { gone.push(it); continue; }
         const r = it.el.getBoundingClientRect();
-        if ((r.width === 0 && r.height === 0) || r.left + r.width / 2 >= paneLeft) { it.out.style.display = 'none'; continue; }
-        it.out.style.display = '';
-        rows.push({ it, r, t: r.top, hb: r.height, h: it.out.offsetHeight, y: 0 });
+        if ((r.width === 0 && r.height === 0) || r.left + r.width / 2 >= paneLeft) { hidden.push(it); continue; }
+        rows.push({ it, r, t: r.top, hb: r.height, h: 0, y: 0 });
       }
+      for (const it of gone) it.out.remove();
+      for (const it of hidden) it.out.style.display = 'none';
+      for (const x of rows) x.it.out.style.display = '';
+      for (const x of rows) x.h = x.it.out.offsetHeight;
       rows.sort((a, b) => a.t - b.t);
       // The pane's width is settled once from the page as it reflowed: an entry gets about
       // three quarters of its block's width, which is what a CJK translation of an English
@@ -194,6 +204,18 @@ const COLLECT_JS: &str = r#"
       }
       S.schedule();
     };
+    // The segment will not arrive (the request failed, or the model left it out twice):
+    // the placeholder stops shimmering and the entry says so, rather than waiting for ever
+    S.fail = (id, label) => {
+      const it = S.items.get(id);
+      if (!it || !it.pending) return;
+      it.pending = false;
+      it.out.textContent = label;
+      it.out.style.opacity = '.35';
+      it.out.style.minHeight = '';
+      it.out.style.borderLeftStyle = 'dashed';
+      S.schedule();
+    };
     // The background stopped at its budget before block `at`: that block's entry says so and offers to go on
     S.skeleton = (o, lines) => {
       o.textContent = '';
@@ -238,7 +260,7 @@ const COLLECT_JS: &str = r#"
       if (S.selected != null) S.select(S.selected, false);
       S.pane.remove();
       document.documentElement.style.marginRight = S.prevMargin || '';
-      for (const it of S.items.values()) { it.el.removeAttribute('data-vemry-tr'); it.el.style.outline = ''; }
+      for (const it of S.items.values()) it.el.removeAttribute('data-vemry-tr');
       S.items.clear();
       window.__vemryTr = null;
     };
@@ -280,6 +302,9 @@ const COLLECT_JS: &str = r#"
   const BLOCK = new Set(['DIV','P','UL','OL','LI','TABLE','SECTION','ARTICLE','HEADER','FOOTER','ASIDE','NAV','BLOCKQUOTE','PRE','H1','H2','H3','H4','H5','H6','FIGURE','FORM','FIELDSET','DL','DD','DT','HR','TR','TD','TH','MAIN','DETAILS','SUMMARY']);
   const TEXTY = new Set(['P','H1','H2','H3','H4','H5','H6','LI','BLOCKQUOTE','DD','DT','DIV','SPAN','SECTION','ARTICLE','SUMMARY','MAIN']);
   const out = [];
+  // Tagged here but never received on the other side: sent again, ahead of anything new,
+  // so the ids the job hands out (its segment count, counting up) stay the pane's ids
+  for (const [id, it] of S.items) if (id >= KNOWN) out.push({ id, text: it.text });
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
   for (let el = walker.currentNode; el; el = walker.nextNode()) {
     if (!TEXTY.has(el.tagName) || el.hasAttribute('data-vemry-tr')) continue;
@@ -317,7 +342,7 @@ const COLLECT_JS: &str = r#"
     S.skeleton(o, lines);
     o.addEventListener('click', () => { if (!o.querySelector('[data-vemry-tr-out]') ) S.select(id, true); });
     S.inner.appendChild(o);
-    S.items.set(id, { el, out: o, math: maths, pending: true, lines });
+    S.items.set(id, { el, out: o, math: maths, pending: true, lines, text });
     out.push({ id, text });
   }
   S.schedule();
@@ -352,9 +377,17 @@ fn progress_js(done: usize, total: usize) -> String {
     format!("(() => {{ const S = window.__vemryTr; if (S) S.progress({done}, {total}); }})()")
 }
 
-/// The collect script for a target language.
-fn collect_js(target: &str) -> String {
-    COLLECT_JS.replace("__TARGET__", &target.replace(['"', '\\'], ""))
+/// The collect script for a target language; `known` is how many blocks the job
+/// already holds, which is where the page's own numbering has to pick up.
+fn collect_js(target: &str, known: usize) -> String {
+    COLLECT_JS.replace("__TARGET__", &target.replace(['"', '\\'], "")).replace("__KNOWN__", &known.to_string())
+}
+
+/// Mark the entries of segments that will not arrive.
+fn failed_js(ids: &[u32], label: &str) -> String {
+    let list = serde_json::to_string(ids).unwrap_or_else(|_| "[]".into());
+    let label = serde_json::to_string(label).unwrap_or_else(|_| "\"\"".into());
+    format!("(() => {{ const S = window.__vemryTr; if (S) for (const id of {list}) S.fail(id, {label}); }})()")
 }
 
 /// What page the tab is on, without touching it: the pane's document token (null
@@ -513,7 +546,19 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
                 let _ = ev_webview.eval(pause_js(at));
                 return;
             }
-            TranslateEvent::Failed { .. } | TranslateEvent::Idle => {}
+            // These will not arrive: the entries stop waiting, and they count towards
+            // the progress line, which would otherwise never fill
+            TranslateEvent::Failed { ids, .. } => {
+                let label = crate::i18n::t(crate::i18n::current(), "translate.untranslated");
+                let _ = ev_webview.eval(failed_js(&ids, &label));
+                let mut counted = counted.lock().unwrap();
+                for id in ids {
+                    if counted.insert(id) {
+                        ev_done.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+            TranslateEvent::Idle => {}
         }
         let (done, total) = (ev_done.load(Ordering::Relaxed), ev_total.load(Ordering::Relaxed));
         let _ = ev_webview.eval(progress_js(done, total));
@@ -561,7 +606,8 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
                 emit(&poll_app, &BrowserEvent::Translate { label: poll_t.label.clone(), active: false, done: 0, total: 0, tokens: 0 });
                 break;
             }
-            let Ok(data) = eval_json(&webview, &collect_js(&poll_t.job.target)).await else { continue };
+            let known = poll_t.job.len();
+            let Ok(data) = eval_json(&webview, &collect_js(&poll_t.job.target, known)).await else { continue };
             // Stopped while the eval was out: the collect just re-installed the pane the
             // clear removed, so it is cleared again and nothing is restarted
             if !poll_t.active.load(Ordering::Relaxed) {
@@ -574,18 +620,23 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
                 Some("more") => poll_t.job.continue_background(Some(vemry_agent::translate::BACKGROUND_BUDGET_CHARS)),
                 _ => {}
             }
+            if !c.blocks.is_empty() {
+                poll_t.job.extend(segments_of(&c.blocks));
+                poll_total.store(poll_t.job.len(), Ordering::Relaxed);
+            }
+            // after `extend`, so a block that came in on this very poll and is already on
+            // screen goes to the front of the queue rather than waiting a second for the next one
             if !c.visible.is_empty() {
                 poll_t.job.request(&c.visible, false);
             }
             if c.blocks.is_empty() {
                 continue;
             }
-            poll_t.job.extend(segments_of(&c.blocks));
-            poll_total.store(poll_t.job.len(), Ordering::Relaxed);
             // blocks that came from the cache landed through `extend` without an event
             for (id, text) in poll_t.job.translations() {
                 if c.blocks.iter().any(|b| b.id == id) {
                     let _ = webview.eval(apply_js(id, &text, true));
+                    poll_t.done.fetch_add(1, Ordering::Relaxed);
                 }
             }
             progress(&poll_app, &poll_t);
@@ -610,7 +661,7 @@ pub async fn browser_translate_toggle(
         return Ok(false);
     }
     let target = crate::translate::target_of(&settings::load(&app));
-    let data = eval_json(&webview, &collect_js(&target)).await?;
+    let data = eval_json(&webview, &collect_js(&target, 0)).await?;
     let collected: Collected = serde_json::from_value(data).map_err(|e| e.to_string())?;
     if collected.blocks.is_empty() {
         let _ = webview.eval(CLEAR_JS);

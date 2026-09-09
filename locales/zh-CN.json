@@ -1471,6 +1471,7 @@
   "translate.modeHint": "两栏怎么排;窄窗自动改为交错",
   "translate.modelHint": "翻译所用模型;在「设置 › AI」里更换",
   "translate.noSource": "先打开一篇笔记,再对照翻译",
+  "translate.noSuchJob": "这次翻译已经不在了",
   "translate.notANote": "只能翻译笔记或 PDF",
   "translate.notYet": "滚到这里时翻译,或点「翻译全文」",
   "translate.nothingToTranslate": "没有可翻译的内容",

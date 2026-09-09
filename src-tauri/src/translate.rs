@@ -211,6 +211,10 @@ pub async fn translate_open(
                 return Err(t("translate.privateFile"));
             }
             let (key, pages) = vemry_agent::context::pdf_pages(v, rel, rel)?;
+            // No text at all is a scan, not an empty document: say which it is
+            if pages.iter().all(|p| p.trim().is_empty()) {
+                return Err(t("translate.pdfEmpty"));
+            }
             let segments = vemry_core::segment_pages(&pages);
             let title = std::path::Path::new(rel).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| rel.to_string());
             let doc = TranslateDoc { key, title, segments };
@@ -301,7 +305,7 @@ fn current_job(state: &State<'_, AppState>, job: &str) -> Result<Arc<TranslateJo
         .as_ref()
         .filter(|j| j.id == job)
         .cloned()
-        .ok_or_else(|| "no such translation".to_string())
+        .ok_or_else(|| t("translate.noSuchJob"))
 }
 
 /// The view asks for segments in the order it wants them (the visible rows
@@ -404,14 +408,14 @@ pub fn compose_translation(segments: &[Segment], translations: &HashMap<u32, Str
 #[tauri::command]
 pub async fn translate_save(app: AppHandle, state: State<'_, AppState>, job: String) -> Result<String, String> {
     let j = current_job(&state, &job)?;
-    let source = state.translate.sources.lock().unwrap().get(&job).cloned().ok_or("no such translation")?;
+    let source = state.translate.sources.lock().unwrap().get(&job).cloned().ok_or_else(|| t("translate.noSuchJob"))?;
     // What is still untranslated is translated first — the saved note is complete,
     // not a mix of translation and source
     if j.has_remaining() {
         j.continue_background(None);
         j.wait_idle().await;
         if j.is_cancelled() {
-            return Err("no such translation".into());
+            return Err(t("translate.noSuchJob"));
         }
     }
     let s = settings::load(&app);
