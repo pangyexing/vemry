@@ -131,9 +131,9 @@ pub enum BrowserEvent {
     /// neither has to fetch again). Non-tab state riding on browser://event, as
     /// AdblockStatus did first.
     BookmarksChanged { bookmarks: Vec<bookmarks::Bookmark> },
-    /// A tab's in-page translation: on or off, and how many of its blocks have
-    /// their translation (the chrome's button reads it).
-    Translate { label: String, active: bool, done: usize, total: usize },
+    /// A tab's in-page translation: on or off, how many of its blocks have their
+    /// translation, and the tokens spent on it (the chrome's button reads it).
+    Translate { label: String, active: bool, done: usize, total: usize, tokens: u64 },
 }
 
 pub fn emit(app: &AppHandle, event: &BrowserEvent) {

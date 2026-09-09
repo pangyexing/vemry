@@ -45,6 +45,8 @@ class TranslateStore {
   requested = $state<Record<number, true>>({});
   /** A save in progress: first translating what is left, then writing. */
   saving = $state(false);
+  /** Tokens spent on this document so far (from the provider's usage counts; 0 where none are reported). */
+  usage = $state({ prompt: 0, completion: 0 });
   private listening = false;
 
   /** The segments the model has to translate (the count line's denominator). */
@@ -83,6 +85,7 @@ class TranslateStore {
       this.doc = doc;
       this.pausedAt = null;
       this.requested = {};
+      this.usage = { prompt: 0, completion: 0 };
       // Everything already in the cache: the job had nothing to send and went idle
       // before the document arrived here, so that event is not coming
       this.idle = doc.segments.every((s) => !s.translate || s.private || s.cached != null);
@@ -181,6 +184,8 @@ class TranslateStore {
         for (const id of e.ids) this.rows[id] = { text: null, done: false, error: e.message };
       } else if (e.type === "paused") {
         this.pausedAt = e.at;
+      } else if (e.type === "usage") {
+        this.usage = { prompt: e.prompt, completion: e.completion };
       } else if (e.type === "idle") {
         this.idle = true;
       }
@@ -200,6 +205,11 @@ export function targetLabel(tag: string): string {
   const key = `translate.lang.${tag}` as MessageKey;
   const s = t(key);
   return s === key ? tag : s;
+}
+
+/** A token count in thousands past 1000 ("12.3k", "45k"), the same shape as the chat's gauge. */
+export function fmtTokens(n: number): string {
+  return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
 /** The target languages the header offers; a custom tag typed in Settings is shown in addition. */

@@ -100,22 +100,56 @@ const COLLECT_JS: &str = r#"
     S.prevMargin = document.documentElement.style.marginRight;
     document.documentElement.style.marginRight = W;
     S.pane = pane; S.inner = inner;
+    const GAP = 6;
     S.layout = () => {
       S.raf = 0;
-      const entries = [...S.items.values()].filter((it) => it.el.isConnected);
-      entries.sort((a, b) => a.el.getBoundingClientRect().top - b.el.getBoundingClientRect().top);
-      let bottom = -1e9;
-      for (const it of entries) {
+      const rows = [];
+      for (const it of S.items.values()) {
+        if (!it.el.isConnected) { it.out.remove(); continue; }
         const r = it.el.getBoundingClientRect();
         if (r.width === 0 && r.height === 0) { it.out.style.display = 'none'; continue; }
         it.out.style.display = '';
-        const top = Math.max(r.top, bottom + 6);
-        it.out.style.top = top + 'px';
-        bottom = top + it.out.offsetHeight;
-        // a placeholder shimmers only where a translation is on its way (in and near the viewport)
-        if (it.pending) { const near = r.bottom > -innerHeight && r.top < innerHeight * 2.5; for (const b of it.out.children) if (b.style.animationName) b.style.animationPlayState = near ? 'running' : 'paused'; }
+        rows.push({ it, r, t: r.top, hb: r.height, h: it.out.offsetHeight, y: 0 });
       }
-      for (const it of S.items.values()) if (!it.el.isConnected) { it.out.remove(); }
+      rows.sort((a, b) => a.t - b.t);
+      // The pane's width is settled once from the page as it reflowed: an entry gets about
+      // three quarters of its block's width, which is what a CJK translation of an English
+      // paragraph needs to end near where the paragraph ends
+      if (!S.sized && rows.length >= 3) {
+        S.sized = true;
+        const widths = rows.map((x) => x.r.width).filter((w) => w > 200).sort((a, b) => a - b);
+        if (widths.length) {
+          const median = widths[Math.floor(widths.length / 2)];
+          const want = Math.round(Math.min(innerWidth * 0.48, Math.max(300, median * 0.75 + 26)));
+          if (Math.abs(want - S.pane.clientWidth) > 24) {
+            S.pane.style.width = want + 'px';
+            document.documentElement.style.marginRight = want + 'px';
+            S.schedule();
+            return;
+          }
+        }
+      }
+      // forward: each entry at its block, or under the one above
+      let bottom = -1e9;
+      for (const x of rows) { x.y = Math.max(x.t, bottom + GAP); bottom = x.y + x.h; }
+      // backward, twice: an entry pushed below its block lifts the one above it into the slack
+      // above — by at most three tenths of that block's height, so it still starts by its block
+      for (let round = 0; round < 2; round++) {
+        for (let i = rows.length - 1; i >= 1; i--) {
+          const cur = rows[i], prev = rows[i - 1];
+          const over = cur.y - cur.t;
+          if (over <= 0) continue;
+          const floor = i >= 2 ? rows[i - 2].y + rows[i - 2].h + GAP : -1e9;
+          const minPrev = Math.max(prev.t - 0.3 * prev.hb, floor);
+          const up = Math.min(over, prev.y - minPrev);
+          if (up > 0) { prev.y -= up; cur.y = Math.max(cur.t, prev.y + prev.h + GAP); }
+        }
+      }
+      for (const x of rows) {
+        x.it.out.style.top = x.y + 'px';
+        // a placeholder shimmers only where a translation is on its way (in and near the viewport)
+        if (x.it.pending) { const near = x.r.bottom > -innerHeight && x.r.top < innerHeight * 2.5; for (const b of x.it.out.children) if (b.style.animationName) b.style.animationPlayState = near ? 'running' : 'paused'; }
+      }
     };
     S.schedule = () => { if (!S.raf) S.raf = requestAnimationFrame(S.layout); };
     document.addEventListener('scroll', S.schedule, true);
@@ -124,7 +158,7 @@ const COLLECT_JS: &str = r#"
     S.apply = (id, text, done) => {
       const it = S.items.get(id);
       if (!it) return;
-      if (done) { it.pending = false; it.out.style.opacity = ''; it.out.style.borderLeftStyle = 'solid'; }
+      if (done) { it.pending = false; it.out.style.opacity = ''; it.out.style.borderLeftStyle = 'solid'; it.out.style.minHeight = ''; }
       else { it.out.style.opacity = '.7'; }
       it.out.textContent = '';
       // a formula travelled as a placeholder; the page's own rendering of it comes back in its place
@@ -226,10 +260,16 @@ const COLLECT_JS: &str = r#"
     const cs = getComputedStyle(el);
     const o = document.createElement('div');
     o.setAttribute('data-vemry-tr-out', String(id));
-    o.style.cssText = 'all:initial;display:block;position:absolute;left:0;right:0;box-sizing:border-box;padding:0 14px 0 12px;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:3px dotted rgba(127,127,127,.35);opacity:.45;cursor:pointer;color:inherit;font-family:' + cs.fontFamily + ';font-size:' + cs.fontSize + ';font-weight:' + cs.fontWeight + ';line-height:' + cs.lineHeight + ';';
-    // the placeholder: as many shimmering lines as the block has, so the pane shows the shape of what is coming
+    // A touch smaller and tighter than the block: a CJK translation of an English paragraph
+    // then ends about where the paragraph does, and the rows below it stay aligned
+    const fs = Math.max(12, parseFloat(cs.fontSize) * 0.94);
+    o.style.cssText = 'all:initial;display:block;position:absolute;left:0;right:0;box-sizing:border-box;padding:0 12px 0 10px;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:3px dotted rgba(127,127,127,.35);opacity:.45;cursor:pointer;color:inherit;font-family:' + cs.fontFamily + ';font-size:' + fs + 'px;font-weight:' + cs.fontWeight + ';line-height:1.5;';
+    // the placeholder: the height the translation will most likely have (the block's), so a
+    // translation landing above the reader does not push the rows below it; and as many
+    // shimmering lines as the block has, so the pane shows the shape of what is coming
     const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
     const lines = Math.max(1, Math.min(4, Math.round(r.height / lh)));
+    o.style.minHeight = Math.round(r.height) + 'px';
     S.skeleton(o, lines);
     o.addEventListener('click', () => { if (!o.querySelector('[data-vemry-tr-out]') ) S.select(id, true); });
     S.inner.appendChild(o);
@@ -369,6 +409,7 @@ fn segments_of(blocks: &[CollectedBlock]) -> Vec<Segment> {
 }
 
 fn progress(app: &AppHandle, t: &PageTranslation) {
+    let (p, c) = t.job.usage();
     emit(
         app,
         &BrowserEvent::Translate {
@@ -376,6 +417,7 @@ fn progress(app: &AppHandle, t: &PageTranslation) {
             active: t.active.load(Ordering::Relaxed),
             done: t.done.load(Ordering::Relaxed),
             total: t.job.len(),
+            tokens: p + c,
         },
     );
 }
@@ -407,11 +449,16 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
     let counted: Arc<Mutex<std::collections::HashSet<u32>>> = Arc::default();
     let total: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(collected.blocks.len()));
     let ev_total = Arc::clone(&total);
+    let tokens: Arc<AtomicUsize> = Arc::default();
+    let ev_tokens = Arc::clone(&tokens);
     let on_event: Box<dyn Fn(TranslateEvent) + Send + Sync> = Box::new(move |event| {
         if !ev_active.load(Ordering::Relaxed) {
             return;
         }
         match event {
+            TranslateEvent::Usage { prompt, completion } => {
+                ev_tokens.store((prompt + completion) as usize, Ordering::Relaxed);
+            }
             TranslateEvent::Segment { id, text, done: true } => {
                 let _ = ev_webview.eval(apply_js(id, &text, true));
                 if counted.lock().unwrap().insert(id) {
@@ -431,7 +478,7 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
         }
         let (done, total) = (ev_done.load(Ordering::Relaxed), ev_total.load(Ordering::Relaxed));
         let _ = ev_webview.eval(progress_js(done, total));
-        emit(&ev_app, &BrowserEvent::Translate { label: ev_label.clone(), active: true, done, total });
+        emit(&ev_app, &BrowserEvent::Translate { label: ev_label.clone(), active: true, done, total, tokens: ev_tokens.load(Ordering::Relaxed) as u64 });
     });
     let effort = s.reasoning_active().then(|| s.reasoning_effort.clone());
     let job = TranslateJob::new(job_id, doc, target, s.translate_addendum.clone(), provider, effort, Arc::new(HttpTransport::new()), Some(cache), on_event);
@@ -473,7 +520,7 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
                 state.browser_translate.stop(&poll_t.label);
                 if let Err(e) = start(&poll_app, &state, poll_t.label.clone(), webview.clone(), c) {
                     let _ = webview.eval(CLEAR_JS);
-                    emit(&poll_app, &BrowserEvent::Translate { label: poll_t.label.clone(), active: false, done: 0, total: 0 });
+                    emit(&poll_app, &BrowserEvent::Translate { label: poll_t.label.clone(), active: false, done: 0, total: 0, tokens: 0 });
                     let _ = e;
                 }
                 break;
@@ -515,7 +562,7 @@ pub async fn browser_translate_toggle(
     let label = webview.label().to_string();
     if let Some(t) = state.browser_translate.stop(&label) {
         let _ = webview.eval(CLEAR_JS);
-        emit(&app, &BrowserEvent::Translate { label: t.label.clone(), active: false, done: 0, total: 0 });
+        emit(&app, &BrowserEvent::Translate { label: t.label.clone(), active: false, done: 0, total: 0, tokens: 0 });
         return Ok(false);
     }
     let data = eval_json(&webview, COLLECT_JS).await?;

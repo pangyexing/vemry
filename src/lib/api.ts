@@ -865,6 +865,8 @@ export type TranslateEvent =
   | { job: string; type: "failed"; ids: number[]; message: string }
   /** The background translation stopped at its budget before segment `at`; what is looked at is still translated. */
   | { job: string; type: "paused"; at: number }
+  /** Tokens spent on this document so far (cumulative). */
+  | { job: string; type: "usage"; prompt: number; completion: number }
   | { job: string; type: "idle" };
 
 /** `reading://event`: the projection request the Reading arm of the url_open funnel sends. */
@@ -907,7 +909,7 @@ export type BrowserEvent =
   | { type: "adblock_status"; status: AdblockStatusView }
   | { type: "bookmarks_changed"; bookmarks: BookmarkView[] }
   /** A tab's in-page translation pane: on or off, and how many blocks have their translation. */
-  | { type: "translate"; label: string; active: boolean; done: number; total: number };
+  | { type: "translate"; label: string; active: boolean; done: number; total: number; tokens: number };
 
 // ---- user scripts (v0.3 programmability) ----
 

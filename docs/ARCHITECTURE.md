@@ -2236,14 +2236,23 @@ the user presses "save as note".
   opened the overlay in the main window, and the jump was the complaint).
   `browser/pagetr.rs`: the tab is a native webview with zero IPC, so everything
   goes through `eval` — `COLLECT_JS` installs the pane (a fixed element on the
-  right; the document gets a matching right margin so a page that reflows does)
-  and tags the page's text blocks (a block with running text and no block
+  right; the document gets a matching right margin so a page that reflows does;
+  once the page has reflowed the pane's width is settled from the median block
+  width — an entry gets about three quarters of its block's width, which is what
+  a CJK translation of an English paragraph needs to end near where the
+  paragraph ends — and an entry is set a touch smaller and tighter than its
+  block) and tags the page's text blocks (a block with running text and no block
   children, outside `nav`/`header`/`footer`/`aside`, captions, tables, reference
   lists and bylines) with ids, the same `TranslateJob` translates them, and each
   finished segment is written into its pane entry with `textContent`. The pane
-  lays its entries out from the blocks' positions on every scroll and resize,
-  pushing an entry down when the one above is taller than its block; a poll
-  every 1.5s collects blocks that appeared since (an endless feed; the job's
+  lays its entries out from the blocks' positions on every scroll and resize: a
+  forward pass puts each entry at its block or under the one above, and a
+  backward pass lifts an entry that got pushed by letting the one above it rise
+  into the slack over its own block (by at most three tenths of that block's
+  height), so a long translation's overflow is shared with its neighbour rather
+  than accumulated down the page; a placeholder is as tall as its block, so a
+  translation landing above the reader does not push the rows below it; a poll
+  every second collects blocks that appeared since (an endless feed; the job's
   segments are growable, `TranslateJob::extend`), and a new document (the
   script's `gen` changes) starts over. Clicking an entry scrolls the page to its
   block. The rows the reader is looking at come first: every poll reports the
@@ -2294,6 +2303,12 @@ the user presses "save as note".
   items (whitespace ignored on both sides; the head and the tail when the whole
   run is not found as one) and the boxes are laid over the canvas as fractions of
   the page.
+- **What it costs is shown.** The job sums the provider's usage counts from each
+  stream's tail (`TranslateEvent::Usage`; DeepSeek sends them when asked, the
+  same `include_usage` the agent uses), and the view's model chip and the
+  browser button's hint carry the tokens spent on the document so far — the
+  reader can see what the background work costs, and the budget stays a number
+  rather than a setting.
 - **Thinking off.** A translation is transcription, not reasoning: on a thinking
   model the thinking is most of the latency (measured on a 2.4k-character page:
   51s at the light level, 6s with thinking disabled), so the request disables it

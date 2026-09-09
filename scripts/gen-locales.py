@@ -1143,6 +1143,7 @@ add("translate.", {
     "translateAll": ("Translate everything", "翻译全文"),
     "notYet": ("Translated when it comes into view, or with “translate everything”", "滚到这里时翻译,或点「翻译全文」"),
     "savingRemaining": ("Translating the remaining {n}…", "正在翻译剩余 {n} 段…"),
+    "usage": ("{n} tokens spent on this document ({input} in, {output} out)", "本文已用 {n} tokens(输入 {input},输出 {output})"),
     "noSource": ("Open a note first, then translate it", "先打开一篇笔记,再对照翻译"),
     "notANote": ("Only a note or a PDF can be translated", "只能翻译笔记或 PDF"),
     "waiting": ("Waiting…", "等待中…"),
@@ -1169,8 +1170,8 @@ add("browserPanel.", {
     "aiDockedHint": ("Add this page to the conversation as context", "把这一页作为上下文加入对话"),
     "translate": ("Translate", "译"),
     "translateHint": ("Split this page with its translation: the page on the left, each paragraph's translation beside it on the right", "在页面里分屏显示译文:页面在左,每段译文在右侧对齐"),
-    "translateActiveHint": ("Translating ({done}/{total}) — click to close the translation pane", "翻译中({done}/{total})——点击关闭译文栏"),
-    "translateDoneHint": ("Translated — click to close the translation pane", "已翻译——点击关闭译文栏"),
+    "translateActiveHint": ("Translating ({done}/{total}) · {tokens} tokens so far — click to close the translation pane", "翻译中({done}/{total})· 已用 {tokens} tokens——点击关闭译文栏"),
+    "translateDoneHint": ("Translated · {tokens} tokens — click to close the translation pane", "已翻译 · 用了 {tokens} tokens——点击关闭译文栏"),
 })
 
 # ---------------------------------------------------------------- clip bar strings (reused by the browser panel chrome)

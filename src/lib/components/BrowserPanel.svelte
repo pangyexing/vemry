@@ -28,6 +28,7 @@
   import { agent } from "$lib/stores/agent.svelte";
   import { browser, MAIN_MIN_BESIDE_PANEL, PANEL_MIN } from "$lib/stores/browser.svelte";
   import { clips } from "$lib/stores/clips.svelte";
+  import { fmtTokens } from "$lib/stores/translate.svelte";
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import StarIcon from "$lib/components/StarIcon.svelte";
@@ -600,7 +601,9 @@
       <button
         class="act"
         class:on={!!trState}
-        title={trState ? (trState.done >= trState.total ? t("browserPanel.translateDoneHint") : t("browserPanel.translateActiveHint", trState)) : t("browserPanel.translateHint")}
+        title={trState
+          ? (trState.done >= trState.total ? t("browserPanel.translateDoneHint", { tokens: fmtTokens(trState.tokens) }) : t("browserPanel.translateActiveHint", { done: trState.done, total: trState.total, tokens: fmtTokens(trState.tokens) }))
+          : t("browserPanel.translateHint")}
         onclick={() => void translatePage()}
         disabled={!cur || isBlank}
       >{t("browserPanel.translate")}{#if trState && trState.done < trState.total}<span class="tr-count">{trState.done}/{trState.total}</span>{/if}</button>

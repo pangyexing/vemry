@@ -67,6 +67,9 @@ pub enum TranslateEvent {
     /// `at`; what the reader looks at is still translated, and `continue_background`
     /// goes on from here.
     Paused { at: u32 },
+    /// The tokens the job has spent so far (cumulative, from the provider's usage
+    /// counts; an endpoint that reports none leaves them at zero).
+    Usage { prompt: u64, completion: u64 },
     /// Nothing queued that would run, and nothing in flight.
     Idle,
 }
@@ -354,6 +357,8 @@ pub struct TranslateJob {
     cache: Mutex<Option<TranslationCache>>,
     /// Signalled whenever the job goes idle (`wait_idle`).
     idle: tokio::sync::Notify,
+    /// Tokens spent so far: (prompt, completion).
+    usage: Mutex<(u64, u64)>,
     on_event: Box<dyn Fn(TranslateEvent) + Send + Sync>,
 }
 
@@ -394,6 +399,7 @@ impl TranslateJob {
             inner: Mutex::new(inner),
             cache: Mutex::new(cache),
             idle: tokio::sync::Notify::new(),
+            usage: Mutex::new((0, 0)),
             on_event,
         })
     }
@@ -401,6 +407,11 @@ impl TranslateJob {
     /// The model the job sends to (the saved note names it).
     pub fn model(&self) -> &str {
         &self.provider.model
+    }
+
+    /// Tokens spent so far: (prompt, completion).
+    pub fn usage(&self) -> (u64, u64) {
+        *self.usage.lock().unwrap()
     }
 
     /// The segments as they stand (a copy).
@@ -645,7 +656,8 @@ impl TranslateJob {
             ],
             tools: None,
             stream: true,
-            stream_options: None,
+            // usage rides on the stream's tail; DeepSeek sends it only when asked (the same gate the agent uses)
+            stream_options: self.provider.is_deepseek().then(|| serde_json::json!({ "include_usage": true })),
             reasoning_effort,
             thinking,
         };
@@ -671,6 +683,14 @@ impl TranslateJob {
                 _ => {}
             };
             let mut on_chunk = |chunk: crate::types::StreamChunk| -> bool {
+                if let Some(u) = &chunk.usage {
+                    let mut usage = self.usage.lock().unwrap();
+                    usage.0 += u.prompt_tokens;
+                    usage.1 += u.completion_tokens;
+                    let (prompt, completion) = *usage;
+                    drop(usage);
+                    self.emit(TranslateEvent::Usage { prompt, completion });
+                }
                 for choice in chunk.choices {
                     if let Some(t) = choice.delta.content {
                         for ev in parser.push(&t) {

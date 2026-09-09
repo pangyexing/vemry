@@ -8,7 +8,7 @@
   // which is what closes the job.
   import { t, tn } from "$lib/i18n/i18n.svelte";
   import { api, type TranslateSegment } from "$lib/api";
-  import { translate, targetLabel, TARGET_TAGS, type TranslateMode } from "$lib/stores/translate.svelte";
+  import { translate, targetLabel, fmtTokens, TARGET_TAGS, type TranslateMode } from "$lib/stores/translate.svelte";
   import { fileKind, mimeOf, vault } from "$lib/stores/vault.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { executeCommand } from "$lib/commands/registry";
@@ -35,6 +35,8 @@
   const total = $derived(translate.toTranslate.length);
   const done = $derived(translate.doneCount);
   const failed = $derived(translate.failedIds.length);
+  /** Tokens spent on this document so far (0 until the provider reports any). */
+  const spent = $derived(translate.usage.prompt + translate.usage.completion);
   const targets = $derived.by(() => {
     const cur = doc?.target ?? "";
     const list: string[] = [...TARGET_TAGS];
@@ -299,7 +301,11 @@
           <option value="stack">{t("translate.mode.stack")}</option>
           <option value="target">{t("translate.mode.target")}</option>
         </select>
-        <button class="chip model" title={t("translate.modelHint")} onclick={() => void executeCommand("settings-ai")}>{doc.model}</button>
+        <button
+          class="chip model"
+          title={spent > 0 ? `${t("translate.modelHint")}\n${t("translate.usage", { n: fmtTokens(spent), input: fmtTokens(translate.usage.prompt), output: fmtTokens(translate.usage.completion) })}` : t("translate.modelHint")}
+          onclick={() => void executeCommand("settings-ai")}
+        >{doc.model}{#if spent > 0} · {fmtTokens(spent)}{/if}</button>
         {#if failed > 0}
           <button class="chip warn" title={t("translate.retryFailed")} onclick={() => translate.retryFailed()}>
             {tn("translate.failedCount", failed)} · {t("translate.retryFailed")}
@@ -477,7 +483,7 @@
   }
   .actions .model {
     font-family: var(--font-mono);
-    max-width: 160px;
+    max-width: 230px;
     overflow: hidden;
     text-overflow: ellipsis;
   }
