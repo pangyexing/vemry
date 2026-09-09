@@ -58,7 +58,10 @@ pub fn is_date_token(s: &str) -> bool {
 /// Append `piece` (with its own leading space) to a line before any trailing anchor.
 fn append_before_anchor(line: &str, piece: &str) -> String {
     match crate::blockid::anchor_start(line) {
-        Some(at) => format!("{}{piece}{}", line[..at].trim_end_matches([' ', '\t']), &line[at..]),
+        // The anchor's own separator is written back as one space: `anchor_start` points at
+        // the first of however many stood there, and keeping them would leave a run of
+        // spaces the frontend's appendBeforeAnchor does not write
+        Some(at) => format!("{}{piece} {}", line[..at].trim_end_matches([' ', '\t']), line[at..].trim_start_matches([' ', '\t'])),
         None => format!("{}{piece}", line.trim_end_matches([' ', '\t'])),
     }
 }

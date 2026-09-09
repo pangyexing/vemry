@@ -169,10 +169,15 @@ export function cardsOf(hits: BlockHit[], today: string, types: BlockType[]): Ca
 function cardOf(hit: BlockHit, today: string, types: BlockType[]): Card {
   const r = rowOf(hit);
   const when = whenOf(r);
+  // Only a day the task was to be finished by makes it late: a start day that has come
+  // and gone says the task may be worked on, not that it is overdue (Agenda's isLate and
+  // its groups read the same rule) — whenOf's start fallback places the card, it does
+  // not date it
+  const late = r.due ?? r.scheduled;
   const col: ColumnId =
     isClosed(r.state)
       ? "done"
-      : when && when < today
+      : late && late < today
         ? "overdue"
         : when === today || r.scheduled === today
           ? "today"
@@ -258,8 +263,8 @@ function cardComparator(order: CardOrder, types: BlockType[]): (a: Card, b: Card
   // twice per comparison
   const fieldKey = k.by === "field" ? k.key.toLowerCase() : "";
   const valueOf = (c: Card): string | undefined => (k.by === "date" ? whenOf(c) : k.by === "field" ? c.fields[fieldKey] : undefined);
-  // a sort by a state field reads its declared order (cmpDeclared), any other field
-  // cmpValue — the vocabulary is the sort key's own, never the grouping key's
+  // a sort by a state field reads its declared order (cmpMissingLast's `declared`), any
+  // other field cmpValue — the vocabulary is the sort key's own, never the grouping key's
   const order_ = k.by === "field" ? stateField(types, k.key) : null;
   return (a, b) => {
     const doing = doingFirst(a, b);

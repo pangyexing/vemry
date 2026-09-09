@@ -57,23 +57,14 @@ export function cmpValue(a: string, b: string): number {
  *  (tasks.ts's bySource is this one read off a TaskRow's hit). */
 export const byNote = (a: BlockHit, b: BlockHit) => a.note.localeCompare(b.note) || a.block.span.start - b.block.span.start;
 
-/** The order of a state field's values (fields.ts's stateField): the declared order,
- *  case-insensitively. A value the vocabulary does not name sorts after every named
- *  one, and two unnamed values fall back to cmpValue, so the order is still total. */
-export function cmpDeclared(a: string, b: string, declared: string[]): number {
-  const ia = stateIndex(declared, a);
-  const ib = stateIndex(declared, b);
-  if (ia < 0 && ib < 0) return cmpValue(a, b);
-  if (ia < 0) return 1;
-  if (ib < 0) return -1;
-  return ia - ib;
-}
-
 /** The one `sort` convention, read by a query block's hits and by the board's cards: a row
  *  without the key's value goes last whichever the direction, and equal values keep `tie`'s
  *  order. `tie` is a comparator rather than a number so it runs only when it decides.
- *  `declared` — a state field's vocabulary — replaces the value order with the declared
- *  one (cmpDeclared); the missing-last rule holds either way. */
+ *  `declared` — a state field's vocabulary (fields.ts's stateField) — replaces the value
+ *  order with the declared one, case-insensitively. A value the vocabulary does not name
+ *  sorts after every named one, and that rule, like the missing-last one, is settled
+ *  before the direction is applied, so descending does not lift the unnamed values to the
+ *  top; two unnamed values fall back to cmpValue, so the order is still total. */
 export function cmpMissingLast<T>(
   a: T,
   b: T,
@@ -84,7 +75,13 @@ export function cmpMissingLast<T>(
   declared?: string[] | null,
 ): number {
   if (va === undefined || vb === undefined) return va === vb ? tie(a, b) : va === undefined ? 1 : -1;
-  return (declared ? cmpDeclared(va, vb, declared) : cmpValue(va, vb)) * dir || tie(a, b);
+  if (declared) {
+    const ia = stateIndex(declared, va);
+    const ib = stateIndex(declared, vb);
+    if (ia < 0 !== ib < 0) return ia < 0 ? 1 : -1; // one named, one not: the unnamed goes last
+    if (ia >= 0) return (ia - ib) * dir || tie(a, b);
+  }
+  return cmpValue(va, vb) * dir || tie(a, b);
 }
 
 /** A stable sort; the missing-value and tie-break rules are cmpMissingLast's. `declared`

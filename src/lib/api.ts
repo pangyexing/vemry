@@ -111,7 +111,8 @@ export interface FieldSpec {
   key: string;
   default?: string;
   values?: string[];
-  /** `date` / `number` / `text` (a hint). */
+  /** `date` / `number` / `text` / `state` (a hint). `state` makes `values` a vocabulary
+   *  in order — the first value is where a block starts, the last where it ends. */
   type?: string;
 }
 

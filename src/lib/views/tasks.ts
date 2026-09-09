@@ -130,8 +130,9 @@ export function dateIconSvg(field: DateField): string {
 /** The icon of any attribute; a priority's follows its value (normal has none). */
 export function attrIconSvg(kind: AttrKind, priority?: Priority): string {
   if (kind in DATE_FIELDS) return dateIconSvg(kind as DateField);
+  // `normal` is the unwritten default and draws nothing: no chip asks for it
   const key = kind === "priority" ? `priority-${priority ?? "high"}` : kind;
-  return svgOf(ATTR_ICONS[key] ?? ATTR_ICONS.repeat);
+  return svgOf(ATTR_ICONS[key] ?? "");
 }
 
 /** The stroke icon of a task checkbox (todo an empty box / doing a half-filled one /
@@ -258,12 +259,28 @@ function priorityToken(tok: string): Priority | null {
   }
 }
 
-/** `30m`, `2h`, `1.5h`, `2h30m`, `1d`, `1d2h` → minutes; null when not a duration. */
+/** `30m`, `2h`, `1.5h`, `2h30m`, `1d`, `1d2h` → minutes; null when not a duration.
+ *  A number then its unit, over and over, in any order — the reading of taskattrs.rs's
+ *  parse_estimate, which is what the index stores; a pattern that fixed the order would
+ *  call `30m2h` junk and end the trailing run on a line Rust reads right through. */
 export function parseEstimate(s: string): number | null {
-  const m = s.trim().match(/^(?:(\d+(?:\.\d+)?)d)?(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?$/);
-  if (!m || (m[1] === undefined && m[2] === undefined && m[3] === undefined)) return null;
-  const total = Number(m[1] ?? 0) * DAY_MINUTES + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0);
-  return total > 0 ? Math.round(total) : null;
+  let total = 0;
+  let num = "";
+  let any = false;
+  for (const c of s.trim()) {
+    if ((c >= "0" && c <= "9") || c === ".") {
+      num += c;
+      continue;
+    }
+    const perUnit = c === "m" ? 1 : c === "h" ? 60 : c === "d" ? DAY_MINUTES : 0;
+    const n = num === "" ? NaN : Number(num);
+    if (!perUnit || !Number.isFinite(n)) return null;
+    num = "";
+    total += n * perUnit;
+    any = true;
+  }
+  if (num !== "" || !any || total <= 0) return null;
+  return Math.round(total);
 }
 
 /** Minutes back to the shortest spelling: `45m`, `2h`, `2h30m`, `1d`, `1d2h`. */
@@ -657,8 +674,11 @@ export function parseRepeat(rule: string): Repeat | null {
   let unitWord: string | undefined;
   if (words.length === 2) unitWord = words[1];
   else if (words.length === 3) {
+    // digits only, as Rust's `parse::<u32>()` reads it: `Number` alone would take `0x10`,
+    // `2.0` and `1e9` and count a period Rust calls no rule at all
+    if (!/^\d+$/.test(words[1])) return null;
     every = Number(words[1]);
-    if (!Number.isInteger(every) || every <= 0) return null;
+    if (!Number.isSafeInteger(every) || every <= 0) return null;
     unitWord = words[2];
   } else return null;
   const unit = unitWord.replace(/s$/, "");
@@ -711,6 +731,9 @@ export function nextOccurrenceLine(line: string, today: string): string | null {
   const anchor = a.due ?? a.scheduled ?? a.start;
   const from = rule.whenDone ? today : (anchor ?? today);
   const target = nextOf(rule, from);
+  // A rule whose step lands outside what a Date can hold gives an unreadable day: no
+  // occurrence rather than a line stamped `NaN-NaN-NaN`
+  if (parseYmd(target) === null) return null;
   const shift = diffDays(target, anchor ?? from);
   let out = setCheckbox(line, "todo");
   out = rescheduleLine(out, "done", null);
@@ -939,7 +962,9 @@ export const taskKey = (r: TaskRow) => r.hit.note + ":" + r.hit.block.span.start
 
 /** The date a task groups by: due first, then the ⏳ scheduled day, then the ⏩ start —
  *  otherwise a task "starting next week" would carry a date chip while lying under "no
- *  date". Agenda's grouping and the kanban's column assignment read this one rule.
+ *  date". It places a task; it does not date it — whether a task is *late* is its due
+ *  day's business alone (the board's overdue column and Agenda's isLate both read
+ *  `due ?? scheduled`, never the start day).
  *  Asked for one `field`, it reads that field alone: Agenda with a date kind pressed
  *  places every task by the date the user asked to see, not by the due-first default. */
 export const whenOf = (r: TaskRow, field?: DateField) => (field ? r[field] : (r.due ?? r.scheduled ?? r.start));

@@ -19,6 +19,10 @@ export type RowChip =
   | { kind: "field"; key: string; value: string }
   | { kind: "tag"; tag: string };
 
+/** The chips derived from a block's inline fields: every RowChip but a tag, which comes
+ *  off the block's tags and not its fields. */
+export type FieldChip = Exclude<RowChip, { kind: "tag" }>;
+
 export interface BlockRow {
   hit: BlockHit;
   /** The words: the block's text without its markers, fields and anchor; the note's
@@ -71,8 +75,8 @@ export function blockText(hit: BlockHit): string {
  *  field's as a state chip with its step, the rest as plain chips capped at
  *  MAX_FIELD_CHIPS; a task's date fields are its date chips and are left out. Agenda's
  *  rows and a query row read this one derivation. */
-export function fieldChipsOf(hit: BlockHit, types: BlockType[]): RowChip[] {
-  const chips: RowChip[] = [];
+export function fieldChipsOf(hit: BlockHit, types: BlockType[]): FieldChip[] {
+  const chips: FieldChip[] = [];
   const task = hit.block.kind.type === "task";
   let fieldCount = 0;
   const seen = new Set<string>();
@@ -157,7 +161,9 @@ export function stateSummary(rows: BlockRow[], types: BlockType[]): StateSummary
   if (!best) return null;
   const key = best.chips[0].key;
   const counts = new Array<number>(best.of).fill(0);
-  for (const c of best.chips) counts[c.step]++;
+  // a step outside the vocabulary the first chip reported would lengthen `counts` past
+  // `values` and leave the head drawing a bar with no name
+  for (const c of best.chips) if (c.step < counts.length) counts[c.step]++;
   const values = stateField(types, key) ?? best.chips.map((c) => c.value);
   return { key, values, counts, total: best.chips.length };
 }

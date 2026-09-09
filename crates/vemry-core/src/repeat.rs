@@ -40,7 +40,8 @@ impl Repeat {
             Unit::Day => from.checked_add_days(Days::new(n as u64)).unwrap_or(from),
             Unit::Week => from.checked_add_days(Days::new(7 * n as u64)).unwrap_or(from),
             Unit::Month => from.checked_add_months(Months::new(n)).unwrap_or(from),
-            Unit::Year => from.checked_add_months(Months::new(12 * n)).unwrap_or(from),
+            // saturating: a rule may name any number of years, and `12 * n` would overflow
+            Unit::Year => from.checked_add_months(Months::new(n.saturating_mul(12))).unwrap_or(from),
         }
     }
 }

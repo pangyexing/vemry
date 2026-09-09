@@ -6,7 +6,7 @@
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
   import { attrIconSvg, byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, estimateSum, formatEstimate, isBlocked, isClosed, isUrgent, localDate, openIds, priorityLabel, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
-  import { fieldChipsOf } from "$lib/views/blockrow";
+  import { fieldChipsOf, type FieldChip } from "$lib/views/blockrow";
   import { stateGlyphSvg, stateTone } from "$lib/chips";
   import { types } from "$lib/stores/types.svelte";
   import { commitTaskWrite, copyTaskId } from "$lib/views/taskwrite";
@@ -120,6 +120,15 @@
 
   /** The ids the open tasks carry: what a ⛔ can still wait on. */
   const open = $derived(openIds(allRows));
+  /** A row's field chips, derived once per render pass rather than inside the row's
+   *  markup: fieldChipsOf walks every enabled type for every field of the block, and a
+   *  hover or a menu opening would otherwise rerun that for every row on screen. */
+  const chipsOf = $derived.by(() => {
+    const types_ = types.enabled;
+    const m = new Map<string, FieldChip[]>();
+    for (const r of shown) m.set(taskKey(r), fieldChipsOf(r.hit, types_));
+    return m;
+  });
   /** The estimates of the day added up, shown beside the group's count when any row has one. */
   const todayEstimate = $derived.by(() => {
     const sum = estimateSum(groups.today);
@@ -266,10 +275,10 @@
         {/if}
         <!-- The task's inline fields as chips (views/blockrow.ts's one derivation): a state
           field with its step's glyph, the rest as key: value — the board shows the same -->
-        {#each fieldChipsOf(r.hit, types.enabled) as f (f.kind === "tag" ? f.tag : f.key)}
+        {#each chipsOf.get(taskKey(r)) ?? [] as f (f.key)}
           {#if f.kind === "state"}
             <span class="chip state-chip {`tone-${stateTone(f.step, f.of)}`}" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
-          {:else if f.kind === "field"}
+          {:else}
             <span class="chip field-chip" title={`${f.key}:: ${f.value}`}><span class="fk">{f.key}</span>{f.value}</span>
           {/if}
         {/each}
