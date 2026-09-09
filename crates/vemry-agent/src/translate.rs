@@ -30,12 +30,20 @@ use crate::types::{ChatMessage, ChatRequest};
 use crate::AgentError;
 
 /// How much source text one request carries (in bytes of segment text). Small
-/// enough that the first translation lands within seconds; large enough that a
-/// page is a handful of calls.
+/// enough that a translation lands within seconds; large enough that a page is a
+/// handful of calls.
 pub const BATCH_CHARS: usize = 2000;
+/// The job's first batch is cut short: the first text the reader sees should land
+/// in a couple of seconds, and a full batch takes several.
+pub const FIRST_BATCH_CHARS: usize = 600;
 /// Requests in flight at once. Two keeps the model busy while the first batch's
 /// text is still streaming, without burning a rate limit on a long document.
 pub const MAX_IN_FLIGHT: usize = 2;
+/// How much of a document is translated ahead of the reader on its own (bytes of
+/// segment text). What the reader looks at is never limited; this bounds the
+/// background work on a long document — a book, a thread of five hundred
+/// comments — which stops here and says so, and goes on when asked.
+pub const BACKGROUND_BUDGET_CHARS: usize = 60_000;
 
 /// The document being translated: the cache key it is filed under, its title, and
 /// the segments (`vemry_core::segment_markdown`, or the PDF page cutter).
@@ -55,7 +63,11 @@ pub enum TranslateEvent {
     /// These segments will not arrive: the request failed (`message` is the
     /// provider's error as-is), or the model returned nothing for them twice.
     Failed { ids: Vec<u32>, message: String },
-    /// Nothing pending and nothing in flight.
+    /// The background translation reached its budget and stopped before segment
+    /// `at`; what the reader looks at is still translated, and `continue_background`
+    /// goes on from here.
+    Paused { at: u32 },
+    /// Nothing queued that would run, and nothing in flight.
     Idle,
 }
 
@@ -300,9 +312,21 @@ fn table_shape_ok(source: &str, translation: &str) -> bool {
 
 #[derive(Default)]
 struct Inner {
-    /// Segment ids waiting to be sent, front first; `request` moves the visible
-    /// ones to the front.
-    pending: VecDeque<u32>,
+    /// What the reader asked for (the rows on screen and around them), front
+    /// first; `request` moves ids here, to the front. Never limited.
+    wanted: VecDeque<u32>,
+    /// The rest of the document in order, translated behind the reader's back
+    /// while the budget lasts.
+    background: VecDeque<u32>,
+    /// Bytes of segment text taken from `background` so far, and the point it may
+    /// reach (None = no limit).
+    spent: usize,
+    budget: Option<usize>,
+    /// The segment the reported stop stands before, so a stop that moves (the
+    /// reader looked at that segment and it was translated) is reported again.
+    paused_at: Option<u32>,
+    /// Batches started so far — the first one is cut short.
+    batches: usize,
     in_flight: usize,
     /// Ids in a batch that is being streamed.
     active: HashSet<u32>,
@@ -328,6 +352,8 @@ pub struct TranslateJob {
     cancel: AtomicBool,
     inner: Mutex<Inner>,
     cache: Mutex<Option<TranslationCache>>,
+    /// Signalled whenever the job goes idle (`wait_idle`).
+    idle: tokio::sync::Notify,
     on_event: Box<dyn Fn(TranslateEvent) + Send + Sync>,
 }
 
@@ -346,7 +372,7 @@ impl TranslateJob {
         cache: Option<TranslationCache>,
         on_event: Box<dyn Fn(TranslateEvent) + Send + Sync>,
     ) -> Arc<Self> {
-        let mut inner = Inner::default();
+        let mut inner = Inner { budget: Some(BACKGROUND_BUDGET_CHARS), ..Inner::default() };
         if let Some(c) = &cache {
             for seg in doc.segments.iter().filter(|s| s.translate && !s.private) {
                 if let Some(t) = c.get(&seg.text) {
@@ -367,6 +393,7 @@ impl TranslateJob {
             cancel: AtomicBool::new(false),
             inner: Mutex::new(inner),
             cache: Mutex::new(cache),
+            idle: tokio::sync::Notify::new(),
             on_event,
         })
     }
@@ -409,8 +436,64 @@ impl TranslateJob {
             }
             ids
         };
-        self.request(&ids, false);
+        self.queue(&ids);
         ids
+    }
+
+    /// Put segments in the background queue, in order — the document as a whole
+    /// when it opens. Translated after everything the reader asked for, while the
+    /// budget lasts.
+    pub fn queue(self: &Arc<Self>, ids: &[u32]) {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let segs = self.segments.read().unwrap();
+            for &id in ids {
+                let Some(seg) = segs.get(id as usize) else { continue };
+                if !seg.translate || seg.private || inner.active.contains(&id) || inner.done.contains_key(&id) {
+                    continue;
+                }
+                if !inner.wanted.contains(&id) && !inner.background.contains(&id) {
+                    inner.background.push_back(id);
+                }
+            }
+        }
+        self.pump();
+    }
+
+    /// Go on with the background translation past the stop: `more` bytes of
+    /// segment text further, or all of it (None).
+    pub fn continue_background(self: &Arc<Self>, more: Option<usize>) {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.budget = more.map(|m| inner.spent + m);
+            inner.paused_at = None;
+        }
+        self.pump();
+    }
+
+    /// Whether any translatable segment is still to come (queued, in flight, or
+    /// stopped behind the budget).
+    pub fn has_remaining(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        !inner.wanted.is_empty() || !inner.background.is_empty() || inner.in_flight > 0
+    }
+
+    /// Resolve when the job has nothing running and nothing queued that would run
+    /// (at once when that is already so).
+    pub async fn wait_idle(&self) {
+        loop {
+            let notified = self.idle.notified();
+            {
+                let inner = self.inner.lock().unwrap();
+                let stopped = inner.in_flight == 0
+                    && inner.wanted.is_empty()
+                    && (inner.background.is_empty() || inner.budget.is_some_and(|b| inner.spent >= b));
+                if stopped || self.is_cancelled() {
+                    return;
+                }
+            }
+            notified.await;
+        }
     }
 
     /// Every translation known now: the cache hits at open, plus what has landed.
@@ -439,13 +522,14 @@ impl TranslateJob {
                     continue;
                 }
                 inner.failed.remove(&id);
-                inner.pending.retain(|p| *p != id);
+                inner.wanted.retain(|p| *p != id);
+                inner.background.retain(|p| *p != id);
                 if !front.contains(&id) {
                     front.push(id);
                 }
             }
             for id in front.into_iter().rev() {
-                inner.pending.push_front(id);
+                inner.wanted.push_front(id);
             }
         }
         self.pump();
@@ -453,7 +537,12 @@ impl TranslateJob {
 
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
-        self.inner.lock().unwrap().pending.clear();
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.wanted.clear();
+            inner.background.clear();
+        }
+        self.idle.notify_waiters();
     }
 
     /// Take the cache out of the job (an in-memory one, to keep for the next
@@ -470,30 +559,58 @@ impl TranslateJob {
         (self.on_event)(e);
     }
 
-    /// Start batches while there is room. Called after every request and after
-    /// every batch; must run inside a tokio runtime.
+    /// Start batches while there is room: what the reader asked for first, then the
+    /// document in order while the budget lasts. Called after every request and
+    /// after every batch; must run inside a tokio runtime.
     fn pump(self: &Arc<Self>) {
         if self.is_cancelled() {
             return;
         }
+        let mut paused_at: Option<u32> = None;
         let idle = loop {
             let batch = {
                 let mut inner = self.inner.lock().unwrap();
-                if inner.in_flight >= MAX_IN_FLIGHT || inner.pending.is_empty() {
-                    break inner.in_flight == 0 && inner.pending.is_empty();
+                if inner.in_flight >= MAX_IN_FLIGHT {
+                    break false;
                 }
+                let segs = self.segments.read().unwrap();
+                let limit = if inner.batches == 0 { FIRST_BATCH_CHARS } else { BATCH_CHARS };
                 let mut ids = vec![];
                 let mut size = 0;
-                let segs = self.segments.read().unwrap();
-                while let Some(&id) = inner.pending.front() {
+                // the reader's rows: as many as fit
+                while let Some(&id) = inner.wanted.front() {
                     let n = segs[id as usize].text.len();
-                    if !ids.is_empty() && size + n > BATCH_CHARS {
+                    if !ids.is_empty() && size + n > limit {
                         break;
                     }
-                    inner.pending.pop_front();
+                    inner.wanted.pop_front();
                     ids.push(id);
                     size += n;
                 }
+                // then the document, while the budget lasts (a batch is not mixed across the two)
+                if ids.is_empty() {
+                    while let Some(&id) = inner.background.front() {
+                        let n = segs[id as usize].text.len();
+                        if inner.budget.is_some_and(|b| inner.spent >= b) {
+                            if ids.is_empty() && inner.in_flight == 0 && inner.paused_at != Some(id) {
+                                inner.paused_at = Some(id);
+                                paused_at = Some(id);
+                            }
+                            break;
+                        }
+                        if !ids.is_empty() && size + n > limit {
+                            break;
+                        }
+                        inner.background.pop_front();
+                        inner.spent += n;
+                        ids.push(id);
+                        size += n;
+                    }
+                }
+                if ids.is_empty() {
+                    break inner.in_flight == 0;
+                }
+                inner.batches += 1;
                 inner.in_flight += 1;
                 inner.active.extend(ids.iter().copied());
                 ids
@@ -501,7 +618,11 @@ impl TranslateJob {
             let job = Arc::clone(self);
             tokio::spawn(async move { job.run_batch(batch).await });
         };
+        if let Some(at) = paused_at {
+            self.emit(TranslateEvent::Paused { at });
+        }
         if idle {
+            self.idle.notify_waiters();
             self.emit(TranslateEvent::Idle);
         }
     }
@@ -602,7 +723,7 @@ impl TranslateJob {
                 for id in missing.iter().rev() {
                     if (ids.len() > 1 || reshape.contains(id)) && !inner.retried.contains(id) {
                         inner.retried.insert(*id);
-                        inner.pending.push_front(*id);
+                        inner.wanted.push_front(*id);
                     } else {
                         inner.failed.insert(*id);
                         failed.push(*id);
@@ -765,6 +886,54 @@ mod tests {
         job.request(&[0], false);
         let events = drain_until_idle(&mut rx).await;
         assert!(events.iter().any(|e| matches!(e, TranslateEvent::Failed { ids, message } if ids == &vec![0] && message.contains("429"))));
+    }
+
+    #[tokio::test]
+    async fn the_first_batch_is_short_and_the_background_stops_at_its_budget() {
+        // Three scripted answers: the first batch (one segment, cut short), then the
+        // background up to its budget, then the rest after "continue"
+        let transport = Arc::new(ScriptedTransport::new(vec![
+            vec![text_chunk("<s id=0>A</s>"), finish_chunk("stop")],
+            vec![text_chunk("<s id=1>B</s>"), finish_chunk("stop")],
+            vec![text_chunk("<s id=2>C</s>"), finish_chunk("stop")],
+            vec![text_chunk("<s id=3>D</s>"), finish_chunk("stop")],
+        ]));
+        let (on_event, mut rx) = events_channel();
+        let d = doc(vec![
+            seg(0, SegKind::Para, &"a".repeat(500), true, false),
+            seg(1, SegKind::Para, &"b".repeat(500), true, false),
+            seg(2, SegKind::Para, &"c".repeat(500), true, false),
+            seg(3, SegKind::Para, "d", true, false),
+        ]);
+        let job = TranslateJob::new(
+            "j".into(), d, "en".into(), String::new(), ProviderConfig::zhipu("k".into()), None,
+            transport.clone(), None, on_event,
+        );
+        // a budget of one segment's worth of background work
+        job.inner.lock().unwrap().budget = Some(600);
+        job.queue(&[0, 1, 2, 3]);
+        let events = drain_until_idle(&mut rx).await;
+        let done: Vec<u32> = events.iter().filter_map(|e| match e { TranslateEvent::Segment { id, done: true, .. } => Some(*id), _ => None }).collect();
+        assert_eq!(done, vec![0, 1], "{events:?}");
+        assert!(events.iter().any(|e| matches!(e, TranslateEvent::Paused { at: 2 })), "{events:?}");
+        {
+            let reqs = transport.requests.lock().unwrap();
+            assert_eq!(reqs.len(), 2);
+            let first = reqs[0].messages[1].text().unwrap().to_string();
+            assert!(first.contains("<s id=0>") && !first.contains("<s id=1>"), "the first batch is one short segment: {first}");
+        }
+        assert!(job.has_remaining());
+        // the reader looks at the segment the stop stands before: it is translated, and the stop moves on
+        job.request(&[2], false);
+        let events = drain_until_idle(&mut rx).await;
+        assert!(events.iter().any(|e| matches!(e, TranslateEvent::Segment { id: 2, done: true, .. })), "{events:?}");
+        assert!(events.iter().any(|e| matches!(e, TranslateEvent::Paused { at: 3 })), "{events:?}");
+        job.continue_background(None);
+        let events = drain_until_idle(&mut rx).await;
+        let done: Vec<u32> = events.iter().filter_map(|e| match e { TranslateEvent::Segment { id, done: true, .. } => Some(*id), _ => None }).collect();
+        assert_eq!(done, vec![3]);
+        assert!(!job.has_remaining());
+        job.wait_idle().await;
     }
 
     #[tokio::test]

@@ -2182,11 +2182,22 @@ the user presses "save as note".
   `<s id=N>…</s>` and come back the same way, so alignment is by id and a segment
   the model drops is resent alone once and then reported as failed (the provider's
   message as-is). `StreamParser` closes a segment the moment its `</s>` arrives,
-  which is what fills the right column while the batch is still streaming; the
-  view reports the rows on screen through `translate_request` (an
-  IntersectionObserver, batched at 150ms), and the job moves them to the front of
-  its queue, so a reader who scrolls to the middle sees that part first. Two
-  batches are in flight at once.
+  which is what fills the right column while the batch is still streaming. Two
+  batches are in flight at once, and the job's first batch is cut to about 600
+  characters so the first text lands in a couple of seconds.
+- **Where it reads, then ahead, then a budget.** The job keeps two queues. What the
+  reader asked for comes first and is never limited: the view reports the rows in
+  a window of a screen behind and two ahead (an IntersectionObserver, batched at
+  150ms), the browser pane a screen behind and two and a half ahead (a page scrolls
+  faster), and `translate_request` moves them to the front. The rest of the
+  document is background work in order, bounded by a budget of about 60k
+  characters of source text: a paper or a long article finishes on its own, a book
+  or a thread of five hundred comments stops there and says so — the row where it
+  stopped offers "continue" (another budget) and "translate everything"
+  (`translate_continue`), and rows beyond it show a still placeholder until they
+  come into view. So short and long documents follow one rule with two outcomes,
+  rather than two modes. Saving translates what is left first (`translate_save`
+  lifts the budget and waits for idle), so the note is complete.
 - **What leaves the app.** A note in the privacy zone is refused whole
   (`translate_open` says so); a `> [!private]` block in a visible note is marked by
   the segmenter, never enqueued by the job, shown on the left and "not translated"
@@ -2237,9 +2248,11 @@ the user presses "save as note".
   script's `gen` changes) starts over. Clicking an entry scrolls the page to its
   block. The rows the reader is looking at come first: every poll reports the
   untranslated blocks in and near the viewport and the job moves them to the
-  front of its queue. Until a translation lands, an entry is a placeholder of as
-  many shimmering lines as its block has, and a progress line runs along the top
-  of the pane. Picking an entry, or clicking its block in the page, keeps the
+  front of its queue; the rest is the same budgeted background work, and the
+  budget's stop is an entry in the pane that offers to go on. Until a translation
+  lands, an entry is a placeholder of as many shimmering lines as its block has
+  (still, beyond the window), the text streams into it as it arrives, and a
+  progress line runs along the top of the pane. Picking an entry, or clicking its block in the page, keeps the
   block lit on the page and the entry lit in the pane until another is picked
   (the same lit row the PDF view has), scrolling only when the block is off
   screen. A rendered formula (MathML, KaTeX, MathJax) travels as a placeholder

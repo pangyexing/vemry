@@ -863,6 +863,8 @@ export interface TranslateDocView {
 export type TranslateEvent =
   | { job: string; type: "segment"; id: number; text: string; done: boolean }
   | { job: string; type: "failed"; ids: number[]; message: string }
+  /** The background translation stopped at its budget before segment `at`; what is looked at is still translated. */
+  | { job: string; type: "paused"; at: number }
   | { job: string; type: "idle" };
 
 /** `reading://event`: the projection request the Reading arm of the url_open funnel sends. */
@@ -1084,6 +1086,8 @@ export const api = {
   /** Ask for these segments next, in this order (the visible rows first); force = retranslate. */
   translateRequest: (job: string, ids: number[], force = false) => invoke<void>("translate_request", { job, ids, force }),
   translateCancel: (job: string) => invoke<void>("translate_cancel", { job }),
+  /** Go on with the background translation past its stop: another budget's worth, or all of it. */
+  translateContinue: (job: string, all: boolean) => invoke<void>("translate_continue", { job, all }),
   /** Save the translations as a note beside the source; resolves with the note's path. */
   translateSave: (job: string) => invoke<string>("translate_save", { job }),
   /** Downloads every configured subscription; resolves with the per-source failures

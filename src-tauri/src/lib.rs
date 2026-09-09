@@ -268,6 +268,7 @@ pub fn run() {
             translate::translate_request,
             translate::translate_cancel,
             translate::translate_save,
+            translate::translate_continue,
             browser::pagetr::browser_translate_toggle,
             browser::adblock::adblock_update_rules,
             browser::adblock::adblock_import_rules

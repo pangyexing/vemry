@@ -238,13 +238,14 @@ pub async fn translate_open(
         state.translate.drop_job(&old);
     }
     state.translate.sources.lock().unwrap().insert(job_id.clone(), source.clone());
-    // Everything not yet known, in document order; the view moves what it shows to the front
+    // Everything not yet known, in document order, as background work (the budget
+    // bounds it); the view asks for what it shows, which always comes first
     let pending: Vec<u32> = segments
         .iter()
         .filter(|seg| seg.translate && !seg.private && !known.contains_key(&seg.id))
         .map(|seg| seg.id)
         .collect();
-    job.request(&pending, false);
+    job.queue(&pending);
     Ok(TranslateDocView {
         job: job_id,
         title,
@@ -285,6 +286,15 @@ fn current_job(state: &State<'_, AppState>, job: &str) -> Result<Arc<TranslateJo
 #[tauri::command]
 pub async fn translate_request(state: State<'_, AppState>, job: String, ids: Vec<u32>, force: bool) -> Result<(), String> {
     current_job(&state, &job)?.request(&ids, force);
+    Ok(())
+}
+
+/// Go on with the background translation past its stop: another budget's worth,
+/// or the whole document.
+#[tauri::command]
+pub async fn translate_continue(state: State<'_, AppState>, job: String, all: bool) -> Result<(), String> {
+    let more = if all { None } else { Some(vemry_agent::translate::BACKGROUND_BUDGET_CHARS) };
+    current_job(&state, &job)?.continue_background(more);
     Ok(())
 }
 
@@ -373,6 +383,15 @@ pub fn compose_translation(segments: &[Segment], translations: &HashMap<u32, Str
 pub async fn translate_save(app: AppHandle, state: State<'_, AppState>, job: String) -> Result<String, String> {
     let j = current_job(&state, &job)?;
     let source = state.translate.sources.lock().unwrap().get(&job).cloned().ok_or("no such translation")?;
+    // What is still untranslated is translated first — the saved note is complete,
+    // not a mix of translation and source
+    if j.has_remaining() {
+        j.continue_background(None);
+        j.wait_idle().await;
+        if j.is_cancelled() {
+            return Err("no such translation".into());
+        }
+    }
     let s = settings::load(&app);
     let translations = j.translations();
     let segments = j.segments();

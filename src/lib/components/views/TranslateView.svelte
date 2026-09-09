@@ -185,7 +185,8 @@
         }
         scheduleReport();
       },
-      { root, rootMargin: "300px 0px" },
+      // the prefetch window: a screen behind the reader, two ahead
+      { root, rootMargin: "100% 0px 200% 0px" },
     );
     node.dataset.id = String(id);
     io.observe(node);
@@ -223,15 +224,16 @@
     toast.push(t("translate.copiedAll"));
   }
   async function save() {
-    const d = translate.doc;
-    if (!d) return;
+    if (!translate.doc || translate.saving) return;
     try {
-      const path = await api.translateSave(d.job);
+      const path = await translate.save();
       toast.push(t("translate.saved", { path }));
     } catch (e) {
       toast.push(String(e), "error");
     }
   }
+  /** How many translatable segments have no translation yet (the save button says so while it translates them). */
+  const remaining = $derived(translate.toTranslate.filter((s) => !translate.rows[s.id]?.done).length);
   async function changeTarget(tag: string) {
     if (!doc || tag === doc.target) return;
     try {
@@ -308,7 +310,9 @@
           <span class="chip" title={t("translate.progressHint")}>{t("translate.progress", { done, total })}</span>
         {/if}
         <button title={t("translate.copyAll")} onclick={() => void copyAll()}>{t("translate.copy")}</button>
-        <button class="primary" title={t("translate.saveHint")} onclick={() => void save()}>{t("translate.save")}</button>
+        <button class="primary" title={t("translate.saveHint")} disabled={translate.saving} onclick={() => void save()}
+          >{translate.saving && remaining > 0 ? t("translate.savingRemaining", { n: remaining }) : t("translate.save")}</button
+        >
       </span>
     {:else}
       <span class="title faint">{t("view.translate")}</span>
@@ -350,8 +354,18 @@
             <span class="tools">
               <button title={t("translate.retranslate")} onclick={(e) => { e.stopPropagation(); translate.request([seg.id], true); }}>↻</button>
             </span>
-          {:else}
+          {:else if translate.pausedAt === seg.id}
+            <!-- the background translation stopped here at its budget: the reader decides how much further -->
+            <p class="paused">
+              <span>{t("translate.pausedHere")}</span>
+              <button onclick={(e) => { e.stopPropagation(); translate.continueBackground(false); }}>{t("translate.continue")}</button>
+              <button onclick={(e) => { e.stopPropagation(); translate.continueBackground(true); }}>{t("translate.translateAll")}</button>
+            </p>
+          {:else if translate.requested[seg.id] || !translate.idle}
             <div class="skel"><i></i><i></i><i class="short"></i></div>
+          {:else}
+            <!-- not asked for yet: translated when it comes into view, or with "translate everything" -->
+            <div class="skel still" title={t("translate.notYet")}><i></i><i class="short"></i></div>
           {/if}
         {/snippet}
         {#if doc.source.kind === "pdf"}
@@ -708,6 +722,29 @@
   }
   .skel i.short {
     width: 55%;
+  }
+  .skel.still i {
+    animation: none;
+    background: var(--bg-panel);
+    opacity: 0.7;
+  }
+  .paused {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--fs-sm);
+    color: var(--fg-muted);
+  }
+  .paused button {
+    font-size: var(--fs-xs);
+    padding: 2px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    color: var(--accent);
+  }
+  .paused button:hover {
+    background: var(--bg-hover);
   }
   @keyframes shimmer {
     from { background-position: 200% 0; }

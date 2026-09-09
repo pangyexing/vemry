@@ -39,6 +39,12 @@ class TranslateStore {
   mode = $state<TranslateMode>(loadMode());
   /** The row the reader clicked: lit on both sides. */
   selected = $state<number | null>(null);
+  /** The segment the background translation stopped before (its budget spent); null = not stopped. */
+  pausedAt = $state<number | null>(null);
+  /** The segments the view asked for (in and near the viewport): the ones whose placeholder shimmers. */
+  requested = $state<Record<number, true>>({});
+  /** A save in progress: first translating what is left, then writing. */
+  saving = $state(false);
   private listening = false;
 
   /** The segments the model has to translate (the count line's denominator). */
@@ -75,6 +81,8 @@ class TranslateStore {
       }
       this.rows = rows;
       this.doc = doc;
+      this.pausedAt = null;
+      this.requested = {};
       // Everything already in the cache: the job had nothing to send and went idle
       // before the document arrived here, so that event is not coming
       this.idle = doc.segments.every((s) => !s.translate || s.private || s.cached != null);
@@ -113,8 +121,33 @@ class TranslateStore {
     if (force) {
       for (const id of ids) this.rows[id] = { text: null, done: false, error: null };
     }
+    const req = { ...this.requested };
+    for (const id of ids) req[id] = true;
+    this.requested = req;
     this.idle = false;
     void api.translateRequest(job, ids, force).catch((e) => (this.error = String(e)));
+  }
+
+  /** Past the stop: another budget's worth of the document, or all of it. */
+  continueBackground(all: boolean) {
+    const job = this.doc?.job;
+    if (!job) return;
+    this.pausedAt = null;
+    this.idle = false;
+    void api.translateContinue(job, all).catch((e) => (this.error = String(e)));
+  }
+
+  /** Save as a note: what is left is translated first (the engine does it), then the note lands. */
+  async save(): Promise<string> {
+    const job = this.doc?.job;
+    if (!job) throw new Error("no document");
+    this.saving = true;
+    this.pausedAt = null;
+    try {
+      return await api.translateSave(job);
+    } finally {
+      this.saving = false;
+    }
   }
 
   retryFailed() {
@@ -146,6 +179,8 @@ class TranslateStore {
         this.rows[e.id] = { text: e.text, done: e.done, error: null };
       } else if (e.type === "failed") {
         for (const id of e.ids) this.rows[id] = { text: null, done: false, error: e.message };
+      } else if (e.type === "paused") {
+        this.pausedAt = e.at;
       } else if (e.type === "idle") {
         this.idle = true;
       }

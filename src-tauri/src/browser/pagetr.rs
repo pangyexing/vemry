@@ -112,6 +112,8 @@ const COLLECT_JS: &str = r#"
         const top = Math.max(r.top, bottom + 6);
         it.out.style.top = top + 'px';
         bottom = top + it.out.offsetHeight;
+        // a placeholder shimmers only where a translation is on its way (in and near the viewport)
+        if (it.pending) { const near = r.bottom > -innerHeight && r.top < innerHeight * 2.5; for (const b of it.out.children) if (b.style.animationName) b.style.animationPlayState = near ? 'running' : 'paused'; }
       }
       for (const it of S.items.values()) if (!it.el.isConnected) { it.out.remove(); }
     };
@@ -119,10 +121,11 @@ const COLLECT_JS: &str = r#"
     document.addEventListener('scroll', S.schedule, true);
     window.addEventListener('resize', S.schedule);
     S.timer = setInterval(S.schedule, 1000);
-    S.apply = (id, text) => {
+    S.apply = (id, text, done) => {
       const it = S.items.get(id);
       if (!it) return;
-      it.pending = false;
+      if (done) { it.pending = false; it.out.style.opacity = ''; it.out.style.borderLeftStyle = 'solid'; }
+      else { it.out.style.opacity = '.7'; }
       it.out.textContent = '';
       // a formula travelled as a placeholder; the page's own rendering of it comes back in its place
       const parts = text.split(/⟦m(\d+)⟧/);
@@ -137,8 +140,42 @@ const COLLECT_JS: &str = r#"
           if (c instanceof HTMLElement && c.scrollWidth > c.clientWidth && c.clientWidth > 0) { c.style.fontSize = Math.floor((c.clientWidth / c.scrollWidth) * 96) + '%'; c.style.overflow = 'hidden'; }
         }
       }
+      S.schedule();
+    };
+    // The background stopped at its budget before block `at`: that block's entry says so and offers to go on
+    S.skeleton = (o, lines) => {
+      o.textContent = '';
+      for (let i = 0; i < lines; i++) {
+        const b = document.createElement('div');
+        b.style.cssText = 'all:initial;display:block;height:.65em;margin:.4em 0;border-radius:4px;background:linear-gradient(90deg,rgba(127,127,127,.14),rgba(127,127,127,.32),rgba(127,127,127,.14));background-size:200% 100%;animation:vemryTrShimmer 1.4s linear infinite;' + (i === lines - 1 && lines > 1 ? 'width:60%;' : '');
+        o.appendChild(b);
+      }
+    };
+    S.wants = null;
+    S.pausedAt = null;
+    S.pause = (at, labels) => {
+      const it = S.items.get(at);
+      if (!it || !it.pending) return;
+      S.pausedAt = at;
+      it.out.textContent = '';
       it.out.style.opacity = '';
-      it.out.style.borderLeftStyle = 'solid';
+      const note = document.createElement('span');
+      note.style.cssText = 'all:initial;font:inherit;color:inherit;opacity:.6;font-size:.85em;';
+      note.textContent = labels.here + ' · ';
+      it.out.appendChild(note);
+      for (const [key, label] of [['more', labels.more], ['all', labels.all]]) {
+        const b = document.createElement('span');
+        b.style.cssText = 'all:initial;font:inherit;color:inherit;font-size:.85em;cursor:pointer;text-decoration:underline;margin-right:.8em;';
+        b.textContent = label;
+        b.addEventListener('click', (e) => { e.stopPropagation(); S.wants = key; S.resume(); });
+        it.out.appendChild(b);
+      }
+      S.schedule();
+    };
+    S.resume = () => {
+      const it = S.pausedAt == null ? null : S.items.get(S.pausedAt);
+      S.pausedAt = null;
+      if (it && it.pending) { S.skeleton(it.out, it.lines); it.out.style.opacity = '.45'; }
       S.schedule();
     };
     S.clear = () => {
@@ -193,27 +230,38 @@ const COLLECT_JS: &str = r#"
     // the placeholder: as many shimmering lines as the block has, so the pane shows the shape of what is coming
     const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
     const lines = Math.max(1, Math.min(4, Math.round(r.height / lh)));
-    for (let i = 0; i < lines; i++) {
-      const b = document.createElement('div');
-      b.style.cssText = 'all:initial;display:block;height:.65em;margin:.4em 0;border-radius:4px;background:linear-gradient(90deg,rgba(127,127,127,.14),rgba(127,127,127,.32),rgba(127,127,127,.14));background-size:200% 100%;animation:vemryTrShimmer 1.4s linear infinite;' + (i === lines - 1 && lines > 1 ? 'width:60%;' : '');
-      o.appendChild(b);
-    }
-    o.addEventListener('click', () => S.select(id, true));
+    S.skeleton(o, lines);
+    o.addEventListener('click', () => { if (!o.querySelector('[data-vemry-tr-out]') ) S.select(id, true); });
     S.inner.appendChild(o);
-    S.items.set(id, { el, out: o, math: maths, pending: true });
+    S.items.set(id, { el, out: o, math: maths, pending: true, lines });
     out.push({ id, text });
   }
   S.schedule();
-  // the blocks in and near the viewport still waiting: the reader's place goes to the front of the queue
+  // the blocks in and near the viewport still waiting (a screen behind, two and a half
+  // ahead — a page scrolls faster than a note): the reader's place goes to the front of the queue
   const visible = [];
   for (const [id, it] of S.items) {
     if (!it.pending || !it.el.isConnected) continue;
     const r = it.el.getBoundingClientRect();
-    if (r.bottom > -400 && r.top < innerHeight + 400) visible.push(id);
+    if (r.bottom > -innerHeight && r.top < innerHeight * 2.5) visible.push(id);
   }
-  return { url: location.href, title: document.title, gen: S.gen, blocks: out, visible };
+  const wants = S.wants;
+  S.wants = null;
+  return { url: location.href, title: document.title, gen: S.gen, blocks: out, visible, wants };
 })()
 "#;
+
+/// The pause marker's copy, in the user's language (the page shows it, so it comes
+/// from the catalog like every other string the user reads).
+fn pause_js(at: u32) -> String {
+    let lang = crate::i18n::current();
+    let labels = serde_json::json!({
+        "here": crate::i18n::t(lang, "translate.pausedHere"),
+        "more": crate::i18n::t(lang, "translate.continue"),
+        "all": crate::i18n::t(lang, "translate.translateAll"),
+    });
+    format!("(() => {{ const S = window.__vemryTr; if (S) S.pause({at}, {labels}); }})()")
+}
 
 /// Move the pane's progress line.
 fn progress_js(done: usize, total: usize) -> String {
@@ -223,10 +271,10 @@ fn progress_js(done: usize, total: usize) -> String {
 /// Remove the pane and untag the blocks.
 const CLEAR_JS: &str = "(() => { if (window.__vemryTr) window.__vemryTr.clear(); return true; })()";
 
-/// Put a translation into its pane entry.
-fn apply_js(id: u32, text: &str) -> String {
+/// Put a translation into its pane entry — the text so far while it streams, final when done.
+fn apply_js(id: u32, text: &str, done: bool) -> String {
     let payload = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
-    format!("(() => {{ const S = window.__vemryTr; if (S) S.apply({id}, {payload}); }})()")
+    format!("(() => {{ const S = window.__vemryTr; if (S) S.apply({id}, {payload}, {done}); }})()")
 }
 
 #[derive(Deserialize)]
@@ -239,6 +287,9 @@ struct Collected {
     /// The untranslated blocks in and near the viewport, to be sent first.
     #[serde(default)]
     visible: Vec<u32>,
+    /// A click on the pause marker: "more" or "all".
+    #[serde(default)]
+    wants: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -362,12 +413,20 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
         }
         match event {
             TranslateEvent::Segment { id, text, done: true } => {
-                let _ = ev_webview.eval(apply_js(id, &text));
+                let _ = ev_webview.eval(apply_js(id, &text, true));
                 if counted.lock().unwrap().insert(id) {
                     ev_done.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            TranslateEvent::Segment { .. } => return,
+            // the text so far, streamed into the entry as it arrives
+            TranslateEvent::Segment { id, text, done: false } => {
+                let _ = ev_webview.eval(apply_js(id, &text, false));
+                return;
+            }
+            TranslateEvent::Paused { at } => {
+                let _ = ev_webview.eval(pause_js(at));
+                return;
+            }
             TranslateEvent::Failed { .. } | TranslateEvent::Idle => {}
         }
         let (done, total) = (ev_done.load(Ordering::Relaxed), ev_total.load(Ordering::Relaxed));
@@ -378,15 +437,14 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
     let job = TranslateJob::new(job_id, doc, target, s.translate_addendum.clone(), provider, effort, Arc::new(HttpTransport::new()), Some(cache), on_event);
     // Cache hits land in the pane at once
     for (id, text) in job.translations() {
-        let _ = webview.eval(apply_js(id, &text));
+        let _ = webview.eval(apply_js(id, &text, true));
         done.fetch_add(1, Ordering::Relaxed);
     }
-    // The viewport's blocks first, then the rest in document order — one request, so the
-    // first batches to leave are the reader's
-    let mut order: Vec<u32> = collected.visible.clone();
+    // The viewport's blocks are what the reader wants — asked for first, so the first
+    // (short) batch is theirs; the document follows as background work
     let ids: Vec<u32> = job.segments().iter().map(|seg| seg.id).collect();
-    order.extend(ids.iter().copied().filter(|id| !collected.visible.contains(id)));
-    job.request(&order, false);
+    job.request(&collected.visible, false);
+    job.queue(&ids);
     let _ = webview.eval(progress_js(done.load(Ordering::Relaxed), ids.len()));
     let t = Arc::new(PageTranslation { label: label.clone(), url: collected.url, gen: collected.gen, job, active, done });
     state.browser_translate.tabs.lock().unwrap().insert(label.clone(), Arc::clone(&t));
@@ -420,6 +478,11 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
                 }
                 break;
             }
+            match c.wants.as_deref() {
+                Some("all") => poll_t.job.continue_background(None),
+                Some("more") => poll_t.job.continue_background(Some(vemry_agent::translate::BACKGROUND_BUDGET_CHARS)),
+                _ => {}
+            }
             if !c.visible.is_empty() {
                 poll_t.job.request(&c.visible, false);
             }
@@ -431,7 +494,7 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
             // blocks that came from the cache landed through `extend` without an event
             for (id, text) in poll_t.job.translations() {
                 if c.blocks.iter().any(|b| b.id == id) {
-                    let _ = webview.eval(apply_js(id, &text));
+                    let _ = webview.eval(apply_js(id, &text, true));
                 }
             }
             progress(&poll_app, &poll_t);
