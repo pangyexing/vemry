@@ -360,6 +360,16 @@ pub fn parse(json: &str) -> Result<LabSpec, String> {
                 for s in steps.iter_mut() {
                     clip(&mut s.label);
                     clip_opt(&mut s.text);
+                    // the value beside a step is drawn cell by cell like a heatmap, and is capped like one
+                    let what = format!("the step `{}`", s.label);
+                    match &s.value {
+                        Some(StepValue::Vector(v)) => cap(&what, v.len(), MAX_HEATMAP)?,
+                        Some(StepValue::Grid(g)) => {
+                            cap(&what, g.len(), MAX_HEATMAP)?;
+                            cap(&what, g.iter().map(|r| r.len()).max().unwrap_or(0), MAX_HEATMAP)?;
+                        }
+                        Some(StepValue::Number(_)) | None => {}
+                    }
                 }
             }
         }
@@ -447,5 +457,12 @@ mod tests {
         let json = r#"{"controls":[{"kind":"slider","name":"s","label":null,"min":1,"max":1,"step":1,"value":1}],"views":[]}"#;
         assert!(parse(json).unwrap_err().contains("min < max"));
         assert!(parse("nonsense").unwrap_err().contains("malformed"));
+        // a step's value is drawn cell by cell, so it is capped like a heatmap
+        let wide: Vec<Vec<f64>> = vec![vec![0.0; 65]];
+        let json = serde_json::json!({"controls": [], "views": [{"kind":"step","title":"t","steps":[{"label":"big","text":null,"value": wide}]}]});
+        let e = parse(&json.to_string()).unwrap_err();
+        assert!(e.contains("the step `big` has 65; the limit is 64"), "{e}");
+        let json = serde_json::json!({"controls": [], "views": [{"kind":"step","title":"t","steps":[{"label":"row","text":null,"value": vec![0.0; 65]}]}]});
+        assert!(parse(&json.to_string()).unwrap_err().contains("the step `row` has 65"));
     }
 }

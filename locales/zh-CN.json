@@ -1015,6 +1015,7 @@
   "runBlock.run": "运行",
   "runBlock.running": "运行中…",
   "runBlock.tableView": "以表格查看",
+  "runBlock.value": "值",
   "script.fromScript": "脚本 {name}",
   "scriptGrant.allowWrite": "允许写入",
   "scriptGrant.bodyAfter": "。",

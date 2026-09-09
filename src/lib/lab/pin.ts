@@ -15,16 +15,18 @@ function literal(v: number | boolean | string): string {
 }
 
 /** The spec object of `name` inside a controls({…}) call: `name: { … }` with the key
- *  bare or quoted, and a body free of nested braces (a spec holds arrays, not objects). */
+ *  bare or quoted, and a body free of nested braces (a spec holds arrays, not objects). The
+ *  key has to start where an identifier starts: without the lookbehind, pinning `k` would
+ *  rewrite the spec of `d_k`, which ends in the same letters. */
 function specOf(code: string, name: string): { start: number; end: number; body: string } | null {
-  const re = new RegExp(`(["']?)${escapeRe(name)}\\1\\s*:\\s*\\{([^{}]*)\\}`);
+  const re = new RegExp(`(?<![\\w$])(["']?)${escapeRe(name)}\\1\\s*:\\s*\\{([^{}]*)\\}`);
   const m = re.exec(code);
   if (!m) return null;
   const bodyStart = m.index + m[0].length - 1 - m[2].length;
   return { start: bodyStart, end: bodyStart + m[2].length, body: m[2] };
 }
 
-const VALUE_RE = /(\bvalue\s*:\s*)(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?|true|false|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/;
+const VALUE_RE = /(\bvalue\s*:\s*)(-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?|true|false|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/;
 const TOGGLE_RE = /(\btoggle\s*:\s*)(true|false)/;
 
 /** The closing bracket matching the `[` at `open`, or -1. */
@@ -101,9 +103,10 @@ export function pinCode(code: string, controls: LabControl[]): PinResult {
         skipped.push(c.name);
         continue;
       }
-      body = body.replace(TOGGLE_RE, `$1${literal(c.value)}`);
+      body = body.replace(TOGGLE_RE, (_m, pre: string) => pre + literal(c.value));
     } else if (VALUE_RE.test(body)) {
-      body = body.replace(VALUE_RE, `$1${literal(c.value)}`);
+      // a function replacer: a string one would read `$&` or `$1` inside a select's value as a group reference
+      body = body.replace(VALUE_RE, (_m, pre: string) => pre + literal(c.value));
     } else {
       // no value: written in, after the last field
       const trimmed = body.replace(/[\s,]*$/, "");

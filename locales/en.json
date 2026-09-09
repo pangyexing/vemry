@@ -1015,6 +1015,7 @@
   "runBlock.run": "Run",
   "runBlock.running": "Running…",
   "runBlock.tableView": "Show as a table",
+  "runBlock.value": "value",
   "script.fromScript": "Script {name}",
   "scriptGrant.allowWrite": "Allow writes",
   "scriptGrant.bodyAfter": ".",

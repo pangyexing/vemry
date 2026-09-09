@@ -22,7 +22,7 @@ import { swallowPress } from "$lib/lab/dom";
 import { focusEditor } from "./clickguard";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import { EditorState, type Extension, RangeSet, RangeValue, StateEffect, StateField, type Transaction } from "@codemirror/state";
+import { EditorState, type Extension, MapMode, RangeSet, RangeValue, StateEffect, StateField, type Transaction } from "@codemirror/state";
 import { fencedCodeAt, fencedCodeText } from "./fenced";
 import { selectionReveals, selectionTouches } from "./reveal";
 import { foldRangesOf, insideFold } from "./table";
@@ -335,10 +335,16 @@ function buildButtons(state: EditorState, deco: Decoration): DecorationSet {
 
 interface CardResult {
   decos: DecorationSet;
-  /** Whether the document holds a js fence at all (a revealed one counts): without one,
-   *  a cursor move cannot make a card appear, so the tree is not walked again. */
-  hasFence: boolean;
+  /** Every js fence's span, whether it is drawn as a card or shown as source. A cursor
+   *  move that touches none of them can change no card, so the tree is not walked again
+   *  — the common case, and the walk is the whole document's. */
+  fences: { from: number; to: number }[];
 }
+
+/** Whether a selection reaches a span (the superset of what the reveal and the selected
+ *  mark ask): either end of a move near a fence is what makes a rescan worth its walk. */
+const nearFence = (sel: EditorState["selection"], fences: { from: number; to: number }[]) =>
+  fences.some((f) => sel.ranges.some((r) => r.from <= f.to && r.to >= f.from));
 
 /** A session in the labs range set, anchored at its fence's start. */
 class SessionMark extends RangeValue {
@@ -359,15 +365,15 @@ class SessionMark extends RangeValue {
 function buildCards(state: EditorState, labs: RangeSet<SessionMark>, host: RunHost): CardResult {
   const doc = state.doc;
   const decos: ReturnType<Decoration["range"]>[] = [];
-  let hasFence = false;
+  const fences: { from: number; to: number }[] = [];
   syntaxTree(state).iterate({
     enter(node) {
       if (node.name !== "FencedCode") return;
       const firstLine = doc.lineAt(node.from);
       if (!JS_HEAD_RE.test(firstLine.text)) return false;
-      hasFence = true;
       const from = firstLine.from;
       const to = doc.lineAt(Math.min(node.to, doc.length)).to;
+      fences.push({ from, to });
       // the reveal and the fold decide before the body is read: whether the block is a
       // lab does not change the answer, and reading it materialises the whole fence
       if (selectionReveals(state, from, to) || insideFold(state, from, to)) return false;
@@ -383,7 +389,7 @@ function buildCards(state: EditorState, labs: RangeSet<SessionMark>, host: RunHo
       return false;
     },
   });
-  return { decos: Decoration.set(decos, true), hasFence };
+  return { decos: Decoration.set(decos, true), fences };
 }
 
 export function runBlockExtension(host: RunHost): Extension {
@@ -419,24 +425,44 @@ export function runBlockExtension(host: RunHost): Extension {
     },
     provide: (f) => EditorView.decorations.from(f),
   });
-  // The sessions, by fence start; a deleted fence takes its session with it
+  // The sessions, by fence start; a deleted fence takes its session with it. A session
+  // outlives its widget (a reveal takes the card away and gives it back), so it is only
+  // ever ended here — dropping the mark without ending it would leave its observers and
+  // its pending re-run running for the rest of the document's life
+  const endAt = (value: RangeSet<SessionMark>, at: number) =>
+    value.update({
+      filterFrom: at,
+      filterTo: at,
+      filter: (_f, _t, mark) => {
+        mark.session.destroy();
+        return false;
+      },
+    });
   const labs = StateField.define<RangeSet<SessionMark>>({
     create: () => RangeSet.empty,
     update(value, tr) {
+      if (tr.docChanged) {
+        // a fence deleted along with the text around it: map alone would keep the point at
+        // the deletion's edge, leaving a session nothing draws and the next fence typed
+        // there would adopt. A deletion that starts exactly at the anchor still survives
+        // this (a position on a deletion's edge is not "deleted") — the ✕ ends those
+        const live = new Set<SessionMark>();
+        let died = false;
+        value.between(0, tr.startState.doc.length, (f, _t, mark) => {
+          if (tr.changes.mapPos(f, 1, MapMode.TrackDel) == null) {
+            mark.session.destroy();
+            died = true;
+          } else live.add(mark);
+        });
+        if (died) value = value.update({ filter: (_f, _t, mark) => live.has(mark) });
+      }
       value = value.map(tr.changes);
       for (const e of tr.effects) {
         if (e.is(setLab)) {
           const at = Math.min(e.value.at, tr.state.doc.length);
-          value = value.update({ filterFrom: at, filterTo: at, filter: () => false, add: [new SessionMark(e.value.session).range(at)], sort: true });
+          value = endAt(value, at).update({ add: [new SessionMark(e.value.session).range(at)], sort: true });
         } else if (e.is(clearLab)) {
-          value = value.update({
-            filterFrom: e.value.at,
-            filterTo: e.value.at,
-            filter: (_f, _t, mark) => {
-              mark.session.destroy();
-              return false;
-            },
-          });
+          value = endAt(value, e.value.at);
         }
       }
       return value;
@@ -447,11 +473,11 @@ export function runBlockExtension(host: RunHost): Extension {
     create: (state) => buildCards(state, state.field(labs), host),
     update(value, tr) {
       const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
-      const foldChanged = foldRangesOf(tr).length > 0;
-      if (!tr.docChanged && !tr.selection && !treeChanged && !foldChanged && !labChanged(tr)) return value;
-      // The common case — a note with no js fence: a cursor move needs no rescan (a
-      // document or syntax-tree change still does, since a fence may have just been typed)
-      if (!value.hasFence && !tr.docChanged && !treeChanged && !foldChanged) return value;
+      const structural = tr.docChanged || treeChanged || foldRangesOf(tr).length > 0 || labChanged(tr);
+      if (!structural && !tr.selection) return value;
+      // The common case — a cursor moving with no js fence anywhere near either end of the
+      // move: nothing it could change, and the walk is the whole document's tree
+      if (!structural && !nearFence(tr.startState.selection, value.fences) && !nearFence(tr.state.selection, value.fences)) return value;
       return buildCards(tr.state, tr.state.field(labs), host);
     },
     provide: (f) => EditorView.decorations.from(f, (v) => v.decos),

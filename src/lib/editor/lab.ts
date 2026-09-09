@@ -105,12 +105,25 @@ function withValue(c: LabControl, v: LabParams[string] | undefined): LabControl 
   }
 }
 
-/** The identity of the control set: a re-run that changes it rebuilds the controls, one that keeps it updates nothing the user is holding. */
+/** The identity of the control set: a re-run that changes it rebuilds the controls, one
+ *  that keeps it updates nothing the user is holding. A slider's range belongs to that
+ *  identity — a block whose bounds follow another control would otherwise keep a widget
+ *  the reader can no longer move to the values it now accepts. */
 const controlKey = (controls: LabControl[]) =>
   controls
     .map(
       (c) =>
-        `${c.kind}:${c.name}${c.kind === "select" ? `:${c.options.join("|")}` : c.kind === "matrix" ? `:${c.rows.length}x${c.rows[0]?.length ?? 0}` : c.kind === "presets" ? `:${c.items.map((i) => i.label).join("|")}` : ""}`,
+        `${c.kind}:${c.name}${
+          c.kind === "slider"
+            ? `:${c.min}:${c.max}:${c.step}`
+            : c.kind === "select"
+              ? `:${c.options.join("|")}`
+              : c.kind === "matrix"
+                ? `:${c.rows.length}x${c.rows[0]?.length ?? 0}`
+                : c.kind === "presets"
+                  ? `:${c.items.map((i) => i.label).join("|")}`
+                  : ""
+        }`,
     )
     .join("\n");
 
@@ -267,7 +280,18 @@ export class LabSession implements TipHost {
   /** A preset sets several controls at once: the params, the widgets (rebuilt from
    *  the new values so the sliders show them), and one re-run. */
   private applyPreset(c: Extract<LabControl, { kind: "presets" }>, item: LabPreset) {
-    for (const [k, v] of Object.entries(item.set)) this.params[k] = Array.isArray(v) ? v.map((r) => r.slice()) : v;
+    for (const [k, v] of Object.entries(item.set)) {
+      if (!Array.isArray(v)) {
+        this.params[k] = v;
+        continue;
+      }
+      // a grid of a shape the matrix was not declared with is one the sandbox drops: the
+      // widget must not take it either, or the cells shown stop being the cells that ran
+      const target = this.spec.controls.find((ctl) => ctl.name === k);
+      if (target?.kind === "matrix" && v.length === target.rows.length && target.rows.every((r, i) => r.length === v[i].length)) {
+        this.params[k] = v.map((r) => r.slice());
+      }
+    }
     this.params[c.name] = item.label;
     this.spec = { ...this.spec, controls: this.spec.controls.map((ctl) => withValue(ctl, this.params[ctl.name])) };
     this.buildControls();
@@ -416,7 +440,7 @@ export class LabSession implements TipHost {
           body.appendChild(buildTable(v));
           break;
         case "step":
-          body.appendChild(buildStep(v, { next: t("runBlock.nextStep"), all: t("runBlock.allSteps"), reset: t("runBlock.resetSteps") }));
+          body.appendChild(buildStep(v));
           break;
       }
     };

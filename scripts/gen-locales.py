@@ -2139,6 +2139,8 @@ add("runBlock.", {
     "experiment": ("Experiment", "实验"),
     "editCode": ("Edit the code", "编辑代码"),
     "codeChanged": ("The code changed — run again", "代码已改动,重新运行"),
+    # the fallback name of a chart's value column, when the block gave the view none
+    "value": ("value", "值"),
     "nextStep": ("Next", "下一步"),
     "allSteps": ("All", "全部"),
     "resetSteps": ("Reset", "重来"),

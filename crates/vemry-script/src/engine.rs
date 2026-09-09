@@ -520,7 +520,7 @@ impl Worker {
     /// params go in as a JSON global the glue reads while building `vemry.lab`
     /// (their presence is what enables the lab API — a script context never
     /// sets it), and the spec the block built comes back out through
-    /// `__vemry_lab_take` once the code has run.
+    /// `__vemry_lab_take`, taken before the code runs and called under the same fuse.
     fn eval_block(&self, code: &str, current_note: Option<String>, params: Option<serde_json::Value>) -> BlockEvalResult {
         let meta = Rc::new(RefCell::new(ScriptMeta {
             exec: ExecKind::Block,
@@ -548,6 +548,9 @@ impl Worker {
         let result: Result<(Option<String>, Option<String>), String> = context.with(|ctx| {
             ctx.globals().set("__vemry_lab_params", params_json).map_err(|e| format!("bindings: {e}"))?;
             bindings::install(&ctx, env).map_err(|e| format!("bindings: {e}"))?;
+            // Taken before the block runs and called inside the fuse below: the code can
+            // neither replace the function nor sit in it once the deadline is cleared
+            let take: Function = ctx.globals().get("__vemry_lab_take").catch(&ctx).map_err(|e| e.to_string())?;
             let (result, timed_out) = self.with_deadline(self.config.block_timeout, || {
                 let value = ctx
                     .eval::<rquickjs::Value, _>(code.as_bytes().to_vec())
@@ -557,26 +560,26 @@ impl Worker {
                 // the block result instead of vanishing
                 drain_jobs(&ctx, &self.deadline);
                 let value = value?;
-                if value.is_undefined() {
-                    return Ok(None);
-                }
-                let repr: Function = ctx
-                    .eval("(v) => { try { return typeof v === 'string' ? v : JSON.stringify(v); } catch { return String(v); } }")
-                    .catch(&ctx)
-                    .map_err(|e| e.to_string())?;
-                repr.call::<_, Option<String>>((value,)).catch(&ctx).map_err(|e| e.to_string())
+                let repr: Option<String> = if value.is_undefined() {
+                    None
+                } else {
+                    let to_repr: Function = ctx
+                        .eval("(v) => { try { return typeof v === 'string' ? v : JSON.stringify(v); } catch { return String(v); } }")
+                        .catch(&ctx)
+                        .map_err(|e| e.to_string())?;
+                    to_repr.call::<_, Option<String>>((value,)).catch(&ctx).map_err(|e| e.to_string())?
+                };
+                // The lab the block built, as JSON (null when it never called vemry.lab)
+                let lab: Option<String> = take.call(()).catch(&ctx).map_err(|e| e.to_string())?;
+                Ok((repr, lab))
             });
-            let repr = result.map_err(|e| {
+            result.map_err(|e| {
                 if timed_out {
                     format!("the code block timed out (>{:?}): {e}", self.config.block_timeout)
                 } else {
                     e
                 }
-            })?;
-            // The lab the block built, as JSON (null when it never called vemry.lab)
-            let take: Function = ctx.globals().get("__vemry_lab_take").catch(&ctx).map_err(|e| e.to_string())?;
-            let lab: Option<String> = take.call(()).catch(&ctx).map_err(|e| e.to_string())?;
-            Ok((repr, lab))
+            })
         });
         let mut lines = meta.borrow().block_output.clone();
         // whatever the block printed is kept either way: an error is the reason beside it
@@ -1441,6 +1444,13 @@ mod tests {
         // a bad call shape is a plain error naming the call
         let r = host.eval_block("vemry.lab.controls({ x: { slider: [5, 1] } })", None, None);
         assert!(r.error.as_deref().unwrap().contains("`x`.slider"), "{:?}", r.error);
+        // a highlight that is no row or column number is no highlight, not a dead block
+        let r = host.eval_block(r#"vemry.lab.table("t", [[1]], { highlight: { row: -1, col: 0.5 } })"#, None, None);
+        assert_eq!(r.error, None, "{:?}", r.error);
+        match &r.lab.unwrap().views[0] {
+            lab::LabView::Table { highlight, .. } => assert_eq!(*highlight, Some(lab::Highlight { row: None, col: None })),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

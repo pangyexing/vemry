@@ -15,6 +15,7 @@
 // never cycled: the cap is eight); magnitude is one hue light→dark, and a signed
 // heatmap is two poles around a neutral midpoint.
 import type { LabView, LineSeries } from "$lib/api";
+import { t } from "$lib/i18n/i18n.svelte";
 import { renderMathHtml, scanInlineMath } from "$lib/math";
 import { el, swallowPress } from "./dom";
 
@@ -581,7 +582,7 @@ export function buildHeatmap(view: HeatmapView, tip: TipHost): HTMLElement {
         if (showNumbers) cell.textContent = fmt(v, view.digits ?? (Number.isInteger(v) ? 0 : 2));
       }
       cell.addEventListener("pointermove", (e) => {
-        tip.show(`${rowLabel(i)} · ${colLabel(j)}`, [{ slot: 0, label: view.title || "value", value: fmt(v, view.digits) }], e.clientX, e.clientY);
+        tip.show(`${rowLabel(i)} · ${colLabel(j)}`, [{ slot: 0, label: view.title || t("runBlock.value"), value: fmt(v, view.digits) }], e.clientX, e.clientY);
       });
       cell.addEventListener("pointerleave", () => tip.hide());
       grid.appendChild(cell);
@@ -671,8 +672,8 @@ function stepValue(v: StepItem["value"]): HTMLElement | null {
 
 type StepItem = StepView["steps"][number];
 
-/** The derivation, revealed one step at a time; `labels` are the button captions the caller localises. */
-export function buildStep(view: StepView, labels: { next: string; all: string; reset: string }): HTMLElement {
+/** The derivation, revealed one step at a time. */
+export function buildStep(view: StepView): HTMLElement {
   const wrap = el("div", "cm-lab-steps");
   const list = el("ol", "cm-lab-step-list");
   const items = view.steps.map((s, i) => {
@@ -689,9 +690,9 @@ export function buildStep(view: StepView, labels: { next: string; all: string; r
   });
   let shown = Math.min(1, items.length);
   const bar = el("div", "cm-lab-step-bar");
-  const next = el("button", "cm-lab-btn", labels.next);
-  const all = el("button", "cm-lab-btn", labels.all);
-  const reset = el("button", "cm-lab-btn", labels.reset);
+  const next = el("button", "cm-lab-btn", t("runBlock.nextStep"));
+  const all = el("button", "cm-lab-btn", t("runBlock.allSteps"));
+  const reset = el("button", "cm-lab-btn", t("runBlock.resetSteps"));
   const counter = el("span", "cm-lab-step-count");
   const apply = () => {
     items.forEach((li, i) => {
@@ -749,7 +750,7 @@ export function tableTwin(view: LabView): HTMLElement | null {
       return buildTable({
         kind: "table",
         title: view.title,
-        columns: ["", ...view.series.map((s, i) => seriesName(s.name, i, view.series.length) || (view.y_label ?? "value"))],
+        columns: ["", ...view.series.map((s, i) => seriesName(s.name, i, view.series.length) || view.y_label || t("runBlock.value"))],
         rows: view.labels.map((l, i) => [l, ...view.series.map((s) => s.values[i] ?? null)]),
         digits: null,
         highlight: null,

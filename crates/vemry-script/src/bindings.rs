@@ -483,6 +483,8 @@ const GLUE_JS: &str = r#"
     return g.map((r) => numList(r, what));
   };
   const digitsOf = (v) => (isNum(v) ? Math.max(0, Math.min(6, Math.round(v))) : null);
+  // a row/column index: the canonical type is unsigned, so a negative or fractional one is no index at all
+  const indexOf = (v) => (isNum(v) && Number.isInteger(v) && v >= 0 ? v : null);
   const labControls = (spec) => {
     labOn("controls");
     if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new Error("lab.controls: pass an object of { name: spec }");
@@ -651,7 +653,7 @@ const GLUE_JS: &str = r#"
       columns,
       rows: body.map((r) => columns.map((_, i) => cell(r[i]))),
       digits: digitsOf(o.digits),
-      highlight: h ? { row: isNum(h.row) ? h.row : null, col: isNum(h.col) ? h.col : null } : null,
+      highlight: h ? { row: indexOf(h.row), col: indexOf(h.col) } : null,
     });
   };
   const labStep = (title, steps) => {
