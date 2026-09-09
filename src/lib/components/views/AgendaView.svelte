@@ -5,13 +5,11 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
-  import { assignTaskId, attrIconSvg, byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, estimateSum, formatEstimate, isBlocked, isClosed, localDate, newTaskId, openIds, priorityLabel, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
-  import { copyText } from "$lib/copytext";
-  import { toast } from "$lib/stores/toast.svelte";
+  import { attrIconSvg, byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, estimateSum, formatEstimate, isBlocked, isClosed, isUrgent, localDate, openIds, priorityLabel, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
   import { fieldChipsOf } from "$lib/views/blockrow";
   import { stateGlyphSvg, stateTone } from "$lib/chips";
   import { types } from "$lib/stores/types.svelte";
-  import { commitTaskWrite } from "$lib/views/taskwrite";
+  import { commitTaskWrite, copyTaskId } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
   import Chevron from "../Chevron.svelte";
@@ -185,19 +183,11 @@
         open: () => void openTask(r.hit),
         editDate: (field, current) => (dateMenu = { ...at, key, hit: r.hit, field, current }),
         setState: (state, act) => void commit(r.hit, act, () => updateTask(r.hit, { state })),
-        copyId: () => void copyTaskId(r),
+        copyId: () => void copyTaskId(r, commit),
         remove: () => void commit(r.hit, t("task.act.remove"), () => deleteTask(r.hit)),
       }),
       key,
     );
-  }
-
-  /** The task's id to the clipboard — minted and written onto its line first when it has
-   *  none (what a `⛔` on another task names; an id exists only once something needs it). */
-  async function copyTaskId(r: Row) {
-    const id = r.taskId ?? newTaskId();
-    const ok = r.taskId ? true : await commit(r.hit, t("task.act.id"), () => assignTaskId(r.hit, id));
-    if (ok && (await copyText(id))) toast.push(t("task.copiedId", { id }));
   }
 
   /** Clicking a task jumps to its line. The kanban uses the same vault.openBlockAt — the
@@ -260,7 +250,7 @@
         <!-- The task's other attributes, each its icon and value in its tone: what presses
           (an urgent priority, a lock still shut) in danger, the rest muted -->
         {#if r.priority !== "normal"}
-          <span class="chip attr-chip" class:urgent={r.priority === "highest" || r.priority === "high"} title={priorityLabel(r.priority)}>{@html attrIconSvg("priority", r.priority)}{priorityLabel(r.priority)}</span>
+          <span class="chip attr-chip" class:urgent={isUrgent(r.priority)} title={priorityLabel(r.priority)}>{@html attrIconSvg("priority", r.priority)}{priorityLabel(r.priority)}</span>
         {/if}
         {#if blocked}
           <span class="chip attr-chip urgent" title={t("task.chip.blockedBy", { ids: r.dependsOn.join(", ") })}>{@html attrIconSvg("depends")}{t("task.chip.blocked")}</span>

@@ -91,7 +91,7 @@ function columnTitle(id: ColumnId): string {
  *  declare it), the columns are its vocabulary in the declared order, every value a
  *  column whether or not a card sits in it, with each step's glyph; a value outside
  *  the vocabulary follows them. */
-export function columnDefsFor(mode: GroupMode, cards: Card[], types: BlockType[] = []): ColumnDef[] {
+export function columnDefsFor(mode: GroupMode, cards: Card[], types: BlockType[]): ColumnDef[] {
   if (mode.by === "state") return COLUMNS.map((c) => ({ ...c, title: columnTitle(c.id) }));
   const key = mode.key.toLowerCase();
   const declared = stateField(types, mode.key);
@@ -110,14 +110,16 @@ export function columnDefsFor(mode: GroupMode, cards: Card[], types: BlockType[]
 
 /** The column a card sits in under a grouping. Under a state field the column is the
  *  declared spelling of the card's value (a card that wrote `Done` sits in `done`). */
-export function cardCol(card: Card, mode: GroupMode, types: BlockType[] = []): string {
+export function cardCol(card: Card, mode: GroupMode, types: BlockType[], declared?: string[] | null): string {
   if (mode.by === "state") return card.col;
   const v = card.fields[mode.key.toLowerCase()];
   if (v === undefined) return NONE_COL;
-  const declared = stateField(types, mode.key);
-  if (!declared) return v;
-  const i = stateIndex(declared, v);
-  return i < 0 ? v : declared[i];
+  // the grouping key's vocabulary is a loop invariant: columnsOf reads it once for the
+  // whole board rather than once per card
+  const vocab = declared === undefined ? stateField(types, mode.key) : declared;
+  if (!vocab) return v;
+  const i = stateIndex(vocab, v);
+  return i < 0 ? v : vocab[i];
 }
 
 /** The field keys the cards carry (for the group-by menu), most used first. */
@@ -160,7 +162,7 @@ const MAX_FIELD_CHIPS = 2;
  *  the kanban's filter box filters at the card level: filtering reads tasks.ts's
  *  taskFilterKey (the same key as Agenda's), and building the cards should not rerun
  *  rowOf's chain of regexes on every keystroke. */
-export function cardsOf(hits: BlockHit[], today: string, types: BlockType[] = []): Card[] {
+export function cardsOf(hits: BlockHit[], today: string, types: BlockType[]): Card[] {
   return hits.map((hit) => cardOf(hit, today, types));
 }
 
@@ -249,15 +251,16 @@ const doingFirst = (a: Card, b: Card) => (a.state === "doing" ? 0 : 1) - (b.stat
  *  the key — it is the task being worked on, and it is orthogonal to every key. The
  *  missing-value and tie-break rules are cmpMissingLast's, the same implementation a
  *  query block's `sort` reads, so the two cannot drift. */
-function cardComparator(order: CardOrder, declared: string[] | null = null): (a: Card, b: Card) => number {
+function cardComparator(order: CardOrder, types: BlockType[]): (a: Card, b: Card) => number {
   const k = order.key;
   const dir = order.desc ? -1 : 1;
   // The field key is a loop invariant: lowercasing it inside the comparator would run
   // twice per comparison
   const fieldKey = k.by === "field" ? k.key.toLowerCase() : "";
   const valueOf = (c: Card): string | undefined => (k.by === "date" ? whenOf(c) : k.by === "field" ? c.fields[fieldKey] : undefined);
-  // a sort by a state field reads its declared order (cmpDeclared), any other field cmpValue
-  const order_ = k.by === "field" ? declared : null;
+  // a sort by a state field reads its declared order (cmpDeclared), any other field
+  // cmpValue — the vocabulary is the sort key's own, never the grouping key's
+  const order_ = k.by === "field" ? stateField(types, k.key) : null;
   return (a, b) => {
     const doing = doingFirst(a, b);
     if (doing) return doing;
@@ -277,17 +280,17 @@ function cardComparator(order: CardOrder, declared: string[] | null = null): (a:
  *  task's own change time, most recently changed first, the way a task manager's inbox
  *  and completed list read (Agenda's no-date and done groups read the same rule). Only
  *  the state grouping has these two columns. */
-function columnComparator(col: string, mode: GroupMode, order: CardOrder, declared: string[] | null = null): (a: Card, b: Card) => number {
-  if (order.key.by !== "auto") return cardComparator(order, declared);
+function columnComparator(col: string, mode: GroupMode, order: CardOrder, types: BlockType[]): (a: Card, b: Card) => number {
+  if (order.key.by !== "auto") return cardComparator(order, types);
   const noDate = mode.by === "state" && (col === "unscheduled" || col === "done");
-  return cardComparator(noDate ? MODIFIED_DESC : DATE_ASC);
+  return cardComparator(noDate ? MODIFIED_DESC : DATE_ASC, types);
 }
 
-export function columnsOf(cards: Card[], defs: ColumnDef[], mode: GroupMode, order: CardOrder, types: BlockType[] = []): Record<string, Card[]> {
+export function columnsOf(cards: Card[], defs: ColumnDef[], mode: GroupMode, order: CardOrder, types: BlockType[]): Record<string, Card[]> {
   const cols: Record<string, Card[]> = Object.fromEntries(defs.map((d) => [d.id, [] as Card[]]));
-  for (const c of cards) cols[cardCol(c, mode, types)]?.push(c);
   const declared = mode.by === "field" ? stateField(types, mode.key) : null;
-  for (const [id, list] of Object.entries(cols)) list.sort(columnComparator(id, mode, order, declared));
+  for (const c of cards) cols[cardCol(c, mode, types, declared)]?.push(c);
+  for (const [id, list] of Object.entries(cols)) list.sort(columnComparator(id, mode, order, types));
   return cols;
 }
 
@@ -302,7 +305,7 @@ export function activeField(card: Card): DateField {
  *  null = no action (the same column, or invalid). In state mode "scheduled" needs a
  *  concrete date, which the view collects from a date menu first and passes in; in
  *  field mode the column is the value to write ("none" removes the field). */
-export function dropEdit(card: Card, col: string, today: string, date?: string, mode: GroupMode = { by: "state" }, types: BlockType[] = []): TaskEdit | null {
+export function dropEdit(card: Card, col: string, today: string, date: string | undefined, mode: GroupMode, types: BlockType[]): TaskEdit | null {
   if (col === cardCol(card, mode, types)) return null;
   if (mode.by === "field") return { field: { key: mode.key, value: col === NONE_COL ? null : col } };
   if (col === "overdue") return null;

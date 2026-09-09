@@ -4,7 +4,7 @@
 // menus Agenda and the board share. The Rust side is the agent's copy of the same rules;
 // change the two together.
 import { t, tn } from "$lib/i18n/i18n.svelte";
-import { ANCHOR_TAIL_RE, scanFields, setFieldValue, stripAnchor, stripFields } from "$lib/fields";
+import { ANCHOR_TAIL_RE, anchorTailStart, appendBeforeAnchor, cutSpan, scanFields, setFieldValue, stripAnchor, stripFields } from "$lib/fields";
 import { api, type BlockHit, type Priority, type TaskState } from "$lib/api";
 import { byNote } from "$lib/views/queryrows";
 import { readBlockSpan } from "$lib/views/blockspan";
@@ -31,7 +31,7 @@ const ANY_CHECKBOX_RE = /^(\s*(?:[-*+]|\d{1,9}[.)])\s+)\[([ xX/-])\](?=\s|$)/;
 export const isClosed = (state: TaskState) => state === "done" || state === "cancelled";
 
 /** The checkbox character of a state. */
-export function stateChar(state: TaskState): string {
+function stateChar(state: TaskState): string {
   return state === "done" ? "x" : state === "doing" ? "/" : state === "cancelled" ? "-" : " ";
 }
 /** The state a checkbox character means (Rust's parse_task_line: an unknown one is to-do). */
@@ -142,16 +142,6 @@ export function taskStateIconSvg(state: TaskState): string {
   return stateGlyphSvg(taskStep(state), TASK_STEPS, state === "cancelled");
 }
 
-/** The `key::` names that are task attributes (lowercase): no field chip is drawn for
- *  them on a task line, they are attribute chips. */
-export const TASK_ATTR_KEYS = new Set([
-  "due", "scheduled", "start", "created", "completion", "cancelled", "priority", "repeat", "oncompletion", "id", "dependson", "estimate",
-]);
-
-/** Every emoji that opens an attribute: where a token splits, and where a repeat rule's
- *  text stops (taskattrs.rs EMOJI_MARKERS). */
-const EMOJI_MARKERS = ["📅", "⏳", "⌛", "⏩", "🛫", "➕", "✅", "❌", "❗", "❕", "🔺", "⏫", "🔼", "🔽", "⏬", "🔁", "🚮", "🏁", "🆔", "⛔", "🕐"];
-
 /** The emoji spellings of the attributes that are not dates: the first is the one
  *  written, the rest are read as well (taskattrs.rs AttrKind::emoji). */
 const ATTR_EMOJI: Record<Exclude<AttrKind, DateField>, string[]> = {
@@ -169,22 +159,15 @@ const emojiOf = (kind: AttrKind): string[] => (kind in DATE_FIELDS ? DATE_FIELDS
 const ATTR_ORDER: AttrKind[] = ["id", "depends", "priority", "repeat", "delete", "estimate", "created", "start", "scheduled", "due", "cancelled", "done"];
 const rankOf = (kind: AttrKind) => ATTR_ORDER.indexOf(kind);
 
-/** The `key::` name of each attribute (lowercase): the bracketed `[key:: value]`
- *  spelling is the attribute; a bare `key:: value` is an ordinary field. */
-const ATTR_BY_KEY: Record<string, AttrKind> = {
-  due: "due",
-  scheduled: "scheduled",
-  start: "start",
-  created: "created",
-  completion: "done",
-  cancelled: "cancelled",
-  priority: "priority",
-  repeat: "repeat",
-  oncompletion: "delete",
-  id: "id",
-  dependson: "depends",
-  estimate: "estimate",
-};
+/** Every emoji that opens an attribute: where a token splits, and where a repeat rule's
+ *  text stops (taskattrs.rs EMOJI_MARKERS). The union of the spellings above, so a new
+ *  one is a row in that table and nothing else. */
+const EMOJI_MARKERS = ATTR_ORDER.flatMap(emojiOf);
+
+/** Every date marker → its field, built once: the scanner asked this per token. */
+const DATE_BY_EMOJI: [string, DateField][] = (Object.keys(DATE_FIELDS) as DateField[]).flatMap((f) =>
+  DATE_FIELDS[f].emoji.map((e) => [e, f] as [string, DateField]),
+);
 
 /** The `key::` name of an attribute, the word the editor shows in place of the emoji
  *  while the source is being edited (a priority adds its value, being the whole mark). */
@@ -202,6 +185,17 @@ export const ATTR_KEY_NAME: Record<AttrKind, string> = {
   depends: "dependsOn",
   estimate: "estimate",
 };
+
+/** The `key::` name of each attribute (lowercase) → its kind: the bracketed
+ *  `[key:: value]` spelling is the attribute; a bare `key:: value` is an ordinary
+ *  field. The inverse of the table above rather than a second copy of it. */
+const ATTR_BY_KEY: Record<string, AttrKind> = Object.fromEntries(
+  (Object.entries(ATTR_KEY_NAME) as [AttrKind, string][]).map(([kind, key]) => [key.toLowerCase(), kind]),
+);
+
+/** The `key::` names that are task attributes: no field chip is drawn for them on a
+ *  task line, they are attribute chips. */
+export const TASK_ATTR_KEYS = new Set(Object.keys(ATTR_BY_KEY));
 
 /** How many UTF-16 units of a mark's text are its emoji glyph (U+FE0F included, and a
  *  priority's whole run of marks): what the editor replaces with the drawn icon while
@@ -223,7 +217,8 @@ export function markerGlyphLength(kind: AttrKind, text: string): number {
 const DAY_MINUTES = 8 * 60;
 
 /** Without U+FE0F: an emoji typed with the variation selector reads as the bare one. */
-const stripVs = (s: string) => s.replace(/\uFE0F/g, "");
+// the guard is the point: a variation selector is rare and the replace is not free
+const stripVs = (s: string) => (s.includes("\uFE0F") ? s.replace(/\uFE0F/g, "") : s);
 
 /** A `priority::` value or a priority token (Rust's priority_word / priority_token). */
 function priorityWord(s: string): Priority | null {
@@ -285,7 +280,10 @@ export function formatEstimate(minutes: number): string {
 
 const splitIds = (s: string) => s.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 
-const startsMarker = (s: string) => EMOJI_MARKERS.some((m) => s.startsWith(m));
+/** Whether an attribute's emoji starts at `at`. Every marker is above the ASCII range,
+ *  so an ASCII character there answers no without a comparison — and the offset spares
+ *  the tokenizer a fresh substring at every position of every token it walks. */
+const startsMarker = (s: string, at = 0) => s.charCodeAt(at) >= 0x80 && EMOJI_MARKERS.some((m) => s.startsWith(m, at));
 
 /** A token that ends a repeat rule's text and that a marker takes no value from: the
  *  next attribute, a field, a tag or an anchor. */
@@ -342,7 +340,7 @@ function tokenize(text: string): Tok[] {
     const tok = m[0];
     let start = 0;
     for (let j = 0; j < tok.length; ) {
-      if (j > start && startsMarker(tok.slice(j)) && !sameMarkRun(tok, start, j)) {
+      if (j > start && startsMarker(tok, j) && !sameMarkRun(tok, start, j)) {
         out.push({ text: tok.slice(start, j), at: m.index + start });
         start = j;
       }
@@ -433,9 +431,8 @@ export function scanTaskAttrs(text: string): TaskAttrMark[] {
       continue;
     }
     let dated = false;
-    for (const field of Object.keys(DATE_FIELDS) as DateField[]) {
-      const marker = DATE_FIELDS[field].emoji.find((e) => bare.startsWith(e));
-      if (!marker) continue;
+    for (const [marker, field] of DATE_BY_EMOJI) {
+      if (!bare.startsWith(marker)) continue;
       const v = valueOf(i, marker)!;
       push(field, at, v.end, v.value);
       i = v.next;
@@ -528,7 +525,7 @@ export interface LineAttrs {
   estimate?: number;
 }
 
-export function lineAttrs(line: string): LineAttrs {
+function lineAttrs(line: string): LineAttrs {
   const a: LineAttrs = { priority: "normal", deleteOnDone: false, dependsOn: [] };
   for (const m of scanTaskAttrs(line)) {
     if (!m.active) continue;
@@ -561,14 +558,6 @@ export function parseYmd(token: string): string | null {
 
 /* ---------------------------------------------------------------- the rewrites */
 
-/** Remove `[from, to)` from a line without leaving a double space behind. */
-function cut(line: string, from: number, to: number): string {
-  let before = line.slice(0, from);
-  const after = line.slice(to);
-  if (/[ \t]$/.test(before) && (after === "" || /^[ \t]/.test(after))) before = before.replace(/[ \t]+$/, "");
-  return before + after;
-}
-
 /** Where the scanner's text starts on a line: after the checkbox of a task line, at the
  *  start of any other (Rust's rest_offset). */
 export const restOffset = (line: string) => ANY_CHECKBOX_RE.exec(line)?.[0].length ?? 0;
@@ -578,14 +567,6 @@ export const restOffset = (line: string) => ANY_CHECKBOX_RE.exec(line)?.[0].leng
  *  The editor shows it as the atom while the cursor sits at it or just past its space,
  *  and Backspace there removes it whole. */
 export const isUnitMark = (m: TaskAttrMark) => m.kind === "priority" || m.kind === "delete" || m.value === "";
-
-/** Append `piece` (with its own leading space) before any trailing `^anchor` (appending
- *  after it would silently kill the block anchor). */
-function appendBeforeAnchor(line: string, piece: string): string {
-  const anchor = /[ \t]\^[\w-]+[ \t]*$/.exec(line);
-  if (anchor) return line.slice(0, anchor.index).replace(/[ \t]+$/, "") + piece + line.slice(anchor.index);
-  return line.replace(/[ \t]+$/, "") + piece;
-}
 
 /** Insert a fresh attribute (`piece`, e.g. `📅 2026-09-10`) into the trailing run at
  *  its place in the written order: before the first attribute that comes later in the
@@ -604,8 +585,8 @@ export function insertAttr(line: string, kind: AttrKind, piece: string): string 
 /** A marker of `kind` typed at the end of the line with nothing after it (an `@`
  *  palette pick, `📅` awaiting its date): where its value goes, or -1. */
 function bareMarkerEnd(line: string, kind: AttrKind): number {
-  const anchor = /[ \t]\^[\w-]+[ \t]*$/.exec(line);
-  const body = line.slice(0, anchor ? anchor.index : line.length).replace(/[ \t]+$/, "");
+  const at = anchorTailStart(line);
+  const body = line.slice(0, at < 0 ? line.length : at).replace(/[ \t]+$/, "");
   const stripped = body.replace(/\uFE0F+$/, "");
   return emojiOf(kind).some((e) => stripped.endsWith(e)) ? body.length : -1;
 }
@@ -624,7 +605,7 @@ export function rescheduleLine(line: string, field: DateField, date: string | nu
   const marks = scanTaskAttrs(line.slice(at0));
   if (date === null) {
     let out = line;
-    for (let i = marks.length - 1; i >= 0; i--) if (marks[i].tail && marks[i].kind === field) out = cut(out, at0 + marks[i].start, at0 + marks[i].end);
+    for (let i = marks.length - 1; i >= 0; i--) if (marks[i].tail && marks[i].kind === field) out = cutSpan(out, at0 + marks[i].start, at0 + marks[i].end);
     return out;
   }
   const win = marks.find((m) => m.active && m.kind === field);
@@ -723,7 +704,7 @@ function nextOf(rule: Repeat, from: string): string {
  *  the same amount; the checkbox reopens, the stamps go, a ➕ is refreshed, and the
  *  `^anchor` is dropped (an id must not be duplicated). The mirror of repeat.rs. */
 export function nextOccurrenceLine(line: string, today: string): string | null {
-  const a = lineAttrs(line.replace(ANY_CHECKBOX_RE, "$1[ ]"));
+  const a = lineAttrs(line);
   if (!a.repeat) return null;
   const rule = parseRepeat(a.repeat);
   if (!rule) return null;
@@ -734,11 +715,11 @@ export function nextOccurrenceLine(line: string, today: string): string | null {
   let out = setCheckbox(line, "todo");
   out = rescheduleLine(out, "done", null);
   out = rescheduleLine(out, "cancelled", null);
-  for (const f of ["due", "scheduled", "start"] as const) if (a[f]) out = rescheduleLine(out, f, addDays(a[f]!, shift));
+  for (const f of EDIT_FIELDS) if (a[f]) out = rescheduleLine(out, f, addDays(a[f]!, shift));
   if (!anchor) out = rescheduleLine(out, "scheduled", target);
   if (a.created) out = rescheduleLine(out, "created", today);
-  const tail = /[ \t]\^[\w-]+[ \t]*$/.exec(out);
-  if (tail) out = out.slice(0, tail.index).replace(/[ \t]+$/, "");
+  const tail = anchorTailStart(out);
+  if (tail >= 0) out = out.slice(0, tail).replace(/[ \t]+$/, "");
   return out;
 }
 
@@ -878,7 +859,7 @@ export function taskText(content: string): string {
   let s = content.replace(/^\s*[-*+]\s+\[.\]\s*/, "");
   // the attributes of the trailing run; a `📅` in the description and a decorative `⏳ waiting` are words
   const marks = scanTaskAttrs(s).filter((m) => m.tail);
-  for (let i = marks.length - 1; i >= 0; i--) s = cut(s, marks[i].start, marks[i].end);
+  for (let i = marks.length - 1; i >= 0; i--) s = cutSpan(s, marks[i].start, marks[i].end);
   return plainText(
     stripAnchor(
       // a block id minted on the line is a badge in the editor, not a word
@@ -970,7 +951,7 @@ export const byDate = (field?: DateField) => (a: TaskRow, b: TaskRow) =>
   (whenOf(a, field) ?? "9999").localeCompare(whenOf(b, field) ?? "9999") || bySource(a, b);
 
 /** The rank of a priority: the higher the more urgent. */
-export const priorityRank = (p: Priority) => ({ highest: 4, high: 3, normal: 2, low: 1, lowest: 0 })[p];
+const priorityRank = (p: Priority) => ({ highest: 4, high: 3, normal: 2, low: 1, lowest: 0 })[p];
 
 /** The most urgent first, then `then` (a date order, a change-time order). Agenda's
  *  groups and the board's columns put what is marked urgent at the top of whatever

@@ -7,7 +7,7 @@
 // on fresh data. Any block kind: a task's `[status:: x]` and a paragraph's alike (a
 // task's due/scheduled dates are not fields to this module; tasks.ts owns those).
 import { api, type BlockHit } from "$lib/api";
-import { scanFields, setFieldValue } from "$lib/fields";
+import { cutSpan, scanFields, setFieldValue } from "$lib/fields";
 
 /** Set (or with null remove) the value of `key` on the block: the field's first
  *  occurrence, at its indexed span. false = a stale span (or the key is not on the
@@ -24,12 +24,12 @@ export async function writeBlockField(hit: BlockHit, key: string, value: string 
   const construct = dec.decode(bytes.slice(start, end));
   const mark = scanFields(construct)[0];
   if (!mark || mark.key.toLowerCase() !== lower || mark.value !== field.value || mark.from !== 0 || mark.to !== construct.length) return false;
-  let before = dec.decode(bytes.slice(0, start));
-  let piece = setFieldValue(construct, key, value);
+  const before = dec.decode(bytes.slice(0, start));
+  const piece = setFieldValue(construct, key, value);
   const after = dec.decode(bytes.slice(end));
-  // a removed bracket field takes the space before it along, so no double space is left
-  if (value === null && piece === "" && /[ \t]$/.test(before) && (after === "" || /^[\s]/.test(after))) before = before.replace(/[ \t]+$/, "");
   if (piece === construct) return true;
-  await api.noteWrite(hit.note, before + piece + after);
+  // a removed bracket field takes the space before it along, so no double space is left
+  const out = value === null && piece === "" ? cutSpan(before + after, before.length, before.length) : before + piece + after;
+  await api.noteWrite(hit.note, out);
   return true;
 }

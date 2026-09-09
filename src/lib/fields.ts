@@ -33,6 +33,31 @@ export function stripAnchor(line: string): string {
   return line.replace(ANCHOR_TAIL_RE, "").trimEnd();
 }
 
+/** Where a trailing ` ^id` anchor starts — the offset of the space before the caret, or
+ *  -1 when the line has none. One notch more lenient than ANCHOR_TAIL_RE, as
+ *  blockid.rs::anchor_start is: trailing whitespace after the id is tolerated, so a
+ *  value inserted before it lands in the same place either way. */
+export function anchorTailStart(line: string): number {
+  return line.search(/[ \t]\^[A-Za-z0-9-]+[ \t]*$/);
+}
+
+/** Append `piece` (with its own leading space) before any trailing `^anchor`: appending
+ *  after it would silently kill the block anchor. */
+export function appendBeforeAnchor(line: string, piece: string): string {
+  const at = anchorTailStart(line);
+  if (at < 0) return line.replace(/[ \t]+$/, "") + piece;
+  return line.slice(0, at).replace(/[ \t]+$/, "") + piece + line.slice(at);
+}
+
+/** Remove `[from, to)` without leaving a double space behind. `\s` rather than `[ \t]`
+ *  on the far side: at note level the text after a field can begin with a newline. */
+export function cutSpan(text: string, from: number, to: number): string {
+  let before = text.slice(0, from);
+  const after = text.slice(to);
+  if (/[ \t]$/.test(before) && (after === "" || /^\s/.test(after))) before = before.replace(/[ \t]+$/, "");
+  return before + after;
+}
+
 const ANCHOR_TAILS_RE = new RegExp(ANCHOR_TAIL_RE.source, "gm");
 /** Every line of `text` without its trailing ` ^id` anchor. The lines' other trailing
  *  whitespace stays: in a slice that is still Markdown, two spaces are a hard break. */
@@ -288,21 +313,13 @@ export function setFieldValue(line: string, key: string, value: string | null, a
   const marks = scanFields(line, 0, { empty: true }).filter((f) => f.key.toLowerCase() === lower);
   const mark = (at === undefined ? undefined : marks.find((f) => f.from <= at && at <= f.to)) ?? marks[0];
   if (mark) {
-    if (value === null) {
-      let before = line.slice(0, mark.from);
-      const after = line.slice(mark.to);
-      if (/\s$/.test(before) && (after === "" || /^\s/.test(after))) before = before.replace(/\s+$/, "");
-      return before + after;
-    }
+    if (value === null) return cutSpan(line, mark.from, mark.to);
     // an empty `key::` has no space after the colons yet, and `key::value` is not a field
     const sep = line.slice(mark.from, mark.valueFrom).endsWith("::") ? " " : "";
     return line.slice(0, mark.valueFrom) + sep + value + line.slice(mark.valueTo);
   }
   if (value === null) return line;
-  const anchor = /[ \t]\^[A-Za-z0-9-]+[ \t]*$/.exec(line);
-  const piece = ` [${key}:: ${value}]`;
-  if (anchor) return line.slice(0, anchor.index).replace(/[ \t]+$/, "") + piece + line.slice(anchor.index);
-  return line.replace(/[ \t]+$/, "") + piece;
+  return appendBeforeAnchor(line, ` [${key}:: ${value}]`);
 }
 
 /** Text with its inline fields removed (a view row shows the words, not the metadata). */

@@ -8,6 +8,9 @@
 import { t } from "$lib/i18n/i18n.svelte";
 import { k } from "$lib/shortcut";
 import { vault } from "$lib/stores/vault.svelte";
+import { copyText } from "$lib/copytext";
+import { toast } from "$lib/stores/toast.svelte";
+import { assignTaskId, newTaskId } from "$lib/views/tasks";
 import type { BlockHit } from "$lib/api";
 
 /** `act` is the wording of the action for the dirty guard's message. Returns true only
@@ -30,4 +33,16 @@ export async function commitTaskWrite(
     vault.error = String(err);
   }
   return false;
+}
+
+/** A task's id to the clipboard — minted and written onto its line first when it has
+ *  none (what a `⛔` on another task names; an id exists only once something needs it).
+ *  `commit` is the view's own, which the import cycle keeps per view. */
+export async function copyTaskId(
+  task: { hit: BlockHit; taskId?: string },
+  commit: (hit: BlockHit, act: string, write: () => Promise<boolean>) => Promise<boolean>,
+) {
+  const id = task.taskId ?? newTaskId();
+  const ok = task.taskId ? true : await commit(task.hit, t("task.act.id"), () => assignTaskId(task.hit, id));
+  if (ok && (await copyText(id))) toast.push(t("task.copiedId", { id }));
 }

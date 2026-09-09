@@ -121,12 +121,6 @@ impl AttrKind {
     }
 }
 
-/// Every emoji that opens an attribute: where a token splits, and where a repeat
-/// rule's text stops.
-pub const EMOJI_MARKERS: &[&str] = &[
-    "📅", "⏳", "⌛", "⏩", "🛫", "➕", "✅", "❌", "❗", "❕", "🔺", "⏫", "🔼", "🔽", "⏬", "🔁", "🚮", "🏁", "🆔", "⛔", "🕐",
-];
-
 /// Minutes in an estimate's `d`: a working day.
 pub const DAY_MINUTES: u32 = 8 * 60;
 
@@ -167,29 +161,6 @@ impl TaskAttrs {
         }
     }
 
-    /// The attributes of a task block; None for any other kind.
-    pub fn of_kind(kind: &BlockKind) -> Option<(TaskState, TaskAttrs)> {
-        match kind {
-            BlockKind::Task { state, due, scheduled, start, created, done, cancelled, priority, repeat, delete_on_done, task_id, depends_on, estimate } => Some((
-                *state,
-                TaskAttrs {
-                    due: *due,
-                    scheduled: *scheduled,
-                    start: *start,
-                    created: *created,
-                    done: *done,
-                    cancelled: *cancelled,
-                    priority: *priority,
-                    repeat: repeat.clone(),
-                    delete_on_done: *delete_on_done,
-                    task_id: task_id.clone(),
-                    depends_on: depends_on.clone(),
-                    estimate: *estimate,
-                },
-            )),
-            _ => None,
-        }
-    }
 }
 
 /// One attribute occurrence on a line, as the scanner found it.
@@ -211,8 +182,14 @@ pub struct AttrMark {
 }
 
 /// Without U+FE0F: an emoji typed with the variation selector reads as the bare one.
-pub fn strip_vs16(s: &str) -> String {
-    s.chars().filter(|&c| c != '\u{FE0F}').collect()
+/// Borrowed when there is none, which is the overwhelmingly common token — this runs
+/// several times per token of every task line in the vault.
+pub fn strip_vs16(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.contains('\u{FE0F}') {
+        std::borrow::Cow::Owned(s.chars().filter(|&c| c != '\u{FE0F}').collect())
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
 }
 
 /// `YYYY-MM-DD` exactly, and a real calendar date.
@@ -329,18 +306,18 @@ fn is_stop(tok: &str) -> bool {
     starts_marker(&bare) || bare.starts_with(['[', '(', '^', '#']) || bare.contains("::")
 }
 
+/// Whether an attribute's emoji opens `s` — the union of the table's own spellings, so
+/// a new one is a row in it and nothing else. An ASCII byte there answers no without a
+/// comparison: every marker is well above it.
 fn starts_marker(s: &str) -> bool {
-    EMOJI_MARKERS.iter().any(|m| s.starts_with(m))
+    !s.is_empty() && !s.as_bytes()[0].is_ascii() && AttrKind::ALL.iter().flat_map(|k| k.emoji()).any(|m| s.starts_with(m))
 }
 
 /// A `key::` or emoji value read for a kind: (the value kept, whether it reads).
 fn read_value(kind: AttrKind, raw: &str) -> (String, bool) {
     let raw = raw.trim();
-    if kind.is_date() {
-        return (raw.to_string(), parse_date(raw).is_some());
-    }
     match kind {
-        AttrKind::Created | AttrKind::Start | AttrKind::Scheduled | AttrKind::Due | AttrKind::Cancelled | AttrKind::Done => unreachable!(),
+        AttrKind::Created | AttrKind::Start | AttrKind::Scheduled | AttrKind::Due | AttrKind::Cancelled | AttrKind::Done => (raw.to_string(), parse_date(raw).is_some()),
         AttrKind::Priority => match priority_word(raw) {
             Some(p) if p != Priority::Normal => (priority_name(p).to_string(), true),
             _ => (raw.to_string(), false),
@@ -425,7 +402,7 @@ pub fn scan_task_attrs(text: &str) -> Vec<AttrMark> {
             return Some((rem.to_string(), i + 1, tok_end(i)));
         }
         match toks.get(i + 1) {
-            Some(next) if !is_stop(next.text) => Some((strip_vs16(next.text), i + 2, tok_end(i + 1))),
+            Some(next) if !is_stop(next.text) => Some((strip_vs16(next.text).into_owned(), i + 2, tok_end(i + 1))),
             _ => Some((String::new(), i + 1, tok_end(i))),
         }
     };
