@@ -12,9 +12,10 @@ what [[Open Questions]] says about what this can and cannot show.
 
 - [x] Pick a recall task that is boring enough to repeat 📅 2026-08-18
 - [x] Decide the schedule: nap days and control days alternate 📅 2026-08-20
-- [ ] Write the protocol down before starting, so I cannot revise it later 📅 2026-08-24 #method
-- [/] Log four weeks of mornings ⏳ 2026-08-25 📅 2026-09-22
-- [ ] Analyse, and write it up whatever the result 📅 2026-09-25
+- [ ] Write the protocol down before starting, so I cannot revise it later ❗ 📅 2026-08-24 #method
+- [/] Log four weeks of mornings 🆔 log4wk 🔁 every day 🕐 15m ⏳ 2026-08-25 📅 2026-09-22
+- [ ] Charge the wrist tracker 🔁 every week 🚮 ⏳ 2026-08-30
+- [ ] Analyse, and write it up whatever the result ⛔ log4wk ⏩ 2026-09-23 📅 2026-09-25
 
 ## Rules I am not allowed to change mid-run
 

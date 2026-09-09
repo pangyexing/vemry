@@ -17,7 +17,7 @@ This file is injected into the AI agent's system prompt: it is the constitution 
 - Tags: `#sleep` `#method` `#reading` — topic tags only, never status tags (state lives in the task syntax)
 - Linking: create a `[[link]] `the first time a concept appears in a note
 - Claims get a `^id` at the end of the line so evidence can reference them
-- Dates are `📅 YYYY-MM-DD` for a deadline, `⏳ YYYY-MM-DD` for the day it is planned for, `⏩ YYYY-MM-DD` for the earliest start
+- A task's attributes come after its text, at the end of the line, never before it: `📅 YYYY-MM-DD` for a deadline, `⏳ YYYY-MM-DD` for the day it is planned for, `⏩ YYYY-MM-DD` for the earliest start, `❗` for important (`❗❗` urgent), `🔁 every week` to repeat, `🕐 30m` for an estimate
 
 ## AI preferences
 
