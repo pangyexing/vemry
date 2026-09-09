@@ -56,16 +56,45 @@ export function cmpValue(a: string, b: string): number {
  *  (tasks.ts's bySource is this one read off a TaskRow's hit). */
 export const byNote = (a: BlockHit, b: BlockHit) => a.note.localeCompare(b.note) || a.block.span.start - b.block.span.start;
 
-/** The one `sort` convention, read by a query block's hits and by the board's cards: a row
- *  without the key's value goes last whichever the direction, and equal values keep `tie`'s
- *  order. `tie` is a comparator rather than a number so it runs only when it decides. */
-export function cmpMissingLast<T>(a: T, b: T, va: string | undefined, vb: string | undefined, dir: number, tie: (a: T, b: T) => number): number {
-  if (va === undefined || vb === undefined) return va === vb ? tie(a, b) : va === undefined ? 1 : -1;
-  return cmpValue(va, vb) * dir || tie(a, b);
+/** The order of a state field's values (fields.ts's stateField): the declared order,
+ *  case-insensitively. A value the vocabulary does not name sorts after every named
+ *  one, and two unnamed values fall back to cmpValue, so the order is still total. */
+export function cmpDeclared(a: string, b: string, declared: string[]): number {
+  const ia = declaredIndex(declared, a);
+  const ib = declaredIndex(declared, b);
+  if (ia < 0 && ib < 0) return cmpValue(a, b);
+  if (ia < 0) return 1;
+  if (ib < 0) return -1;
+  return ia - ib;
 }
 
-/** A stable sort; the missing-value and tie-break rules are cmpMissingLast's. */
-export function sortHits(hits: BlockHit[], spec: SortSpec): BlockHit[] {
+function declaredIndex(declared: string[], value: string): number {
+  const lower = value.toLowerCase();
+  return declared.findIndex((v) => v.toLowerCase() === lower);
+}
+
+/** The one `sort` convention, read by a query block's hits and by the board's cards: a row
+ *  without the key's value goes last whichever the direction, and equal values keep `tie`'s
+ *  order. `tie` is a comparator rather than a number so it runs only when it decides.
+ *  `declared` — a state field's vocabulary — replaces the value order with the declared
+ *  one (cmpDeclared); the missing-last rule holds either way. */
+export function cmpMissingLast<T>(
+  a: T,
+  b: T,
+  va: string | undefined,
+  vb: string | undefined,
+  dir: number,
+  tie: (a: T, b: T) => number,
+  declared?: string[] | null,
+): number {
+  if (va === undefined || vb === undefined) return va === vb ? tie(a, b) : va === undefined ? 1 : -1;
+  return (declared ? cmpDeclared(va, vb, declared) : cmpValue(va, vb)) * dir || tie(a, b);
+}
+
+/** A stable sort; the missing-value and tie-break rules are cmpMissingLast's. `declared`
+ *  is the vocabulary when the sort key is a state field (the caller reads fields.ts's
+ *  stateField: this module stays free of the types store). */
+export function sortHits(hits: BlockHit[], spec: SortSpec, declared?: string[] | null): BlockHit[] {
   const k = spec.key;
   const dir = spec.desc ? -1 : 1;
   const lower = k.by === "field" ? k.key.toLowerCase() : "";
@@ -74,7 +103,7 @@ export function sortHits(hits: BlockHit[], spec: SortSpec): BlockHit[] {
     if (k.by === "note") c = byNote(a, b);
     else if (k.by === "kind") c = a.block.kind.type.localeCompare(b.block.kind.type);
     else if (k.by === "text") c = a.block.content.localeCompare(b.block.content);
-    else return cmpMissingLast(a, b, fieldOfLower(a, lower), fieldOfLower(b, lower), dir, byNote);
+    else return cmpMissingLast(a, b, fieldOfLower(a, lower), fieldOfLower(b, lower), dir, byNote, declared);
     return c * dir || byNote(a, b);
   };
   return [...hits].sort(cmp);
@@ -88,11 +117,23 @@ export interface HitGroup {
 }
 
 /** Groups in first-seen order of the (already sorted) hits; blocks without the
- *  field go under `noneTitle`, last. `kindLabel` names a kind group. */
-export function groupHits(hits: BlockHit[], group: GroupKey, noneTitle: string, kindLabel: (kind: string) => string): HitGroup[] {
+ *  field go under `noneTitle`, last. `kindLabel` names a kind group. Grouped by a
+ *  state field (`declared` is its vocabulary), every declared value is a group in the
+ *  declared order — an empty one included, so a board of the field always has the same
+ *  columns — and a value outside the vocabulary follows them, before "none". */
+export function groupHits(
+  hits: BlockHit[],
+  group: GroupKey,
+  noneTitle: string,
+  kindLabel: (kind: string) => string,
+  declared?: string[] | null,
+): HitGroup[] {
   const groups = new Map<string, HitGroup>();
   const none: BlockHit[] = [];
   const lower = group.by === "field" ? group.key.toLowerCase() : "";
+  // A value's spelling in the group's title is the declared one, whatever case a block wrote
+  const canonical = (v: string) => (declared ? (declared[declaredIndex(declared, v)] ?? v) : v);
+  if (group.by === "field" && declared) for (const v of declared) groups.set(v, { key: v, title: v, hits: [] });
   for (const h of hits) {
     let key: string | undefined;
     let title: string;
@@ -103,7 +144,8 @@ export function groupHits(hits: BlockHit[], group: GroupKey, noneTitle: string, 
       key = h.block.kind.type;
       title = kindLabel(key);
     } else {
-      key = fieldOfLower(h, lower);
+      const v = fieldOfLower(h, lower);
+      key = v === undefined ? undefined : canonical(v);
       title = key ?? "";
     }
     if (key === undefined) {

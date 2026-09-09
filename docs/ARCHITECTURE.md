@@ -688,7 +688,15 @@ skipped rather than replayed, leaving one `schedule_missed` line.
   dependency). When the cursor is outside the
   block, the whole fence is replaced by a live-results widget (`queryblock.ts`,
   the same StateField block-replace semantics as table.ts); clicking a row jumps
-  through `openNote` and enters navigation history. A change to
+  to its block through `openBlockAt` and enters navigation history. A row is a
+  `BlockRow` (`views/blockrow.ts`: the one derivation of words vs. chips from a
+  `BlockHit` — a task's checkbox, the text without markers and fields, the field
+  chips with a state field's step on its chip, the tags minus the query's own, the dates),
+  drawn with the chip builders of `lib/chips.ts`; the head sums the rows over
+  their state field. A row's chips write back through the task views' funnel
+  (`views/taskwrite.ts`; a field through `views/fieldwrite.ts`, which rewrites
+  the field's own indexed byte span after checking the bytes still read as that
+  field), and the index refresh that follows re-runs the block. A change to
   `vault.indexVersion` triggers a re-query through the `queryRefresh` effect — the
   same refresh signal the projections use. In any standard Markdown renderer it
   degrades to an ordinary code block. No lock-in.
@@ -740,6 +748,21 @@ A type file opens through the same `note_read`/`note_write` as a note, but
 never indexed, and the watcher's `TypesChanged` (own writes included) is how
 the menus and the open editor follow it. A typed block is ordinary Markdown
 with fields — no note points at a type.
+A field declared `type: state` is a state field (`lib/fields.ts::stateField`:
+the `values` in declared order are the steps; `stateStepOf` places a value).
+Nothing about it reaches Rust beyond the type file's `type` string, which the
+loader has always carried through: the glyph on the editor's chip
+(`livepreview.ts`, through the `fieldState` option), on an embed's and the
+reader's chip (`markdown.ts`), on a query row, an Agenda row and a board card
+(`views/blockrow.ts`, `views/kanban.ts`) is one drawing, `lib/chips.ts`'s
+`stateGlyphSvg(step, of)` — the task views' three-state icon is that drawing
+at three steps, so a task reads as a state field with a fixed vocabulary and
+checkbox syntax. `queryrows.ts`'s sort and group and the board's columns take
+the declared order (every declared value a column, empty ones too); the value
+menu (`FieldValueMenu.svelte`) lists the steps with "Advance to …" first; and
+the system prompt spells a state field as `key (state: a → b → c)` so the
+model moves blocks along it with `set_block_field` — the same schema
+exception as before, one string longer.
 
 ### Skills (instruction-level)
 

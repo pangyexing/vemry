@@ -90,6 +90,8 @@ Inline `#tag`, merged and deduplicated with frontmatter `tags`.
   entities like `&#8203;` out)
 - An all-digits tag is not a tag (`#1` is ordinary text)
 - Not parsed inside inline code spans
+- The editor draws a tag as a capsule with its `#` kept but faded (the hash is
+  what makes the word a tag on disk); a projection's tag chip does the same
 
 **Fallback**: ordinary text. A `#tag` at the start of a line is not mistaken for a
 heading — ATX headings require a space after the `#`, and vemry agrees with
@@ -100,21 +102,71 @@ CommonMark on that.
 ```markdown
 - [ ] To do
 - [/] In progress
-- [x] Done
-- [ ] With dates 📅 2026-08-20 ⏳ 2026-08-15
-- [ ] The equivalent in ASCII due::2026-08-20 scheduled::2026-08-15
+- [x] Done ✅ 2026-08-21
+- [-] Cancelled ❌ 2026-08-21
+- [ ] With dates ⏩ 2026-08-10 ⏳ 2026-08-15 📅 2026-08-20
+- [ ] The equivalent in ASCII [start:: 2026-08-10] [scheduled:: 2026-08-15] [due:: 2026-08-20]
+- [ ] Everything else ❗ 🔁 every week 🕐 45m 🆔 scan01 ⛔ k3x9pa 🚮
 ```
 
 - Any of `-`, `*`, `+` as the bullet, at any indentation
 - The `]` in `[?]` must be followed by a space or the end of the line
-- `x` and `X` both mean done; an unknown state character is treated as to-do
-- Dates are always `YYYY-MM-DD`; due is `📅` or `due::`, scheduled is `⏳` or
-  `scheduled::`
+- `x` and `X` both mean done, `-` means cancelled; an unknown state character is
+  treated as to-do
+- The checkbox is the one truth of the state; the ✅ / ❌ dates only record when.
+  Ticking a task writes `✅ today`, `[-]` writes `❌ today`, reopening removes the
+  stamp — in the editor, in Agenda, on the board and through the agent alike
+- Every attribute after the text has an emoji spelling and a `key::` spelling. The
+  two read the same; when both are present the emoji wins:
+
+| Attribute | Emoji | `key::` | Value |
+|---|---|---|---|
+| Due | `📅` | `due::` | `YYYY-MM-DD` |
+| Scheduled — the day it is planned for | `⏳` | `scheduled::` | `YYYY-MM-DD` |
+| Start — the earliest day | `⏩` | `start::` | `YYYY-MM-DD` |
+| Created | `➕` | `created::` | `YYYY-MM-DD` |
+| Done | `✅` | `completion::` | `YYYY-MM-DD` |
+| Cancelled | `❌` | `cancelled::` | `YYYY-MM-DD` |
+| Priority | `❗❗` `❗` · `❕` `❕❕` | `priority::` | `highest` `high` `low` `lowest` |
+| Repeat | `🔁` | `repeat::` | `every [N] day\|week\|month\|year [when done]` |
+| Removed once done | `🚮` | `onCompletion::` | `delete` |
+| Id | `🆔` | `id::` | one token |
+| Depends on | `⛔` | `dependsOn::` | ids, comma-separated |
+| Estimate | `🕐` | `estimate::` | `30m` `2h` `1d` (a day is 8h) |
+
+- Dates are always `YYYY-MM-DD` (an unpadded month or day is accepted). A marker
+  whose token is not a date is plain text: `⏳ waiting for a reply` is nothing to the
+  parser. The space after an emoji is optional; a `[key:: value]` closes at its bracket
+- Priority: one `❗` is important, two are urgent; one `❕` is later, two are someday;
+  without a mark a task is normal. The two are not mixed on one line
+- Repeat: ticking the task writes its next occurrence above it, every date moved by
+  one period — counted from the due date, else the scheduled or start date; with
+  `when done`, from the day it was ticked. The new line reopens, loses the stamps
+  and the `^anchor`, and refreshes a `➕`. The rule's text runs to the next attribute,
+  field, tag or anchor, so a multi-word rule in `key::` form takes the bracketed
+  spelling
+- `🚮`: ticking removes the line; with a repeat, the next occurrence takes its place
+- Depends on: while any listed id belongs to an open task, the task is blocked —
+  Agenda greys it and names what it waits on. The id is the task's own, not a block
+  id: `^anchor` addresses a block, `🆔` addresses a task
+- Spellings other tools write are read as well, and rewritten in place when the line
+  is edited: `🛫` as start, `⌛` as scheduled, `🔺 ⏫ 🔼 🔽 ⏬` as priorities, `🏁` as
+  removed once done, `priority:: medium` as high. vemry writes the first spelling only
+- In the editor the checkbox is drawn as one (`[/]` as the indeterminate dash, `[-]`
+  crossed out): a click flips done, ⌥-click flips in progress — the two gestures a
+  query row's checkbox takes too. The attributes draw as chips, each in its tone: a
+  start date and a done stamp in the go colour, the scheduled day in the accent, what
+  presses — an urgent priority, a lock still shut, an overdue due date — in the danger
+  colour, the rest muted. The cursor's line shows the source; a malformed date is
+  underlined on every line
 
 **Fallback**: `[ ]` and `[x]` are standard GFM task list items and render as
-checkboxes. `[/]` is not a GFM marker (GFM accepts only a space or `x`/`X`), so it
-degrades to an ordinary list item with the literal text `[/]` — still readable.
-Dates are inline plain text.
+checkboxes. `[/]` and `[-]` are not GFM markers (GFM accepts only a space or `x`/`X`),
+so they degrade to ordinary list items with the literal text — still readable. The
+attributes are inline plain text. The emoji and the `key::` spellings are the ones the
+Tasks plugin for Obsidian reads (an interoperability fact, not a design borrowed): a
+vault kept in both reads the same dates in both, with `⏩`, `❗ ❕`, `🚮` and `🕐` being
+plain words there.
 
 ## Lists
 
@@ -173,7 +225,7 @@ whitespace, a digit or the end of the line — so `std::vector`, `C++::foo`,
   interpreted by whoever reads them — a date, a number, a `[[link]]`, a list
   `a, b` — not by the parser
 - A task's `due::` / `scheduled::` are ordinary fields as well as task dates;
-  the `📅` / `⏳` spellings are task dates only
+  the emoji spellings (`📅` / `⏳` / `⏩` …) are task attributes only
 - Not scanned inside inline code, `[[wikilinks]]`, fenced code or frontmatter
 - Frontmatter scalars (and `created`) are the note's fields: a field filter
   falls back to them when a block has no field of that key (`title`, `tags`,
@@ -185,7 +237,9 @@ whitespace, a digit or the end of the line — so `std::vector`, `C++::foo`,
   and typing the `]` that closes an empty field raises its menu right away
 - In the editor a field renders as a chip; a click on it opens a value menu —
   a free input, the values the vault already uses, and "remove field"; a date
-  value gets the date menu instead
+  value gets the date menu instead; a state field's chip (a block type's
+  `type: state` key, see Block types) carries the glyph of its step, and its
+  menu lists the steps in order
 
 **Fallback**: `key:: value` is readable plain text; `[key:: value]` shows as a
 bracketed span (it is not a link, having no `(url)`); `(key:: value)` is a
@@ -306,7 +360,30 @@ fields — nothing in a note points at the type, and deleting a type file
 changes no note. The agent's system prompt names the types so it writes such
 blocks the same way.
 
-**Fallback**: a typed block is a normal block with `[key:: value]` text.
+`type: state` makes a field a **state field**: its `values` are the steps of a
+progression in the order written — the first is where a block starts, the
+last where it ends. Everywhere the value shows, it carries a glyph of its step
+(an empty box, a box filling from the bottom, a ticked box: the same three
+shapes a task's todo / doing / done draw, so a task reads as a state field
+whose vocabulary is fixed at three and whose syntax is a checkbox), and the
+chip's menu lists the steps in order with "Advance to …" first. A query block
+sorted or grouped by the field, and the board grouped by it, follow the
+declared order — every declared value a group or column, empty ones
+included. A value the vocabulary does not name is an ordinary chip and sorts
+after the named ones. A block may carry both a checkbox and a state field
+(a `kind: task` type with a `status`): the checkbox says whether the work is
+done, the field which phase it is in, and neither moves the other.
+
+```yaml
+fields:
+  - key: status
+    type: state
+    values: [unread, reading, retold, done]
+    default: unread
+```
+
+**Fallback**: a typed block is a normal block with `[key:: value]` text; a
+state field is a `[key:: value]` like any other.
 
 ## Query blocks
 
@@ -335,8 +412,21 @@ repeat), plus two presentation keys:
 | `group` | `note` / `kind` / a field key — one collapsible group per value, blocks without the field under "None", last (presentation only: applied in the editor, not part of the query the agent's tool takes) |
 | `sort` | `note` / `kind` / `text` / a field key, optionally followed by `asc` (default) or `desc`; dates and numbers sort as such, blocks without the field last either way (presentation only, like `group`) |
 
-No nesting, no expressions — deliberately a safe subset: a query block is read-only,
-cannot write to disk, and cannot reach the network.
+No nesting, no expressions — deliberately a safe subset: the query itself is
+read-only, cannot write to disk, and cannot reach the network.
+
+Each result row shows the block as a row, not as its source: a task's checkbox in
+the margin, the words with the markers, fields and anchor taken off, then the
+block's fields as chips (a state field with the glyph of its step — drawn once, on
+the chip — the rest as `key: value`), its tags — except the one
+the query's `tag:` already names, which every row would repeat — a task's dates,
+and the note's title. A block whose words are nothing but tags and fields (a
+`#chapter [status:: unread]` marker line) shows its note's title as the words.
+When the rows carry a state field, the head counts them at each step and draws
+the done and the active shares as a bar. A row's checkbox and field chips are
+live: a click on a task's checkbox flips it done (⌥ for in progress), a click on a
+chip opens the same value menu as in the editor, and the pick is written to the
+block's own note — the only writes a query block makes, each one a click.
 
 **Fallback**: **an ordinary code block** showing the query as written. That is the
 intent — results are derived data and are never written to disk, so what an outside

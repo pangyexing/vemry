@@ -5,7 +5,10 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
-  import { byDate, byModified, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, localDate, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
+  import { attrIconSvg, byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, estimateSum, formatEstimate, isBlocked, isClosed, localDate, openIds, priorityLabel, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
+  import { fieldChipsOf } from "$lib/views/blockrow";
+  import { stateGlyphSvg, stateTone } from "$lib/chips";
+  import { types } from "$lib/stores/types.svelte";
   import { commitTaskWrite } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
@@ -55,8 +58,7 @@
   $effect(() => {
     const q: BlockQuery = { kind: "task", limit: 5000 };
     if (query.trim()) q.text = query.trim();
-    if (dateKind === "due") q.field = "due";
-    if (dateKind === "scheduled") q.field = "scheduled";
+    if (dateKind) q.field = dateKind;
     viewContext.set({ view: "agenda", label: query.trim() ? `${t("view.agenda")} · ${query.trim()}` : t("view.agenda"), query: q, rows: shown.length });
     return () => viewContext.set(null);
   });
@@ -84,29 +86,40 @@
     void hits;
     return localDate();
   });
-  /** The groups: overdue / today / the next 7 days / later / doing / no date / done */
+  /** The groups: overdue / today / the next 7 days / later / not started yet / doing / no date / done (cancelled included) */
   const groups = $derived.by(() => {
     const weekEnd = localDate(7);
     const kind = dateKind;
-    const g = { overdue: [] as Row[], today: [] as Row[], week: [] as Row[], later: [] as Row[], doing: [] as Row[], nodate: [] as Row[], done: [] as Row[] };
+    const g = { overdue: [] as Row[], today: [] as Row[], week: [] as Row[], later: [] as Row[], future: [] as Row[], doing: [] as Row[], nodate: [] as Row[], done: [] as Row[] };
     for (const r of shown) {
       const when = whenOf(r, kind);
-      if (r.state === "done") g.done.push(r);
+      if (isClosed(r.state)) g.done.push(r);
+      // A task whose ⏩ start day has not come is not to be done yet, whatever its other
+      // dates say — in the default view only: with a date kind pressed every task sits by that one date
+      else if (!kind && r.start && r.start > today) g.future.push(r);
       else if (when && when < today) g.overdue.push(r);
-      // A task starting today with ⏳ belongs under "today" even when its due date is later
-      // — in the default view only: with a date kind pressed every task sits by that one date
+      // A task planned for today with ⏳ belongs under "today" even when its due date is later
       else if (when === today || (!kind && r.scheduled === today)) g.today.push(r);
       else if (when && when <= weekEnd) g.week.push(r);
       else if (when) g.later.push(r);
       else if (r.state === "doing") g.doing.push(r);
       else g.nodate.push(r);
     }
-    // Each group is sorted once: the two with no date to read follow the task's own change
-    // time, most recently changed first; the rest go by date. With a date kind pressed every
-    // group goes by that date — it is the order that was asked for, the done group included
-    const byWhen = byDate(kind);
-    for (const [name, rows] of Object.entries(g)) rows.sort(!kind && (name === "nodate" || name === "done") ? byModified : byWhen);
+    // Each group is sorted once: what is marked urgent comes first, then the two with no
+    // date to read follow the task's own change time, most recently changed first, and the
+    // rest go by date. With a date kind pressed every group goes by that date — it is the
+    // order that was asked for, the done group included
+    const byWhen = byPriority(byDate(kind));
+    for (const [name, rows] of Object.entries(g)) rows.sort(!kind && (name === "nodate" || name === "done") ? byPriority(byModified) : byWhen);
     return g;
+  });
+
+  /** The ids the open tasks carry: what a ⛔ can still wait on. */
+  const open = $derived(openIds(allRows));
+  /** The estimates of the day added up, shown beside the group's count when any row has one. */
+  const todayEstimate = $derived.by(() => {
+    const sum = estimateSum(groups.today);
+    return sum > 0 ? t("agenda.estimate", { v: formatEstimate(sum) }) : "";
   });
 
   const total = $derived(shown.length);
@@ -116,14 +129,14 @@
    *  group (a task's date is its due date whenever it has one); with the start date
    *  pressed the group follows the start date, and a task that started last month but is
    *  due next week must not be painted late. */
-  const isLate = (r: Row) => r.state !== "done" && !!r.due && r.due < today;
+  const isLate = (r: Row) => !isClosed(r.state) && !!r.due && r.due < today;
   /** The date track's width follows what the shown rows carry. Every row shares it, so the
    *  source chips still line up into one column across the groups (the reason the track is
    *  fixed at all); it is only as wide as the widest chip the current rows can show — the
    *  full "date · N days late" (13em), a bare date (the chip is about 7.2em), or nothing but
    *  the hover "+" — rather than reserving 13em for a lateness that no row in a filtered
    *  list has. The task text keeps its own cap; the space goes to the source column. */
-  const dateTrack = $derived(shown.some(isLate) ? "13em" : shown.some((r) => r.due || r.scheduled) ? "7.5em" : "2.6em");
+  const dateTrack = $derived(shown.some(isLate) ? "13em" : shown.some((r) => r.due || r.scheduled || r.start) ? "7.5em" : "2.6em");
 
   /** The write funnel every path shares (taskwrite.ts, the kanban's too): the dirty guard, a requery on a stale span and error reporting. */
   const commit = (hit: BlockHit, act: string, write: () => Promise<boolean>) => commitTaskWrite(hit, act, write, load);
@@ -138,7 +151,7 @@
 
   function openDateMenu(e: MouseEvent, r: Row, field: DateField) {
     e.stopPropagation();
-    dateMenu = { x: e.clientX, y: e.clientY, key: taskKey(r), hit: r.hit, field, current: field === "due" ? r.due : r.scheduled };
+    dateMenu = { x: e.clientX, y: e.clientY, key: taskKey(r), hit: r.hit, field, current: r[field] };
   }
 
   /** The row a menu is about keeps its hover colour while the menu is open. A chip's date
@@ -191,10 +204,13 @@
 
 {#snippet taskRow(r: Row)}
   {@const dueOverdue = isLate(r)}
+  {@const closed = isClosed(r.state)}
+  {@const blocked = isBlocked(r, open)}
   <li>
     <div
       class="row"
       class:held={taskKey(r) === heldKey}
+      class:blocked
       role="button"
       tabindex="0"
       onclick={() => void openTask(r.hit)}
@@ -202,11 +218,11 @@
       onkeydown={(e) =>
         e.target === e.currentTarget && (e.key === "Enter" || e.key === " ") && void openTask(r.hit)}
     >
-      <button class="check" class:done={r.state === "done"} aria-label={t("task.toggleDone")} onclick={(e) => onToggle(e, r.hit)}>
+      <button class="check" class:done={closed} aria-label={t("task.toggleDone")} onclick={(e) => onToggle(e, r.hit)}>
         {@html taskStateIconSvg(r.state)}
       </button>
       <!-- The text is clipped to its track: a long task is read whole from cliptip's box, a quarter second into the hover (the kanban card does the same) -->
-      <span class="text" class:done={r.state === "done"} use:cliptip={r.text}>{r.text}</span>
+      <span class="text" class:done={closed} use:cliptip={r.text}>{r.text}</span>
       <!-- The date and the source each take a fixed-width slot: a row with no date holds its
         place too, which is what lets the source chips line up into a real column (before
         this, the chips of the with-date and without-date groups differed by nearly 70px on
@@ -216,13 +232,42 @@
           {@render dateChip(r, "due", t("task.editDateWith", { field: dateFieldLabel("due"), date: r.due }), dueLabel(r.due, dueOverdue), dueOverdue ? "due overdue" : "due")}
         {/if}
         {#if r.scheduled}
-          {@render dateChip(r, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: r.scheduled }), r.scheduled)}
+          {@render dateChip(r, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: r.scheduled }), r.scheduled, "scheduled")}
         {/if}
-        {#if !r.due && r.state !== "done"}
+        {#if r.start}
+          {@render dateChip(r, "start", t("task.editDateWith", { field: dateFieldLabel("start"), date: r.start }), r.start, "start")}
+        {/if}
+        {#if !r.due && !closed}
           {@render dateChip(r, "due", t("task.setDate", { field: dateFieldLabel("due") }), "+", "add-date")}
         {/if}
       </span>
       <span class="meta">
+        <!-- The task's other attributes, each its icon and value in its tone: what presses
+          (an urgent priority, a lock still shut) in danger, the rest muted -->
+        {#if r.priority !== "normal"}
+          <span class="chip attr-chip" class:urgent={r.priority === "highest" || r.priority === "high"} title={priorityLabel(r.priority)}>{@html attrIconSvg("priority", r.priority)}{priorityLabel(r.priority)}</span>
+        {/if}
+        {#if blocked}
+          <span class="chip attr-chip urgent" title={t("task.chip.blockedBy", { ids: r.dependsOn.join(", ") })}>{@html attrIconSvg("depends")}{t("task.chip.blocked")}</span>
+        {/if}
+        {#if r.repeat}
+          <span class="chip attr-chip" title={t("task.chip.repeat", { rule: r.repeat })}>{@html attrIconSvg("repeat")}{r.repeat}</span>
+        {/if}
+        {#if r.estimate}
+          <span class="chip attr-chip" title={t("task.chip.estimate", { v: formatEstimate(r.estimate) })}>{@html attrIconSvg("estimate")}{formatEstimate(r.estimate)}</span>
+        {/if}
+        {#if r.deleteOnDone}
+          <span class="chip attr-chip" title={t("task.chip.deleteOnDone")}>{@html attrIconSvg("delete")}</span>
+        {/if}
+        <!-- The task's inline fields as chips (views/blockrow.ts's one derivation): a state
+          field with its step's glyph, the rest as key: value — the board shows the same -->
+        {#each fieldChipsOf(r.hit, types.enabled) as f (f.kind === "tag" ? f.tag : f.key)}
+          {#if f.kind === "state"}
+            <span class="chip state-chip {`tone-${stateTone(f.step, f.of)}`}" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
+          {:else if f.kind === "field"}
+            <span class="chip field-chip" title={`${f.key}:: ${f.value}`}><span class="fk">{f.key}</span>{f.value}</span>
+          {/if}
+        {/each}
         <span class="chip note-chip">{r.hit.note_title}</span>
         {#if vault.privatePaths.has(r.hit.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
       </span>
@@ -241,7 +286,7 @@
   </button>
 {/snippet}
 
-{#snippet section(title: string, rows: Row[], collapsed: boolean, tone: "" | "late" | "today" = "")}
+{#snippet section(title: string, rows: Row[], collapsed: boolean, tone: "" | "late" | "today" = "", extra: string = "")}
   {#if rows.length}
     <details open={!collapsed}>
       <summary>
@@ -251,6 +296,7 @@
           chevron is the only collapse indicator -->
         <span class="chevron"><Chevron /></span>
         <span class="title {tone}">{title}</span><span class="count">{rows.length}</span>
+        {#if extra}<span class="extra">{extra}</span>{/if}
       </summary>
       <ul>
         {#each rows as r (taskKey(r))}
@@ -272,6 +318,7 @@
       <span class="legend">
         {@render dateKindToggle("due")}
         {@render dateKindToggle("scheduled")}
+        {@render dateKindToggle("start")}
       </span>
     {/snippet}
   </ViewHeader>
@@ -287,9 +334,10 @@
       <ViewEmpty onclear={clearFilters}>{t("task.noMatch", { query })}</ViewEmpty>
     {:else}
       {@render section(t("agenda.overdue"), groups.overdue, false, "late")}
-      {@render section(t("agenda.today"), groups.today, false, "today")}
+      {@render section(t("agenda.today"), groups.today, false, "today", todayEstimate)}
       {@render section(t("agenda.week"), groups.week, false)}
       {@render section(t("agenda.later"), groups.later, true)}
+      {@render section(t("agenda.future"), groups.future, true)}
       {@render section(t("agenda.doing"), groups.doing, false)}
       {@render section(t("agenda.nodate"), groups.nodate, false)}
       {@render section(t("agenda.done"), groups.done, true)}
@@ -479,6 +527,36 @@
   .chip.due.overdue {
     color: var(--danger);
   }
+  /* The date chips' tones: a start date in the go colour, the scheduled day in the accent */
+  .chip.start {
+    color: var(--ok);
+  }
+  .chip.scheduled {
+    color: var(--accent);
+  }
+  /* The other attributes: the icon then the value; urgent in danger */
+  .attr-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .attr-chip :global(svg) {
+    width: 0.9em;
+    height: 0.9em;
+    flex-shrink: 0;
+  }
+  .attr-chip.urgent {
+    color: var(--danger);
+  }
+  /* A task waiting on another: read as not yet actionable */
+  .row.blocked .text {
+    color: var(--fg-faint);
+  }
+  .extra {
+    font-size: var(--fs-xs);
+    font-weight: 400;
+    color: var(--fg-faint);
+  }
   /* A date chip is a button: the icon and the date in a row; a note-chip is still a span and is unaffected by flex */
   button.chip {
     display: inline-flex;
@@ -515,5 +593,42 @@
     display: inline-flex;
     flex-shrink: 0;
     color: var(--accent);
+  }
+  /* A field chip: the key faint before the value; a state field's with its glyph in the
+     step's tone (chips.ts) — the same shapes as the board's */
+  .field-chip .fk {
+    color: var(--fg-faint);
+    margin-right: 3px;
+  }
+  .field-chip .fk::after {
+    content: ":";
+  }
+  .state-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding-left: 4px;
+  }
+  .state-chip .glyph {
+    display: inline-flex;
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+  }
+  .state-chip .glyph :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+  .tone-idle {
+    color: var(--state-idle);
+  }
+  .tone-active {
+    color: var(--fg);
+  }
+  .tone-active .glyph {
+    color: var(--state-active);
+  }
+  .tone-done {
+    color: var(--state-done);
   }
 </style>

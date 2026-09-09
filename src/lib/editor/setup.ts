@@ -13,7 +13,7 @@ import { tags } from "@lezer/highlight";
 import { wikilinkExtension, type WikilinkHost } from "./wikilink";
 import { mdlinkExtension } from "./mdlink";
 import { linkAt } from "./linkat";
-import { livePreview, type AssetLoader, type ImageCopier, type FieldChipHandler } from "./livepreview";
+import { livePreview, type AssetLoader, type ImageCopier, type FieldChipHandler, type LivePreviewOptions } from "./livepreview";
 import { tagCompletions, calloutCompletions, atCompletions, fieldCompletions, imeCompletionGuard, acceptWithTab } from "./completions";
 import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
@@ -121,6 +121,8 @@ export interface EditorOptions {
   blockTypes?: () => BlockType[];
   /** note mode: a click on a chip (a task date, or any inline `key:: value` field) */
   onFieldChip?: FieldChipHandler;
+  /** note mode: the step of a state field's value, for the chip's glyph (fields.ts's stateStepOf over the vault's types) */
+  fieldState?: LivePreviewOptions["fieldState"];
   /** note mode: live `vemry-query` blocks (query + result-row navigation) */
   queryHost?: QueryHost | null;
   /** note mode: run button on `js` blocks (one-shot read-only sandbox) */
@@ -265,7 +267,7 @@ function buildState(opts: EditorOptions): EditorState {
       markdown({ base: markdownLanguage, extensions: [Highlight], addKeymap: false }),
       listKeymap,
       syntaxHighlighting(mdHighlight),
-      livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage, onFieldChip: opts.onFieldChip, openUrl: opts.openUrl }),
+      livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage, onFieldChip: opts.onFieldChip, fieldState: opts.fieldState, openUrl: opts.openUrl }),
       foldExtension(),
       blockSelection(),
       flashField,

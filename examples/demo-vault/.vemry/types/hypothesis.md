@@ -10,6 +10,7 @@ fields:
   - key: baseline
   - key: result
   - key: status
+    type: state
     values: [open, validated, refuted, inconclusive]
     default: open
 ---

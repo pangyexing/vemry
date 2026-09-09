@@ -4,10 +4,15 @@
   uses) and "remove field". Enter in the input commits it; a click on a candidate picks
   it; a click outside or Esc cancels without writing. Viewport clamping and the closing
   discipline come from popmenu.ts, shared with TaskDateMenu.
+  For a state field (`state` is its vocabulary) the candidates are the steps in their
+  declared order, each with its glyph, and the first entry advances to the next step —
+  the same gesture whether the chip sits in the editor, an embed or a query row.
   The input takes focus on mount, so a typed value is one keystroke away from the chip. -->
 <script lang="ts">
   import { t } from "$lib/i18n/i18n.svelte";
   import { clampToViewport, dismissOn } from "$lib/popmenu";
+  import { stateGlyphSvg, stateTone } from "$lib/chips";
+  import { stateIndex } from "$lib/fields";
 
   interface Props {
     /** The fixed positioning anchor: where the chip was clicked */
@@ -21,12 +26,18 @@
     values: string[];
     /** A numeric input (the type says `number`, or the current value is one) */
     number?: boolean;
+    /** The key is a state field: its vocabulary in declared order (fields.ts's stateField) */
+    steps?: string[] | null;
     /** null = remove the field; the parent clears the menu's state before writing */
     onpick: (value: string | null) => void;
     /** Cancelled by a click outside or Escape: nothing is written */
     onclose: () => void;
   }
-  let { x, y, key, current, values, number = false, onpick, onclose }: Props = $props();
+  let { x, y, key, current, values, number = false, steps = null, onpick, onclose }: Props = $props();
+
+  /** Where the current value sits in the vocabulary (-1: not a step), and the step after it. */
+  const at = $derived(steps ? stateIndex(steps, current) : -1);
+  const next = $derived(steps && at >= 0 && at < steps.length - 1 ? steps[at + 1] : null);
 
   let el = $state<HTMLElement | null>(null);
   let input = $state<HTMLInputElement | null>(null);
@@ -68,9 +79,26 @@
       commit();
     }}
   />
-  {#each values as v (v)}
-    <button role="menuitem" class:current={v === current} onclick={() => onpick(v)}>{v}</button>
-  {/each}
+  {#if steps}
+    {#if next}
+      <button role="menuitem" class="advance" onclick={() => onpick(next)}>
+        <span class="glyph {`tone-${stateTone(at + 1, steps.length)}`}">{@html stateGlyphSvg(at + 1, steps.length)}</span>{t("field.advance", { value: next })}
+      </button>
+      <div class="menu-sep"></div>
+    {/if}
+    {#each steps as v, i (v)}
+      <button role="menuitem" class:current={i === at} onclick={() => onpick(v)}>
+        <span class="glyph {`tone-${stateTone(i, steps.length)}`}">{@html stateGlyphSvg(i, steps.length)}</span>{v}
+      </button>
+    {/each}
+    {#each values.filter((v) => stateIndex(steps!, v) < 0) as v (v)}
+      <button role="menuitem" class:current={v === current} onclick={() => onpick(v)}><span class="glyph"></span>{v}</button>
+    {/each}
+  {:else}
+    {#each values as v (v)}
+      <button role="menuitem" class:current={v === current} onclick={() => onpick(v)}>{v}</button>
+    {/each}
+  {/if}
   <div class="menu-sep"></div>
   <button role="menuitem" class="danger" onclick={() => onpick(null)}>{t("field.remove")}</button>
 </div>
@@ -123,6 +151,31 @@
   }
   .menu button.danger {
     color: var(--danger);
+  }
+  .menu button.advance {
+    font-weight: 600;
+  }
+  /* A step's glyph before its value (chips.ts), in the step's tone */
+  .glyph {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    vertical-align: -2px;
+    margin-right: 6px;
+  }
+  .glyph :global(svg) {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .tone-idle {
+    color: var(--state-idle);
+  }
+  .tone-active {
+    color: var(--state-active);
+  }
+  .tone-done {
+    color: var(--state-done);
   }
   .menu input {
     margin: 2px 6px 4px;

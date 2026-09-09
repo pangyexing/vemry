@@ -232,6 +232,50 @@ export function declaredField(types: BlockType[], key: string): { values: { valu
   return { values, kind };
 }
 
+/** The ordered vocabulary of a state field: a key some enabled type declares with
+ *  `type: state` and at least two `values`. The order of the values is the order of
+ *  progress — the first is where a block starts, the last is where it ends — and it is
+ *  what the glyph (chips.ts), the value menu, a query block's `sort`/`group` and the
+ *  board's columns all read. Several types naming the key merge in declaration order,
+ *  deduplicated case-insensitively. null when the key is not a state field: it is then
+ *  an ordinary text field, whatever `values` it lists. */
+export function stateField(types: BlockType[], key: string): string[] | null {
+  const lower = key.toLowerCase();
+  const seen = new Set<string>();
+  const values: string[] = [];
+  let declared = false;
+  for (const ty of types)
+    for (const f of ty.fields) {
+      if (f.key.toLowerCase() !== lower || f.type !== "state") continue;
+      declared = true;
+      for (const v of f.values ?? []) {
+        const k = v.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        values.push(v);
+      }
+    }
+  return declared && values.length >= 2 ? values : null;
+}
+
+/** Where a value sits in a state vocabulary (case-insensitive); -1 for a value the
+ *  vocabulary does not name (a spelling from before the type, or a typo — the chip then
+ *  draws no glyph, and the block sorts after every named value). */
+export function stateIndex(values: string[], value: string): number {
+  const lower = value.toLowerCase();
+  return values.findIndex((v) => v.toLowerCase() === lower);
+}
+
+/** The step of one field value, when the key is a state field and the value is one of
+ *  its steps — the one answer the editor's chip, an embed's chip, a row's chip and a
+ *  card's chip all read. */
+export function stateStepOf(types: BlockType[], key: string, value: string): { step: number; of: number } | null {
+  const values = stateField(types, key);
+  if (!values) return null;
+  const step = stateIndex(values, value);
+  return step < 0 ? null : { step, of: values.length };
+}
+
 /** Set, replace or (with null) remove a field on one line. The field with that key is
  *  rewritten in place, keeping the form the user wrote — an empty placeholder `[key:: ]`
  *  is filled rather than doubled; with several of the key, `at` (an offset into the

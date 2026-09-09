@@ -6,9 +6,9 @@
 //! inline construct, and none of it is CommonMark — an AST parser would still
 //! need all of this custom code on top.
 
-use chrono::NaiveDate;
 
 use crate::block::{Block, BlockKind, Field, TaskState, WikiLink};
+use crate::taskattrs::parse_task_attrs;
 use crate::note::Frontmatter;
 
 pub struct ParsedNote {
@@ -179,9 +179,7 @@ pub fn parse_blocks(raw: &str, body_offset: usize) -> Vec<Block> {
         if let Some((state, rest)) = parse_task_line(line) {
             flush_para!(i);
             let span = start..start + line.len();
-            let due = parse_date_attr(rest, &["📅", "due::"]);
-            let scheduled = parse_date_attr(rest, &["⏳", "scheduled::"]);
-            let mut b = make_block(raw, BlockKind::Task { state, due, scheduled }, span);
+            let mut b = make_block(raw, parse_task_attrs(rest).into_kind(state), span);
             b.content = rest.trim().to_string();
             assign_id(&mut b, blocks.len());
             blocks.push(b);
@@ -371,8 +369,9 @@ pub(crate) fn parse_heading(trimmed: &str) -> Option<(u8, &str)> {
     None
 }
 
-/// `- [ ] text` / `* [x] text` / `+ [/] text`, any indentation.
-fn parse_task_line(line: &str) -> Option<(TaskState, &str)> {
+/// `- [ ] text` / `* [x] text` / `+ [/] text` / `- [-] text`, any indentation: the
+/// state and the text after the checkbox.
+pub(crate) fn parse_task_line(line: &str) -> Option<(TaskState, &str)> {
     let t = line.trim_start();
     let rest = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).or_else(|| t.strip_prefix("+ "))?;
     let rest = rest.trim_start();
@@ -392,6 +391,7 @@ fn parse_task_line(line: &str) -> Option<(TaskState, &str)> {
         ' ' => TaskState::Todo,
         '/' => TaskState::Doing,
         'x' | 'X' => TaskState::Done,
+        '-' => TaskState::Cancelled,
         _ => TaskState::Todo,
     };
     Some((state, after.trim_start()))
@@ -470,19 +470,6 @@ pub(crate) fn parse_callout_open(trimmed: &str) -> Option<(String, &str)> {
     // optional fold markers
     rest = rest.strip_prefix('+').or_else(|| rest.strip_prefix('-')).unwrap_or(rest);
     Some((ctype, rest.trim()))
-}
-
-fn parse_date_attr(text: &str, markers: &[&str]) -> Option<NaiveDate> {
-    for marker in markers {
-        if let Some(p) = text.find(marker) {
-            let after = text[p + marker.len()..].trim_start();
-            let token: String = after.chars().take_while(|c| !c.is_whitespace()).collect();
-            if let Ok(d) = NaiveDate::parse_from_str(&token, "%Y-%m-%d") {
-                return Some(d);
-            }
-        }
-    }
-    None
 }
 
 /// Scan a raw slice for `[[wikilinks]]` and `#tags`, skipping inline code.

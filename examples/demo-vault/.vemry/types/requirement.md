@@ -10,6 +10,7 @@ fields:
     values: [P0, P1, P2]
     default: P1
   - key: status
+    type: state
     values: [draft, reviewing, accepted, shipped, dropped]
     default: draft
   - key: owner

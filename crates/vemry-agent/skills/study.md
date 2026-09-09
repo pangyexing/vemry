@@ -91,6 +91,12 @@ card is the reader's progress bar, not a receipt at the end.
 
   (the fence language is `vemry-query`, one key per line; a tag alone matches
   every block of a tagged note, and the text filter keeps the `#chapter` line).
+  Each row shows the chapter's title, its status as a state chip, and the head
+  counts the chapters at each step — when the vault has the `chapter` block type
+  (the system prompt lists it under Block types with `status (state: unread →
+  reading → retold → done)`). Without it the rows show the status as a plain
+  chip; the skill does not create the type (a `.vemry/` file is the user's to
+  add, from "block type…" in the command palette).
   After it, `## 可加的实验` when any chapter's experiment was listed rather than
   written (see the lab block below): one line per experiment — the chapter as a
   [[link]], what to move, what to watch — so the reader picks the next one.
@@ -122,6 +128,13 @@ card is the reader's progress bar, not a receipt at the end.
      chapter, never yes/no.
   7. *in my words* — left empty: the reader fills it.
   Under 350 words of explanation per chapter; the source blocks carry the rest.
+- The status line moves as the reading does, and it is set with set_block_field
+  on the chapter's `#chapter` block, spelled exactly `unread`, `reading`,
+  `retold`, `done`: `reading` when a chapter is opened with the reader (the
+  first time it is explained or its question answered), `retold` when the
+  retelling check has run on it, `done` only by the reader — the chip in the
+  hub or the chapter is theirs to click. Never move a chapter backwards, and
+  never touch the status of a chapter the session did not work on.
 - The reader's confusions are tasks: `- [ ] why divide by √d_k #question` in a
   chapter note. When asked to answer them (or when one is in the working note),
   answer under the task as an indented line (edit_note), in the chapter's

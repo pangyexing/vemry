@@ -17,6 +17,9 @@
     taskKey,
     taskMenuEntries,
     taskStateIconSvg,
+    isClosed,
+    attrIconSvg,
+    priorityLabel,
     updateTask,
     type TaskEdit,
   } from "$lib/views/tasks";
@@ -38,6 +41,8 @@
     type GroupMode,
   } from "$lib/views/kanban";
   import { t } from "$lib/i18n/i18n.svelte";
+  import { types } from "$lib/stores/types.svelte";
+  import { stateGlyphSvg, stateTone } from "$lib/chips";
   import { commitTaskWrite } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
@@ -88,7 +93,7 @@
    *  dates cardOf settled, and the filtering reads taskFilterKey — the same key as Agenda's,
    *  so the two views give the same answer to the same keystroke; and building a card happens
    *  once per block rather than on every keystroke. */
-  const allCards = $derived(cardsOf(hits, localDate()));
+  const allCards = $derived(cardsOf(hits, localDate(), types.enabled));
   const shown = $derived(fuzzyKeep(allCards, query, taskFilterKey));
   const total = $derived(shown.length);
 
@@ -101,7 +106,7 @@
 
   async function onToggle(e: Event, card: Card) {
     e.stopPropagation();
-    await applyEdit(card.hit, { state: card.state === "done" ? "todo" : "done" }, t("task.act.toggle"));
+    await applyEdit(card.hit, { state: isClosed(card.state) ? "todo" : "done" }, t("task.act.toggle"));
   }
 
   /** Clicking a card jumps to the task's line. Agenda uses the same vault.openBlockAt — the
@@ -171,7 +176,7 @@
     const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-drop-col]");
     const col = el?.dataset.dropCol ?? null;
     // Dropping back in the same column means nothing happens, so it is not highlighted misleadingly
-    dropTarget = col !== null && col !== cardCol(drag.card, groupBy) ? col : null;
+    dropTarget = col !== null && col !== cardCol(drag.card, groupBy, types.enabled) ? col : null;
   }
 
   function dragEnd(e: PointerEvent) {
@@ -215,7 +220,7 @@
     suppressClick = false;
   }
 
-  const dropOf = (card: Card, col: string, date?: string) => dropEdit(card, col, localDate(), date, groupBy);
+  const dropOf = (card: Card, col: string, date?: string) => dropEdit(card, col, localDate(), date, groupBy, types.enabled);
 
   /** Clicking a date chip or the scheduling ghost chip: the menu pops up at the chip and reschedules directly, without dragging */
   function openChipMenu(e: MouseEvent, card: Card, field: DateField) {
@@ -295,9 +300,9 @@
     return key ? { key, desc: !!saved?.desc } : DEFAULT_ORDER;
   }
   /** The columns follow the grouping: the five state columns, or one per value of the chosen field plus "none". */
-  const defs = $derived(columnDefsFor(groupBy, shown));
+  const defs = $derived(columnDefsFor(groupBy, shown, types.enabled));
   const cols = $derived.by(() => {
-    const cols = columnsOf(shown, defs, groupBy, order);
+    const cols = columnsOf(shown, defs, groupBy, order, types.enabled);
     // The card of a drop still landing sits at the top of "scheduled" (it has no date yet to
     // sort by), whichever column its data still puts it in; the write's reload sorts it in
     if (pendingKey && groupBy.by === "state") {
@@ -588,7 +593,7 @@
             title={collapsed[colDef.id] ? t("kanban.expand") : t("kanban.collapse")}
             onclick={() => toggleCollapse(colDef.id)}
           >
-            <i class="dot" data-tone={colDef.tone}></i><span class="col-title">{colDef.title}</span><span class="count"
+            {#if colDef.glyph}<i class="col-glyph {`tone-${colDef.glyphTone}`}">{@html colDef.glyph}</i>{:else}<i class="dot" data-tone={colDef.tone}></i>{/if}<span class="col-title">{colDef.title}</span><span class="count"
               >{cards.length}</span
             >
             <!-- The affordance of "this header collapses": the same chevron as Agenda's
@@ -613,7 +618,7 @@
                 <div
                   class="card"
                   class:doing={card.state === "doing"}
-                  class:done={card.state === "done" && !pend}
+                  class:done={isClosed(card.state) && !pend}
                   class:pending={!!pend}
                   class:held={heldKey === taskKey(card)}
                   role="button"
@@ -631,7 +636,7 @@
                       onpointerdown={(e) => e.stopPropagation()}
                       onclick={(e) => void onToggle(e, card)}
                     >
-                      {@html taskStateIconSvg(pend && card.state === "done" ? "todo" : card.state)}
+                      {@html taskStateIconSvg(pend && isClosed(card.state) ? "todo" : card.state)}
                     </button>
                     <!-- Clamped to two lines: a long task is read whole from cliptip's box, a quarter second into the hover -->
                     <span class="text" use:cliptip={card.text}>{card.text}</span>
@@ -650,14 +655,23 @@
                     {#if card.scheduled && pendField !== "scheduled"}
                       {@render dateChip(card, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: card.scheduled }), chipDate(card.scheduled))}
                     {/if}
+                    {#if card.priority !== "normal"}
+                      <!-- The priority as its icon alone: the card has no room for a word, the title carries it -->
+                      <span class="chip pri-chip" class:urgent={card.priority === "highest" || card.priority === "high"} title={priorityLabel(card.priority)}>{@html attrIconSvg("priority", card.priority)}</span>
+                    {/if}
                     {#each card.tags as tag (tag)}
                       <span class="chip tag-chip">#{tag}</span>
                     {/each}
-                    {#each card.fieldChips as [key, value] (key)}
-                      <span class="chip field-chip" title={`${key}:: ${value}`}><span class="fk">{key}</span>{value}</span>
+                    {#each card.fieldChips as f (f.key)}
+                      {#if f.step !== undefined && f.of !== undefined}
+                        <!-- A state field's value (fields.ts's stateField): the step's glyph and tone, the key left to the title -->
+                        <span class="chip field-chip state-chip {`tone-${stateTone(f.step, f.of)}`}" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
+                      {:else}
+                        <span class="chip field-chip" title={`${f.key}:: ${f.value}`}><span class="fk">{f.key}</span>{f.value}</span>
+                      {/if}
                     {/each}
                     <span class="chip note-chip" title={card.hit.note}>{card.hit.note_title}</span>
-                    {#if !card.due && !card.scheduled && card.state !== "done" && !pend}
+                    {#if !card.due && !card.scheduled && !isClosed(card.state) && !pend}
                       <!-- A card with no date shows a calendar ghost chip on hover: a new field
                         goes through activeField = due. It is absolutely positioned over the
                         checkbox's indent gap in the meta row (26px, structurally always empty)
@@ -1291,5 +1305,49 @@
   }
   .field-chip .fk::after {
     content: ":";
+  }
+  /* A state field's chip and a state column's header glyph (chips.ts), in the step's tone */
+  .state-chip .glyph,
+  .col-glyph {
+    display: inline-flex;
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+  }
+  .state-chip .glyph :global(svg),
+  .col-glyph :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+  .state-chip {
+    padding-left: 4px;
+  }
+  .tone-idle {
+    color: var(--state-idle);
+  }
+  .tone-active {
+    color: var(--state-active);
+  }
+  .tone-done {
+    color: var(--state-done);
+  }
+  .state-chip.tone-active {
+    color: var(--fg);
+  }
+  .state-chip.tone-active .glyph {
+    color: var(--state-active);
+  }
+  /* The priority chip: the icon alone, in danger when it presses */
+  .pri-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 4px;
+  }
+  .pri-chip :global(svg) {
+    width: 0.95em;
+    height: 0.95em;
+  }
+  .pri-chip.urgent {
+    color: var(--danger);
   }
 </style>

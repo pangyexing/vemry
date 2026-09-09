@@ -25,7 +25,30 @@ import { contentStart, fencedCodeAt, fencedCodeText, inCode } from "./fenced";
 import { revealArmed, revealRanges, selectionReveals, selectionTouches } from "./reveal";
 import { tableField } from "./table";
 import { LINK_RE as WIKI_RE } from "./wikilink";
-import { DATE_FIELDS, dateFieldLabel, type DateField, dateIconSvg, localDate, scanTaskDates, STAMP_RE, TASK_LINE_RE } from "$lib/views/tasks";
+import {
+  attrIconSvg,
+  type AttrKind,
+  completeTaskSlice,
+  DATE_FIELDS,
+  dateFieldLabel,
+  type DateField,
+  EDIT_FIELDS,
+  type EditField,
+  formatEstimate,
+  isClosed,
+  localDate,
+  parseEstimate,
+  type Priority,
+  priorityLabel,
+  scanTaskAttrs,
+  STAMP_RE,
+  stateOfChar,
+  TASK_ATTR_KEYS,
+  TASK_LINE_RE,
+  type TaskAttrMark,
+  type TaskState,
+} from "$lib/views/tasks";
+import { type StateStep, stateGlyphSvg, stateTone } from "$lib/chips";
 import { scanFields } from "$lib/fields";
 import { privateRangeAt } from "./privateblock";
 import { blockRoot } from "./blockwidget";
@@ -63,6 +86,8 @@ const hideDeco = Decoration.replace({});
 const bulletDeco = Decoration.mark({ class: "cm-lp-bullet" });
 const doneDeco = Decoration.mark({ class: "cm-lp-done" });
 const tagDeco = Decoration.mark({ class: "cm-lp-tag" });
+/** The `#` of a tag: kept in the text, faded by CSS (the name carries the capsule) */
+const tagHashDeco = Decoration.mark({ class: "cm-lp-tag-hash" });
 const anchorDeco = Decoration.mark({ class: "cm-lp-anchor" });
 const badDateDeco = Decoration.mark({
   class: "cm-lp-baddate",
@@ -86,26 +111,33 @@ interface Entry {
   deco: Decoration;
 }
 
-/** The `- [ ]` checkbox; a click rewrites the checked state in the text underneath */
+/** The `- [ ]` checkbox; a click rewrites the state in the text underneath: a plain
+ *  click flips done, ⌥ flips "in progress" (`[/]`, drawn as the native indeterminate
+ *  dash — the same two gestures as a query row's glyph, and the one way from the editor
+ *  to the state the task views' menus set). */
 class CheckboxWidget extends WidgetType {
-  constructor(readonly checked: boolean) {
+  constructor(readonly state: TaskState) {
     super();
   }
   eq(other: CheckboxWidget) {
-    return other.checked === this.checked;
+    return other.state === this.state;
   }
   toDOM(view: EditorView) {
     const box = document.createElement("input");
     box.type = "checkbox";
     box.className = "cm-lp-checkbox";
-    box.checked = this.checked;
+    box.checked = this.state === "done";
+    box.indeterminate = this.state === "doing";
+    // `[-]`: the box crossed out (app.css), a click reopens it
+    if (this.state === "cancelled") box.classList.add("cm-lp-checkbox-cancelled");
+    box.title = t(this.state === "doing" ? "task.menu.markBackTodo" : this.state === "cancelled" ? "task.menu.reopen" : "task.toggleDone");
     box.onmousedown = (e) => {
       // Handled on mousedown: preventDefault keeps the editor's selection, or the
       // cursor landing inside the checkbox's range would trigger reveal and replace
       // this widget before the click arrived
       e.preventDefault();
       e.stopPropagation();
-      toggleTaskAt(view, view.posAtDOM(box));
+      toggleTaskAt(view, view.posAtDOM(box), e.altKey);
     };
     return box;
   }
@@ -158,30 +190,62 @@ class TextBadgeWidget extends WidgetType {
 // an ordered number keeps its source
 const bulletDotDeco = Decoration.replace({ widget: new TextBadgeWidget("•", "cm-lp-bulletdot") });
 
-/** The task date chip: a valid 📅/⏳/due::/scheduled:: renders as a small capsule
- *  looking exactly like Agenda's, and an overdue (and unfinished) one is coloured
- *  danger; a click lands beside the chip, and the source can be edited once the line
- *  reveals */
-class DateChipWidget extends WidgetType {
+/** A task attribute chip: a valid date (📅 ⏳ ⏩ … or its `key::` spelling) renders as a
+ *  small capsule looking exactly like Agenda's, an overdue (and open) due date coloured
+ *  danger; the other attributes — a priority, a repeat rule, an estimate, an id, what
+ *  the task waits on, "removed once done" — draw their icon and value in the
+ *  attribute's tone (app.css). A click on a settable date lands beside the chip and
+ *  raises its menu; the source can be edited once the line reveals */
+class AttrChipWidget extends WidgetType {
   constructor(
-    readonly kind: DateField,
-    readonly date: string,
-    readonly overdue: boolean,
+    readonly kind: AttrKind,
+    readonly text: string,
+    readonly cls: string,
+    readonly title: string,
+    readonly icon: string,
     readonly onChip?: FieldChipHandler,
+    readonly chipValue = "",
   ) {
     super();
   }
-  eq(other: DateChipWidget) {
-    return other.kind === this.kind && other.date === this.date && other.overdue === this.overdue;
+  eq(other: AttrChipWidget) {
+    return other.kind === this.kind && other.text === this.text && other.cls === this.cls && other.icon === this.icon;
   }
   toDOM(view: EditorView) {
     const el = document.createElement("span");
-    el.className = `cm-lp-datechip${this.onChip ? " cm-lp-chip-click" : ""}${this.overdue ? " cm-lp-datechip-overdue" : ""}`;
-    el.title = dateFieldLabel(this.kind);
-    el.innerHTML = dateIconSvg(this.kind);
-    el.append(this.date);
-    wireChipClick(el, view, this.onChip, this.kind, this.date);
+    el.className = `cm-lp-datechip cm-lp-attr-${this.kind} ${this.cls}${this.onChip ? " cm-lp-chip-click" : ""}`;
+    el.title = this.title;
+    el.innerHTML = this.icon;
+    if (this.text) el.append(this.text);
+    else el.classList.add("cm-lp-datechip-bare");
+    wireChipClick(el, view, this.onChip, this.kind, this.chipValue);
     return el;
+  }
+}
+
+/** The text, tone class, tooltip and icon of a non-date attribute chip. */
+function attrChipParts(am: TaskAttrMark): [string, string, string, string] {
+  switch (am.kind) {
+    case "priority": {
+      const p = am.value as Priority;
+      return ["", p === "highest" || p === "high" ? "cm-lp-attr-urgent" : "cm-lp-attr-faint", priorityLabel(p), attrIconSvg("priority", p)];
+    }
+    case "repeat":
+      return [am.value, "", t("task.chip.repeat", { rule: am.value }), attrIconSvg("repeat")];
+    case "delete":
+      return ["", "", t("task.chip.deleteOnDone"), attrIconSvg("delete")];
+    case "id":
+      return [am.value, "", t("task.chip.id", { id: am.value }), attrIconSvg("id")];
+    case "depends": {
+      const ids = am.value.split(",").join(", ");
+      return [ids, "cm-lp-attr-urgent", t("task.chip.blockedBy", { ids }), attrIconSvg("depends")];
+    }
+    case "estimate": {
+      const v = formatEstimate(parseEstimate(am.value) ?? 0);
+      return [v, "", t("task.chip.estimate", { v }), attrIconSvg("estimate")];
+    }
+    default:
+      return [am.value, "", "", ""];
   }
 }
 
@@ -247,16 +311,26 @@ class FieldChipWidget extends WidgetType {
     readonly key: string,
     readonly value: string,
     readonly onChip?: FieldChipHandler,
+    /** The value's step when the key is a state field (the host's fieldState): the chip
+     *  then carries the glyph and the step's tone. */
+    readonly state?: StateStep | null,
   ) {
     super();
   }
   eq(other: FieldChipWidget) {
-    return other.key === this.key && other.value === this.value;
+    return other.key === this.key && other.value === this.value && other.state?.step === this.state?.step && other.state?.of === this.state?.of;
   }
   toDOM(view: EditorView) {
     const el = document.createElement("span");
     const empty = this.value === "";
     el.className = `cm-lp-field${this.onChip ? " cm-lp-chip-click" : ""}${empty ? " cm-lp-field-empty" : ""}`;
+    if (this.state) {
+      el.classList.add("cm-lp-field-state", `chip-tone-${stateTone(this.state.step, this.state.of)}`);
+      const g = document.createElement("span");
+      g.className = "cm-lp-field-glyph";
+      g.innerHTML = stateGlyphSvg(this.state.step, this.state.of);
+      el.appendChild(g);
+    }
     const k = document.createElement("span");
     k.className = "cm-lp-field-key";
     k.textContent = this.key;
@@ -529,12 +603,29 @@ class CopyWidget extends WidgetType {
 // side -1: with the fence line hidden by a replace, the button is only rendered when it sits before the hidden range
 const copyDeco = Decoration.widget({ widget: new CopyWidget(), side: -1 });
 
-function toggleTaskAt(view: EditorView, pos: number) {
+/** The checkbox character after a click: a plain click flips done (todo or doing → done,
+ *  done or cancelled → todo), ⌥ flips "in progress" (todo or done → doing, doing → todo). */
+export function nextCheckbox(ch: string, alt: boolean): string {
+  const state = stateOfChar(ch);
+  if (alt) return state === "doing" ? " " : "/";
+  return isClosed(state) ? " " : "x";
+}
+
+/** A click on the checkbox rewrites the whole line, as the task views do: a closing
+ *  state leaves its ✅ / ❌ stamp, a repeating task ticked gets its next occurrence above
+ *  it, and a 🚮 task ticked goes, its line break with it. */
+function toggleTaskAt(view: EditorView, pos: number, alt = false) {
   const line = view.state.doc.lineAt(pos);
-  const m = /^(?:(?:[-*+]|\d+[.)])\s+)?\[( |x|X)\]/.exec(line.text.slice(pos - line.from));
+  const m = /^(?:(?:[-*+]|\d+[.)])\s+)?\[( |x|X|\/|-)\]/.exec(line.text.slice(pos - line.from));
   if (!m) return;
-  const box = pos + m[0].length - 2; // the check character sits before the "?]" at the end of the match
-  view.dispatch({ changes: { from: box, to: box + 1, insert: m[1] === " " ? "x" : " " } });
+  const out = completeTaskSlice(line.text, stateOfChar(nextCheckbox(m[1], alt)), localDate());
+  if (out === "") {
+    const from = line.from > 0 ? line.from - 1 : line.from;
+    const to = line.from > 0 ? line.to : Math.min(line.to + 1, view.state.doc.length);
+    view.dispatch({ changes: { from, to, insert: "" }, userEvent: "delete" });
+    return;
+  }
+  if (out !== line.text) view.dispatch({ changes: { from: line.from, to: line.to, insert: out }, userEvent: "input.task" });
 }
 
 function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): DecorationSet {
@@ -701,48 +792,60 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
               listMark && /^[-*+]$/.test(doc.sliceString(listMark.from, listMark.to))
                 ? listMark.from
                 : node.from; // an ordered task only swaps the [ ] itself and keeps the number
-            const checked = /[xX]/.test(doc.sliceString(node.from, node.to));
+            const marker = doc.sliceString(node.from, node.to);
+            const taskState: TaskState = stateOfChar(marker.length >= 3 ? marker[1] : " ");
+            const closed = isClosed(taskState);
             const task = node.node.parent;
-            if (checked && task && task.to > node.to + 1)
+            if (closed && task && task.to > node.to + 1)
               marks.push({ from: node.to + 1, to: task.to, deco: doneDeco });
             // Only the task's **first line** is scanned: a Rust task block is a single
-            // line (the parser recognises tasks line by line), and a date marker on a
-            // lazy continuation line is something the parser never reads, so drawing a
-            // chip for it would display a date that does not exist in the index
+            // line (the parser recognises tasks line by line), and a marker on a lazy
+            // continuation line is something the parser never reads, so drawing a chip
+            // for it would display an attribute that does not exist in the index
             const lineEnd = doc.lineAt(node.from).to;
             const rest = doc.sliceString(node.to, task ? Math.min(task.to, lineEnd) : lineEnd);
-            for (const dm of scanTaskDates(rest)) {
-              const dFrom = node.to + dm.start;
-              const dTo = node.to + dm.end;
-              if (dm.date === null) {
-                // A malformed date (starting with a digit, or an explicit attr::): the
-                // parser ignores it silently and the task vanishes from Agenda with
-                // nothing to see — so a warning is drawn (on the cursor's line too: a
-                // typo should be visible the moment it is made). A decorative emoji (⏳
-                // and the like) draws no warning: the parser is just as silent about it,
-                // and a warning would only be a false alarm
-                if (dm.attempted) marks.push({ from: dFrom, to: dTo, deco: badDateDeco });
+            for (const am of scanTaskAttrs(rest)) {
+              const aFrom = node.to + am.start;
+              const aTo = node.to + am.end;
+              if (am.kind in DATE_FIELDS) {
+                if (am.date === null) {
+                  // A malformed date (starting with a digit, or an explicit attr::): the
+                  // parser ignores it silently and the task vanishes from Agenda with
+                  // nothing to see — so a warning is drawn (on the cursor's line too: a
+                  // typo should be visible the moment it is made). A decorative emoji (⏳
+                  // and the like) draws no warning: the parser is just as silent about
+                  // it, and a warning would only be a false alarm
+                  if (am.attempted) marks.push({ from: aFrom, to: aTo, deco: badDateDeco });
+                  continue;
+                }
+                // Only the winner the parser actually read renders a chip (looking
+                // exactly like Agenda's); a valid date that is not the winner is ordinary
+                // text, and a chip there would misreport the index. The source is only
+                // shown for editing when the cursor touches the chip's range (clicking a
+                // chip folds to its boundary)
+                if (!am.active || revealedEl(aFrom, aTo)) continue;
+                const field = am.kind as DateField;
+                const overdue = field === "due" && !closed && am.date < today;
+                // the dates a person sets open their menu on a click; a stamp does not
+                const onChip = EDIT_FIELDS.includes(field as EditField) ? opts.onFieldChip : undefined;
+                hides.push({
+                  from: aFrom,
+                  to: aTo,
+                  deco: Decoration.replace({
+                    widget: new AttrChipWidget(field, am.date, overdue ? "cm-lp-datechip-overdue" : "", dateFieldLabel(field), attrIconSvg(field), onChip, am.date),
+                  }),
+                });
                 continue;
               }
-              // Only the winner the parser actually read renders a chip (looking exactly
-              // like Agenda's); a valid date that is not the winner is ordinary text, and
-              // a chip there would misreport the index. The source is only shown for
-              // editing when the cursor touches the chip's range (clicking a chip folds
-              // to its boundary)
-              if (!dm.active || revealedEl(dFrom, dTo)) continue;
-              hides.push({
-                from: dFrom,
-                to: dTo,
-                deco: Decoration.replace({
-                  widget: new DateChipWidget(dm.field, dm.date, dm.field === "due" && !checked && dm.date < today, opts.onFieldChip),
-                }),
-              });
+              if (!am.active || revealedEl(aFrom, aTo)) continue;
+              const [text, cls, title, icon] = attrChipParts(am);
+              hides.push({ from: aFrom, to: aTo, deco: Decoration.replace({ widget: new AttrChipWidget(am.kind, text, cls, title, icon) }) });
             }
             if (revealedEl(bulletFrom, node.to)) break;
             hides.push({
               from: bulletFrom,
               to: node.to,
-              deco: Decoration.replace({ widget: new CheckboxWidget(checked) }),
+              deco: Decoration.replace({ widget: new CheckboxWidget(taskState) }),
             });
             break;
           }
@@ -982,6 +1085,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
       const start = range.from + m.index + m[1].length;
       if (isCode(start)) continue;
       marks.push({ from: start, to: start + 1 + m[2].length, deco: tagDeco });
+      marks.push({ from: start, to: start + 1, deco: tagHashDeco });
     }
 
     // Where a block anchor is defined, "… ^id" renders as a small badge (the marker a
@@ -1019,12 +1123,13 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
         if (line.text.includes("::") && line.from >= fmEnd && !isCode(line.from)) {
           const task = TASK_LINE_RE.test(line.text);
           for (const f of scanFields(line.text, line.from, { empty: true })) {
-            if (task && f.key in DATE_FIELDS && f.value !== "") continue;
+            if (task && TASK_ATTR_KEYS.has(f.key.toLowerCase()) && f.value !== "") continue;
             if (revealedEl(f.from, f.to)) {
               marks.push({ from: f.from, to: f.to, deco: fieldSrcDeco });
               continue;
             }
-            hides.push({ from: f.from, to: f.to, deco: Decoration.replace({ widget: new FieldChipWidget(f.key, f.value, opts.onFieldChip) }) });
+            const state = f.value !== "" && opts.fieldState ? opts.fieldState(f.key, f.value) : null;
+            hides.push({ from: f.from, to: f.to, deco: Decoration.replace({ widget: new FieldChipWidget(f.key, f.value, opts.onFieldChip, state) }) });
           }
         }
         if (line.to >= range.to) break;
@@ -1151,6 +1256,9 @@ export interface LivePreviewOptions {
   openUrl?: (url: string) => void;
   /** A click on a chip: a task's due/scheduled date, or any inline `key:: value` field. */
   onFieldChip?: FieldChipHandler;
+  /** The step of a field's value when its key is a state field (fields.ts's stateStepOf
+   *  over the vault's types): the chip then draws the glyph. Absent, no chip does. */
+  fieldState?: (key: string, value: string) => StateStep | null;
 }
 
 /** After a composition ends without a document change (a cancelled one), no

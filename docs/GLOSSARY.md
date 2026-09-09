@@ -19,6 +19,9 @@ three months later, and each translation drifts on its own. A new user-visible t
 | 嵌入 | embed | transclusion, include, import |
 | 小节 | section | chapter, part, heading (that is the line itself) |
 | 字段 | field | property, attribute, metadata |
+| 状态字段 | state field | status field (status is a key's name, not the concept), enum, lifecycle |
+| 档（状态字段的一个取值） | step | stage, phase, level |
+| 标签片（字段、标签、日期在行上的小胶囊） | chip | badge, pill, tag (taken by #tag), capsule |
 | 投影视图 | projection | dashboard, module, widget |
 | 断言 | claim | assertion, statement |
 | 证据 | evidence | citation, source |
@@ -56,6 +59,24 @@ three months later, and each translation drifts on its own. A new user-visible t
 | 折叠 | fold | collapse |
 
 The interface uses the word that reads best (**Reader**); architecture prose uses the concept word (**reading projection**). That is a division of labour, not an inconsistency.
+
+## Tasks
+
+| Chinese | English | Do not use |
+|---|---|---|
+| 截止日期 | due date | deadline (in the interface), end date |
+| 排期日期 | scheduled date | start date (that is ⏩), planned date |
+| 开始日期 | start date | begin date, available from |
+| 创建日期 | created | added on |
+| 完成日期 / 取消日期 | completed on / cancelled on | done date, closed date |
+| 已取消 | cancelled | abandoned, dropped, discarded |
+| 优先级 | priority | importance, urgency (that is one step of it) |
+| 紧急 / 重要 / 以后 / 有空再说 | urgent / important / later / someday | highest / high / low / lowest (the `priority::` values, not the copy) |
+| 重复 | repeat | recurrence, recurring |
+| 完成即弃 | removed once done | delete on completion, auto-delete |
+| 编号（任务的） | id | task id, handle (taken by the block handle) |
+| 受阻 | blocked | waiting, locked, dependent |
+| 估时 | estimate | effort, duration, time box |
 
 ## The seven projections
 

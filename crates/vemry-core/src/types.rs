@@ -33,7 +33,10 @@ pub struct FieldSpec {
     /// Suggested values (the completion offers them first).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<String>,
-    /// `date` / `number` / `text` (a hint for the editor; the parser does not care).
+    /// `date` / `number` / `text` / `state` (a hint for the editor; the parser does not
+    /// care). `state` makes `values` a vocabulary in order — the first value is where a
+    /// block starts, the last where it ends — which the editor's chips, the board's
+    /// columns and the system prompt read; the field on disk is a plain `[key:: value]`.
     #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
 }
@@ -77,6 +80,7 @@ icon: 📚
 fields:
   - key: author
   - key: status
+    type: state
     values: [to-read, reading, done]
     default: to-read
   - key: rating
@@ -94,7 +98,7 @@ pub fn type_skeleton(name: &str) -> String {
     let tag = tag_of(name);
     let tag_line = if tag.is_empty() { String::new() } else { format!("tag: {}\n", yaml_scalar(&tag)) };
     format!(
-        "---\nname: {}\ndescription: {}\nkind: bullet\n{tag_line}fields:\n  - key: status\n    values: [open, done]\n    default: open\n  - key: due\n    type: date\n---\n{{{{cursor}}}} [status:: {{{{status}}}}] [due:: ]\n",
+        "---\nname: {}\ndescription: {}\nkind: bullet\n{tag_line}fields:\n  - key: status\n    type: state\n    values: [open, done]\n    default: open\n  - key: due\n    type: date\n---\n{{{{cursor}}}} [status:: {{{{status}}}}] [due:: ]\n",
         yaml_scalar(name),
         yaml_scalar(&format!("A {name}")),
     )
@@ -209,6 +213,8 @@ mod tests {
         assert_eq!(t.tag.as_deref(), Some("meeting"));
         assert_eq!(t.fields.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(), ["status", "due"]);
         assert_eq!(t.fields[0].default.as_deref(), Some("open"));
+        // the skeleton's status is a state: its values are steps in order
+        assert_eq!(t.fields[0].kind.as_deref(), Some("state"));
         assert_eq!(t.fields[1].kind.as_deref(), Some("date"));
         assert!(t.template.starts_with("{{cursor}} [status:: {{status}}]"));
         // a name YAML would misread is quoted, and the tag keeps only what a tag can hold
@@ -229,6 +235,7 @@ mod tests {
         assert_eq!(t.icon.as_deref(), Some("📚"));
         assert_eq!(t.fields.len(), 3);
         assert_eq!(t.fields[1].values, vec!["to-read", "reading", "done"]);
+        assert_eq!(t.fields[1].kind.as_deref(), Some("state"));
         assert_eq!(t.fields[1].default.as_deref(), Some("to-read"));
         assert_eq!(t.fields[2].kind.as_deref(), Some("number"));
         assert!(t.template.starts_with("{{cursor}}"));

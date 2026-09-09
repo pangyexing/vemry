@@ -401,7 +401,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                     "tag": {"type": "string"},
                     "note": {"type": "string"},
                     "field": {"type": "string", "description": "Inline-field filter, query_blocks grammar"},
-                    "task_state": {"type": "string", "enum": ["todo", "doing", "done"]},
+                    "task_state": {"type": "string", "enum": ["todo", "doing", "done", "cancelled"]},
                     "group_by": {"type": "string", "description": "A field key, 'note', or 'week'"}
                 },
                 "required": ["group_by"]
@@ -433,7 +433,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                     "note": {"type": "string", "description": "Restrict to one note path"},
                     "tag": {"type": "string"},
                     "text": {"type": "string", "description": "Substring filter on block content"},
-                    "task_state": {"type": "string", "enum": ["todo", "doing", "done"]},
+                    "task_state": {"type": "string", "enum": ["todo", "doing", "done", "cancelled"]},
                     "due_before": {"type": "string", "description": "YYYY-MM-DD: tasks due on or before this date"},
                     "field": {"type": "string", "description": "Inline-field filter: `key` (present), `key = v`, `key != v`, `key < v`, `key > v`, `key ~ v` (contains); YYYY-MM-DD values compare as dates, numbers as numbers"},
                     "limit": {"type": "integer", "description": "Max results, default and cap 200; aggregate_blocks counts past it"}
@@ -515,15 +515,16 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         f(
             "update_task",
-            "Change one task block in place — its state and/or its dates — as one write on the task's own line (the same rewrite the Agenda and the board make): state todo/doing/done; due and scheduled as YYYY-MM-DD, or null to clear one. Use it instead of edit_note for ticking, rescheduling or scheduling a task. Requires user approval unless the note is the working note.",
+            "Change one task block in place — its state and/or its dates — as one write on the task's own line (the same rewrite the Agenda and the board make): state todo/doing/done/cancelled (done stamps ✅ today, cancelled ❌ today, reopening removes the stamp; ticking a 🔁 repeating task adds its next occurrence above it; ticking a 🚮 task removes the line); due, scheduled and start as YYYY-MM-DD, or null to clear one. Use it instead of edit_note for ticking, rescheduling or scheduling a task. Requires user approval unless the note is the working note.",
             json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
                     "block": {"type": "string", "description": "The task's handle from query_blocks or read_note: '^id' or 'bN'"},
-                    "state": {"type": "string", "enum": ["todo", "doing", "done"]},
+                    "state": {"type": "string", "enum": ["todo", "doing", "done", "cancelled"]},
                     "due": {"description": "YYYY-MM-DD, or null to remove the due date"},
-                    "scheduled": {"description": "YYYY-MM-DD, or null to remove the scheduled date"}
+                    "scheduled": {"description": "YYYY-MM-DD (the day it is planned for), or null to remove it"},
+                    "start": {"description": "YYYY-MM-DD (the earliest day it can start), or null to remove it"}
                 },
                 "required": ["path", "block"]
             }),
@@ -1469,30 +1470,47 @@ pub fn prepare_write(
                 Some("todo") => Some(vemry_core::TaskState::Todo),
                 Some("doing") => Some(vemry_core::TaskState::Doing),
                 Some("done") => Some(vemry_core::TaskState::Done),
-                Some(other) => return Err(ToolError::Other(format!("unknown task state '{other}' (todo, doing or done)"))),
+                Some("cancelled") => Some(vemry_core::TaskState::Cancelled),
+                Some(other) => return Err(ToolError::Other(format!("unknown task state '{other}' (todo, doing, done or cancelled)"))),
             };
-            let due = date_arg(args, "due")?;
-            let scheduled = date_arg(args, "scheduled")?;
-            if state.is_none() && due.is_none() && scheduled.is_none() {
-                return Err(ToolError::Other("update_task needs at least one of state, due or scheduled".into()));
+            let dates = [
+                (vemry_core::taskedit::DateField::Due, date_arg(args, "due")?),
+                (vemry_core::taskedit::DateField::Scheduled, date_arg(args, "scheduled")?),
+                (vemry_core::taskedit::DateField::Start, date_arg(args, "start")?),
+            ];
+            if state.is_none() && dates.iter().all(|(_, d)| d.is_none()) {
+                return Err(ToolError::Other("update_task needs at least one of state, due, scheduled or start".into()));
             }
-            let span = blocks[i].span.clone();
+            let mut span = blocks[i].span.clone();
             let slice = &raw[span.clone()];
             // One rewrite for everything asked (the board's merged drag write): two
-            // writes would leave the second one's span stale
-            let new_slice = vemry_core::taskedit::rewrite_first_line(slice, |line| {
+            // writes would leave the second one's span stale. The dates go first, so a
+            // repeat's next occurrence is counted from the rescheduled line; then the
+            // state, with its stamp, a repeat's next occurrence and a 🚮 removal
+            let mut new_slice = vemry_core::taskedit::rewrite_first_line(slice, |line| {
                 let mut out = line.to_string();
-                if let Some(st) = state {
-                    out = vemry_core::taskedit::set_checkbox(&out, st);
-                }
-                if let Some(d) = &due {
-                    out = vemry_core::taskedit::reschedule_line(&out, vemry_core::taskedit::DateField::Due, d.as_deref());
-                }
-                if let Some(d) = &scheduled {
-                    out = vemry_core::taskedit::reschedule_line(&out, vemry_core::taskedit::DateField::Scheduled, d.as_deref());
+                for (field, date) in &dates {
+                    if let Some(d) = date {
+                        out = vemry_core::taskedit::reschedule_line(&out, *field, d.as_deref());
+                    }
                 }
                 out
             });
+            if let Some(st) = state {
+                let today = chrono::Local::now().date_naive();
+                new_slice = vemry_core::taskedit::complete_task_slice(&new_slice, st, today);
+            }
+            if new_slice.is_empty() {
+                // A 🚮 task ticked: the whole line goes, its line break with it (the one
+                // after it, or the one before when the block ends the note)
+                if raw[span.end..].starts_with("\r\n") {
+                    span.end += 2;
+                } else if raw[span.end..].starts_with('\n') {
+                    span.end += 1;
+                } else if raw[..span.start].ends_with('\n') {
+                    span.start -= if raw[..span.start].ends_with("\r\n") { 2 } else { 1 };
+                }
+            }
             block_rewrite_request(request_id, name, &id, &raw, span, new_slice)
         }
         "set_block_field" => {
@@ -2109,9 +2127,13 @@ mod tests {
         let (_d, vault) = fixture();
         std::fs::write(vault.root().join("Todo.md"), "# Todo\n\n- [ ] write spec 📅 2026-09-01 ^t1\n  - sub note\n- plain item\n").unwrap();
         let vault = Vault::open(vault.root()).unwrap();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         let req = prepare_write(&vault, "u1".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "state": "done", "due": "2026-09-10", "scheduled": "2026-09-08"}), None, None).unwrap();
-        assert!(req.new_content.contains("- [x] write spec 📅 2026-09-10 ⏳ 2026-09-08 ^t1\n  - sub note\n- plain item\n"), "{}", req.new_content);
+        assert!(req.new_content.contains(&format!("- [x] write spec 📅 2026-09-10 ⏳ 2026-09-08 ✅ {today} ^t1\n  - sub note\n- plain item\n")), "{}", req.new_content);
         assert_eq!(req.kind, WriteKind::Edit);
+        // cancelled leaves its own stamp; a start date has its own marker
+        let req = prepare_write(&vault, "u1b".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "state": "cancelled", "start": "2026-09-05"}), None, None).unwrap();
+        assert!(req.new_content.contains(&format!("- [-] write spec 📅 2026-09-01 ⏩ 2026-09-05 ❌ {today} ^t1\n")), "{}", req.new_content);
         let req = prepare_write(&vault, "u2".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "due": null}), None, None).unwrap();
         assert!(req.new_content.contains("- [ ] write spec ^t1\n"), "{}", req.new_content);
         let e = prepare_write(&vault, "u3".into(), "update_task", &json!({"path": "Todo.md", "block": "b2", "state": "done"}), None, None).unwrap_err();
@@ -2119,6 +2141,13 @@ mod tests {
         assert!(prepare_write(&vault, "u4".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1"}), None, None).is_err());
         assert!(prepare_write(&vault, "u5".into(), "update_task", &json!({"path": "Todo.md", "block": "^t1", "due": "next week"}), None, None).is_err());
         assert!(matches!(prepare_write(&vault, "u6".into(), "update_task", &json!({"path": "secret/Plan.md", "block": "b0", "state": "done"}), None, None).unwrap_err(), ToolError::Privacy(_)));
+        // ticking a repeating task puts the next occurrence above it; ticking a 🚮 task removes the line
+        std::fs::write(vault.root().join("Rep.md"), "- [ ] water 🔁 every week 📅 2026-09-12 ^r1\n- [ ] tidy 🚮 ^r2\n- after\n").unwrap();
+        let vault = Vault::open(vault.root()).unwrap();
+        let req = prepare_write(&vault, "u7".into(), "update_task", &json!({"path": "Rep.md", "block": "^r1", "state": "done"}), None, None).unwrap();
+        assert!(req.new_content.starts_with(&format!("- [ ] water 🔁 every week 📅 2026-09-19\n- [x] water 🔁 every week 📅 2026-09-12 ✅ {today} ^r1\n")), "{}", req.new_content);
+        let req = prepare_write(&vault, "u8".into(), "update_task", &json!({"path": "Rep.md", "block": "^r2", "state": "done"}), None, None).unwrap();
+        assert_eq!(req.new_content, "- [ ] water 🔁 every week 📅 2026-09-12 ^r1\n- after\n");
     }
 
     /// set_block_field: set / replace / remove on the block's first line, a task's dates routed to the date grammar, bad keys refused.

@@ -148,10 +148,25 @@ pub fn build_system_prompt(vault: &Vault, plan_tool: bool, web_search: bool) -> 
     let types: Vec<_> = vemry_core::list_block_types(&vault.meta_dir()).into_iter().filter(|t| !t.disabled).collect();
     if !types.is_empty() {
         prompt.push_str(
-            "\n\n## Block types\n\nThe user's block types. When you write a block of one of these, use its kind and put its fields on the block's line as [key:: value] (dates as YYYY-MM-DD), with the tag when one is listed.\n",
+            "\n\n## Block types\n\nThe user's block types. When you write a block of one of these, use its kind and put its fields on the block's line as [key:: value] (dates as YYYY-MM-DD), with the tag when one is listed. A field written as `key (state: a → b → c)` is a state: its values are the steps in order, a block starts at the first and ends at the last; set it with set_block_field, spelled exactly as listed.\n",
         );
         for t in &types {
-            let fields = t.fields.iter().map(|f| f.key.as_str()).collect::<Vec<_>>().join(", ");
+            // A state field (`type: state` with its values) shows its vocabulary: the model
+            // moves blocks along it and has to spell the steps as the editor's chips read
+            // them. Other fields show the key alone — their values are a suggestion, not a
+            // vocabulary, and the schema exception stays as narrow as it was
+            let fields = t
+                .fields
+                .iter()
+                .map(|f| {
+                    if f.kind.as_deref() == Some("state") && f.values.len() >= 2 {
+                        format!("{} (state: {})", f.key, f.values.join(" → "))
+                    } else {
+                        f.key.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             let tag = t.tag.as_deref().map(|g| format!(" #{g}")).unwrap_or_default();
             let desc = if t.description.is_empty() { String::new() } else { format!(" — {}", t.description) };
             prompt.push_str(&format!("- {} ({}{}): {}{}\n", t.name, t.kind, tag, fields, desc));
@@ -567,8 +582,22 @@ mod tests {
         std::fs::write(dir.join("off.md"), "---\nname: off\ndisabled: true\n---\n").unwrap();
         let p = build_system_prompt(&vault, false, false);
         assert!(p.contains("## Block types"), "{p}");
-        assert!(p.contains("- book (bullet #book): author, status, rating"), "{p}");
+        assert!(p.contains("- book (bullet #book): author, status (state: to-read → reading → done), rating"), "{p}");
         assert!(!p.contains("- off"));
+    }
+
+    #[test]
+    fn block_type_state_field_shows_its_steps_and_plain_values_do_not() {
+        let (_d, vault) = fixture();
+        let dir = vault.meta_dir().join("types");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("chapter.md"),
+            "---\nname: chapter\nkind: paragraph\ntag: chapter\nfields:\n  - key: status\n    type: state\n    values: [unread, reading, retold, done]\n  - key: mood\n    values: [good, bad]\n---\n",
+        )
+        .unwrap();
+        let p = build_system_prompt(&vault, false, false);
+        assert!(p.contains("- chapter (paragraph #chapter): status (state: unread → reading → retold → done), mood"), "{p}");
     }
 
     #[test]

@@ -21,6 +21,7 @@
   --accent: #0f766e;
   --accent-soft: rgba(15, 118, 110, 0.1);
   --danger: #b91c1c;
+  --ok: #2e7d4f;
   /* The ink of an inverted surface (a notice): the other theme's accent and danger, since the
      ground under them is the other theme's ground */
   --accent-inverse: #38b2a3;
@@ -44,6 +45,11 @@
   --co-quote: var(--fg-muted);
   --co-claim: #be123c;
   --co-evidence: #0e7490;
+  /* The three tones of a state (chips.ts): the first step, a step in between, the last —
+     a task's todo / doing / done and a state field's values read the same three */
+  --state-idle: var(--fg-faint);
+  --state-active: var(--accent);
+  --state-done: var(--co-success);
   /* The lab's chart colours (editor/lab.ts, lab/charts.ts). Eight categorical slots
      in a fixed order that clears the colour-vision checks on this surface; one hue
      light→dark for magnitude; two poles around a neutral midpoint for signed values.
@@ -119,6 +125,7 @@
     --accent: #38b2a3;
     --accent-soft: rgba(56, 178, 163, 0.13);
     --danger: #e06c6c;
+    --ok: #7cc494;
     --accent-inverse: #0f766e;
     --danger-inverse: #b91c1c;
     --diff-add-bg: rgba(56, 178, 163, 0.1);
@@ -1222,10 +1229,53 @@ button:focus-visible,
   font-family: var(--font-mono);
   margin-bottom: 2px;
 }
+.cm-queryblock-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+/* The rows' distribution over their state field (views/blockrow.ts's stateSummary):
+   one item per step that has rows, then a bar of the done and the active shares */
+.cm-queryblock-dist {
+  display: inline-flex;
+  gap: 10px;
+  font-family: var(--font-ui);
+  color: var(--fg-muted);
+}
+.cm-queryblock-dist-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cm-queryblock-dist-item svg {
+  width: 13px;
+  height: 13px;
+}
+.cm-queryblock-bar {
+  display: flex;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--bg-active);
+  margin: 0 6px 6px;
+}
+.cm-queryblock-bar i {
+  display: block;
+  height: 100%;
+}
+.cm-queryblock-bar-done {
+  background: var(--state-done);
+}
+.cm-queryblock-bar-active {
+  background: var(--state-active);
+}
+/* A row: the state glyph, the words, the chips, the note (views/blockrow.ts decides
+   which of a block's metadata is words and which a chip) */
 .cm-queryblock-row {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   text-align: left;
   padding: 3px 6px;
   border-radius: 4px;
@@ -1235,6 +1285,29 @@ button:focus-visible,
 .cm-queryblock-row:hover {
   background: var(--bg-hover);
 }
+.cm-queryblock-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.cm-queryblock-glyph {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+}
+.cm-queryblock-glyph svg {
+  width: 100%;
+  height: 100%;
+}
+.cm-queryblock-glyph-none {
+  width: 4px;
+}
+.cm-queryblock-clickable {
+  cursor: pointer;
+}
+.cm-queryblock-clickable:hover {
+  filter: brightness(1.15);
+}
 .cm-queryblock-text {
   flex: 1;
   min-width: 0;
@@ -1242,10 +1315,26 @@ button:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A row at its last step reads as finished: the words step back, no strike (that stays the editor's done-task convention) */
+.cm-queryblock-row-done .cm-queryblock-text {
+  color: var(--fg-muted);
+}
+.cm-queryblock-chips {
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  max-width: 55%;
+  overflow: hidden;
+}
 .cm-queryblock-note {
   flex-shrink: 0;
   font-size: var(--fs-xs);
   color: var(--accent);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cm-queryblock-empty {
   color: var(--fg-faint);
@@ -1277,13 +1366,86 @@ button:focus-visible,
   font-weight: 400;
   color: var(--fg-faint);
 }
-.cm-queryblock-row-nonote .cm-queryblock-note {
-  display: none;
+.cm-queryblock-group-empty > summary {
+  color: var(--fg-faint);
+  font-weight: 500;
 }
 .cm-queryblock-error {
   color: var(--danger);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
+}
+/* The chip family of chips.ts: a field (`key: value`), a state (the glyph, the value, the
+   step's tone), a tag (the hash faded), a date (the icon). Query rows build these; the
+   editor's and the board's chips are the same shapes under their own class names */
+.vchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--bg-hover);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 1px 6px 2px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.vchip-key {
+  color: var(--fg-faint);
+}
+.vchip-key::after {
+  content: ":";
+}
+.vchip-tag {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.vchip-hash {
+  opacity: 0.55;
+  margin-right: -2px;
+}
+.vchip-date {
+  color: var(--fg-muted);
+}
+.vchip-date svg {
+  width: 0.9em;
+  height: 0.9em;
+}
+.vchip-overdue {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+.vchip-glyph {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.vchip-glyph svg {
+  width: 100%;
+  height: 100%;
+}
+.vchip-state {
+  padding-left: 4px;
+}
+.vchip-tone-idle {
+  color: var(--state-idle);
+}
+.vchip-tone-active {
+  color: var(--state-active);
+}
+.vchip-tone-done {
+  color: var(--state-done);
+}
+.vchip-state.vchip-tone-idle .vchip-val,
+.vchip-state.vchip-tone-done .vchip-val {
+  color: var(--fg-muted);
+}
+.vchip-state.vchip-tone-active .vchip-val {
+  color: var(--fg);
 }
 .cm-lp-strike {
   text-decoration: line-through;
@@ -1313,6 +1475,12 @@ button:focus-visible,
 .cm-lp-checkbox:checked {
   background: var(--accent);
   border-color: var(--accent);
+}
+/* `[/]` in progress: the box half-filled from the bottom — the middle step of the state
+   glyph (chips.ts), so the editor's checkbox and a row's glyph read the same */
+.cm-lp-checkbox:indeterminate {
+  border-color: var(--accent);
+  background: linear-gradient(to top, var(--accent) 50%, transparent 50%);
 }
 .cm-lp-checkbox:checked::after {
   content: "";
@@ -1361,6 +1529,11 @@ button:focus-visible,
   padding: 1px 7px 2px;
   font-size: 0.85em;
 }
+/* The `#` of a tag stays (it is what makes the word a tag on disk, and what was typed)
+   but steps back, so the name carries the capsule — the same fade as a row's tag chip */
+.cm-lp-tag-hash {
+  opacity: 0.55;
+}
 /* A date marker on a task line that does not parse: the parser silently treats it as no date, and this draws the warning */
 .cm-lp-baddate {
   text-decoration: underline wavy var(--danger);
@@ -1391,6 +1564,46 @@ button:focus-visible,
 .cm-lp-datechip-overdue {
   color: var(--danger);
 }
+/* The other attribute chips of a task line, each kind in its tone (the same colour logic
+   as Agenda's chips): a start date and a done stamp in the go colour, the scheduled day
+   in the accent, what presses — an urgent priority, a lock still shut — in danger, the
+   rest muted; a chip with no value (a priority, "removed once done") is its icon alone */
+.cm-lp-datechip-bare svg {
+  margin-right: 0;
+}
+.cm-lp-attr-start,
+.cm-lp-attr-done {
+  color: var(--ok);
+}
+.cm-lp-attr-scheduled {
+  color: var(--accent);
+}
+.cm-lp-attr-urgent {
+  color: var(--danger);
+}
+.cm-lp-attr-faint,
+.cm-lp-attr-cancelled,
+.cm-lp-attr-created {
+  color: var(--fg-faint);
+}
+/* `[-]` cancelled: the box crossed out, faint — closed, but not by being done */
+.cm-lp-checkbox-cancelled {
+  border-color: var(--fg-faint);
+}
+.cm-lp-checkbox-cancelled::before,
+.cm-lp-checkbox-cancelled::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 50%;
+  height: 1.5px;
+  background: var(--fg-faint);
+  transform: rotate(45deg);
+}
+.cm-lp-checkbox-cancelled::after {
+  transform: rotate(-45deg);
+}
 /* An inline `key:: value` field as a chip (the key muted, the value plain); the source
    `key::` is faint while the cursor is on it */
 .cm-lp-field,
@@ -1411,6 +1624,47 @@ button:focus-visible,
 .cm-lp-field-key::after,
 .md-body .md-field-key::after {
   content: ":";
+}
+/* A state field's chip (fields.ts's stateField): the glyph before the key, in the step's tone */
+.cm-lp-field-glyph,
+.md-body .md-field-glyph {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  vertical-align: -0.12em;
+  margin-right: 4px;
+}
+.cm-lp-field-glyph svg,
+.md-body .md-field-glyph svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.cm-lp-field-state,
+.md-body .md-field-state {
+  padding-left: 5px;
+}
+.cm-lp-field-state.chip-tone-idle,
+.cm-lp-field-state.chip-tone-done,
+.md-body .md-field-state.chip-tone-idle,
+.md-body .md-field-state.chip-tone-done {
+  color: var(--fg-muted);
+}
+.cm-lp-field-state.chip-tone-active,
+.md-body .md-field-state.chip-tone-active {
+  color: var(--fg);
+}
+.cm-lp-field-state.chip-tone-idle .cm-lp-field-glyph,
+.md-body .md-field-state.chip-tone-idle .md-field-glyph {
+  color: var(--state-idle);
+}
+.cm-lp-field-state.chip-tone-active .cm-lp-field-glyph,
+.md-body .md-field-state.chip-tone-active .md-field-glyph {
+  color: var(--state-active);
+}
+.cm-lp-field-state.chip-tone-done .cm-lp-field-glyph,
+.md-body .md-field-state.chip-tone-done .md-field-glyph {
+  color: var(--state-done);
 }
 .cm-lp-field-src {
   color: var(--fg-muted);

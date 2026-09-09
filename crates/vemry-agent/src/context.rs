@@ -328,17 +328,27 @@ fn resolve_view(vault: &Vault, label: &str, query: &serde_json::Value, filtered:
     for h in &hits {
         let note = h.note.as_str().strip_suffix(".md").unwrap_or(h.note.as_str());
         let mut meta = String::new();
-        if let vemry_core::BlockKind::Task { state, due, scheduled } = &h.block.kind {
+        if let vemry_core::BlockKind::Task { state, due, scheduled, start, priority, depends_on, .. } = &h.block.kind {
             meta.push_str(match state {
                 vemry_core::TaskState::Todo => " [todo]",
                 vemry_core::TaskState::Doing => " [doing]",
                 vemry_core::TaskState::Done => " [done]",
+                vemry_core::TaskState::Cancelled => " [cancelled]",
             });
-            if let Some(d) = due {
-                meta.push_str(&format!(" due {d}"));
+            if !priority.is_normal() {
+                meta.push_str(&format!(" priority {}", priority.as_str()));
+            }
+            if let Some(d) = start {
+                meta.push_str(&format!(" start {d}"));
             }
             if let Some(d) = scheduled {
                 meta.push_str(&format!(" scheduled {d}"));
+            }
+            if let Some(d) = due {
+                meta.push_str(&format!(" due {d}"));
+            }
+            if !depends_on.is_empty() {
+                meta.push_str(&format!(" blocked-by {}", depends_on.join(",")));
             }
         }
         let first: String = h.block.content.lines().next().unwrap_or("").chars().take(160).collect();

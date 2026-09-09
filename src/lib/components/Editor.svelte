@@ -26,7 +26,7 @@
   import { agent } from "$lib/stores/agent.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { toast } from "$lib/stores/toast.svelte";
-  import { api, SELECTION_MAX_CHARS, trimLoneSurrogate, type BlockQuery, type BlockSelector } from "$lib/api";
+  import { type TaskState, api, SELECTION_MAX_CHARS, trimLoneSurrogate, type BlockHit, type BlockQuery, type BlockSelector } from "$lib/api";
   import { planInsert, planCursorInsert, type InsertPlan } from "$lib/insert";
   import { extractOutline } from "$lib/outline";
   import { countWords } from "$lib/stats";
@@ -49,8 +49,11 @@
     type ReviewStep,
   } from "$lib/editor/provenance";
   import { flashRange } from "$lib/editor/flash";
-  import { declaredField, fieldValueKind, scanFields, setFieldValue } from "$lib/fields";
-  import { DATE_FIELDS, rescheduleLine, TASK_LINE_RE, type DateField } from "$lib/views/tasks";
+  import { declaredField, fieldValueKind, scanFields, setFieldValue, stateField, stateStepOf } from "$lib/fields";
+  import { DATE_FIELDS, rescheduleLine, TASK_LINE_RE, type DateField, updateTask } from "$lib/views/tasks";
+  import { commitTaskWrite } from "$lib/views/taskwrite";
+  import { writeBlockField } from "$lib/views/fieldwrite";
+  import type { RowChipClick } from "$lib/editor/queryblock";
   import TaskDateMenu from "./views/TaskDateMenu.svelte";
   import FieldValueMenu from "./FieldValueMenu.svelte";
   import { types } from "$lib/stores/types.svelte";
@@ -88,8 +91,20 @@
   /** The date menu raised by a chip: which line and key it edits. */
   let fieldMenu = $state<{ x: number; y: number; pos: number; key: string; current?: string; field: DateField } | null>(null);
   /** The value menu raised by any other chip: the candidates (the block types' declared
-   *  values first, then the vault's), and whether the input is numeric. */
-  let valueMenu = $state<{ x: number; y: number; pos: number; key: string; current: string; values: string[]; number: boolean } | null>(null);
+   *  values first, then the vault's), whether the input is numeric, and the vocabulary
+   *  when the key is a state field. `pos` is the chip's line in this editor; a chip on a
+   *  query row carries its `hit` instead, and the pick is written to that block's note. */
+  let valueMenu = $state<{
+    x: number;
+    y: number;
+    pos: number;
+    hit?: BlockHit;
+    key: string;
+    current: string;
+    values: string[];
+    number: boolean;
+    state: string[] | null;
+  } | null>(null);
   /** How many candidate values the menu lists at most. */
   const MENU_VALUES_MAX = 12;
 
@@ -109,6 +124,27 @@
     if (next === line.text) return;
     view.dispatch({ changes: { from: line.from, to: line.to, insert: next }, userEvent: "input.field" });
   }
+  /** The value menu's candidates for a key: the declared values first, then the vault's,
+   *  deduplicated and capped; numeric when the type says so or the value is a number; and
+   *  the vocabulary when the key is a state field. Shared by an editor chip and a query
+   *  row's chip, so the two menus cannot disagree. */
+  async function valueMenuFor(key: string, value: string, at: { x: number; y: number }) {
+    const spec = declaredField(types.enabled, key);
+    const seen = (await currentFieldStats()).find((s) => s.key.toLowerCase() === key.toLowerCase())?.values ?? [];
+    const values = [...new Set([...spec.values.map((v) => v.value), ...seen])].slice(0, MENU_VALUES_MAX);
+    const number = spec.kind === "number" || (value !== "" && fieldValueKind(value) === "number");
+    return { x: at.x, y: at.y, key, current: value, values, number, state: stateField(types.enabled, key) };
+  }
+  /** A query row's chip pick, written to the row's block in its own note (the task
+   *  views' funnel: the dirty guard, a stale span requeries). The index refresh that
+   *  follows the write re-runs every query block on its own. */
+  const writeRowField = (hit: BlockHit, key: string, value: string | null) =>
+    commitTaskWrite(hit, t("queryBlock.act.setField"), () => writeBlockField(hit, key, value), requeryBlocks);
+  /** A stale span: the query blocks re-run now rather than at the next index refresh
+   *  (a fresh key, distinct from any index version, so the widgets do rebuild). */
+  async function requeryBlocks() {
+    view?.dispatch({ effects: queryRefresh.of(-Date.now()) });
+  }
   function applyFieldDate(date: string | null) {
     const m = fieldMenu;
     fieldMenu = null;
@@ -117,7 +153,9 @@
   function applyFieldValue(value: string | null) {
     const m = valueMenu;
     valueMenu = null;
-    if (m) writeField(m, value);
+    if (!m) return;
+    if (m.hit) void writeRowField(m.hit, m.key, value);
+    else writeField(m, value);
   }
   let loadedFor = -1;
 
@@ -1157,20 +1195,28 @@
       onFieldChip: async (_v: EditorView, pos: number, key: string, value: string, at: { x: number; y: number }) => {
         const spec = declaredField(types.enabled, key);
         if (key in DATE_FIELDS || spec.kind === "date" || fieldValueKind(value) === "date") {
-          fieldMenu = { x: at.x, y: at.y, pos, key, current: value || undefined, field: key === "scheduled" ? "scheduled" : "due" };
+          fieldMenu = { x: at.x, y: at.y, pos, key, current: value || undefined, field: (key in DATE_FIELDS ? key : "due") as DateField };
           return;
         }
-        const seen = (await currentFieldStats()).find((s) => s.key.toLowerCase() === key.toLowerCase())?.values ?? [];
-        const values = [...new Set([...spec.values.map((v) => v.value), ...seen])].slice(0, MENU_VALUES_MAX);
-        const number = spec.kind === "number" || (value !== "" && fieldValueKind(value) === "number");
-        valueMenu = { x: at.x, y: at.y, pos, key, current: value, values, number };
+        valueMenu = { ...(await valueMenuFor(key, value, at)), pos };
       },
+      // A state field's chip draws its step (the same vocabulary the menu lists)
+      fieldState: (key: string, value: string) => stateStepOf(types.enabled, key, value),
       blockHost: isNote ? blockHost : null,
       embedHost: isNote ? embedHost : null,
       queryHost: isNote
         ? {
             runQuery: (q: BlockQuery) => api.queryBlocks(q),
-            openNote: (target: string) => void vault.openNote(target),
+            // a row lands on its block (Agenda's jump), or on the note when the widget has no offset
+            openNote: (target: string, byteStart?: number, content?: string) =>
+              void (byteStart === undefined ? vault.openNote(target) : vault.openBlockAt(target, byteStart, content)),
+            blockTypes: () => types.enabled,
+            // a row's chip raises the same value menu as an editor chip; the pick goes to the row's note
+            onRowChip: async (c: RowChipClick) => {
+              valueMenu = { ...(await valueMenuFor(c.key, c.value, c.at)), pos: 0, hit: c.hit };
+            },
+            onRowState: (hit: BlockHit, state: TaskState) =>
+              void commitTaskWrite(hit, t("task.act.state"), () => updateTask(hit, { state }), requeryBlocks),
           }
         : null,
       runHost: isNote ? { evalBlock: (code: string, params: LabParams | null) => api.scriptEvalBlock(code, path, params) } : null,
@@ -1350,6 +1396,7 @@
     current={valueMenu.current}
     values={valueMenu.values}
     number={valueMenu.number}
+    steps={valueMenu.state}
     onpick={applyFieldValue}
     onclose={() => (valueMenu = null)}
   />

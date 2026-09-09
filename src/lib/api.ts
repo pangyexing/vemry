@@ -50,11 +50,38 @@ export interface SearchHit {
   score: number;
 }
 
+/** A task's checkbox (mirrors vemry-core's `TaskState`): `[ ]`, `[/]`, `[x]`, `[-]`. */
+export type TaskState = "todo" | "doing" | "done" | "cancelled";
+/** A task's priority (mirrors `Priority`); `normal` is the unwritten default and never serialised. */
+export type Priority = "highest" | "high" | "normal" | "low" | "lowest";
+
 export type BlockKind =
   | { type: "paragraph" }
   | { type: "heading"; level: number }
   | { type: "list_item"; indent: number; ordered: boolean }
-  | { type: "task"; state: "todo" | "doing" | "done"; due?: string; scheduled?: string }
+  | {
+      type: "task";
+      state: TaskState;
+      due?: string;
+      scheduled?: string;
+      start?: string;
+      created?: string;
+      /** ✅ — the day it was ticked. */
+      done?: string;
+      /** ❌ — the day it was cancelled. */
+      cancelled?: string;
+      priority?: Priority;
+      /** 🔁 — the rule's text as written. */
+      repeat?: string;
+      /** 🚮 — the line is removed once done. */
+      delete_on_done?: boolean;
+      /** 🆔 — the handle other tasks depend on. */
+      task_id?: string;
+      /** ⛔ — task ids that must be closed first. */
+      depends_on?: string[];
+      /** 🕐 — minutes. */
+      estimate?: number;
+    }
   | { type: "claim" }
   | { type: "evidence"; supports: string[] }
   | { type: "code_block"; lang: string }
@@ -155,7 +182,7 @@ export interface BlockQuery {
   note?: string;
   tag?: string;
   text?: string;
-  task_state?: "todo" | "doing" | "done";
+  task_state?: TaskState;
   /** `YYYY-MM-DD` — tasks due on or before this date (mirrors Rust `NaiveDate`). */
   due_before?: string;
   /** Field conditions (all must hold): flat strings, typed objects, or a list of either. */

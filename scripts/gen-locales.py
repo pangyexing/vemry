@@ -607,7 +607,23 @@ add("outline.", {
 # ---------------------------------------------------------------- tasks (Agenda + Board)
 add("task.", {
     "field.due": ("due date", "截止日期"),
-    "field.scheduled": ("start date", "开始日期"),
+    "field.scheduled": ("scheduled date", "排期日期"),
+    "field.start": ("start date", "开始日期"),
+    "field.created": ("created", "创建日期"),
+    "field.done": ("completed on", "完成日期"),
+    "field.cancelled": ("cancelled on", "取消日期"),
+    # The four steps of a priority around the unwritten default
+    "priority.highest": ("urgent", "紧急"),
+    "priority.high": ("important", "重要"),
+    "priority.low": ("later", "以后"),
+    "priority.lowest": ("someday", "有空再说"),
+    # The chips of the other attributes (the editor's tooltips, Agenda's chips)
+    "chip.repeat": ("repeats {rule}", "重复 {rule}"),
+    "chip.deleteOnDone": ("removed once done", "完成即弃"),
+    "chip.id": ("id {id}", "编号 {id}"),
+    "chip.blockedBy": ("waiting on {ids}", "等待 {ids}"),
+    "chip.blocked": ("blocked", "受阻"),
+    "chip.estimate": ("estimate {v}", "估时 {v}"),
     "overdue_one": ("{n} day overdue", "逾期 {n} 天"),
     "overdue_other": ("{n} days overdue", "逾期 {n} 天"),
     "toggleDone": ("Toggle done", "切换完成状态"),
@@ -623,7 +639,7 @@ add("task.", {
     "empty1": ("No tasks yet. Write ", "没有任务。用 "),
     "empty2": (" in a note to create one; ", " 语法在笔记里创建；"),
     "empty3": (" means in progress, and ", " 表示进行中，"),
-    "empty4": (" is a start date.", " 是开始日期。"),
+    "empty4": (" is the day it is planned for.", " 是排期日期。"),
     "noMatch": ("No tasks match “{query}”.", "没有匹配「{query}」的任务。"),
     "dirtyGuard": ("This note has unsaved changes — press {key} to save before {action}",
                    "当前笔记有未保存的修改，请先 {key} 保存再{action}"),
@@ -637,6 +653,7 @@ add("task.", {
     "menu.markDoing": ("Mark in progress", "标记进行中"),
     "menu.markBackTodo": ("Mark back to to-do", "标回待办"),
     "menu.markDone": ("Mark done", "标记完成"),
+    "menu.markCancelled": ("Mark cancelled", "标记取消"),
     "menu.reopen": ("Reopen", "重新打开"),
     "menu.remove": ("Remove task", "移除任务"),
     "menu.removeConfirm": ("Remove it? The line is deleted from the note.", "确认移除？将从笔记原文删除"),
@@ -647,6 +664,8 @@ add("agenda.", {
     "today": ("Today", "今天"),
     "week": ("Next 7 days", "未来 7 天"),
     "later": ("Later", "更晚"),
+    "future": ("Not started yet", "未到开始日"),
+    "estimate": ("{v} planned", "估时 {v}"),
     "doing": ("In progress", "进行中"),
     "nodate": ("No date", "无日期"),
     "done": ("Done", "已完成"),
@@ -1917,6 +1936,8 @@ add("queryBlock.", {
     "kind.private": ("Private blocks", "私密块"),
     "querying": ("Querying…", "查询中…"),
     "hits": ("vemry-query · {n} hits", "vemry-query · {n} 条"),
+    # The dirty guard's wording for a write from a query row's chip
+    "act.setField": ("changing the field", "修改字段"),
     "noHits": ("No matches", "无匹配"),
 })
 
@@ -1990,6 +2011,8 @@ add("field.", {
     "fillHint": ("Click to fill in", "点击填写"),
     "enterValue": ("Type a value", "输入取值"),
     "remove": ("Remove field", "移除字段"),
+    # A state field (a `type: state` key of a block type): the menu's first entry moves to the next step
+    "advance": ("Advance to {value}", "推进到 {value}"),
 })
 
 add("embed.", {

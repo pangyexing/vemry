@@ -19,7 +19,10 @@
 import { t } from "$lib/i18n/i18n.svelte";
 import type { BlockHit } from "$lib/api";
 import { cmpMissingLast, cmpValue } from "$lib/views/queryrows";
-import { bySource, DATE_FIELDS, type DateField, rowOf, type TaskEdit, type TaskRow, whenOf } from "$lib/views/tasks";
+import type { BlockType } from "$lib/api";
+import { stateField, stateIndex } from "$lib/fields";
+import { stateGlyphSvg, type StateTone, stateTone } from "$lib/chips";
+import { isClosed, TASK_ATTR_KEYS, bySource, DATE_FIELDS, type DateField, rowOf, type TaskEdit, type TaskRow, whenOf } from "$lib/views/tasks";
 
 type ColumnId = "overdue" | "today" | "scheduled" | "unscheduled" | "done";
 
@@ -36,8 +39,16 @@ export interface Card extends TaskRow {
   tags: string[];
   /** The task's inline fields, lowercase key → first value (the date fields excluded: they are the chips). */
   fields: Record<string, string>;
-  /** The field chips a card shows (at most two). */
-  fieldChips: [string, string][];
+  /** The field chips a card shows (at most two): the key, the value, and — when the key
+   *  is a state field — the value's step, for the glyph. */
+  fieldChips: FieldChipSpec[];
+}
+
+export interface FieldChipSpec {
+  key: string;
+  value: string;
+  step?: number;
+  of?: number;
 }
 
 /** The semantic level of a column header's colour dot, which the view maps onto the existing tokens (danger/accent/fg-muted/fg-faint). */
@@ -51,6 +62,9 @@ interface ColumnDef {
   drop: boolean;
   add: boolean;
   tone: ColumnTone;
+  /** A state field's column: the step's glyph (chips.ts) stands in for the tone dot, in the step's tone. */
+  glyph?: string;
+  glyphTone?: StateTone;
 }
 
 /** The state columns in render order. "Overdue" is not a valid drop target
@@ -73,20 +87,37 @@ function columnTitle(id: ColumnId): string {
 
 /** The columns of a grouping: the five state columns, or the distinct values of the
  *  field among the cards (dates and numbers in their own order, the rest alphabetical
- *  — a query block's cmpValue) followed by "none". */
-export function columnDefsFor(mode: GroupMode, cards: Card[]): ColumnDef[] {
+ *  — a query block's cmpValue) followed by "none". Grouped by a state field (`types`
+ *  declare it), the columns are its vocabulary in the declared order, every value a
+ *  column whether or not a card sits in it, with each step's glyph; a value outside
+ *  the vocabulary follows them. */
+export function columnDefsFor(mode: GroupMode, cards: Card[], types: BlockType[] = []): ColumnDef[] {
   if (mode.by === "state") return COLUMNS.map((c) => ({ ...c, title: columnTitle(c.id) }));
   const key = mode.key.toLowerCase();
-  const values = [...new Set(cards.map((c) => c.fields[key]).filter((v): v is string => v !== undefined))].sort(cmpValue);
-  const defs: ColumnDef[] = values.map((v) => ({ id: v, title: v, drop: true, add: true, tone: "muted" }));
+  const declared = stateField(types, mode.key);
+  const seen = [...new Set(cards.map((c) => c.fields[key]).filter((v): v is string => v !== undefined))];
+  let defs: ColumnDef[];
+  if (declared) {
+    const extra = seen.filter((v) => stateIndex(declared, v) < 0).sort(cmpValue);
+    defs = declared.map((v, i) => ({ id: v, title: v, drop: true, add: true, tone: "muted", glyph: stateGlyphSvg(i, declared.length), glyphTone: stateTone(i, declared.length) }));
+    defs.push(...extra.map((v) => ({ id: v, title: v, drop: true, add: true, tone: "muted" as ColumnTone })));
+  } else {
+    defs = seen.sort(cmpValue).map((v) => ({ id: v, title: v, drop: true, add: true, tone: "muted" }));
+  }
   defs.push({ id: NONE_COL, title: t("kanban.col.none"), drop: true, add: true, tone: "faint" });
   return defs;
 }
 
-/** The column a card sits in under a grouping. */
-export function cardCol(card: Card, mode: GroupMode): string {
+/** The column a card sits in under a grouping. Under a state field the column is the
+ *  declared spelling of the card's value (a card that wrote `Done` sits in `done`). */
+export function cardCol(card: Card, mode: GroupMode, types: BlockType[] = []): string {
   if (mode.by === "state") return card.col;
-  return card.fields[mode.key.toLowerCase()] ?? NONE_COL;
+  const v = card.fields[mode.key.toLowerCase()];
+  if (v === undefined) return NONE_COL;
+  const declared = stateField(types, mode.key);
+  if (!declared) return v;
+  const i = stateIndex(declared, v);
+  return i < 0 ? v : declared[i];
 }
 
 /** The field keys the cards carry (for the group-by menu), most used first. */
@@ -104,7 +135,7 @@ export function quickTaskPayload(col: string, text: string, today: string, date?
   const t = text.trim();
   if (!t) return null;
   if (mode.by === "field") return col === NONE_COL ? `- [ ] ${t}` : `- [ ] ${t} [${mode.key}:: ${col}]`;
-  const due = (d: string) => `- [ ] ${t} ${DATE_FIELDS.due.emoji} ${d}`;
+  const due = (d: string) => `- [ ] ${t} ${DATE_FIELDS.due.emoji[0]} ${d}`;
   switch (col) {
     case "today":
       return due(today);
@@ -126,15 +157,15 @@ const MAX_FIELD_CHIPS = 2;
  *  the kanban's filter box filters at the card level: filtering reads tasks.ts's
  *  taskFilterKey (the same key as Agenda's), and building the cards should not rerun
  *  rowOf's chain of regexes on every keystroke. */
-export function cardsOf(hits: BlockHit[], today: string): Card[] {
-  return hits.map((hit) => cardOf(hit, today));
+export function cardsOf(hits: BlockHit[], today: string, types: BlockType[] = []): Card[] {
+  return hits.map((hit) => cardOf(hit, today, types));
 }
 
-function cardOf(hit: BlockHit, today: string): Card {
+function cardOf(hit: BlockHit, today: string, types: BlockType[]): Card {
   const r = rowOf(hit);
   const when = whenOf(r);
   const col: ColumnId =
-    r.state === "done"
+    isClosed(r.state)
       ? "done"
       : when && when < today
         ? "overdue"
@@ -146,7 +177,7 @@ function cardOf(hit: BlockHit, today: string): Card {
   const fields: Record<string, string> = {};
   for (const f of hit.block.fields ?? []) {
     const k = f.key.toLowerCase();
-    if (k in DATE_FIELDS || k in fields) continue;
+    if (TASK_ATTR_KEYS.has(k) || k in fields) continue;
     fields[k] = f.value;
   }
   return {
@@ -154,7 +185,13 @@ function cardOf(hit: BlockHit, today: string): Card {
     col,
     tags: [...new Set(hit.block.tags ?? [])].slice(0, MAX_TAGS),
     fields,
-    fieldChips: Object.entries(fields).slice(0, MAX_FIELD_CHIPS),
+    fieldChips: Object.entries(fields)
+      .slice(0, MAX_FIELD_CHIPS)
+      .map(([key, value]) => {
+        const declared = stateField(types, key);
+        const step = declared ? stateIndex(declared, value) : -1;
+        return step >= 0 ? { key, value: declared![step], step, of: declared!.length } : { key, value };
+      }),
   };
 }
 
@@ -209,13 +246,15 @@ const doingFirst = (a: Card, b: Card) => (a.state === "doing" ? 0 : 1) - (b.stat
  *  the key — it is the task being worked on, and it is orthogonal to every key. The
  *  missing-value and tie-break rules are cmpMissingLast's, the same implementation a
  *  query block's `sort` reads, so the two cannot drift. */
-function cardComparator(order: CardOrder): (a: Card, b: Card) => number {
+function cardComparator(order: CardOrder, declared: string[] | null = null): (a: Card, b: Card) => number {
   const k = order.key;
   const dir = order.desc ? -1 : 1;
   // The field key is a loop invariant: lowercasing it inside the comparator would run
   // twice per comparison
   const fieldKey = k.by === "field" ? k.key.toLowerCase() : "";
   const valueOf = (c: Card): string | undefined => (k.by === "date" ? whenOf(c) : k.by === "field" ? c.fields[fieldKey] : undefined);
+  // a sort by a state field reads its declared order (cmpDeclared), any other field cmpValue
+  const order_ = k.by === "field" ? declared : null;
   return (a, b) => {
     const doing = doingFirst(a, b);
     if (doing) return doing;
@@ -223,7 +262,7 @@ function cardComparator(order: CardOrder): (a: Card, b: Card) => number {
     if (k.by === "note") c = bySource(a, b);
     else if (k.by === "text") c = a.text.localeCompare(b.text);
     else if (k.by === "modified") c = a.modified - b.modified;
-    else return cmpMissingLast(a, b, valueOf(a), valueOf(b), dir, bySource);
+    else return cmpMissingLast(a, b, valueOf(a), valueOf(b), dir, bySource, order_);
     return c * dir || bySource(a, b);
   };
 }
@@ -235,18 +274,17 @@ function cardComparator(order: CardOrder): (a: Card, b: Card) => number {
  *  task's own change time, most recently changed first, the way a task manager's inbox
  *  and completed list read (Agenda's no-date and done groups read the same rule). Only
  *  the state grouping has these two columns. */
-function columnComparator(col: string, mode: GroupMode, order: CardOrder): (a: Card, b: Card) => number {
-  if (order.key.by !== "auto") return cardComparator(order);
+function columnComparator(col: string, mode: GroupMode, order: CardOrder, declared: string[] | null = null): (a: Card, b: Card) => number {
+  if (order.key.by !== "auto") return cardComparator(order, declared);
   const noDate = mode.by === "state" && (col === "unscheduled" || col === "done");
   return cardComparator(noDate ? MODIFIED_DESC : DATE_ASC);
 }
 
-export function columnsOf(cards: Card[], defs: ColumnDef[], mode: GroupMode, order: CardOrder): Record<string, Card[]> {
+export function columnsOf(cards: Card[], defs: ColumnDef[], mode: GroupMode, order: CardOrder, types: BlockType[] = []): Record<string, Card[]> {
   const cols: Record<string, Card[]> = Object.fromEntries(defs.map((d) => [d.id, [] as Card[]]));
-  // The grouping key lowercased once for the whole board rather than once per card
-  const lower = mode.by === "field" ? mode.key.toLowerCase() : "";
-  for (const c of cards) cols[mode.by === "state" ? c.col : (c.fields[lower] ?? NONE_COL)]?.push(c);
-  for (const [id, list] of Object.entries(cols)) list.sort(columnComparator(id, mode, order));
+  for (const c of cards) cols[cardCol(c, mode, types)]?.push(c);
+  const declared = mode.by === "field" ? stateField(types, mode.key) : null;
+  for (const [id, list] of Object.entries(cols)) list.sort(columnComparator(id, mode, order, declared));
   return cols;
 }
 
@@ -261,12 +299,12 @@ export function activeField(card: Card): DateField {
  *  null = no action (the same column, or invalid). In state mode "scheduled" needs a
  *  concrete date, which the view collects from a date menu first and passes in; in
  *  field mode the column is the value to write ("none" removes the field). */
-export function dropEdit(card: Card, col: string, today: string, date?: string, mode: GroupMode = { by: "state" }): TaskEdit | null {
-  if (col === cardCol(card, mode)) return null;
+export function dropEdit(card: Card, col: string, today: string, date?: string, mode: GroupMode = { by: "state" }, types: BlockType[] = []): TaskEdit | null {
+  if (col === cardCol(card, mode, types)) return null;
   if (mode.by === "field") return { field: { key: mode.key, value: col === NONE_COL ? null : col } };
   if (col === "overdue") return null;
   // Dragging out of "done" reopens it, merged into the same write-back as the target column's date action
-  const reopen = card.state === "done" ? ("todo" as const) : undefined;
+  const reopen = isClosed(card.state) ? ("todo" as const) : undefined;
   switch (col as ColumnId) {
     case "today":
       return { state: reopen, date: { field: activeField(card), value: today } };

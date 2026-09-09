@@ -2,12 +2,51 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
+/// The checkbox of a task line: `[ ]` to do, `[/]` in progress, `[x]` done, `[-]`
+/// cancelled. The checkbox is the one truth of the state; the ✅ / ❌ dates only say when.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskState {
     Todo,
     Doing,
     Done,
+    Cancelled,
+}
+
+impl TaskState {
+    /// Done or cancelled: the task is closed and leaves every list of open work.
+    pub fn is_closed(self) -> bool {
+        matches!(self, TaskState::Done | TaskState::Cancelled)
+    }
+}
+
+/// A task's priority: four steps around the unwritten default. Ordered, so a list sorts
+/// by it (`Highest` first when descending).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Priority {
+    Lowest,
+    Low,
+    #[default]
+    Normal,
+    High,
+    Highest,
+}
+
+impl Priority {
+    pub fn is_normal(&self) -> bool {
+        *self == Priority::Normal
+    }
+    /// The `priority::` spelling of the value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Priority::Lowest => "lowest",
+            Priority::Low => "low",
+            Priority::Normal => "normal",
+            Priority::High => "high",
+            Priority::Highest => "highest",
+        }
+    }
 }
 
 /// A `[[wikilink]]` occurrence. `target` is the note part; heading/block refs
@@ -85,12 +124,46 @@ pub enum BlockKind {
         indent: usize,
         ordered: bool,
     },
+    /// A checkbox line. The attributes after the text are read by `taskattrs.rs` (each
+    /// with an emoji and a `key::` spelling); every one is optional and left out of the
+    /// JSON when absent.
     Task {
         state: TaskState,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        /// 📅 / `due::` — the deadline.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         due: Option<NaiveDate>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        /// ⏳ / `scheduled::` — the day the task is planned for.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         scheduled: Option<NaiveDate>,
+        /// ⏩ / `start::` — the earliest day it can be started.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start: Option<NaiveDate>,
+        /// ➕ / `created::`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        created: Option<NaiveDate>,
+        /// ✅ / `completion::` — stamped when the checkbox is ticked.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        done: Option<NaiveDate>,
+        /// ❌ / `cancelled::` — stamped when the checkbox becomes `[-]`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cancelled: Option<NaiveDate>,
+        #[serde(default, skip_serializing_if = "Priority::is_normal")]
+        priority: Priority,
+        /// 🔁 / `repeat::` — the rule's text as written (`every 2 weeks when done`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repeat: Option<String>,
+        /// 🚮 / `onCompletion:: delete` — the line is removed once done.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        delete_on_done: bool,
+        /// 🆔 / `id::` — the handle other tasks depend on (not the block id).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        /// ⛔ / `dependsOn::` — task ids that must be closed first.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        depends_on: Vec<String>,
+        /// 🕐 / `estimate::` — in minutes (`30m`, `2h`, `1d` = 8h).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        estimate: Option<u32>,
     },
     Claim,
     Evidence {

@@ -7,6 +7,7 @@ icon: ?
 fields:
   - key: owner
   - key: status
+    type: state
     values: [open, answered]
     default: open
 ---
