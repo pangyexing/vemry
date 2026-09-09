@@ -605,9 +605,12 @@ impl AgentRunner {
                         }
                         if let Some(t) = &choice.delta.content {
                             if !t.is_empty() {
-                                *produced_ref = true;
                                 text_ref.push_str(t);
+                                // `produced` gates the transient retry, and what it guards is
+                                // the user seeing content twice: a withheld light response has
+                                // shown nothing, so it is still safe to resend
                                 if !withhold {
+                                    *produced_ref = true;
                                     on_event(AgentEvent::TextDelta { text: t.clone() });
                                 }
                             }
@@ -1394,7 +1397,9 @@ struct TurnWeb {
     pages: HashMap<String, Arc<FetchedPage>>,
 }
 
-/// A page's cache key: the URL's normalised spelling, so `…/a` and `…/a/` are one page.
+/// A page's cache key: the URL's normalised spelling (the scheme and host lowercased, an
+/// empty path made `/`, the escaping regularised), so one address written two ways is one
+/// page. A trailing slash is part of the path and is left alone: `…/a` and `…/a/` are two.
 /// An address that will not parse keys by itself (parse_read_urls has already refused
 /// those, but import_page's argument reaches here too).
 fn page_key(url: &str) -> String {

@@ -158,11 +158,14 @@ pub fn segment_pages(pages: &[String]) -> Vec<Segment> {
         let raw_lines: Vec<&str> = page.lines().map(str::trim).collect();
         let nonblank = raw_lines.iter().filter(|l| !l.is_empty()).count().max(1);
         let blank = raw_lines.len() - raw_lines.iter().filter(|l| !l.is_empty()).count();
-        // Double-spaced output: a blank line after nearly every line means nothing
-        let blanks_mean_nothing = blank * 10 >= nonblank * 4;
         let padded = raw_lines.iter().filter(|l| l.contains("  ")).count();
         // Most lines padded: the padding is justification, and its absence marks a paragraph's last line
         let justified_page = padded * 10 >= nonblank * 3;
+        // Double-spaced output: a blank line after nearly every line means nothing. Only on a
+        // page whose lines are wrapped body text — the padding says so — since a page of short
+        // lines standing on their own (a title page, a reference list) has the same ratio and
+        // there the blanks are real separators; ignoring them glues the whole page into one block
+        let blanks_mean_nothing = justified_page && blank * 10 >= nonblank * 4;
         let lines: Vec<(String, bool)> = raw_lines
             .iter()
             .map(|l| (l.split_whitespace().collect::<Vec<_>>().join(" "), l.contains("  ")))
@@ -209,13 +212,18 @@ pub fn segment_pages(pages: &[String]) -> Vec<Segment> {
             }
             let aside = is_aside_line(&text);
             let heading = !aside && para.len() == 1 && looks_like_heading(&text);
+            // The front matter ends at the abstract whether its heading stands on a line of
+            // its own or opens the abstract's first paragraph (`Abstract—…`) — the forms
+            // has_abstract looks for. Read off the paragraph, not the heading branch, or a
+            // page whose abstract opens inline never leaves the front matter and every
+            // segment after the title is an aside
+            if is_abstract_heading(&text) {
+                before_abstract = false;
+            }
             let (mut kind, mut prefix) = if heading { (SegKind::Heading { level: 2 }, "## ".to_string()) } else { (SegKind::Para, String::new()) };
             if aside {
                 kind = SegKind::Aside;
             } else if heading {
-                if is_abstract_heading(&text) {
-                    before_abstract = false;
-                }
                 if !seen_title {
                     seen_title = true;
                 } else if before_abstract {
@@ -318,7 +326,9 @@ fn is_reference_heading(text: &str) -> bool {
 
 fn is_abstract_heading(text: &str) -> bool {
     let l = text.trim().to_lowercase();
-    l == "abstract" || l == "abstract." || l == "摘要" || l.starts_with("abstract—") || l.starts_with("abstract:")
+    // `Abstract` alone, and the forms that open the abstract's own first paragraph
+    // (`Abstract—…`, `Abstract-…`, `Abstract: …`)
+    l == "摘要" || matches!(l.strip_prefix("abstract"), Some(rest) if rest.is_empty() || rest.starts_with(['.', ':', '：', '—', '–', '-']))
 }
 
 /// Mostly digits and punctuation: a table row, a figure's axis, a column of results.
@@ -616,6 +626,25 @@ mod tests {
         let v = segment_pages(&["To facilitate these residual connections, all sub-layers in the model, as well as the embedding\nlayers, produce outputs of dimension dmodel = 512.\n".to_string()]);
         assert_eq!(v.len(), 1, "{:?}", v.iter().map(|s| (&s.kind, &s.text)).collect::<Vec<_>>());
         assert_eq!(v[0].kind, SegKind::Para);
+    }
+
+    /// An abstract whose heading opens its own first paragraph (`Abstract—…`) still ends
+    /// the front matter, and a page of short standalone lines keeps its blank lines as the
+    /// paragraph separators they are.
+    #[test]
+    fn an_inline_abstract_heading_ends_the_front_matter() {
+        let p = "Deep Residual Learning for Image Recognition\n\nKaiming He\n\nMicrosoft Research\n\nAbstract\u{2014}Deeper neural networks are more difficult to train. We present a residual learning framework.\n\n1. Introduction\n\nDeep convolutional neural networks have led to a series of breakthroughs for image classification.\n";
+        let v = segment_pages(&[p.to_string()]);
+        let got: Vec<(&SegKind, &str)> = v.iter().map(|s| (&s.kind, s.text.as_str())).collect();
+        assert_eq!(got.len(), 6, "{got:?}");
+        assert_eq!(got[0].0, &SegKind::Heading { level: 2 });
+        assert_eq!(got[1].0, &SegKind::Aside, "author {got:?}");
+        assert_eq!(got[2].0, &SegKind::Aside, "address {got:?}");
+        // the abstract itself, and everything after it, is body text again
+        assert!(got[3].1.starts_with("Abstract\u{2014}Deeper") && got[3].0 == &SegKind::Para, "{got:?}");
+        assert_eq!(got[4].0, &SegKind::Heading { level: 2 }, "{got:?}");
+        assert_eq!(got[5].0, &SegKind::Para, "{got:?}");
+        assert!(v[3..].iter().all(|s| s.translate), "{got:?}");
     }
 
     #[test]

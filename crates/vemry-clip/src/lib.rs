@@ -411,11 +411,39 @@ fn is_cjk_punct(c: char) -> bool {
     CJK_PUNCT.contains(c)
 }
 
+/// Copy the delimited span opening at `at` (a run of backticks or dollars) into `out`
+/// verbatim, and answer where it ended; an unclosed opener is just its own characters.
+fn copy_span(chars: &[char], at: usize, out: &mut Vec<char>) -> usize {
+    let d = chars[at];
+    let run = chars[at..].iter().take_while(|&&c| c == d).count();
+    let mut j = at + run;
+    while j < chars.len() {
+        if chars[j] == d {
+            let r = chars[j..].iter().take_while(|&&c| c == d).count();
+            if r >= run {
+                out.extend(&chars[at..j + run]);
+                return j + run;
+            }
+            j += r;
+            continue;
+        }
+        j += 1;
+    }
+    out.extend(&chars[at..at + run]);
+    at + run
+}
+
 fn cjk_emphasis_line(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
     let mut out: Vec<char> = Vec::with_capacity(chars.len());
     let mut i = 0;
     while i < chars.len() {
+        // An inline code span or a `$…$` math span is content: copied through whole, the
+        // same spans soften_escapes skips. Without this a `。` inside one moves out of it
+        if chars[i] == '`' || chars[i] == '$' {
+            i = copy_span(&chars, i, &mut out);
+            continue;
+        }
         if chars[i] != '*' {
             out.push(chars[i]);
             i += 1;
@@ -725,29 +753,61 @@ fn table_tag_at(s: &str) -> Option<usize> {
     None
 }
 
-/// One start tag with its `class` attribute(s) removed: quoted (either quote) or bare
-/// values, the attribute name in any case.
+/// One start tag with its `class` attribute removed: quoted (either quote) or bare
+/// values, the attribute name in any case. The tag is walked attribute by attribute, so
+/// `class=` inside another attribute's value (`title="a class=b"`) is text — searching for
+/// the spelling instead would cut the tag in half there — and an attribute whose name
+/// merely ends in it (`data-class`) is not the one dropped.
 fn strip_class_attr(tag: &str) -> String {
+    let b = tag.as_bytes();
     let mut out = String::with_capacity(tag.len());
-    let mut rest = tag;
-    loop {
-        let lower = rest.to_ascii_lowercase();
-        let Some(at) = lower.find("class=").filter(|&at| at > 0 && lower.as_bytes()[at - 1].is_ascii_whitespace()) else {
-            out.push_str(rest);
-            return out;
-        };
-        out.push_str(rest[..at].trim_end());
-        let value = &rest[at + "class=".len()..];
-        let skip = match value.as_bytes().first() {
-            Some(&q @ (b'"' | b'\'')) => value[1..].find(q as char).map_or(value.len(), |e| e + 2),
-            _ => value.find(|c: char| c.is_ascii_whitespace() || c == '>').unwrap_or(value.len()),
-        };
-        let after = &value[skip..];
-        if !after.starts_with('>') && !after.starts_with("/>") && !after.is_empty() {
-            out.push(' ');
+    // the tag name (`<table`), up to the first space
+    let mut i = b.iter().position(|c| c.is_ascii_whitespace()).unwrap_or(b.len());
+    out.push_str(&tag[..i]);
+    while i < b.len() {
+        let from = i; // the whitespace before the attribute belongs to it
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
         }
-        rest = after;
+        if i >= b.len() || b[i] == b'>' || b[i] == b'/' {
+            out.push_str(&tag[from..]);
+            return out;
+        }
+        let name_start = i;
+        while i < b.len() && !b[i].is_ascii_whitespace() && !matches!(b[i], b'=' | b'>' | b'/') {
+            i += 1;
+        }
+        let name = &tag[name_start..i];
+        let mut j = i;
+        while j < b.len() && b[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if b.get(j) == Some(&b'=') {
+            j += 1;
+            while j < b.len() && b[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            match b.get(j) {
+                Some(&q @ (b'"' | b'\'')) => {
+                    j += 1;
+                    while j < b.len() && b[j] != q {
+                        j += 1;
+                    }
+                    j = (j + 1).min(b.len());
+                }
+                _ => {
+                    while j < b.len() && !b[j].is_ascii_whitespace() && b[j] != b'>' {
+                        j += 1;
+                    }
+                }
+            }
+            i = j;
+        }
+        if !name.eq_ignore_ascii_case("class") {
+            out.push_str(&tag[from..i]);
+        }
     }
+    out
 }
 
 /// A selection's DOM fragment → Markdown: the same htmd configuration as the
@@ -1148,6 +1208,10 @@ mod tests {
             unclass_tables(r#"<p class="a">x</p><TABLE id="t" class="ltx_tabular ltx_guessed_headers"><tr><td class="c">1</td></tr></TABLE><table class='x'/><tablet class="k">"#),
             r#"<p class="a">x</p><TABLE id="t"><tr><td class="c">1</td></tr></TABLE><table/><tablet class="k">"#
         );
+        // an attribute that merely ends in the name is not it, and the spelling inside
+        // another attribute's value is text — neither may cut the tag short
+        assert_eq!(unclass_tables(r#"<table data-class="a" class="ltx_guessed_headers"><tr>"#), r#"<table data-class="a"><tr>"#);
+        assert_eq!(unclass_tables(r#"<table title="a class=b" class="x" id=t><tr>"#), r#"<table title="a class=b" id=t><tr>"#);
         // a data table whose class says "header" survives the extraction with its rows
         let para = "<p>Recurrent neural networks, long short-term memory and gated recurrent neural networks in particular, have been firmly established as state of the art approaches in sequence modeling and transduction problems such as language modeling and machine translation.</p>".repeat(8);
         let html = format!(
@@ -1383,6 +1447,9 @@ mod tests {
         assert_eq!(cjk_emphasis("**分析。**"), "**分析。**");
         assert_eq!(cjk_emphasis("```\n**a。**b\n```"), "```\n**a。**b\n```");
         assert_eq!(cjk_emphasis("**。**当"), "**。**当");
+        // an inline code or math span is content: the punctuation inside it stays put
+        assert_eq!(cjk_emphasis("代码 `*p。*q` 结束"), "代码 `*p。*q` 结束");
+        assert_eq!(cjk_emphasis("公式 $a*b。*c$ 之后**分析。**当"), "公式 $a*b。*c$ 之后**分析**。当");
         assert_eq!(fragment_to_markdown("<p><strong>在本篇文章中，分析。</strong>当然</p>"), "**在本篇文章中，分析**。当然");
     }
 

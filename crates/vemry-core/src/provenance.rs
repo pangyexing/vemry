@@ -375,7 +375,7 @@ pub enum ProvenanceEntry {
         session: Option<String>,
         path: String,
         blocks: Vec<BlockStamp>,
-        /// The write's changed regions, so it can be put back (`plan_revert`);
+        /// The write's changed regions, so it can be put back (`plan_revert_ids`);
         /// absent on lines older than the field.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         hunks: Vec<Hunk>,

@@ -203,9 +203,13 @@ fn equation_lines(rows: &[String]) -> Option<Vec<String>> {
             if c.is_empty() {
                 continue;
             }
+            // Only a *display* formula makes a table an equation: `$$…$$`, or the
+            // `\displaystyle` an aligned pair is laid out with. A results table whose cells
+            // are inline `$0.5$` values is a table, and a stack of equations would lose it
+            let display = c.len() > 2 && c.starts_with('$') && c.ends_with('$') && (c.starts_with("$$") || c.contains("\\displaystyle"));
             if c.starts_with('(') && c.ends_with(')') && c[1..c.len() - 1].chars().all(|ch| ch.is_ascii_digit()) {
                 number = Some(c);
-            } else if c.starts_with('$') && c.ends_with('$') && c.len() > 2 {
+            } else if display {
                 let body = c.trim_matches('$').replace("\\displaystyle", "");
                 tex.push(body.trim().to_string());
             } else {
@@ -271,7 +275,13 @@ fn attach_figures(blocks: &mut Vec<Block>) {
         while k > 0 && taken < 6 {
             match &out[k - 1] {
                 Block::Image { .. } => {}
-                Block::Para(l) if l.len() == 1 && l[0].chars().count() <= 80 && !l[0].ends_with('.') => {}
+                // a half's label: a short fragment. A sentence above the image is body text
+                // and stays where it is, rather than disappearing into the figure's alt
+                Block::Para(l)
+                    if l.len() == 1
+                        && l[0].chars().count() <= 80
+                        && l[0].split_whitespace().count() <= 8
+                        && !l[0].trim_end().ends_with(['.', ':', '!', '?', '。', '：', '！', '？']) => {}
                 _ => break,
             }
             k -= 1;
@@ -321,7 +331,8 @@ fn attach_figures(blocks: &mut Vec<Block>) {
 }
 
 fn heading_matches(text: &str, words: &[&str]) -> bool {
-    let t = text.to_ascii_lowercase();
+    // a numbered section (`7 References`, `8. Acknowledgements`) is the same section
+    let t = text.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ').to_ascii_lowercase();
     words.iter().any(|w| t.starts_with(w))
 }
 
@@ -418,7 +429,10 @@ fn assemble(blocks: Vec<Block>, url: &str, title: &str, front: &[(String, String
     // the outline: one line per heading, the ids its section holds
     let mut outline: Vec<String> = Vec::new();
     let mut section_ids: Vec<String> = Vec::new();
-    let mut section_line = String::new();
+    // The note's own H1 heads the ids that come before the first section heading (a plain
+    // article's opening paragraph); without it they would be flushed with — and so read as
+    // belonging to — whichever heading came next
+    let mut section_line = format!("# {title}");
     let flush_section = |line: &mut String, ids: &mut Vec<String>, outline: &mut Vec<String>| {
         if line.is_empty() {
             return;
@@ -595,6 +609,25 @@ mod tests {
         assert!(o.contains("\n## Abstract — ^s0p1\n## 1 Introduction — ^s1p1…^s1p2\n## 3 Model Architecture — ^s3p1, ^fig1\n"), "{o}");
         assert!(o.contains("\n#### 3.2.2 Multi-Head Attention — ^s322p1…^s322p4, ^fig2\n"), "{o}");
         assert!(o.contains("\n## 4 Why Self-Attention — ^tab1\n"), "{o}");
+    }
+
+    /// The outline's sections: a block before the first heading belongs to the note's own
+    /// title, not to whichever heading came next; a numbered reference section still cuts
+    /// the tail; and a table of inline `$…$` values stays a table.
+    #[test]
+    fn the_outline_and_the_cuts_do_not_run_into_the_next_section() {
+        let i = compose_source_note("An opening paragraph.\n\n## Why\n\nBecause.\n", "https://a.io/x", "Post", &[]);
+        assert!(i.outline.contains("\n# Post — ^s0p1\n## Why — ^s0p2"), "{}", i.outline);
+
+        let c = compose_source_note(
+            "## 1 Intro\n\nBody text.\n\n| Model | Score |\n| --- | --- |\n| A | $0.5$ |\n\n## 7 References\n\n[1] Someone. A paper. 2016.\n",
+            "https://a.io/p",
+            "P",
+            &[],
+        );
+        assert!(!c.content.contains("References") && !c.content.contains("Someone"), "a numbered reference section is cut: {}", c.content);
+        assert_eq!((c.tables, c.equations), (1, 0), "a table of inline values is a table: {}", c.content);
+        assert!(c.content.contains("| A | $0.5$ |"), "{}", c.content);
     }
 
     #[test]
