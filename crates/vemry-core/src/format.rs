@@ -200,26 +200,29 @@ fn format_body(lines: &[&str], opts: &FormatOptions) -> String {
         }
         // display math: verbatim through the closing $$
         if let Some(after_open) = trimmed.strip_prefix("$$") {
-            let mut block = vec![line.to_string()];
             // `$$x$$`, `$$x$$ ^id` and `$$x$$ (3)` close on the line they open (a
             // one-line formula, whatever follows the closer); mirrors opensMathBlock
             // in src/lib/math.ts
-            let closed_same_line = after_open.contains("$$");
-            i += 1;
-            if !closed_same_line {
-                while i < lines.len() {
-                    let l = lines[i];
-                    block.push(l.to_string());
-                    i += 1;
-                    // the closer may carry the block's id (`$$ ^s321p2`), as
-                    // closesMathBlock in src/lib/math.ts reads it
-                    if crate::blockid::strip_anchor(l.trim_end()).trim().ends_with("$$") {
-                        break;
-                    }
-                }
+            let close = if after_open.contains("$$") {
+                Some(i)
+            } else {
+                // Otherwise the closer has to come before the paragraph ends, as
+                // mathBlocks in src/lib/editor/math.ts stops at the blank line: a `$$100
+                // is a lot` in a sentence opens nothing, where an unbounded search would
+                // swallow the rest of the note and leave it unformatted for good.
+                // The closer may carry the block's id (`$$ ^s321p2`), as closesMathBlock
+                // in src/lib/math.ts reads it
+                lines[i + 1..]
+                    .iter()
+                    .take_while(|l| !l.trim().is_empty())
+                    .position(|l| crate::blockid::strip_anchor(l.trim_end()).trim().ends_with("$$"))
+                    .map(|p| i + 1 + p)
+            };
+            if let Some(close) = close {
+                items.push((Kind::Verbatim, lines[i..=close].join("\n")));
+                i = close + 1;
+                continue;
             }
-            items.push((Kind::Verbatim, block.join("\n")));
-            continue;
         }
         // private and quote callouts: the whole quote run verbatim (the body is the user's or a citation)
         if let Some(quote_body) = trimmed.strip_prefix('>') {
@@ -707,6 +710,13 @@ mod tests {
         assert_eq!(fmt("[t](https://a.io/p#x) <https://b.io/#y>"), "[t](https://a.io/p#x) <https://b.io/#y>\n");
         // a hard break's two spaces stay
         assert_eq!(fmt("line one  \nline two"), "line one  \nline two\n");
+    }
+
+    #[test]
+    fn an_unclosed_dollar_pair_does_not_swallow_the_note() {
+        // `$$100` in a sentence is not a display block: the paragraph below it is still
+        // formatted (the same verdict mathBlocks reaches in src/lib/editor/math.ts)
+        assert_eq!(fmt("$$100 is a lot\n\nline one \nline two"), "$$100 is a lot\n\nline one\nline two\n");
     }
 
     #[test]

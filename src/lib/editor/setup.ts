@@ -20,7 +20,7 @@ import { slashCompletions } from "./slash";
 import { embedAt, embedExtension, openEmbedSource, type EmbedHost } from "./embed";
 import { provenanceExtension, type ProvenanceHost } from "./provenance";
 import { flashField } from "./flash";
-import { Highlight, highlightTag } from "./markdown-ext";
+import { Highlight, highlightTag, TaskStates } from "./markdown-ext";
 import { queryBlockExtension, type QueryHost } from "./queryblock";
 import { runBlockExtension, type RunHost } from "./runblock";
 import { blockSelection } from "./blocksel";
@@ -266,7 +266,7 @@ function buildState(opts: EditorOptions): EditorState {
     mode.push(
       noteFont,
       placeholder(t("editor.placeholder")),
-      markdown({ base: markdownLanguage, extensions: [Highlight], addKeymap: false }),
+      markdown({ base: markdownLanguage, extensions: [Highlight, TaskStates], addKeymap: false }),
       listKeymap,
       syntaxHighlighting(mdHighlight),
       livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage, onFieldChip: opts.onFieldChip, fieldState: opts.fieldState, openUrl: opts.openUrl }),
@@ -382,6 +382,9 @@ const emptyViewportGuard = EditorView.updateListener.of((update) => {
   if (v.viewport.from !== v.viewport.to || v.state.doc.length === 0) return;
   requestAnimationFrame(() => {
     if (v.viewport.from !== v.viewport.to) return;
-    v.scrollDOM.scrollTop = Math.max(0, v.contentHeight + v.documentTop - v.scrollDOM.clientHeight);
+    // the scroller's own numbers: documentTop is a screen coordinate (the content box's
+    // top, which is negative once scrolled) and does not belong in a scrollTop
+    const el = v.scrollDOM;
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
   });
 });

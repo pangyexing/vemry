@@ -20,7 +20,9 @@ export async function commitTaskWrite(
   hit: BlockHit,
   act: string,
   write: () => Promise<boolean>,
-  requery: () => Promise<void>,
+  /** Refresh the rows the write invalidated. A caller that only dispatches an effect
+   *  (a query block's requery) has nothing to await, so a plain function is enough. */
+  requery: () => void | Promise<void>,
 ): Promise<boolean> {
   if (hit.note === vault.currentPath && vault.dirty) {
     vault.error = t("task.dirtyGuard", { key: k("Mod+S"), action: act });

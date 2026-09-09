@@ -82,6 +82,9 @@ export const CALLOUT_TYPE_ICONS: Record<string, string> = {
  *  privacy badge. One drawing for the editor's widget and the read-only renderers. */
 export function calloutIconSvg(type: string, group: string): string {
   if (group === "private") return privacyGlyphSvg(15);
-  const paths = CALLOUT_TYPE_ICONS[type.toLowerCase()] ?? CALLOUT_ICONS[group] ?? CALLOUT_ICONS.info;
+  // hasOwn, not a bare lookup: the type is whatever the author typed, and a `[!constructor]`
+  // would otherwise resolve up the prototype chain and stringify a function into the <svg>
+  const own = <T,>(table: Record<string, T>, key: string) => (Object.hasOwn(table, key) ? table[key] : undefined);
+  const paths = own(CALLOUT_TYPE_ICONS, type.toLowerCase()) ?? own(CALLOUT_ICONS, group) ?? CALLOUT_ICONS.info;
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
 }

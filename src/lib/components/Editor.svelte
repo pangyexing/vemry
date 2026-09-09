@@ -104,6 +104,7 @@
     values: string[];
     number: boolean;
     state: string[] | null;
+    keyboard?: boolean;
   } | null>(null);
   /** How many candidate values the menu lists at most. */
   const MENU_VALUES_MAX = 12;
@@ -111,14 +112,19 @@
   /** A menu's pick lands on the line: a task's due/scheduled goes through rescheduleLine
    *  (it knows the emoji spellings); any other field is rewritten in place by
    *  setFieldValue, at the clicked chip (null removes it). An empty placeholder of a
-   *  date key (`[due:: ]`, from a block type) is filled in place too: the task-date
-   *  rewriter cannot see it and would leave it behind next to a fresh 📅. */
+   *  date key (`[due:: ]`, from a block type) is filled in place too, and so is a bare
+   *  `due:: 2026-08-20` — a field to the parser, not the task's date: the task-date
+   *  rewriter cannot see either and would leave it behind next to a fresh 📅. */
   function writeField(m: { pos: number; key: string }, value: string | null) {
     if (!view) return;
     const line = view.state.doc.lineAt(Math.min(m.pos, view.state.doc.length));
     const lower = m.key.toLowerCase();
-    const placeholder = scanFields(line.text, 0, { empty: true }).some((f) => f.value === "" && f.key.toLowerCase() === lower);
-    const isTaskDate = !placeholder && TASK_LINE_RE.test(line.text) && m.key in DATE_FIELDS;
+    const marks = scanFields(line.text, 0, { empty: true });
+    // the placeholder test is deliberately position-free: the `@due` flow raises the menu
+    // at the marker it just typed, not at the placeholder it is about to fill
+    const placeholder = marks.some((f) => f.value === "" && f.key.toLowerCase() === lower);
+    const clicked = marks.find((f) => f.key.toLowerCase() === lower && f.from === m.pos - line.from);
+    const isTaskDate = !placeholder && clicked?.form !== "bare" && TASK_LINE_RE.test(line.text) && m.key in DATE_FIELDS;
     const next = isTaskDate ? rescheduleLine(line.text, m.key as DateField, value) : setFieldValue(line.text, m.key, value, m.pos - line.from);
     focusEditor(view, line.from);
     if (next === line.text) return;
@@ -142,7 +148,7 @@
     commitTaskWrite(hit, t("queryBlock.act.setField"), () => writeBlockField(hit, key, value), requeryBlocks);
   /** A stale span: the query blocks re-run now rather than at the next index refresh
    *  (a fresh key, distinct from any index version, so the widgets do rebuild). */
-  async function requeryBlocks() {
+  function requeryBlocks() {
     view?.dispatch({ effects: queryRefresh.of(-Date.now()) });
   }
   function applyFieldDate(date: string | null) {
@@ -150,12 +156,21 @@
     fieldMenu = null;
     if (m) writeField(m, date);
   }
-  /** The date menu closed without a pick: a menu that had taken the keyboard gives the
-   *  focus back to the editor at the line it was raised on, so typing goes on there. */
+  /** A chip menu closed without a pick: a menu that had taken the keyboard gives the
+   *  focus back to the editor at the line it was raised on, so typing goes on there. A
+   *  menu raised from a query row edits another note and has no line here. */
+  function returnFocus(m: { keyboard?: boolean; pos: number; hit?: BlockHit } | null) {
+    if (m?.keyboard && !m.hit && view && !view.hasFocus) focusEditor(view, Math.min(m.pos, view.state.doc.length));
+  }
   function closeFieldMenu() {
     const m = fieldMenu;
     fieldMenu = null;
-    if (m?.keyboard && view && !view.hasFocus) focusEditor(view, Math.min(m.pos, view.state.doc.length));
+    returnFocus(m);
+  }
+  function closeValueMenu() {
+    const m = valueMenu;
+    valueMenu = null;
+    returnFocus(m);
   }
   function applyFieldValue(value: string | null) {
     const m = valueMenu;
@@ -505,11 +520,14 @@
       toast.push(t(plan.missed ? "prov.revertMissed" : "prov.noPendingHere"), "error");
       return;
     }
-    const changes = v.state.changes(plan.replacements.map((r) => ({ from: byteToChar(text, r.from), to: byteToChar(text, r.to), insert: r.insert })));
+    // the specs, not a ChangeSet: whenNotComposing may defer the dispatch past an IME
+    // composition that has since changed the document, and a ChangeSet built against the
+    // old length would be refused outright
+    const changes = plan.replacements.map((r) => ({ from: byteToChar(text, r.from), to: byteToChar(text, r.to), insert: r.insert }));
     const missed = plan.missed;
     // the run after the reverted one, carried across the edit
     const after = afterRuns(v.state, ids);
-    const next = after != null ? changes.mapPos(after, 1) : null;
+    const next = after != null ? v.state.changes(changes).mapPos(after, 1) : null;
     whenNotComposing(() => {
       if (view !== v) return;
       v.dispatch({ changes, annotations: Transaction.userEvent.of("prov.revert") });
@@ -1135,7 +1153,8 @@
     // ---- The document already open, reloaded from disk (an agent write landing, an edit in
     // another app, reloadCurrent): applied as one edit instead of a fresh state. The undo
     // stack survives it and ⌘Z takes the change back — the buffer's own history is the first
-    // "undo the AI" — and the cursor and the scroll stay put. Only the changed span is
+    // "undo the AI" — and the view is then brought onto the changed span
+    // (revealExternalChange). Only the changed span is
     // touched (the longest common prefix and suffix), so the marks the fields map through it
     // stay on their lines. The transaction's docChanged fires the same false onDirty as
     // resetDoc; finishLoad kills that timer the same way ----
@@ -1207,7 +1226,7 @@
           fieldMenu = { x: at.x, y: at.y, pos, key, current: value || undefined, field: (key in DATE_FIELDS ? key : "due") as DateField, keyboard: opts?.keyboard };
           return;
         }
-        valueMenu = { ...(await valueMenuFor(key, value, at)), pos };
+        valueMenu = { ...(await valueMenuFor(key, value, at)), pos, keyboard: opts?.keyboard };
       },
       // A state field's chip draws its step (the same vocabulary the menu lists)
       fieldState: (key: string, value: string) => stateStepOf(types.enabled, key, value),
@@ -1407,7 +1426,7 @@
     number={valueMenu.number}
     steps={valueMenu.state}
     onpick={applyFieldValue}
-    onclose={() => (valueMenu = null)}
+    onclose={closeValueMenu}
   />
 {/if}
 

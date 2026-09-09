@@ -130,7 +130,8 @@ export function mathPlain(tex: string): string {
       .replace(/\\(?:mathrm|mathbf|mathit|mathcal|text|operatorname|boldsymbol)\s*\{([^{}]*)\}/g, "$1");
   }
   s = s.replace(/\\(?:left|right|quad|qquad|displaystyle)\b|\\[,;!]/g, " ");
-  s = s.replace(/\\([A-Za-z]+)/g, (_, name: string) => PLAIN_SYMBOLS[name] ?? name);
+  // hasOwn: `\toString` must stay its own name, not resolve to Object.prototype's method
+  s = s.replace(/\\([A-Za-z]+)/g, (_, name: string) => (Object.hasOwn(PLAIN_SYMBOLS, name) ? PLAIN_SYMBOLS[name] : name));
   s = s.replace(/[{}]/g, "");
   return s.replace(/\s+/g, " ").trim();
 }

@@ -20,7 +20,7 @@ import type { BlockHit, BlockQuery, BlockType, TaskState } from "$lib/api";
 import { fencedCodeText } from "./fenced";
 import { selectionTouches } from "./reveal";
 import { foldRangesOf, insideFold } from "./table";
-import { dateFieldLabel, dateIconSvg, dueLabel, localDate, nextTaskState } from "$lib/views/tasks";
+import { dateFieldLabel, dateIconSvg, dueLabel, localDate, nextTaskState, taskToggleTitle } from "$lib/views/tasks";
 import { stateField } from "$lib/fields";
 import { dateChip, fieldChip, stateGlyph, stateGlyphSvg, stateTone, tagChip } from "$lib/chips";
 import { type BlockRow, blockRowOf, rowStep, stateSummary } from "$lib/views/blockrow";
@@ -199,7 +199,7 @@ class QueryWidget extends WidgetType {
     const step = rowStep(row);
     if (step) el.classList.add(`cm-queryblock-row-${stateTone(step.step, step.of)}`);
     if (row.state) {
-      const g = stateGlyph(step!.step, step!.of, t("task.toggleDone"), step!.cancelled);
+      const g = stateGlyph(step!.step, step!.of, taskToggleTitle(row.state), step!.cancelled);
       g.classList.add("cm-queryblock-glyph");
       if (host.onRowState) {
         g.classList.add("cm-queryblock-clickable");

@@ -54,6 +54,14 @@ export function nextTaskState(state: TaskState, alt = false): TaskState {
   return isClosed(state) ? "todo" : "done";
 }
 
+/** The tooltip of a clickable checkbox or state glyph: what the **plain** click does,
+ *  which is nextTaskState's answer — a cancelled task reopens, everything else toggles
+ *  done. Read by the editor's checkbox and a query row's glyph alike, so the two cannot
+ *  promise different things. */
+export function taskToggleTitle(state: TaskState): string {
+  return t(state === "cancelled" ? "task.menu.reopen" : "task.toggleDone");
+}
+
 /* ---------------------------------------------------------------- the attribute table */
 
 export type DateField = "due" | "scheduled" | "start" | "created" | "done" | "cancelled";

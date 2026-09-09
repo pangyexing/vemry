@@ -261,7 +261,11 @@ class EmbedWidget extends WidgetType {
           };
           for (const img of imgs) {
             const target = img.dataset.asset ?? "";
-            void (this.host.loadAsset?.(target) ?? Promise.resolve(null)).then((u) => {
+            // The rejection is caught rather than left to float: a loader that throws must
+            // still settle, or the count never reaches zero and the body keeps the stale
+            // minHeight it reserved for the figure
+            const url = this.host.loadAsset?.(target) ?? Promise.resolve(null);
+            void url.catch(() => null).then((u) => {
               if (u) {
                 img.addEventListener("load", settled, { once: true });
                 img.addEventListener("error", settled, { once: true });

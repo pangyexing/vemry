@@ -75,6 +75,26 @@ export function blockText(hit: BlockHit): string {
  *  field's as a state chip with its step, the rest as plain chips capped at
  *  MAX_FIELD_CHIPS; a task's date fields are its date chips and are left out. Agenda's
  *  rows and a query row read this one derivation. */
+/** An attribute's `key::` name (ATTR_KEY_NAME lowercased) → the field it fills on a task
+ *  block's kind. The index records a field's key but not how it was spelled, so "did the
+ *  parser read this as the task's attribute?" is asked of the kind. */
+const ATTR_KIND_FIELD: Record<string, string> = {
+  due: "due", scheduled: "scheduled", start: "start", created: "created", completion: "done",
+  cancelled: "cancelled", priority: "priority", repeat: "repeat", oncompletion: "delete_on_done",
+  id: "task_id", dependson: "depends_on", estimate: "estimate",
+};
+
+/** Whether the task's kind carries the attribute this key spells. It does for the emoji
+ *  and the bracketed `[due:: …]` spellings; a bare `due:: 2026-08-20` is an ordinary field
+ *  to the parser, and without this test it was neither the row's words (taskText strips
+ *  every field) nor a chip — the value showed nowhere. */
+function attrOnKind(kind: BlockHit["block"]["kind"], lower: string): boolean {
+  if (kind.type !== "task") return false;
+  const prop = ATTR_KIND_FIELD[lower];
+  const v = prop ? (kind as unknown as Record<string, unknown>)[prop] : undefined;
+  return Array.isArray(v) ? v.length > 0 : v !== undefined && v !== false;
+}
+
 export function fieldChipsOf(hit: BlockHit, types: BlockType[]): FieldChip[] {
   const chips: FieldChip[] = [];
   const task = hit.block.kind.type === "task";
@@ -84,7 +104,7 @@ export function fieldChipsOf(hit: BlockHit, types: BlockType[]): FieldChip[] {
     const lower = f.key.toLowerCase();
     if (seen.has(lower)) continue;
     seen.add(lower);
-    if (task && TASK_ATTR_KEYS.has(lower)) continue;
+    if (task && TASK_ATTR_KEYS.has(lower) && attrOnKind(hit.block.kind, lower)) continue;
     const vocab = stateField(types, f.key);
     if (vocab) {
       const step = stateIndex(vocab, f.value);

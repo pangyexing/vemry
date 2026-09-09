@@ -49,6 +49,7 @@ import {
   markerGlyphLength,
   nextTaskState,
   restOffset,
+  taskToggleTitle,
   scanTaskAttrs,
   STAMP_RE,
   stateOfChar,
@@ -89,6 +90,10 @@ const cjkStrongDeco = Decoration.mark({ class: "cm-lp-cjk-strong" });
 const cjkEmDeco = Decoration.mark({ class: "cm-lp-cjk-em" });
 /** A bare URL's extent for the escape fold above (the click boundary itself is mdlink's) */
 const BARE_URL_RE = /https?:\/\/[^\s<>]+/g;
+/** The whole-line gate for that fold: the same characters CLIP_ESCAPE_RE names, derived
+ *  from it rather than spelled a second time, and without the `g` flag — matchAll below
+ *  starts from the regex's own lastIndex, which a `test` on a global one would move. */
+const CLIP_ESCAPE_TEST = new RegExp(CLIP_ESCAPE_RE.source);
 // The character class mirrors Rust's block-id rule (blockid.rs::is_valid_block_id): a badge must never claim an id the parser rejects
 const ANCHOR_RE = /[ \t]\^([A-Za-z0-9-]+)$/gm;
 export const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|tiff?)$/i;
@@ -147,7 +152,7 @@ class CheckboxWidget extends WidgetType {
     box.indeterminate = this.state === "doing";
     // `[-]`: the box crossed out (app.css), a click reopens it
     if (this.state === "cancelled") box.classList.add("cm-lp-checkbox-cancelled");
-    box.title = t(this.state === "doing" ? "task.menu.markBackTodo" : this.state === "cancelled" ? "task.menu.reopen" : "task.toggleDone");
+    box.title = taskToggleTitle(this.state);
     box.onmousedown = (e) => {
       // Handled on mousedown: preventDefault keeps the editor's selection, or the
       // cursor landing inside the checkbox's range would trigger reveal and replace
@@ -1172,7 +1177,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
     // A backslash escape inside a bare URL (`attention\_tf.py`: a clip's escaping of the
     // `_` in its text) is not an Escape node — the parser sees a URL — so it is folded
     // here; the click path drops the backslash the same way (mdlink.ts)
-    if (text.includes("\\_") || text.includes("\\*")) {
+    if (CLIP_ESCAPE_TEST.test(text)) {
       BARE_URL_RE.lastIndex = 0;
       while ((m = BARE_URL_RE.exec(text))) {
         const start = range.from + m.index;
@@ -1253,7 +1258,11 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
         if (line.text.includes("::") && line.from >= fmEnd && !isCode(line.from)) {
           const task = TASK_LINE_RE.test(line.text);
           for (const f of scanFields(line.text, line.from, { empty: true })) {
-            if (task && TASK_ATTR_KEYS.has(f.key.toLowerCase()) && f.value !== "") continue;
+            // The bracketed spelling of an attribute key IS the attribute and drew its chip
+            // above; a bare `due:: 2026-08-20` is a field only — the parser reads no date out
+            // of it (parser.rs's task_due_is_both_a_date_and_a_field) — so it keeps the
+            // ordinary field chip rather than falling between the two loops and showing raw
+            if (task && (f.form === "bracket" || f.form === "paren") && TASK_ATTR_KEYS.has(f.key.toLowerCase()) && f.value !== "") continue;
             if (revealedEl(f.from, f.to)) {
               marks.push({ from: f.from, to: f.to, deco: fieldSrcDeco });
               continue;

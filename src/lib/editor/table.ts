@@ -73,11 +73,31 @@ function closingParen(text: string, open: number): number {
   return -1;
 }
 
-/** Cell text → DOM: the formulas first (`$…$` typeset by KaTeX, the one generated-HTML
- *  fragment, with trust:false as everywhere), the text between them through
- *  renderInlineText. Math before markup, or the `_` of a subscript would read as
- *  emphasis. */
+/** Cell text → DOM: code spans first (a `` `$x$` `` is code, not a formula — the same
+ *  order the renderers keep, markdown.ts), then the formulas of what is left (`$…$`
+ *  typeset by KaTeX, the one generated-HTML fragment, with trust:false as everywhere),
+ *  then the text between them through renderInlineText. Math before the rest of the
+ *  markup, or the `_` of a subscript would read as emphasis. */
 function renderInline(text: string, into: HTMLElement) {
+  let at = 0;
+  CELL_CODE_RE.lastIndex = 0;
+  let c: RegExpExecArray | null;
+  while ((c = CELL_CODE_RE.exec(text))) {
+    if (c.index > at) renderMath(text.slice(at, c.index), into);
+    const el = document.createElement("span");
+    el.className = "cm-md-mono cm-lp-cell-code";
+    el.textContent = c[1];
+    into.appendChild(el);
+    at = c.index + c[0].length;
+  }
+  if (at < text.length) renderMath(text.slice(at), into);
+}
+
+/** The code spans of a cell, the one branch INLINE_RE's first alternative also names. */
+const CELL_CODE_RE = /`([^`\n]+)`/g;
+
+/** A run of cell text with no code span in it: the formulas typeset, the rest as markup. */
+function renderMath(text: string, into: HTMLElement) {
   let at = 0;
   for (const m of scanInlineMath(text)) {
     if (m.start > at) renderInlineText(text.slice(at, m.start), into);
@@ -111,6 +131,8 @@ function renderInlineText(text: string, into: HTMLElement) {
     // are named apart, and `last` only ever means "how far has been emitted"
     const end = m.index + m[0].length;
     last = end;
+    // renderInline cut the code spans out before calling this, so the first alternative
+    // never fires here; it stays in INLINE_RE as the one spelling of "what is a code span"
     if (m[1] != null) span("cm-md-mono cm-lp-cell-code", m[1]);
     else if (m[2] != null) span("cm-lp-cell-strong", m[2]);
     else if (m[3] != null) span("cm-lp-strike", m[3]);
