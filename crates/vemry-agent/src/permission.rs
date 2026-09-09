@@ -287,6 +287,9 @@ impl ActionsGate for AutoApproveActions {
 /// extraction pipeline, the same one a clip goes through).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FetchedPage {
+    /// The URL that was asked for. A redirect makes it differ from `url`, and the model
+    /// reads on by what it wrote, so this is what the turn's cache is keyed by.
+    pub requested: String,
     pub url: String,
     pub title: String,
     pub markdown: String,

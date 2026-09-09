@@ -26,7 +26,7 @@ pub struct Imported {
 /// The kinds of block the note is assembled from, before ids are assigned.
 #[derive(Debug, Clone)]
 enum Block {
-    Heading { level: usize, key: String, text: String, numbered: bool },
+    Heading { level: usize, key: String, text: String },
     Para(Vec<String>),
     Equation(Vec<String>),
     Table(Vec<String>),
@@ -164,7 +164,7 @@ fn classify(raw: Vec<String>) -> Block {
         let t = raw[0].trim_start();
         let level = t.chars().take_while(|&c| c == '#').count();
         let text = t.trim_start_matches('#').trim().trim_end_matches(':').trim().to_string();
-        return Block::Heading { level, key: String::new(), text, numbered: false };
+        return Block::Heading { level, key: String::new(), text };
     }
     if raw[0].trim_start().starts_with("```") {
         return Block::Fence(raw);
@@ -305,7 +305,7 @@ fn attach_figures(blocks: &mut Vec<Block>) {
             .into_iter()
             .enumerate()
             .map(|(i, (label, url))| {
-                let alt = if images_count_is_one(i, &label) {
+                let alt = if i == 0 && label.is_empty() {
                     format!("Figure {n}: {first_sentence}")
                 } else if !label.is_empty() {
                     format!("Figure {n} ({}): {label}", halves.get(i).copied().unwrap_or("part"))
@@ -318,12 +318,6 @@ fn attach_figures(blocks: &mut Vec<Block>) {
         out.push(Block::Figure { n, images, caption: text });
     }
     *blocks = out;
-}
-
-/// Only a lone image takes the caption's first sentence as its alt (the pairs are
-/// told apart by their labels); decided per image so the closure above stays flat.
-fn images_count_is_one(index: usize, label: &str) -> bool {
-    index == 0 && label.is_empty()
 }
 
 fn heading_matches(text: &str, words: &[&str]) -> bool {
@@ -367,12 +361,10 @@ fn number_headings(blocks: &mut [Block]) {
     let mut level = 2usize;
     let mut seen_numbered = false;
     for b in blocks.iter_mut() {
-        if let Block::Heading { level: l, key: k, text, numbered } = b {
-            if let Some((digits, rest)) = section_number(text) {
+        if let Block::Heading { level: l, key: k, text } = b {
+            if let Some((digits, depth)) = section_number(text) {
                 key = digits;
-                level = (rest.0 + 1).min(6);
-                *text = rest.1;
-                *numbered = true;
+                level = (depth + 1).min(6);
                 seen_numbered = true;
                 *k = key.clone();
                 *l = level;
@@ -391,27 +383,31 @@ fn number_headings(blocks: &mut [Block]) {
     }
 }
 
-/// `3.2.1 Scaled Dot-Product Attention` → ("321", (3, "3.2.1 Scaled Dot-Product Attention")).
-fn section_number(text: &str) -> Option<(String, (usize, String))> {
-    let (num, _rest) = text.split_once(' ')?;
+/// `3.2.1 Scaled Dot-Product Attention` → ("321", 3): the section's key and its depth.
+fn section_number(text: &str) -> Option<(String, usize)> {
+    let (num, _) = text.split_once(' ')?;
     let num = num.trim_end_matches('.');
     let parts: Vec<&str> = num.split('.').collect();
     if parts.is_empty() || parts.len() > 4 || !parts.iter().all(|p| !p.is_empty() && p.len() <= 2 && p.chars().all(|c| c.is_ascii_digit())) {
         return None;
     }
-    Some((parts.concat(), (parts.len(), text.to_string())))
+    Some((parts.concat(), parts.len()))
 }
 
 fn assemble(blocks: Vec<Block>, url: &str, title: &str, front: &[(String, String)]) -> Imported {
-    let mut out = String::new();
-    out.push_str("---\n");
-    out.push_str(&format!("title: {}\n", yaml_scalar(title)));
+    // The title is a page's <title> element: squashed onto one line before it goes
+    // anywhere, or a newline in it would break out of both the frontmatter and the H1
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    // ...and written through core's serialiser, which is the one rule for when a value
+    // has to be quoted (a `:`, a `#`, a leading `>` or `|`, a bare number)
+    let mut fm = vemry_core::Frontmatter { title: Some(title.clone()), ..Default::default() };
     for (k, v) in front {
         if !v.trim().is_empty() && k != "title" && k != "source" {
-            out.push_str(&format!("{k}: {}\n", yaml_scalar(v)));
+            fm.extra.insert(k.clone().into(), v.trim().into());
         }
     }
-    out.push_str(&format!("source: {url}\n---\n\n# {}\n", title.trim()));
+    fm.extra.insert("source".into(), url.into());
+    let mut out = format!("---\n{}---\n\n# {title}\n", fm.to_yaml().unwrap_or_default());
 
     let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut key = "0".to_string();
@@ -501,11 +497,14 @@ fn assemble(blocks: Vec<Block>, url: &str, title: &str, front: &[(String, String
     }
     flush_section(&mut section_line, &mut section_ids, &mut outline);
     let chars = out.chars().count();
-    let parts = chars.div_ceil(crate::prompt::PAGE_CONTEXT_MAX_CHARS).max(1);
-    let mut summary = format!(
-        "{paragraphs} paragraphs, {equations} equations, {figures} figures, {tables} tables; {chars} characters — read_note reads it in {parts} part(s) of {} (part: 1, then 2, …).\n\n",
-        crate::prompt::PAGE_CONTEXT_MAX_CHARS
-    );
+    // the parts read_note will actually serve, not a second count of them
+    let parts = crate::prompt::read_total(&out);
+    let how = if parts == 1 {
+        "read_note reads it whole".to_string()
+    } else {
+        format!("read_note reads it in {parts} parts of {} (part: 1, then 2, …)", crate::prompt::PAGE_CONTEXT_MAX_CHARS)
+    };
+    let mut summary = format!("{paragraphs} paragraphs, {equations} equations, {figures} figures, {tables} tables; {chars} characters — {how}.\n\n");
     summary.push_str(&outline.join("\n"));
     Imported { content: out, outline: summary, paragraphs, equations, figures, tables }
 }
@@ -518,16 +517,6 @@ fn push_with_id(out: &mut String, lines: &[String], id: &str) {
             out.push_str(id);
         }
         out.push('\n');
-    }
-}
-
-/// A frontmatter value: quoted when YAML would read it as something else.
-fn yaml_scalar(v: &str) -> String {
-    let v = v.trim();
-    if v.is_empty() || v.contains(':') || v.contains('#') || v.starts_with(['[', '{', '"', '\'', '*', '&', '!', '%', '@', '`', '-', '?']) || v.parse::<f64>().is_ok() || matches!(v, "true" | "false" | "null" | "yes" | "no") {
-        format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
-        v.to_string()
     }
 }
 
@@ -544,7 +533,7 @@ mod tests {
     #[test]
     fn frontmatter_title_and_the_cut_front_matter() {
         let c = imported().content;
-        assert!(c.starts_with("---\ntitle: Attention Is All You Need\nauthors: Vaswani et al.\nyear: \"2017\"\nsource: https://arxiv.org/html/1706.03762\n---\n\n# Attention Is All You Need\n"), "{c}");
+        assert!(c.starts_with("---\ntitle: Attention Is All You Need\nauthors: Vaswani et al.\nyear: '2017'\nsource: https://arxiv.org/html/1706.03762\n---\n\n# Attention Is All You Need\n"), "{c}");
         assert!(!c.contains("Google hereby grants"), "the license line above the abstract is not archived");
         assert!(!c.contains("††thanks"), "the author block is not archived");
         assert!(c.contains("\n## Abstract\n\nThe dominant sequence transduction models are based on complex recurrent networks. ^s0p1\n"), "{c}");
@@ -611,6 +600,10 @@ mod tests {
     #[test]
     fn a_plain_article_keeps_its_opening_and_gets_section_zero() {
         let c = compose_source_note("An opening paragraph.\n\n## Why\n\nBecause.\n", "https://a.io/x", "Post: a title", &[]).content;
-        assert!(c.starts_with("---\ntitle: \"Post: a title\"\nsource: https://a.io/x\n---\n\n# Post: a title\n\nAn opening paragraph. ^s0p1\n\n## Why\n\nBecause. ^s0p2\n"), "{c}");
+        assert!(c.starts_with("---\ntitle: 'Post: a title'\nsource: https://a.io/x\n---\n\n# Post: a title\n\nAn opening paragraph. ^s0p1\n\n## Why\n\nBecause. ^s0p2\n"), "{c}");
+
+        // a title the page hands over on two lines cannot break out of either block
+        let two = compose_source_note("Body.\n", "https://a.io/y", "A title\nsplit in two", &[]).content;
+        assert!(two.starts_with("---\ntitle: A title split in two\nsource: https://a.io/y\n---\n\n# A title split in two\n"), "{two}");
     }
 }

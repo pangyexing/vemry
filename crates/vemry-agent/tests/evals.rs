@@ -43,7 +43,7 @@ impl ReadGate for PagesFromFixture {
         let mut failed = vec![];
         for u in &req.urls {
             match self.0.get(u).and_then(|v| v.as_str()) {
-                Some(md) => pages.push(FetchedPage { url: u.clone(), title: format!("Page {}", pages.len() + 1), markdown: md.into() }),
+                Some(md) => pages.push(FetchedPage { requested: u.clone(), url: u.clone(), title: format!("Page {}", pages.len() + 1), markdown: md.into() }),
                 None => failed.push(u.clone()),
             }
         }

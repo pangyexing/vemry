@@ -386,8 +386,6 @@ const CITE_MAX_BYTES: usize = 32;
 /// one (`当然**。x**`) is mirrored. Only `**` and `*` are handled, only outside
 /// fences, only on one line.
 fn cjk_emphasis(md: &str) -> String {
-    const PUNCT: &str = "。，、；：！？）」』】》〉…—～（「『【《〈";
-    let is_p = |c: char| PUNCT.contains(c);
     let mut out = String::with_capacity(md.len());
     let mut fence = false;
     for (i, line) in md.split('\n').enumerate() {
@@ -402,12 +400,18 @@ fn cjk_emphasis(md: &str) -> String {
             out.push_str(line);
             continue;
         }
-        out.push_str(&cjk_emphasis_line(line, &is_p));
+        out.push_str(&cjk_emphasis_line(line));
     }
     out
 }
 
-fn cjk_emphasis_line(line: &str, is_p: &dyn Fn(char) -> bool) -> String {
+/// The punctuation that makes a delimiter unable to flank in CommonMark's reading.
+const CJK_PUNCT: &str = "。，、；：！？）」』】》〉…—～（「『【《〈";
+fn is_cjk_punct(c: char) -> bool {
+    CJK_PUNCT.contains(c)
+}
+
+fn cjk_emphasis_line(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
     let mut out: Vec<char> = Vec::with_capacity(chars.len());
     let mut i = 0;
@@ -448,15 +452,15 @@ fn cjk_emphasis_line(line: &str, is_p: &dyn Fn(char) -> bool) -> String {
         let before = if i > 0 { Some(chars[i - 1]) } else { None };
         // trailing punctuation moves after the closer when a word follows it
         let mut tail: Vec<char> = Vec::new();
-        if after.is_some_and(|c| !c.is_whitespace() && !is_p(c) && !c.is_ascii_punctuation()) {
-            while inner.last().is_some_and(|&c| is_p(c)) {
+        if after.is_some_and(|c| !c.is_whitespace() && !is_cjk_punct(c) && !c.is_ascii_punctuation()) {
+            while inner.last().is_some_and(|&c| is_cjk_punct(c)) {
                 tail.insert(0, inner.pop().unwrap());
             }
         }
         // leading punctuation moves before the opener when a word precedes it
         let mut head: Vec<char> = Vec::new();
-        if before.is_some_and(|c| !c.is_whitespace() && !is_p(c) && !c.is_ascii_punctuation()) {
-            while inner.first().is_some_and(|&c| is_p(c)) {
+        if before.is_some_and(|c| !c.is_whitespace() && !is_cjk_punct(c) && !c.is_ascii_punctuation()) {
+            while inner.first().is_some_and(|&c| is_cjk_punct(c)) {
                 head.push(inner.remove(0));
             }
         }
@@ -646,8 +650,9 @@ pub fn extract_page(html: &str, url: &str) -> Result<ExtractedPage, ClipError> {
     }
 
     // Main path: dom_smoothie (a Readability port) extracts the body
-    let html = &unclass_tables(html);
-    let article = dom_smoothie::Readability::new(html.as_str(), Some(url), None)
+    let unclassed = unclass_tables(html);
+    let html: &str = &unclassed;
+    let article = dom_smoothie::Readability::new(html, Some(url), None)
         .ok()
         .and_then(|mut r| r.parse().ok());
     if let Some(article) = article {
@@ -684,7 +689,10 @@ pub fn extract_page(html: &str, url: &str) -> Result<ExtractedPage, ClipError> {
 /// kept in the output; a layout table is still told apart by its shape), so the tag is
 /// handed to Readability without it. The tag is scanned as text — a start tag holds no
 /// markup — and everything else is copied through untouched.
-fn unclass_tables(html: &str) -> String {
+fn unclass_tables(html: &str) -> std::borrow::Cow<'_, str> {
+    if table_tag_at(html).is_none() {
+        return std::borrow::Cow::Borrowed(html); // the common page has no table at all
+    }
     let mut out = String::with_capacity(html.len());
     let mut rest = html;
     while let Some(at) = table_tag_at(rest) {
@@ -696,7 +704,7 @@ fn unclass_tables(html: &str) -> String {
         rest = tail;
     }
     out.push_str(rest);
-    out
+    std::borrow::Cow::Owned(out)
 }
 
 /// The offset of the next `<table` start tag (any case; `<tablet>` is not one).

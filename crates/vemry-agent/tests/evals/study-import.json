@@ -119,7 +119,7 @@
     "note_contains": [
       {
         "path": "papers/vaswani-2017/source.md",
-        "text": "title: Attention Is All You Need\nauthors: Vaswani et al.\nyear: \"2017\"\ngenre: method\nsource: https://arxiv.org/html/1706.03762"
+        "text": "title: Attention Is All You Need\nauthors: Vaswani et al.\nyear: '2017'\ngenre: method\nsource: https://arxiv.org/html/1706.03762"
       },
       {
         "path": "papers/vaswani-2017/source.md",

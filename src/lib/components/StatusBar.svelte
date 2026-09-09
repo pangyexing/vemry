@@ -21,7 +21,9 @@
    *  side-by-side view (a ratio of scripts, computed locally; nothing is sent). */
   const foreign = $derived(
     vault.currentKind === "note" && !inPrivate && vault.mainView !== "translate"
-      && readsForeign(vault.currentContent, prefs.translateTarget || i18n.lang),
+      // the opening is enough: the ratio settles long before MIN_LETTERS, and this runs
+      // on every autosave — over a whole imported source note it is a per-second scan
+      && readsForeign(vault.currentContent.slice(0, 20_000), prefs.translateTarget || i18n.lang),
   );
   /** Unreviewed AI blocks in notes other than the open one (the vault chip's count). */
   const others = $derived.by(() => {

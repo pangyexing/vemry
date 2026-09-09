@@ -41,10 +41,13 @@ export interface Run {
   to: number;
   ids: string[];
   rows: ProvRow[];
-  replaced?: string;
-  /** The first block's local id: what the unfolded-old-text set is keyed by. */
-  key: string;
 }
+
+/** A run's key — the first block's local id, what the unfolded-old-text set is keyed
+ *  by — and the lines its write replaced, when it replaced rather than added. Both are
+ *  the first row's, read from it rather than copied beside it. */
+const runKey = (run: Run) => run.rows[0].local_id;
+const runReplaced = (run: Run) => run.rows[0].replaced;
 
 /** Replace every row (a fresh read of disk truth). */
 export const provenanceSet = StateEffect.define<ProvRow[]>();
@@ -69,9 +72,9 @@ class ReviewWidget extends WidgetType {
   constructor(
     readonly ids: string[],
     readonly host: ProvenanceHost | null,
-    /** The run's key when the run has old text to unfold, else null. */
-    readonly oldKey: string | null,
-    readonly oldOpen: boolean,
+    /** The run's key and whether its old text is unfolded — null when there is none to
+     *  unfold, which is the only state in which "unfolded" would mean anything. */
+    readonly old: { key: string; open: boolean } | null,
     /** A block's own pair inside a run: shown on hover only. */
     readonly hover: boolean,
   ) {
@@ -80,8 +83,8 @@ class ReviewWidget extends WidgetType {
   eq(other: ReviewWidget) {
     return (
       other.ids.join("\0") === this.ids.join("\0") &&
-      other.oldKey === this.oldKey &&
-      other.oldOpen === this.oldOpen &&
+      other.old?.key === this.old?.key &&
+      other.old?.open === this.old?.open &&
       other.hover === this.hover
     );
   }
@@ -110,9 +113,9 @@ class ReviewWidget extends WidgetType {
     button("✕", t(one ? "prov.rejectBlock" : "prov.rejectRun", { n: this.ids.length }), "cm-prov-review cm-prov-reject", () =>
       this.host?.rejectProvenance(this.ids),
     );
-    if (this.oldKey) {
-      const key = this.oldKey;
-      button("⇄", t(this.oldOpen ? "prov.hideReplaced" : "prov.showReplaced"), `cm-prov-review cm-prov-old-toggle${this.oldOpen ? " active" : ""}`, () =>
+    if (this.old) {
+      const { key, open } = this.old;
+      button("⇄", t(open ? "prov.hideReplaced" : "prov.showReplaced"), `cm-prov-review cm-prov-old-toggle${open ? " active" : ""}`, () =>
         view.dispatch({ effects: provenanceToggleOld.of(key) }),
       );
     }
@@ -215,7 +218,7 @@ export function runsOf(rows: ProvRow[]): Run[] {
       open.rows.push(r);
       continue;
     }
-    open = { from: s.from, to: s.to, ids: [r.local_id], rows: [r], replaced: r.replaced, key: r.local_id };
+    open = { from: s.from, to: s.to, ids: [r.local_id], rows: [r] };
     openHunk = hunk;
     runs.push(open);
   }
@@ -258,18 +261,20 @@ function build(state: EditorState, rows: ProvRow[], overlay: boolean, marks: boo
   if (marks) {
     for (const run of runsOf(rows)) {
       const first = doc.lineAt(Math.min(run.from, doc.length));
-      const open = oldOpen.has(run.key);
+      const key = runKey(run);
+      const replaced = runReplaced(run);
+      const open = oldOpen.has(key);
       // the run's controls after its first line's text; what the write replaced above it when unfolded
-      decos.push(Decoration.widget({ widget: new ReviewWidget(run.ids, host, run.replaced ? run.key : null, open, false), side: 1 }).range(first.to));
-      if (open && run.replaced) {
-        decos.push(Decoration.widget({ widget: new ReplacedWidget(run.key, run.replaced), block: true, side: -1 }).range(first.from));
+      decos.push(Decoration.widget({ widget: new ReviewWidget(run.ids, host, replaced ? { key, open } : null, false), side: 1 }).range(first.to));
+      if (open && replaced) {
+        decos.push(Decoration.widget({ widget: new ReplacedWidget(key, replaced), block: true, side: -1 }).range(first.from));
       }
       // a block inside a run of several keeps its own pair, shown on hover
       if (run.rows.length > 1) {
         for (const r of run.rows) {
           const line = doc.lineAt(Math.min(shown(r).from, doc.length));
           if (line.number === first.number) continue;
-          decos.push(Decoration.widget({ widget: new ReviewWidget([r.local_id], host, null, false, true), side: 1 }).range(line.to));
+          decos.push(Decoration.widget({ widget: new ReviewWidget([r.local_id], host, null, true), side: 1 }).range(line.to));
         }
       }
     }
@@ -301,7 +306,7 @@ const field = StateField.define<ProvState>({
       if (e.is(provenanceSet)) {
         rows = e.value;
         // a fresh read names fresh runs: what was unfolded for a run that is gone is dropped
-        const keys = new Set(runsOf(rows).map((r) => r.key));
+        const keys = new Set(runsOf(rows).map(runKey));
         oldOpen = new Set([...oldOpen].filter((k) => keys.has(k)));
         changed = true;
       } else if (e.is(provenanceOverlay)) {
