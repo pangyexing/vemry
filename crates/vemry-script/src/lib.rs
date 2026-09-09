@@ -68,6 +68,13 @@ pub struct BlockEvalResult {
     pub lab: Option<lab::LabSpec>,
 }
 
+impl BlockEvalResult {
+    /// A run that produced nothing but a reason.
+    pub fn failed(error: impl Into<String>) -> Self {
+        Self { output: String::new(), error: Some(error.into()), lab: None }
+    }
+}
+
 /// Events the script host pushes to the UI (`script://event` on the Tauri
 /// side). Grant/prompt requests are the blocking half of the write-permission
 /// flow and arrive via [`UiBridge`] callbacks instead.

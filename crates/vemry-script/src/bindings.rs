@@ -643,13 +643,13 @@ const GLUE_JS: &str = r#"
       columns = Array.isArray(o.columns) ? o.columns.map(String) : [...new Set(rows.flatMap((r) => Object.keys(r ?? {})))];
       body = rows.map((r) => columns.map((c) => (r ?? {})[c]));
     }
-    const cell = (v) => (v == null ? null : typeof v === "number" ? numOrNull(v) : typeof v === "boolean" ? String(v) : String(v));
+    const cell = (v) => (v == null ? null : typeof v === "number" ? numOrNull(v) : String(v));
     const h = o.highlight && typeof o.highlight === "object" ? o.highlight : null;
     labState.views.push({
       kind: "table",
       title: strOr(title, ""),
       columns,
-      rows: body.map((r) => columns.map((_, i) => cell(Array.isArray(r) ? r[i] : r[i]))),
+      rows: body.map((r) => columns.map((_, i) => cell(r[i]))),
       digits: digitsOf(o.digits),
       highlight: h ? { row: isNum(h.row) ? h.row : null, col: isNum(h.col) ? h.col : null } : null,
     });

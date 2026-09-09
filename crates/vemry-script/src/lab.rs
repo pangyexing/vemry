@@ -75,13 +75,12 @@ pub struct PointSeries {
     pub points: Vec<[f64; 2]>,
 }
 
-/// A table cell: a number (formatted by the UI), text, or empty.
+/// A table cell: a number (formatted by the UI) or text; an empty cell is `None`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum Cell {
     Number(f64),
     Text(String),
-    Empty(Option<()>),
 }
 
 /// The value a derivation step shows beside its text: a scalar, a vector or a grid.
@@ -147,7 +146,7 @@ pub enum LabView {
     Table {
         title: String,
         columns: Vec<String>,
-        rows: Vec<Vec<Cell>>,
+        rows: Vec<Vec<Option<Cell>>>,
         digits: Option<u8>,
         highlight: Option<Highlight>,
     },
@@ -285,9 +284,10 @@ pub fn parse(json: &str) -> Result<LabSpec, String> {
         match v {
             LabView::Heatmap { title, data, rows, cols, .. } => {
                 clip(title);
-                cap(&format!("the heatmap `{title}`"), data.len(), MAX_HEATMAP)?;
+                let what = format!("the heatmap `{title}`");
+                cap(&what, data.len(), MAX_HEATMAP)?;
                 let width = data.iter().map(|r| r.len()).max().unwrap_or(0);
-                cap(&format!("the heatmap `{title}`"), width, MAX_HEATMAP)?;
+                cap(&what, width, MAX_HEATMAP)?;
                 for r in rows.iter_mut().flatten().chain(cols.iter_mut().flatten()) {
                     clip(r);
                 }
@@ -296,23 +296,25 @@ pub fn parse(json: &str) -> Result<LabSpec, String> {
                 clip(title);
                 clip_opt(x_label);
                 clip_opt(y_label);
-                cap(&format!("the line chart `{title}`"), series.len(), MAX_SERIES)?;
+                let what = format!("the line chart `{title}`");
+                cap(&what, series.len(), MAX_SERIES)?;
                 if let Some(x) = x {
-                    cap(&format!("the line chart `{title}`"), x.len(), MAX_POINTS)?;
+                    cap(&what, x.len(), MAX_POINTS)?;
                 }
                 for s in series.iter_mut() {
                     clip_opt(&mut s.name);
-                    cap(&format!("the line chart `{title}`"), s.y.len(), MAX_POINTS)?;
+                    cap(&what, s.y.len(), MAX_POINTS)?;
                     if let Some(x) = &s.x {
-                        cap(&format!("the line chart `{title}`"), x.len(), MAX_POINTS)?;
+                        cap(&what, x.len(), MAX_POINTS)?;
                     }
                 }
             }
             LabView::Bars { title, labels, series, y_label, .. } => {
                 clip(title);
                 clip_opt(y_label);
-                cap(&format!("the bar chart `{title}`"), labels.len(), MAX_BARS)?;
-                cap(&format!("the bar chart `{title}`"), series.len(), MAX_SERIES)?;
+                let what = format!("the bar chart `{title}`");
+                cap(&what, labels.len(), MAX_BARS)?;
+                cap(&what, series.len(), MAX_SERIES)?;
                 for l in labels.iter_mut() {
                     clip(l);
                 }
@@ -325,10 +327,11 @@ pub fn parse(json: &str) -> Result<LabSpec, String> {
                 clip(title);
                 clip_opt(x_label);
                 clip_opt(y_label);
-                cap(&format!("the scatter `{title}`"), series.len(), MAX_SERIES)?;
+                let what = format!("the scatter `{title}`");
+                cap(&what, series.len(), MAX_SERIES)?;
                 for s in series.iter_mut() {
                     clip_opt(&mut s.name);
-                    cap(&format!("the scatter `{title}`"), s.points.len(), MAX_POINTS)?;
+                    cap(&what, s.points.len(), MAX_POINTS)?;
                     if s.points.iter().flatten().any(|v| !v.is_finite()) {
                         return Err(format!("lab: the scatter `{title}` holds a non-finite point"));
                     }
@@ -336,15 +339,16 @@ pub fn parse(json: &str) -> Result<LabSpec, String> {
             }
             LabView::Table { title, columns, rows, .. } => {
                 clip(title);
-                cap(&format!("the table `{title}`"), columns.len(), MAX_TABLE_COLS)?;
-                cap(&format!("the table `{title}`"), rows.len(), MAX_TABLE_ROWS)?;
+                let what = format!("the table `{title}`");
+                cap(&what, columns.len(), MAX_TABLE_COLS)?;
+                cap(&what, rows.len(), MAX_TABLE_ROWS)?;
                 for c in columns.iter_mut() {
                     clip(c);
                 }
                 for r in rows.iter_mut() {
-                    r.resize(columns.len(), Cell::Empty(None));
+                    r.resize(columns.len(), None);
                     for cell in r.iter_mut() {
-                        if let Cell::Text(s) = cell {
+                        if let Some(Cell::Text(s)) = cell {
                             clip(s);
                         }
                     }

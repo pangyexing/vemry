@@ -16,6 +16,7 @@
 // heatmap is two poles around a neutral midpoint.
 import type { LabView, LineSeries } from "$lib/api";
 import { renderMathHtml, scanInlineMath } from "$lib/math";
+import { el, swallowPress } from "./dom";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -29,6 +30,8 @@ export interface TipRow {
 /** The tooltip the session owns: one element per lab, moved to the pointer. */
 export interface TipHost {
   show(title: string, rows: TipRow[], clientX: number, clientY: number): void;
+  /** The same tip following the pointer: nothing rebuilt, nothing measured again. */
+  move(clientX: number, clientY: number): void;
   hide(): void;
 }
 
@@ -55,7 +58,7 @@ function fmtTick(v: number): string {
 
 /** Round tick positions covering [min, max] (about `count` of them), the way an axis
  *  should read: 0 / 0.5 / 1 rather than 0.13 / 0.26. */
-export function niceTicks(min: number, max: number, count = 5): number[] {
+function niceTicks(min: number, max: number, count = 5): number[] {
   if (!(max > min)) {
     const v = Number.isFinite(min) ? min : 0;
     return [v];
@@ -114,19 +117,50 @@ function svgText(x: number, y: number, text: string, cls: string, anchor: "start
   return t;
 }
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
-
 /** The colour slot of the i-th series (1-based, capped at eight: a ninth series would
  *  be indistinguishable, and the sandbox cap already refuses more). */
 const slotOf = (i: number) => Math.min(8, i + 1);
 
-/** The width the y tick labels need (a monospace-ish estimate, the axis text is 11px). */
-const labelWidth = (labels: string[]) => Math.max(0, ...labels.map((l) => l.length)) * 6.6 + 10;
+/** The width of one character of axis text (11px, a monospace-ish estimate): the one
+ *  number behind both the room the labels are given and the trimming when they do not fit. */
+const CHAR_W = 6.6;
+
+/** The width the y tick labels need. */
+const labelWidth = (labels: string[]) => Math.max(0, ...labels.map((l) => l.length)) * CHAR_W + 10;
+
+/** A category label as a tick, trimmed to the room it has with the full text as a title. */
+function tickLabel(x: number, y: number, label: string, px: number, anchor: "middle" | "end"): SVGTextElement {
+  const maxChars = Math.max(2, Math.floor(px / CHAR_W));
+  const text = label.length > maxChars ? `${label.slice(0, Math.max(1, maxChars - 1))}…` : label;
+  const t = svgText(x, y, text, "cm-lab-tick", anchor);
+  if (text !== label) t.appendChild(svgEl("title")).textContent = label;
+  return t;
+}
+
+/** How thick one bar of a group may be: the group takes 70% of its slot, the bars share
+ *  what the gaps between them leave, and none is thicker than 24px or thinner than 3. */
+const barThickness = (slot: number, count: number, gap: number) => Math.min(24, Math.max(3, (slot * 0.7 - gap * (count - 1)) / count));
+
+/** Hovering a category lifts its bars and reads out every series at that index. The
+ *  pointer stays on one category for many moves, so the rows are built once per
+ *  category rather than per event. */
+function barHover(hit: SVGRectElement, bars: SVGPathElement[], label: string, rows: () => TipRow[], tip: TipHost) {
+  let shown = false;
+  hit.addEventListener("pointermove", (e) => {
+    if (!shown) {
+      shown = true;
+      bars.forEach((b) => b.classList.add("lift"));
+      tip.show(label, rows(), e.clientX, e.clientY);
+      return;
+    }
+    tip.move(e.clientX, e.clientY);
+  });
+  hit.addEventListener("pointerleave", () => {
+    shown = false;
+    bars.forEach((b) => b.classList.remove("lift"));
+    tip.hide();
+  });
+}
 
 interface Frame {
   svg: SVGSVGElement;
@@ -174,14 +208,17 @@ function frame(width: number, plotH: number, xDom: [number, number], yDom: [numb
   return { svg, plot, left, top, w, h, x, y };
 }
 
+/** The mark that carries a series' identity: a short line, a square, or a dot, in the
+ *  series' colour slot. The legend and the tooltip draw the same one. */
+export const keySwatch = (kind: "line" | "rect" | "dot", slot: number) => el("i", `cm-lab-key cm-lab-key-${kind} s${slot}`);
+
 /** A legend row: a key (a short line for a line chart, a square for bars and dots) and the name, per series. */
 function legend(names: (string | null)[], key: "line" | "rect" | "dot"): HTMLElement | null {
   if (names.length < 2) return null;
   const box = el("div", "cm-lab-legend");
   names.forEach((n, i) => {
     const item = el("span", "cm-lab-legend-item");
-    const swatch = el("i", `cm-lab-key cm-lab-key-${key} s${slotOf(i)}`);
-    item.append(swatch, document.createTextNode(n || `#${i + 1}`));
+    item.append(keySwatch(key, slotOf(i)), document.createTextNode(n || `#${i + 1}`));
     box.appendChild(item);
   });
   return box;
@@ -192,6 +229,15 @@ const seriesName = (name: string | null, i: number, count: number) => name ?? (c
 // ---- line ----
 
 type LineView = Extract<LabView, { kind: "line" }>;
+type Pt = { x: number; y: number | null };
+
+/** The last point of a series that has a value: where the end marker and the direct
+ *  end-label both go. Found once — the search walks backwards rather than copying and
+ *  reversing the series. */
+function lastPoint(series: Pt[]): Pt | undefined {
+  for (let i = series.length - 1; i >= 0; i--) if (series[i].y != null) return series[i];
+  return undefined;
+}
 
 /** The x of the i-th point of a series: its own x, the view's shared x, else the index. */
 function xOf(s: LineSeries, view: LineView, i: number): number | null {
@@ -202,7 +248,7 @@ function xOf(s: LineSeries, view: LineView, i: number): number | null {
 export function drawLine(view: LineView, width: number, tip: TipHost): HTMLElement {
   const wrap = el("div", "cm-lab-chart");
   const pts = view.series.map((s) =>
-    s.y.map((y, i) => ({ x: xOf(s, view, i), y: y != null && Number.isFinite(y) ? y : null })).filter((p) => p.x != null) as { x: number; y: number | null }[],
+    s.y.map((y, i) => ({ x: xOf(s, view, i), y: y != null && Number.isFinite(y) ? y : null })).filter((p) => p.x != null) as Pt[],
   );
   const xs = pts.flat().map((p) => p.x);
   const ys = pts.flat().map((p) => p.y).filter((y): y is number => y != null);
@@ -235,13 +281,13 @@ export function drawLine(view: LineView, width: number, tip: TipHost): HTMLEleme
       pen = true;
     }
     marks.appendChild(svgEl("path", { d, class: `cm-lab-line s${slotOf(si)}` }));
-    const last = [...series].reverse().find((p) => p.y != null);
+    const last = lastPoint(series);
     if (last) marks.appendChild(svgEl("circle", { cx: f.x(last.x), cy: f.y(last.y!), r: 4, class: `cm-lab-dot s${slotOf(si)}` }));
   });
   f.plot.appendChild(marks);
   // direct end-labels ride the marks only while they do not collide (else the legend carries identity)
   const ends = pts
-    .map((series, si) => ({ si, last: [...series].reverse().find((p) => p.y != null) }))
+    .map((series, si) => ({ si, last: lastPoint(series) }))
     .filter((e) => e.last && view.series[e.si].name)
     .map((e) => ({ si: e.si, y: f.y(e.last!.y!), x: f.x(e.last!.x) }))
     .sort((a, b) => a.y - b.y);
@@ -332,7 +378,7 @@ export function drawBars(view: BarsView, width: number, tip: TipHost): HTMLEleme
     const f = frame(width, 180, [0, n], vDom, vTicks, null, view.y_label);
     const slot = f.w / n;
     const gap = 2;
-    const bw = Math.min(24, Math.max(3, (slot * 0.7 - gap * (s - 1)) / s));
+    const bw = barThickness(slot, s, gap);
     const groupW = bw * s + gap * (s - 1);
     const base = f.y(0);
     const marks = svgEl("g");
@@ -350,26 +396,10 @@ export function drawBars(view: BarsView, width: number, tip: TipHost): HTMLEleme
         // the value on the cap, only when the chart is sparse enough to read it
         if (single && n <= 8) marks.appendChild(svgText(a0 + bw / 2, (v >= 0 ? f.y(v) - 5 : f.y(v) + 12), fmt(v), "cm-lab-value", "middle"));
       });
-      hit.addEventListener("pointermove", (e) => {
-        bars.forEach((b) => b.classList.add("lift"));
-        tip.show(
-          label,
-          view.series.map((sr, si) => ({ slot: slotOf(si), label: seriesName(sr.name, si, s), value: fmt(sr.values[gi]) })),
-          e.clientX,
-          e.clientY,
-        );
-      });
-      hit.addEventListener("pointerleave", () => {
-        bars.forEach((b) => b.classList.remove("lift"));
-        tip.hide();
-      });
+      barHover(hit, bars, label, () => view.series.map((sr, si) => ({ slot: slotOf(si), label: seriesName(sr.name, si, s), value: fmt(sr.values[gi]) })), tip);
       marks.appendChild(hit);
       // the category label under the slot, trimmed when the slot is narrow
-      const maxChars = Math.max(2, Math.floor(slot / 6.6));
-      const text = label.length > maxChars ? `${label.slice(0, Math.max(1, maxChars - 1))}…` : label;
-      const t = svgText(gi * slot + slot / 2, f.h + 14, text, "cm-lab-tick", "middle");
-      if (text !== label) t.appendChild(svgEl("title")).textContent = label;
-      f.plot.appendChild(t);
+      f.plot.appendChild(tickLabel(gi * slot + slot / 2, f.h + 14, label, slot, "middle"));
     });
     f.plot.appendChild(marks);
     wrap.appendChild(f.svg);
@@ -378,7 +408,7 @@ export function drawBars(view: BarsView, width: number, tip: TipHost): HTMLEleme
     const rowH = Math.min(30, Math.max(14, 8 + s * 10));
     const plotH = rowH * n;
     const catW = labelWidth(view.labels) - 10;
-    const left = Math.min(160, catW + 8) + (view.y_label ? 0 : 0);
+    const left = Math.min(160, catW + 8);
     const top = 6;
     const bottom = 22 + (view.y_label ? 14 : 0);
     const w = Math.max(60, width - left - 12);
@@ -395,7 +425,7 @@ export function drawBars(view: BarsView, width: number, tip: TipHost): HTMLEleme
     plot.appendChild(svgEl("line", { x1: base, x2: base, y1: 0, y2: plotH, class: "cm-lab-axis" }));
     if (view.y_label) plot.appendChild(svgText(w / 2, plotH + bottom - 4, view.y_label, "cm-lab-axislabel", "middle"));
     const gap = 2;
-    const bh = Math.min(24, Math.max(3, (rowH * 0.7 - gap * (s - 1)) / s));
+    const bh = barThickness(rowH, s, gap);
     const groupH = bh * s + gap * (s - 1);
     const marks = svgEl("g");
     view.labels.forEach((label, gi) => {
@@ -411,25 +441,9 @@ export function drawBars(view: BarsView, width: number, tip: TipHost): HTMLEleme
         bars.push(p);
         if (single && n <= 12) marks.appendChild(svgText(v >= 0 ? x(v) + 5 : x(v) - 5, a0 + bh / 2 + 3.5, fmt(v), "cm-lab-value", v >= 0 ? "start" : "end"));
       });
-      hit.addEventListener("pointermove", (e) => {
-        bars.forEach((b) => b.classList.add("lift"));
-        tip.show(
-          label,
-          view.series.map((sr, si) => ({ slot: slotOf(si), label: seriesName(sr.name, si, s), value: fmt(sr.values[gi]) })),
-          e.clientX,
-          e.clientY,
-        );
-      });
-      hit.addEventListener("pointerleave", () => {
-        bars.forEach((b) => b.classList.remove("lift"));
-        tip.hide();
-      });
+      barHover(hit, bars, label, () => view.series.map((sr, si) => ({ slot: slotOf(si), label: seriesName(sr.name, si, s), value: fmt(sr.values[gi]) })), tip);
       marks.appendChild(hit);
-      const maxChars = Math.max(2, Math.floor((left - 8) / 6.6));
-      const text = label.length > maxChars ? `${label.slice(0, Math.max(1, maxChars - 1))}…` : label;
-      const t = svgText(-6, gi * rowH + rowH / 2 + 3.5, text, "cm-lab-tick", "end");
-      if (text !== label) t.appendChild(svgEl("title")).textContent = label;
-      plot.appendChild(t);
+      plot.appendChild(tickLabel(-6, gi * rowH + rowH / 2 + 3.5, label, left - 8, "end"));
     });
     plot.appendChild(marks);
     svg.appendChild(plot);
@@ -689,13 +703,7 @@ export function buildStep(view: StepView, labels: { next: string; all: string; r
     all.disabled = shown >= items.length;
     reset.disabled = shown <= 1;
   };
-  const stop = (e: Event) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  next.addEventListener("mousedown", stop);
-  all.addEventListener("mousedown", stop);
-  reset.addEventListener("mousedown", stop);
+  for (const b of [next, all, reset]) swallowPress(b);
   next.addEventListener("click", () => {
     shown = Math.min(items.length, shown + 1);
     apply();
@@ -715,6 +723,10 @@ export function buildStep(view: StepView, labels: { next: string; all: string; r
 }
 
 // ---- the table twin of a chart ----
+
+/** The kinds that have a table twin — the toggle asks this rather than building the
+ *  twin to find out, so a figure nobody switches never pays for one. */
+export const hasTableTwin = (kind: LabView["kind"]) => kind === "line" || kind === "bars" || kind === "scatter" || kind === "heatmap";
 
 /** Every chart has a table twin (the WCAG-clean equivalent, and the way to read exact
  *  values without hovering); null for a view that is already a table or a list. */

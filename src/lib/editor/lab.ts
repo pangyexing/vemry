@@ -10,7 +10,8 @@
 // the declared literals through pin.ts.
 import { t } from "$lib/i18n/i18n.svelte";
 import type { BlockEvalResult, LabControl, LabParams, LabSpec, LabView, LabPreset } from "$lib/api";
-import { buildHeatmap, buildStep, buildTable, drawBars, drawLine, drawScatter, fmt, tableTwin, type TipHost, type TipRow } from "$lib/lab/charts";
+import { buildHeatmap, buildStep, buildTable, drawBars, drawLine, drawScatter, fmt, hasTableTwin, keySwatch, tableTwin, type TipHost, type TipRow } from "$lib/lab/charts";
+import { el, swallowPress } from "$lib/lab/dom";
 import { pinCode } from "$lib/lab/pin";
 import { toast } from "$lib/stores/toast.svelte";
 import { Annotation } from "@codemirror/state";
@@ -53,32 +54,22 @@ const ICON_RERUN =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>';
 const ICON_CLOSE =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-const ICON_EDIT =
+export const ICON_EDIT =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
 const ICON_TABLE =
   '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M10 4v16"/></svg>';
 const ICON_CHART =
   '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-5 4 3 5-7"/></svg>';
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
-
 /** A button inside the widget: mousedown is swallowed so the editor's selection stays
  *  where it is (a click inside a block widget would otherwise land the cursor by
  *  coordinates), and the action runs on click. */
-function iconButton(cls: string, icon: string, tip: string, onClick: () => void): HTMLButtonElement {
+export function iconButton(cls: string, icon: string, tip: string, onClick: () => void): HTMLButtonElement {
   const b = el("button", cls);
   b.innerHTML = icon;
   b.dataset.tip = tip;
   b.title = tip;
-  b.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  });
+  swallowPress(b);
   b.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -86,6 +77,10 @@ function iconButton(cls: string, icon: string, tip: string, onClick: () => void)
   });
   return b;
 }
+
+/** What a run leaves to read: its output and its error, in that order. The live card
+ *  and the plain output widget (runblock.ts) show the same text. */
+export const joinOutput = (output: string, error: string | null) => [output, error ?? ""].filter(Boolean).join("\n");
 
 /** The initial params: what every control ran with (so the first move sends the whole set). */
 function paramsOf(controls: LabControl[]): LabParams {
@@ -126,6 +121,9 @@ export class LabSession implements TipHost {
   private readonly outEl: HTMLElement;
   private readonly statusEl: HTMLElement;
   private readonly tipEl: HTMLElement;
+  /** The tip's measured size, kept so following the pointer forces no layout. */
+  private tipW = 0;
+  private tipH = 0;
   private params: LabParams;
   private key: string;
   private timer = 0;
@@ -221,21 +219,32 @@ export class LabSession implements TipHost {
     if (title) tip.appendChild(el("div", "cm-lab-tip-title", title));
     for (const r of rows) {
       const row = el("div", "cm-lab-tip-row");
-      if (r.slot) row.appendChild(el("i", `cm-lab-key cm-lab-key-line s${r.slot}`));
+      if (r.slot) row.appendChild(keySwatch("line", r.slot));
       row.appendChild(el("span", "cm-lab-tip-value", r.value));
       if (r.label) row.appendChild(el("span", "cm-lab-tip-label", r.label));
       tip.appendChild(row);
     }
     tip.style.display = "";
+    // the only measurement: while the pointer stays on the same datum the tip's
+    // content, and so its size, does not change (move)
+    this.tipW = tip.offsetWidth;
+    this.tipH = tip.offsetHeight;
+    this.place(clientX, clientY);
+  }
+
+  move(clientX: number, clientY: number) {
+    if (this.tipEl.style.display === "none") return;
+    this.place(clientX, clientY);
+  }
+
+  private place(clientX: number, clientY: number) {
     const box = this.root.getBoundingClientRect();
-    const w = tip.offsetWidth;
-    const h = tip.offsetHeight;
     let x = clientX - box.left + 14;
     let y = clientY - box.top + 14;
-    if (x + w > box.width - 4) x = Math.max(4, clientX - box.left - w - 14);
-    if (y + h > box.height - 4) y = Math.max(4, clientY - box.top - h - 14);
-    tip.style.left = `${x}px`;
-    tip.style.top = `${y}px`;
+    if (x + this.tipW > box.width - 4) x = Math.max(4, clientX - box.left - this.tipW - 14);
+    if (y + this.tipH > box.height - 4) y = Math.max(4, clientY - box.top - this.tipH - 14);
+    this.tipEl.style.left = `${x}px`;
+    this.tipEl.style.top = `${y}px`;
   }
 
   hide() {
@@ -320,10 +329,7 @@ export class LabSession implements TipHost {
           if (c.value === item.label) b.setAttribute("aria-pressed", "true");
           // the box above stops the press from reaching the editor; the default (a
           // caret placed in the widget) still has to be refused here, as iconButton does
-          b.addEventListener("mousedown", (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          });
+          swallowPress(b);
           b.addEventListener("click", (e) => {
             e.preventDefault();
             this.applyPreset(c, item);
@@ -379,13 +385,18 @@ export class LabSession implements TipHost {
     const head = el("figcaption", "cm-lab-fig-head");
     head.appendChild(el("span", "cm-lab-fig-title", v.title));
     const body = el("div", "cm-lab-fig-body");
-    const twin = tableTwin(v);
+    // The twin is built the first time it is asked for: a re-run rebuilds every figure,
+    // and a full table of a capped series is thousands of elements nobody has looked at
+    let twin: HTMLElement | null = null;
     let showTable = false;
     const draw = () => {
       body.replaceChildren();
-      if (showTable && twin) {
-        body.appendChild(twin);
-        return;
+      if (showTable) {
+        twin ??= tableTwin(v);
+        if (twin) {
+          body.appendChild(twin);
+          return;
+        }
       }
       const width = Math.max(200, Math.floor(body.clientWidth || this.viewsEl.clientWidth || 480) - 2);
       switch (v.kind) {
@@ -409,7 +420,7 @@ export class LabSession implements TipHost {
           break;
       }
     };
-    if (twin) {
+    if (hasTableTwin(v.kind)) {
       const toggle = iconButton("cm-lab-fig-toggle", ICON_TABLE, t("runBlock.tableView"), () => {
         showTable = !showTable;
         toggle.innerHTML = showTable ? ICON_CHART : ICON_TABLE;
@@ -423,13 +434,23 @@ export class LabSession implements TipHost {
     // an axis chart is drawn to the width it has: redrawn as the note's column changes
     if (v.kind === "line" || v.kind === "bars" || v.kind === "scatter") {
       let last = -1;
+      let settle: ReturnType<typeof setTimeout> | undefined;
+      const redraw = () => {
+        if (this.closed) return;
+        draw();
+        this.view?.requestMeasure();
+      };
       const ro = new ResizeObserver(() => {
         const w = body.clientWidth;
-        if (w > 0 && w !== last) {
-          last = w;
-          draw();
-          this.view?.requestMeasure();
-        }
+        if (w <= 0 || w === last) return;
+        const first = last < 0;
+        last = w;
+        // The first width is drawn at once; after that a drag of the sash or the window
+        // changes the width every frame and only the width it settles at is looked at,
+        // so the chart is rebuilt once when the drag stops rather than sixty times
+        clearTimeout(settle);
+        if (first) redraw();
+        else settle = setTimeout(redraw, 80);
       });
       ro.observe(body);
       this.observers.push(ro);
@@ -442,7 +463,7 @@ export class LabSession implements TipHost {
   // ---- output & status ----
 
   private setOutput(output: string, error: string | null) {
-    const text = [output, error ?? ""].filter(Boolean).join("\n");
+    const text = joinOutput(output, error);
     this.outEl.textContent = text;
     this.outEl.hidden = text === "";
     this.outEl.classList.toggle("cm-lab-out-err", !!error);

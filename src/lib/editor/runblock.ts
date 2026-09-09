@@ -17,7 +17,8 @@
 import { t } from "$lib/i18n/i18n.svelte";
 import type { BlockEvalResult, LabParams } from "$lib/api";
 import { blockRoot } from "./blockwidget";
-import { LabSession, type LabHost, cardReveal, labInteracting } from "./lab";
+import { ICON_EDIT, LabSession, type LabHost, cardReveal, iconButton, joinOutput, labInteracting } from "./lab";
+import { swallowPress } from "$lib/lab/dom";
 import { focusEditor } from "./clickguard";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
@@ -76,12 +77,24 @@ function blockAt(view: EditorView, pos: number): Located | null {
   return { code, start: first.from, codeStart: Math.min(first.to + 1, endPos), endPos, range };
 }
 
+/** The fenced block an element inside a card or a button stands in, or null once it has
+ *  left the document. Its position is its line's start either way — a `side: -2` widget
+ *  and a block replace both anchor at the fence's first line. */
+function blockAtDOM(view: EditorView, el: HTMLElement): Located | null {
+  try {
+    return blockAt(view, view.state.doc.lineAt(view.posAtDOM(el)).from);
+  } catch {
+    return null;
+  }
+}
+
 /** Whether a block is a lab: it calls the lab API somewhere in its code. */
 const LAB_RE = /\bvemry\.lab\./;
 
 /** The caption of a cold card: the block's leading `//` comment, first line only. */
 function captionOf(code: string): string {
-  const m = /^\s*\/\/\s*(.+)$/.exec(code.split("\n")[0] ?? "");
+  const nl = code.indexOf("\n");
+  const m = /^\s*\/\/\s*(.+)$/.exec(nl < 0 ? code : code.slice(0, nl));
   return m ? m[1].trim() : "";
 }
 
@@ -111,7 +124,6 @@ async function runBlock(view: EditorView, host: RunHost, info: Located, relocate
   const h = labHost(view, host);
   const session = new LabSession(h, r.lab, r.output, now.code);
   h.bind(session.root);
-  const effects: StateEffect<unknown>[] = [setLab.of({ at: now.start, session })];
   // From the source: the cursor steps to the line after the fence (or before it at
   // the document's end), so the block folds into its card at once — Run is the
   // moment the reader stops editing and starts looking
@@ -121,7 +133,7 @@ async function runBlock(view: EditorView, host: RunHost, info: Located, relocate
     if (now.endPos < doc.length) selection = { anchor: now.endPos + 1 };
     else if (now.start > 0) selection = { anchor: now.start - 1 };
   }
-  view.dispatch({ effects, selection });
+  view.dispatch({ effects: setLab.of({ at: now.start, session }), selection });
 }
 
 class RunWidget extends WidgetType {
@@ -139,22 +151,11 @@ class RunWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       if (btn.disabled) return;
-      let info: Located | null;
-      try {
-        info = blockAt(view, view.posAtDOM(btn));
-      } catch {
-        return;
-      }
+      const relocate = () => blockAtDOM(view, btn);
+      const info = relocate();
       if (!info) return;
       btn.disabled = true;
       btn.textContent = t("runBlock.running");
-      const relocate = (): Located | null => {
-        try {
-          return blockAt(view, view.posAtDOM(btn));
-        } catch {
-          return null;
-        }
-      };
       void runBlock(view, this.host, info, relocate, true).finally(() => {
         btn.disabled = false;
         btn.textContent = t("runBlock.run");
@@ -169,14 +170,7 @@ class RunWidget extends WidgetType {
  *  every call, never from a position remembered at click time. */
 function labHost(view: EditorView, host: RunHost): LabHost & { bind: (el: HTMLElement) => void } {
   let root: HTMLElement | null = null;
-  const located = (): Located | null => {
-    if (!root) return null;
-    try {
-      return blockAt(view, view.state.doc.lineAt(view.posAtDOM(root)).from);
-    } catch {
-      return null;
-    }
-  };
+  const located = () => (root ? blockAtDOM(view, root) : null);
   return {
     bind: (el: HTMLElement) => {
       root = el;
@@ -204,8 +198,6 @@ function labHost(view: EditorView, host: RunHost): LabHost & { bind: (el: HTMLEl
 
 const ICON_FLASK =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.52 16h12.96"/></svg>';
-const ICON_EDIT =
-  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
 
 /** The card a lab block folds into: the live session when there is one, else the
  *  cold card — the caption and a Run button. Its DOM is the session's own root, so
@@ -252,28 +244,14 @@ class LabCardWidget extends WidgetType {
     caption.title = this.caption;
     const tools = document.createElement("span");
     tools.className = "cm-lab-tools";
+    const locate = () => blockAtDOM(view, card);
     const run = document.createElement("button");
     run.className = "cm-lab-run";
     run.textContent = t("runBlock.run");
-    const edit = document.createElement("button");
-    edit.className = "cm-lab-tool";
-    edit.innerHTML = ICON_EDIT;
-    edit.title = t("runBlock.editCode");
-    const swallow = (e: Event) => {
+    swallowPress(run);
+    run.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-    };
-    run.addEventListener("mousedown", swallow);
-    edit.addEventListener("mousedown", swallow);
-    const locate = (): Located | null => {
-      try {
-        return blockAt(view, view.state.doc.lineAt(view.posAtDOM(card)).from);
-      } catch {
-        return null;
-      }
-    };
-    run.addEventListener("click", (e) => {
-      swallow(e);
       if (run.disabled) return;
       const info = locate();
       if (!info) return;
@@ -284,11 +262,12 @@ class LabCardWidget extends WidgetType {
         run.textContent = t("runBlock.run");
       });
     });
-    edit.addEventListener("click", (e) => {
-      swallow(e);
+    // the same ✎ as the live card's, annotation included: without it the pointer guard
+    // below may drop the selection this dispatches
+    const edit = iconButton("cm-lab-tool", ICON_EDIT, t("runBlock.editCode"), () => {
       const info = locate();
       if (!info) return;
-      view.dispatch({ selection: { anchor: info.codeStart } });
+      view.dispatch({ selection: { anchor: info.codeStart }, annotations: cardReveal.of(true) });
       focusEditor(view);
     });
     tools.append(run, edit);
@@ -318,7 +297,7 @@ class OutputWidget extends WidgetType {
     wrap.className = "cm-runblock-out";
     if (this.error) wrap.classList.add("cm-runblock-err");
     const pre = document.createElement("pre");
-    pre.textContent = [this.output, this.error ?? ""].filter(Boolean).join("\n") || t("runBlock.noOutput");
+    pre.textContent = joinOutput(this.output, this.error) || t("runBlock.noOutput");
     wrap.appendChild(pre);
     const clear = document.createElement("button");
     clear.className = "cm-runblock-clear";
@@ -354,6 +333,13 @@ function buildButtons(state: EditorState, deco: Decoration): DecorationSet {
   return Decoration.set(decos, true);
 }
 
+interface CardResult {
+  decos: DecorationSet;
+  /** Whether the document holds a js fence at all (a revealed one counts): without one,
+   *  a cursor move cannot make a card appear, so the tree is not walked again. */
+  hasFence: boolean;
+}
+
 /** A session in the labs range set, anchored at its fence's start. */
 class SessionMark extends RangeValue {
   constructor(readonly session: LabSession) {
@@ -370,19 +356,23 @@ class SessionMark extends RangeValue {
  *  the table's block rule, made for a block with no other way in, would show a
  *  hundred lines of JavaScript to a reader who dragged past — the card is marked
  *  selected instead, since the editor draws no selection over a replaced block. */
-function buildCards(state: EditorState, labs: RangeSet<SessionMark>, host: RunHost): DecorationSet {
+function buildCards(state: EditorState, labs: RangeSet<SessionMark>, host: RunHost): CardResult {
   const doc = state.doc;
   const decos: ReturnType<Decoration["range"]>[] = [];
+  let hasFence = false;
   syntaxTree(state).iterate({
     enter(node) {
       if (node.name !== "FencedCode") return;
       const firstLine = doc.lineAt(node.from);
       if (!JS_HEAD_RE.test(firstLine.text)) return false;
-      const code = fencedCodeText(doc, node.node);
-      if (!LAB_RE.test(code)) return false;
+      hasFence = true;
       const from = firstLine.from;
       const to = doc.lineAt(Math.min(node.to, doc.length)).to;
+      // the reveal and the fold decide before the body is read: whether the block is a
+      // lab does not change the answer, and reading it materialises the whole fence
       if (selectionReveals(state, from, to) || insideFold(state, from, to)) return false;
+      const code = fencedCodeText(doc, node.node);
+      if (!LAB_RE.test(code)) return false;
       const selected = selectionTouches(state, from, to);
       let session: LabSession | null = null;
       labs.between(from, from, (f, _t, mark) => {
@@ -393,7 +383,7 @@ function buildCards(state: EditorState, labs: RangeSet<SessionMark>, host: RunHo
       return false;
     },
   });
-  return Decoration.set(decos, true);
+  return { decos: Decoration.set(decos, true), hasFence };
 }
 
 export function runBlockExtension(host: RunHost): Extension {
@@ -453,14 +443,18 @@ export function runBlockExtension(host: RunHost): Extension {
     },
   });
   const labChanged = (tr: Transaction) => tr.effects.some((e) => e.is(setLab) || e.is(clearLab));
-  const cards = StateField.define<DecorationSet>({
+  const cards = StateField.define<CardResult>({
     create: (state) => buildCards(state, state.field(labs), host),
     update(value, tr) {
       const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
-      if (!tr.docChanged && !tr.selection && !treeChanged && !foldRangesOf(tr).length && !labChanged(tr)) return value;
+      const foldChanged = foldRangesOf(tr).length > 0;
+      if (!tr.docChanged && !tr.selection && !treeChanged && !foldChanged && !labChanged(tr)) return value;
+      // The common case — a note with no js fence: a cursor move needs no rescan (a
+      // document or syntax-tree change still does, since a fence may have just been typed)
+      if (!value.hasFence && !tr.docChanged && !treeChanged && !foldChanged) return value;
       return buildCards(tr.state, tr.state.field(labs), host);
     },
-    provide: (f) => EditorView.decorations.from(f),
+    provide: (f) => EditorView.decorations.from(f, (v) => v.decos),
   });
   // The pointer guard, two rules for a selection-only transaction (the ✎ reveal is
   // annotated and passes; a doc change and an effect pass):
@@ -479,7 +473,7 @@ export function runBlockExtension(host: RunHost): Extension {
     if (!tr.isUserEvent("select.pointer") || !main.empty) return tr;
     const doc = tr.startState.doc;
     let landing: number | null = null;
-    tr.startState.field(cards).between(main.from, main.from, (from, to) => {
+    tr.startState.field(cards).decos.between(main.from, main.from, (from, to) => {
       landing = to < doc.length ? to + 1 : from > 0 ? from - 1 : null;
       return false;
     });

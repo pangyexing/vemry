@@ -201,10 +201,10 @@ impl ScriptHost {
             .send(Job::EvalBlock { code: code.into(), current_note, params, reply: tx })
             .is_err()
         {
-            return BlockEvalResult { output: String::new(), error: Some("script host stopped".into()), lab: None };
+            return BlockEvalResult::failed("script host stopped");
         }
         rx.recv_timeout(Duration::from_secs(30))
-            .unwrap_or_else(|_| BlockEvalResult { output: String::new(), error: Some("script host busy".into()), lab: None })
+            .unwrap_or_else(|_| BlockEvalResult::failed("script host busy"))
     }
 
     /// Test hook: treat every registered cron entry as due right now.
@@ -530,7 +530,7 @@ impl Worker {
         }));
         let context = match Context::full(&self.runtime) {
             Ok(c) => c,
-            Err(e) => return BlockEvalResult { output: String::new(), error: Some(format!("context: {e}")), lab: None },
+            Err(e) => return BlockEvalResult::failed(format!("context: {e}")),
         };
         let params_json = params.unwrap_or_else(|| serde_json::json!({})).to_string();
         let env = BindEnv {
@@ -579,19 +579,21 @@ impl Worker {
             Ok((repr, lab))
         });
         let mut lines = meta.borrow().block_output.clone();
-        match result {
+        // whatever the block printed is kept either way: an error is the reason beside it
+        let (lab, error) = match result {
             Ok((repr, lab_json)) => {
                 if let Some(repr) = repr {
                     lines.push(format!("⇒ {repr}"));
                 }
                 match lab_json.as_deref().map(lab::parse) {
-                    None => BlockEvalResult { output: lines.join("\n"), error: None, lab: None },
-                    Some(Ok(spec)) => BlockEvalResult { output: lines.join("\n"), error: None, lab: Some(spec) },
-                    Some(Err(e)) => BlockEvalResult { output: lines.join("\n"), error: Some(e), lab: None },
+                    None => (None, None),
+                    Some(Ok(spec)) => (Some(spec), None),
+                    Some(Err(e)) => (None, Some(e)),
                 }
             }
-            Err(e) => BlockEvalResult { output: lines.join("\n"), error: Some(e), lab: None },
-        }
+            Err(e) => (None, Some(e)),
+        };
+        BlockEvalResult { output: lines.join("\n"), error, lab }
     }
 
     fn reset_meta(&self, slot: &Slot) {
@@ -1406,7 +1408,7 @@ mod tests {
         match &spec.views[3] {
             lab::LabView::Table { columns, rows, .. } => {
                 assert_eq!(columns, &["n", "s"]);
-                assert_eq!(rows[1], vec![lab::Cell::Number(2.0), lab::Cell::Empty(None)]);
+                assert_eq!(rows[1], vec![Some(lab::Cell::Number(2.0)), None]);
             }
             other => panic!("{other:?}"),
         }
