@@ -2,7 +2,6 @@
   import { api, type SessionMeta } from "$lib/api";
   import { agent } from "$lib/stores/agent.svelte";
   import { vault } from "$lib/stores/vault.svelte";
-  import { tick } from "svelte";
   import { classifyDiff } from "$lib/views/diff";
   import { handleCodeCopyClick, renderAssistantMarkdownBlocks } from "$lib/markdown";
   import "katex/dist/katex.min.css";

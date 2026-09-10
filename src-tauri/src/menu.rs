@@ -10,7 +10,7 @@
 //! Accelerators fall into three classes (paired with the isMac gate on
 //! App.svelte's keydown chain):
 //! 1. Menu-only (the accelerator is set here, and the matching frontend branch
-//!    gets a !isMac gate so it cannot fire twice): ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧C ⌘⇧S — the
+//!    gets a !isMac gate so it cannot fire twice): ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧C ⌘⇧S ⌘⇧T — the
 //!    application-level combinations WKWebView and CodeMirror do not claim;
 //!    ⌘W belongs here too (a special case in Rust that never reaches the
 //!    frontend, which has no binding for it; the chat window's frontend ⌘W

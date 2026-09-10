@@ -428,8 +428,9 @@
     }
     if (agent.phase === "text") return t("chat.statusAnswering");
     // A long think is a visible one: how much reasoning has come in so far, so a
-    // four-minute wait reads as work rather than a hang
-    const n = agent.thinking.length;
+    // four-minute wait reads as work rather than a hang. The running total, not
+    // agent.thinking's length — that window is capped and stops moving at 8k
+    const n = agent.thinkingChars;
     return n ? t("chat.thinkingCount", { n: fmtCount(n) }) : t("chat.thinking");
   };
 

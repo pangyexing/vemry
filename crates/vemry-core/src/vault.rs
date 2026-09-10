@@ -892,26 +892,35 @@ impl Vault {
     pub fn accept_provenance_ids(&mut self, id: &NoteId, local_ids: Option<&[String]>) -> Result<usize> {
         let prov = self.provenance(id)?;
         let pending = |p: &BlockProvenance| matches!(p.origin, Origin::Agent { pending: true, .. });
-        let hashes: Vec<String> = match local_ids {
-            None => prov.iter().filter(|p| pending(p)).map(|p| p.hash.clone()).collect(),
+        // Which rows are being marked, named once each. Both ways in count the same
+        // thing — blocks — while the ledger entry below carries distinct hashes: two
+        // blocks that read the same share one record, and accepting it reviews both.
+        let rows: Vec<usize> = match local_ids {
+            None => prov.iter().enumerate().filter(|(_, p)| pending(p)).map(|(i, _)| i).collect(),
             Some(ids) => {
                 // The one lookup rule (an explicit `^id` beats a positional `bN` spelled
                 // the same): the rows are in block order, so the index carries over
                 let raw = self.read_note(id)?;
                 let blocks = parse_note(&raw).blocks;
-                let mut hashes = Vec::new();
+                let mut rows = Vec::new();
                 for lid in ids {
-                    let p = crate::locate::find_block(&blocks, lid)
-                        .and_then(|i| prov.get(i))
+                    let i = crate::locate::find_block(&blocks, lid)
+                        .filter(|i| *i < prov.len())
                         .ok_or_else(|| VemryError::BlockNotFound { local_id: lid.to_string() })?;
-                    if pending(p) && !hashes.contains(&p.hash) {
-                        hashes.push(p.hash.clone());
+                    if pending(&prov[i]) && !rows.contains(&i) {
+                        rows.push(i);
                     }
                 }
-                hashes
+                rows
             }
         };
-        let accepted = hashes.len();
+        let accepted = rows.len();
+        let mut hashes: Vec<String> = Vec::new();
+        for i in rows {
+            if !hashes.contains(&prov[i].hash) {
+                hashes.push(prov[i].hash.clone());
+            }
+        }
         if !hashes.is_empty() {
             self.provenance.append(ProvenanceEntry::Accept { ts: provenance::now_ts(), hashes });
         }

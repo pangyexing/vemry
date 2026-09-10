@@ -11,6 +11,7 @@
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { agent } from "$lib/stores/agent.svelte";
+  import { prefs } from "$lib/stores/prefs.svelte";
   import { copyText } from "$lib/copytext";
   import Chevron from "./Chevron.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
@@ -549,7 +550,8 @@
       {@render editRow(depth)}
     {:else}
       {@const priv = vault.privacyStatus(note.id)}
-      {@const pend = vault.pendingIn(note.id)}
+      <!-- the same switch as the status bar's chips and the editor's bar: with the marks off, no dot -->
+      {@const pend = prefs.provenanceMarks ? vault.pendingIn(note.id) : 0}
       <button
         class="row file-row"
         class:active={vault.currentPath === note.id}

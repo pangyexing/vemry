@@ -433,7 +433,7 @@ repeat), plus two presentation keys:
 | `note` | the exact vault-relative path of one note, e.g. `projects/Alpha.md` |
 | `tag` | tag name (a leading `#` is stripped) |
 | `text` | substring of the body |
-| `task_state` | `todo` / `doing` / `done` |
+| `task_state` | `todo` / `doing` / `done` / `cancelled` |
 | `due_before` | `YYYY-MM-DD` or `today` (evaluated in local time) |
 | `field` | `key` (present) / `key = v` / `key != v` / `key < v` / `key > v` / `key ~ text`; dates and numbers compare as such; several `field` lines all have to hold |
 | `limit` | positive integer |

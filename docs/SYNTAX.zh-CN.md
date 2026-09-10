@@ -282,7 +282,7 @@ YAML 体，查询本身是**八个平铺标量**，全部可选（`field` 可重
 | `note` | 一篇笔记的准确相对路径，如 `projects/Alpha.md` |
 | `tag` | 标签名（前导 `#` 会被去掉） |
 | `text` | 正文子串 |
-| `task_state` | `todo` / `doing` / `done` |
+| `task_state` | `todo` / `doing` / `done` / `cancelled` |
 | `due_before` | `YYYY-MM-DD` 或 `today`（按本地时区求值） |
 | `field` | `key`（存在）/ `key = v` / `key != v` / `key < v` / `key > v` / `key ~ 文本`；日期与数字按其类型比较；多行 `field` 须同时成立 |
 | `limit` | 正整数 |

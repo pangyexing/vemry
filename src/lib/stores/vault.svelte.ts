@@ -1672,17 +1672,45 @@ class VaultStore {
     }
   }
 
-  /** The vault-wide review list; a failure (no vault open) leaves it empty. */
-  async refreshPendingVault() {
+  /** The one read in flight, and the single follow-up queued behind it. */
+  private pendingRun: Promise<void> | null = null;
+  private pendingQueued: Promise<void> | null = null;
+
+  /** The vault-wide review list; a failure (no vault open) leaves it empty.
+   *  Every vault event asks for it — the echo of the editor's autosave included — and
+   *  answering it reads every note the ledger names as a candidate. So only one read is
+   *  ever in flight (two answers cannot land out of order and leave a stale list behind),
+   *  and every request made while one runs collapses into a single fresh read after it —
+   *  which is what an awaiting caller (an accept, a review start) needs to see. */
+  refreshPendingVault(): Promise<void> {
     if (!this.root) {
       this.pendingNotes = [];
-      return;
+      return Promise.resolve();
     }
-    try {
-      this.pendingNotes = await api.provenancePendingNotes();
-    } catch {
-      this.pendingNotes = [];
+    if (this.pendingRun) {
+      this.pendingQueued ??= this.pendingRun.then(() => {
+        this.pendingQueued = null;
+        // A request that arrived in the gap between the read resolving and this callback
+        // has already started one: join it rather than opening a second
+        return this.pendingRun ?? this.readPendingVault();
+      });
+      return this.pendingQueued;
     }
+    return this.readPendingVault();
+  }
+
+  private readPendingVault(): Promise<void> {
+    const run = (async () => {
+      try {
+        this.pendingNotes = await api.provenancePendingNotes();
+      } catch {
+        this.pendingNotes = [];
+      } finally {
+        this.pendingRun = null;
+      }
+    })();
+    this.pendingRun = run;
+    return run;
   }
 
   /** Mark every unreviewed AI block in these notes (every note, with null) as reviewed —
@@ -1715,7 +1743,11 @@ class VaultStore {
   async openForReview(path: string, which: "first" | "last" = "first"): Promise<void> {
     this.reviewLanding = { path, which };
     await this.openNote(path);
-    if (this.currentPath === path && this.stepPending?.(which)) this.reviewLanding = null;
+    // The open did not land where it was aimed (a dirty guard turned it down, the note is
+    // gone): the landing is dropped rather than left armed to jump the cursor on some
+    // later, unrelated visit to that path
+    if (this.currentPath !== path) this.reviewLanding = null;
+    else if (this.stepPending?.(which)) this.reviewLanding = null;
   }
 
   /** One step of the review: the next (or previous) run of the open note, else the next

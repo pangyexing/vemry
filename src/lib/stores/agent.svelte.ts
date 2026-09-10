@@ -206,6 +206,10 @@ class AgentStore {
   /** The notes each turn wrote (turn id → paths, in landing order): the turn's review starts from them. Live only, like the counts. */
   notesByTurn = $state<Record<string, string[]>>({});
   thinking = $state("");
+  /** How much reasoning this turn has produced, in characters. `thinking` keeps only the
+   *  last 8k for reading, so its length stops moving on a long think — and a long think is
+   *  exactly when the status strip's counter has to keep moving. Live only, reset with it. */
+  thinkingChars = $state(0);
   /** What the stream is delivering right now: reasoning tokens, answer text, or neither (a
    *  tool call in flight, or the gap between them) — the status strip's verb. Live only. */
   phase = $state<"thinking" | "text" | null>(null);
@@ -382,6 +386,7 @@ class AgentStore {
       this.sessionId = null;
     }
     this.thinking = "";
+    this.thinkingChars = 0;
     this.usage = null;
     this.lastTruncated = false;
     this.viewEpoch++;
@@ -566,6 +571,7 @@ class AgentStore {
     const epoch = this.epoch;
     this.running = true;
     this.thinking = "";
+    this.thinkingChars = 0;
     this.phase = null;
     this.turnStartedAt = Date.now();
     this.lastTruncated = false;
@@ -589,6 +595,7 @@ class AgentStore {
       if (epoch === this.epoch) this.flushDelta();
       this.running = false;
       this.thinking = "";
+      this.thinkingChars = 0;
       this.phase = null;
       if (this.turnStartedAt != null) this.lastTurnMs = Date.now() - this.turnStartedAt;
       this.turnStartedAt = null;
@@ -644,6 +651,7 @@ class AgentStore {
     this.undoneTurns = {};
     this.notesByTurn = {};
     this.thinking = "";
+    this.thinkingChars = 0;
   }
 
   /** Resetting the session-scoped state: shared by a vault switch, a create and a switch.
@@ -931,7 +939,9 @@ class AgentStore {
       this.flushTimer = null;
     }
     if (this.pendingThinking) {
-      // Keep a sizeable window to expand, read and copy; the 8k cap stops one turn's thinking from growing without bound
+      // Keep a sizeable window to expand, read and copy; the 8k cap stops one turn's thinking
+      // from growing without bound, and the running total is counted before the cut
+      this.thinkingChars += this.pendingThinking.length;
       this.thinking = (this.thinking + this.pendingThinking).slice(-8000);
       this.pendingThinking = "";
     }
@@ -1091,6 +1101,7 @@ class AgentStore {
         this.harvestLinksFromAnswer();
         this.settleSources();
         this.thinking = "";
+        this.thinkingChars = 0;
         this.phase = null;
         this.lastTruncated = e.truncated;
         break;

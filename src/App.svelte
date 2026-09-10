@@ -1036,11 +1036,16 @@
   async function enterTranslation(open: () => Promise<boolean>) {
     vault.enterTranslate();
     const ok = await open();
-    if (!ok) {
-      const reason = translate.error;
-      vault.exitTranslate();
-      if (reason) toast.push(reason, "error");
+    if (ok) {
+      // Left again while the source was still being cut (Esc, the same key, a landing
+      // underneath): the job that arrives after has nobody watching it, so it is stopped
+      // here rather than left streaming — exitTranslate had nothing to close at the time
+      if (vault.mainView !== "translate") translate.close();
+      return;
     }
+    const reason = translate.error;
+    vault.exitTranslate();
+    if (reason) toast.push(reason, "error");
   }
   /** Side-by-side translation of what is in front of the reader — the reading projection's
    *  page, else the open note — as an overlay over the current view; the same key leaves it.
@@ -1182,7 +1187,7 @@
       return;
     }
     const key = e.key.toLowerCase();
-    // The isMac gate: on macOS ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧C ⌘⇧S ⌘L ⌘T ⌘R belong to the native menu's
+    // The isMac gate: on macOS ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧C ⌘⇧S ⌘L ⌘T ⌘⇧T ⌘R belong to the native menu's
     // accelerators (class 1 of menu.rs's three), so this gives way to avoid firing twice (a
     // double ⌘⇧S would clip twice); the browser keys are there because a native browser tab
     // holding the focus swallows every key before this chain sees it. ⌘P ⌘B ⌘. ⌘⌥arrows stay

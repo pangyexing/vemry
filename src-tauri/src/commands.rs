@@ -774,8 +774,8 @@ pub fn provenance_get(state: State<'_, AppState>, path: String) -> Result<Vec<Bl
 }
 
 /// Accept the pending agent blocks of a note (those with these local ids — a
-/// run — or all of them); returns how many are still pending. Not broadcast:
-/// accepting is not a note event. Answers with how many blocks it accepted.
+/// run — or all of them); answers with how many blocks it accepted. Not
+/// broadcast: accepting is not a note event.
 #[tauri::command]
 pub fn provenance_accept(state: State<'_, AppState>, path: String, local_ids: Option<Vec<String>>) -> Result<usize, String> {
     with_vault_mut(&state, |v| {

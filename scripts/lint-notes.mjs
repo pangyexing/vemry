@@ -13,9 +13,16 @@ const CJK = "[\\u3000-\\u303f\\u3400-\\u4dbf\\u4e00-\\u9fff\\uff00-\\uffef]";
 const files = [];
 (function walk(d) { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (n.endsWith(".md")) files.push(p); } })(ROOT);
 const source = files.find((f) => f.endsWith("/source.md"));
-const sourceIds = new Set(source ? [...readFileSync(source, "utf8").matchAll(/\^([A-Za-z0-9-]+)\s*$/gm)].map((m) => m[1]) : []);
-// spans the prose rules must not touch
-const PROTECT = /(```[\s\S]*?```|`[^`\n]+`|\$\$[^$\n]+\$\$|\$(?![\s$])(?:\\.|[^$\n\\])+?\$(?!\d)|!?\[\[[^\]\n]+\]\]|!?\[[^\]\n]*\]\([^)\n]*\)|\[[^\]\n]*::[^\]\n]*\]|<[^>\n]+>|https?:\/\/\S+|^---\n[\s\S]*?\n---\n)/gm;
+// The anchor's characters are the same set the embeds below are matched with: a narrower
+// one here would report an id that resolves as unresolved
+const sourceIds = new Set(source ? [...readFileSync(source, "utf8").matchAll(/\^([\w-]+)\s*$/gm)].map((m) => m[1]) : []);
+// spans the prose rules must not touch. A display block spans lines (SYNTAX.md: `$$` on their
+// own lines), so its alternative has to as well — matched to one line, the TeX inside every
+// multi-line formula is handed to the prose rules, which report its fragments as bare maths and,
+// with --fix, rewrite them. The frontmatter alternative is anchored to the very
+// start of the file — matched per line it would take any `---` rule in the body for an opener
+// and swallow the prose up to the next one
+const PROTECT = /(```[\s\S]*?```|`[^`\n]+`|\$\$[\s\S]+?\$\$|\$(?![\s$])(?:\\.|[^$\n\\])+?\$(?!\d)|!?\[\[[^\]\n]+\]\]|!?\[[^\]\n]*\]\([^)\n]*\)|\[[^\]\n]*::[^\]\n]*\]|<[^>\n]+>|https?:\/\/\S+|(?<![\s\S])---\n[\s\S]*?\n---\n)/g;
 // a bare formula token: an identifier with a subscript or superscript, a root, a transpose, a squared, an O(…)
 const BARE = /(?<![\\$\w/])(?:√[A-Za-z]\w*(?:[_^]\{?\w+\}?)*|[A-Za-z](?:[_^]\{?[A-Za-z0-9]+\}?)+(?:[=/·×+\-][A-Za-z0-9]+(?:[_^]\{?[A-Za-z0-9]+\}?)*)*|[A-Za-z]+ᵀ|\bO\((?:[^()\n]|\([^()\n]*\))+\))(?![\w$])/g;
 const findings = [];
