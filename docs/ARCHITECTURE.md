@@ -53,10 +53,10 @@ Three constraints follow:
 
 | Module | Responsibility |
 |---|---|
-| `provider.rs` | `ProviderConfig`: base_url + model + key. Zhipu (`glm-4.7-flash`) by default, swappable for any OpenAI-compatible endpoint; `is_deepseek()` decides whether the Responses transport is available |
-| `types.rs` | OpenAI Chat Completions wire types plus the streaming tool_call assembler. `ToolDef` is an untagged enum (`Function` plus `Raw`, which passes a server-side tool through verbatim); `ChatMessage.extra_items` carries Responses output items across turns |
+| `provider.rs` | `ProviderConfig`: base_url + model + key. Zhipu (`glm-4.7-flash`) by default, swappable for any OpenAI-compatible endpoint; `is_deepseek()` decides whether the Anthropic-format transport (and with it web search) is available |
+| `types.rs` | OpenAI Chat Completions wire types plus the streaming tool_call assembler. `ToolDef` is an untagged enum (`Function` plus `Raw`, which passes a server-side tool through verbatim); `ChatMessage.extra_items` carries the Anthropic-format line's replay blocks across turns |
 | `client.rs` | The `ChatTransport` trait (mockable) plus the reqwest SSE implementation — **the LLM channel boundary**. Since v0.4 the system has two further controlled network exits (see "The built-in knowledge browser"). v0.7: a process-wide shared connection pool, connect timeout, a 120 s stream-idle timeout and cancellation polling for a stalled stream; both transports share one read loop, `read_sse` |
-| `responses.rs` | v0.4: the DeepSeek Responses API transport — a second implementation of the same `ChatTransport` trait. On the request side it maps messages→input items, system→instructions and flattens tools; on the response side it synthesises `StreamChunk` from semantic SSE events, so the runner and the mock need no changes. The server-side `web_search` tool is injected through here, and `web_search_call` items are replayed verbatim. Enabled only when web search is on **and** the endpoint is api.deepseek.com |
+| `anthropic.rs` | The Anthropic-format transport (DeepSeek's `/anthropic/v1/messages`) — a second implementation of the same `ChatTransport` trait, and the carrier of web search. On the request side it maps messages→content blocks, system→`system`, tool results→`tool_result` blocks and function tools→`input_schema` tools, spelling the runner's `{"type":"web_search"}` as the `web_search_20250305` server tool; on the response side it synthesises `StreamChunk` from the semantic SSE events, so the runner and the mock need no changes. `server_tool_use` / `web_search_tool_result` blocks (the results as `encrypted_content`) and a thinking block's signature are replayed through `extra_items`. Used for a turn only when web search is on **and** the endpoint is api.deepseek.com |
 | `tools.rs` | The domain tools, in three classes. Read-level (list_notes / read_note / read_file / read_block / search_notes / get_links / clips_lookup / recent_changes / aggregate_blocks / query_blocks / read_skill) execute directly behind the privacy gate; write-level (write_note / edit_note / append_note / set_frontmatter / update_task / set_block_field / restructure_note / move_blocks / move_note / move_file) are first "prepared" into a `WriteRequest` — carrying the rendered diff and the exact content that would land on disk (a move is a path pair, `path → to_path`, with no diff) — and execute only after the gate; session-level (`is_session_tool`: update_plan / list_sources / propose_plan / propose_actions / open_for_reading) act on the session's own state, touch no note and pass no write gate (open_for_reading passes the read gate instead). `import_page` is the one tool of both kinds: the page passes the read gate, the app composes the source note from it (`import.rs`: the page's sections as headings, one block per paragraph with a stable `^s<section>p<n>` id, equations as `$$…$$` with their numbers, figures with their captions as `^figN`, table captions as `^tabN`, the reference list left out) and the note then lands as a write_note — the same diff, gate and provenance — with the outline of ids as the receipt, so a paper is archived without its text passing through the model as output tokens. `update_task` (state and dates in one rewrite of the task's own line) and `set_block_field` (one inline `[key:: value]` on a block's first line) go through `vemry_core::taskedit`, the Rust copy of the editor's `tasks.ts` / `fields.ts` grammar, so a task the AI ticks lands on disk byte for byte as one dragged on the board; `recent_changes` reads the block change times (`blocktimes.rs`) for "what changed since". `move_note` and `move_file` go through `Vault::rename_path`, the same implementation the file tree's move uses, **and rewrite the links that pointed at the moved thing in the same write** (`vemry_core::relink`: the plan is computed at prepare time, shown as the move's diff, and landed after the rename — rename first, rewrite second, a note edited meanwhile skipped rather than overwritten; private referrers are never rewritten). `list_files` and `audit_links` (unresolved links, orphans, dangling `supports::`, duplicate clips — `vemry_core::audit`, index only) are the read side of a tidy-up. `PlanItem`/`PlanStatus` and `parse_plan_items` are update_plan's grammar. `append_note` lands by the vault's own rule (`insert.rs`: the end of a heading's section, or the content end — the same landing as a clip or a quick capture; a missing heading is an error, never a silent fallback; a missing note is a Create) and its diff is only the addition; `set_frontmatter` goes through `vemry_core::set_frontmatter_key` (one top-level key: a scalar, a list, or removal; `private` and `vemry` are refused). `is_local_write` names the three that a followed note takes without a dialog |
 | `undo.rs` | The write journal and "undo this turn's writes": every landed write is recorded with what it replaced (the note's previous text; a move's path pair and link rewrites), and undoing a turn walks its records backwards — a note still holding what the write left gets its previous text back, a created note goes to the trash, a move moves back when nothing has taken its place, a rewrite is restored when its note is untouched; anything edited since is skipped and counted. The journal lives with the session in memory; the jsonl gets an `undo` marker (counts only). Not a snapshot, not git |
 | `sources.rs` | The session's web source table: `extract_citations` (Markdown links and bare ASCII URLs, in document order, deduplicated — the same rule the frontend numbers its superscripts by), `merge_turn` (the verification verdict: a search ran this turn, or the user handed the page over; otherwise the URL came out of the model's prose alone and shows as "unverified"), `drop_turn` (a regenerate or an edit-and-resend takes its turn's sources back) and `read_sources` (the table rebuilt from the audit's `sources` lines with the retry / edit_resend markers applied — the replay and the live path agree by construction). The runner settles every turn's citations into it at the end of the turn; `list_sources` reads it back to the model; compaction can no longer lose it |
@@ -575,7 +575,7 @@ order:
    an untagged enum (plain text still serialises as a bare string, so old sidecars
    and request bodies are byte-identical). `Part::Text / ImageRef{path}` (the
    persisted form) `/ ImageUrl` (the wire form); Chat Completions goes through
-   serde and Responses maps to `input_text`/`input_image`. Images become context
+   serde and the Anthropic-format line maps to `text`/`image` blocks. Images become context
    references through `@`, "+" or a paste (see "Privacy isolation" point 4: stored
    by path, inflated when the request is assembled). **The model is still the
    precondition**: the default glm-4.7-flash and DeepSeek are both text-only and
@@ -1787,34 +1787,54 @@ a selection — yields a citable answer; a passage spanning blocks, or one in a
 private block, carries none, and the rules still forbid citing such a
 selection. This is the seam an in-editor agent will use.
 
-### AI web search (the DeepSeek Responses API)
+### AI web search (DeepSeek's Anthropic-format line)
 
-Search uses the **provider's server-side** `web_search` built-in tool (the DeepSeek
-Responses API, which as it happens supports only deepseek-v4-flash) — no new search
-vendor inside the app, no second key, and search stays inside the existing LLM
-channel. The implementation is `ResponsesTransport` (the second implementation of
-the `ChatTransport` trait; see the vemry-agent table). It is enabled when
-`web_search_enabled && base_url == api.deepseek.com`, off by default, and the
-default path is unchanged.
+Search uses the **provider's server-side** `web_search` tool — no new search vendor
+inside the app, no second key, and search stays inside the existing LLM channel.
+The carrier is `AnthropicTransport` (the second implementation of the
+`ChatTransport` trait; see the vemry-agent table): DeepSeek's Anthropic-format API
+is where the provider keeps the search (its `server_tool_use` /
+`web_search_tool_result` blocks are documented as supported), while its Responses
+API, the carrier until 2026-09-14, began listing every built-in tool as ignored
+that day. A turn searches when `web_search_enabled && base_url == api.deepseek.com`
+(`ProviderConfig::web_search_available`, the one predicate behind the composer's
+chip, the per-turn check and the transport choice), on any DeepSeek model; the
+switch is off by default and the default path is unchanged.
 
-Live findings (2026-08-11): the `/responses` path is correct; function tools need a
-**flat** shape (a nested `{"function":{…}}` returns 400); the stream returns **no
-structured citations** — `annotations` is always empty, and a `web_search_call` item
-carries only `action.queries` (the actual search terms). A follow-up measurement
-(2026-08-19, `live_responses_web_search_params_probe`): the OpenAI-style tool
-parameter `filters.allowed_domains` is **accepted and then completely ignored** —
-with no domain mentioned in the prompt, the search terms contain zero `site:`
-operators and the source domains are unconstrained. So the Raw tool body stays
-parameterless: the provider exposes no parameter surface, and adding parameters
-would only fake a control that does not exist. Visibility is therefore designed as:
-search terms are shown on the timeline through `AgentEvent::WebSearchQueries` and
-recorded in the session log (terms and links only, never full text); sources are
-harvested from the links in the answer body (Markdown or bare URLs) into source
-cards, and clicking one lands in the main window's reading projection by default
-(v0.5 P2; ⌘click opens the browser window) — completing the search → source → read →
-clip → settle loop. Search does not touch disk, does not leave the LLM channel, and
-does not pass through PermissionGate (the principle that the permission boundary is
-the write path is unchanged).
+**The switch is per turn, not per session.** The chat composer's Web chip and the
+settings page write the same field, and `agent_send` reads it afresh on every send:
+a click takes effect from the next message. The system prompt does not mention the
+switch (one sentence, true either way, says search exists only when the tool is in
+the list), so switching changes nothing but the tool table — the one message after
+a switch misses the prefix cache, and the next one hits again. That is the whole
+price of not freezing it, and it buys "click it and it is on" instead of "start a
+new session". The chip is disabled, with the reason, when the endpoint cannot
+search; there is no after-the-fact "search inactive" state to explain.
+
+Measured live (2026-09-14, deepseek-flash and deepseek-v4-pro,
+`live_anthropic_web_search`): the results come back **structured** — title, url,
+page age, the body only as `encrypted_content` — and the usage counts the
+searches (`server_tool_use.web_search_requests`); one message can carry a search
+and a function call together. A session moves between the lines when the chip
+changes (`live_history_moves_between_the_lines`): a thinking block rebuilt from
+`reasoning_content` with no signature is accepted, and the Chat Completions line
+ignores the search blocks. What a search returns is shown as it is: the queries on
+the timeline through `AgentEvent::WebSearchQueries`, the hits on the source card
+through `WebSearchResults` before the answer is written, and the count in the
+turn's usage. The session log keeps queries and links only, never page text. A
+hit is not a source: the end-of-turn settlement (`settle_sources`) records the
+answer's citations (plus the pages read through the gate), a hit only lends its
+title to a citation that names the same URL bare, and the card lists the citations
+first with the uncited hits behind a second toggle (a turn may see fifty hits and
+cite three). Clicking a source lands in the main window's reading projection by
+default (v0.5 P2; ⌘click opens the browser window) — completing the search → source
+→ read → clip → settle loop. The Raw tool body stays parameterless: on the
+Responses line the OpenAI-style `filters.allowed_domains` was accepted and ignored
+(2026-08-19), and whether the Anthropic-style `allowed_domains` takes effect here
+is not yet measured (`live_anthropic_web_search_params_probe`); a control that does
+nothing is worse than none. Search does not touch disk, does not leave the LLM
+channel, and does not pass through PermissionGate (the principle that the
+permission boundary is the write path is unchanged).
 
 ### The research loop (v0.5: citations you can follow, context the user hands in)
 
@@ -1960,7 +1980,7 @@ still allowing only http(s)) renders it into `mainView = "reading"`.
 "Offline first" is stated not as "the only network call is the LLM API" but as five
 **controlled exits**, with everything else fully usable offline:
 
-1. The LLM channel (chat completions / responses, server-side search included) —
+1. The LLM channel (chat completions / the Anthropic-format line, server-side search included) —
    vemry-agent, the only routine exit.
 2. The browser window itself (remote web content) — opened explicitly by the user
    and physically isolated from IPC. The reading projection's hidden `reader` window

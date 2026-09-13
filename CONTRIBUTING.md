@@ -17,7 +17,7 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | A new command | `src/lib/commands/registry.ts` + `App.svelte` | TS |
 | Editor behaviour | `src/lib/editor/` | CodeMirror 6 |
 | AI tools / prompts / skills | `crates/vemry-agent/src/{tools,prompt,skills}.rs` + the built-in skills in `crates/vemry-agent/skills/` | Rust |
-| LLM transport (Chat Completions / DeepSeek Responses + search) | `crates/vemry-agent/src/{client,responses}.rs` | Rust |
+| LLM transport (Chat Completions / DeepSeek's Anthropic-format line + search) | `crates/vemry-agent/src/{client,anthropic}.rs` | Rust |
 | Script sandbox / `vemry.*` API / workflows | `crates/vemry-script/src/` | Rust |
 | Clipping (extraction / html→md / frontmatter) | `crates/vemry-clip/src/` | Rust |
 | Browser tabs and panel / detached window / clip commands / ad blocking | `src-tauri/src/browser/` + `src/lib/components/BrowserPanel.svelte` | Rust + TS |
@@ -57,7 +57,7 @@ VEMRY_TEST_API_KEY=sk-... cargo test -p vemry-agent --test live -- --ignored
 
 # print the system prompt a vault gets (what the model is sent; the UI and the session log show none of it)
 VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt -- --ignored --nocapture
-# optional: VEMRY_TEST_BASE_URL / VEMRY_TEST_MODEL (defaults to DeepSeek deepseek-v4-flash)
+# optional: VEMRY_TEST_BASE_URL / VEMRY_TEST_MODEL (defaults to DeepSeek deepseek-flash)
 ```
 
 ## Principles (a PR is reviewed against these)

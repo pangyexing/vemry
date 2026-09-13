@@ -3,7 +3,9 @@
 //! Ignored by default (network + key + a fraction of a cent of tokens).
 //! Run explicitly:
 //!   VEMRY_TEST_API_KEY=sk-... cargo test -p vemry-agent --test live -- --ignored
-//! Optional: VEMRY_TEST_BASE_URL (default DeepSeek), VEMRY_TEST_MODEL.
+//! Optional: VEMRY_TEST_BASE_URL (default DeepSeek), VEMRY_TEST_MODEL (default
+//! deepseek-flash; the Anthropic-format line searches on every DeepSeek model,
+//! measured 2026-09-14).
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -12,8 +14,13 @@ use std::time::Duration;
 use vemry_agent::permission::AutoAllow;
 use vemry_agent::runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};
 use vemry_agent::session::SessionLog;
-use vemry_agent::{HttpTransport, ProviderConfig, ResponsesTransport};
+use vemry_agent::{AnthropicTransport, HttpTransport, ProviderConfig};
 use vemry_core::Vault;
+
+/// The chat model under test.
+fn test_model() -> String {
+    std::env::var("VEMRY_TEST_MODEL").unwrap_or_else(|_| "deepseek-flash".into())
+}
 
 #[tokio::test]
 #[ignore]
@@ -24,7 +31,7 @@ async fn live_agent_creates_note_via_tools() {
     };
     let provider = ProviderConfig {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
-        model: std::env::var("VEMRY_TEST_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into()),
+        model: test_model(),
         api_key,
     };
 
@@ -86,10 +93,10 @@ async fn live_agent_creates_note_via_tools() {
     assert_eq!(session_files.len(), 1);
 }
 
-/// The plan phase on the real Responses line: a plan-gated turn at "high" sends its
-/// pre-plan calls at "low" and the rest at "high", with the reasoning items of the
-/// light calls passed back — the provider must accept the level changing
-/// mid-conversation. Asserted through what can be seen from outside: the turn
+/// The plan phase on the real Anthropic-format line: a plan-gated turn at "high"
+/// sends its pre-plan calls at "low" and the rest at "high", with the thinking
+/// blocks of the light calls passed back — the provider must accept the level
+/// changing mid-conversation. Asserted through what can be seen from outside: the turn
 /// completed and the notes landed, after a plan (the light calls led to it) or
 /// after the light probe was retaken (the model went to work without one).
 #[tokio::test]
@@ -101,7 +108,7 @@ async fn live_plan_phase_lightens_until_the_plan() {
     };
     let provider = ProviderConfig {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
-        model: std::env::var("VEMRY_TEST_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into()),
+        model: test_model(),
         api_key,
     };
     let dir = tempfile::tempdir().unwrap();
@@ -112,7 +119,7 @@ async fn live_plan_phase_lightens_until_the_plan() {
     std::fs::create_dir_all(&meta_dir).unwrap();
     let log = SessionLog::create(&meta_dir).unwrap();
     let runner = AgentRunner {
-        transport: Arc::new(ResponsesTransport::new()),
+        transport: Arc::new(AnthropicTransport::new()),
         gate: Arc::new(AutoAllow),
         plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
         actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
@@ -172,21 +179,21 @@ async fn live_plan_phase_lightens_until_the_plan() {
     assert!(dir.path().join("Fruit.md").exists(), "Fruit.md was not created");
 }
 
-/// The v0.4 decision points (items 1-3 of the plan's "to verify" list): the
-/// DeepSeek Responses API's `/responses` path, the shape of the streamed citation
-/// fields, and the replay behaviour of web_search_call.
-/// The findings feed back into the tolerant extraction in responses.rs and into
-/// the PR description.
+/// The search carrier end to end through the runner: the Anthropic-format line
+/// runs the server-side search, the results arrive structured (title and url,
+/// asserted — the Responses line never returned any) and the turn's usage counts
+/// the searches. Measured 2026-09-14 on deepseek-flash: two searches, eight results
+/// each, the sources in the answer among them.
 #[tokio::test]
 #[ignore]
-async fn live_responses_web_search() {
+async fn live_anthropic_web_search() {
     let Some(api_key) = std::env::var("VEMRY_TEST_API_KEY").ok().filter(|k| !k.is_empty()) else {
         eprintln!("VEMRY_TEST_API_KEY not set — skipping live test");
         return;
     };
     let provider = ProviderConfig {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
-        model: std::env::var("VEMRY_TEST_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into()),
+        model: test_model(),
         api_key,
     };
 
@@ -198,7 +205,7 @@ async fn live_responses_web_search() {
     let log = SessionLog::create(&meta_dir).unwrap();
 
     let runner = AgentRunner {
-        transport: Arc::new(ResponsesTransport::new()),
+        transport: Arc::new(AnthropicTransport::new()),
         gate: Arc::new(AutoAllow),
         plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
         actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
@@ -250,19 +257,115 @@ async fn live_responses_web_search() {
     eprintln!("=== results ({}): {:#?}", results.len(), results);
     eprintln!("=== text: {text}");
     assert!(!text.is_empty(), "no answer text");
+    assert!(searched, "no web search activity observed — check the /anthropic/v1/messages path and the tool shape");
+    assert!(!results.is_empty(), "the search ran but returned no structured results — the web_search_tool_result block changed shape");
+    assert!(results.iter().all(|r| !r.url.is_empty()), "a result without a url: {results:?}");
+    let titled = results.iter().filter(|r| !r.title.is_empty()).count();
+    assert!(titled * 2 > results.len(), "most hits should carry a title, got {titled} of {}", results.len());
+    let searches: u64 = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::Usage { web_search_requests, .. } => Some(*web_search_requests),
+            _ => None,
+        })
+        .sum();
+    assert!(searches > 0, "the usage did not count the searches");
+}
+
+/// A session may move between lines when the composer's search chip changes: a
+/// turn that ran on Chat Completions (thinking on, a tool call, so the history holds
+/// reasoning_content with no signature stub) is continued on the Anthropic-format
+/// line with the search tool — the provider must accept the rebuilt thinking blocks
+/// and the tool loop, and the second turn must answer. Then the way back: the
+/// history now holds this line's blocks in extra_items, and a third turn on Chat
+/// Completions (which ignores them) must answer too.
+#[tokio::test]
+#[ignore]
+async fn live_history_moves_between_the_lines() {
+    let Some(api_key) = std::env::var("VEMRY_TEST_API_KEY").ok().filter(|k| !k.is_empty()) else {
+        eprintln!("VEMRY_TEST_API_KEY not set — skipping live test");
+        return;
+    };
+    let provider = ProviderConfig {
+        base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
+        model: test_model(),
+        api_key,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Apples.md"), "# Apples\n\nApples keep best in a cool, dark place.\n").unwrap();
+    let vault = Arc::new(Mutex::new(Some(Vault::open(dir.path()).unwrap())));
+    let meta_dir = dir.path().join(".vemry");
+    std::fs::create_dir_all(&meta_dir).unwrap();
+    let log = SessionLog::create(&meta_dir).unwrap();
+    let make_runner = |transport: Arc<dyn vemry_agent::ChatTransport>| AgentRunner {
+        transport,
+        gate: Arc::new(AutoAllow),
+        plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
+        actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
+        read_gate: Arc::new(vemry_agent::permission::DenyReads),
+        vault: Arc::clone(&vault),
+        sources: Arc::new(Mutex::new(vec![])),
+        journal: Arc::new(Mutex::new(vec![])),
+    };
+    let mut history = vec![];
+    let legs: [(&str, bool, &str); 3] = [
+        ("chat completions", false, "Read Apples.md and tell me in one sentence how to store apples."),
+        ("anthropic", true, "Search the web for how long apples keep in a fridge, and answer in one sentence with the source link."),
+        ("chat completions", false, "Now, without searching, restate both facts in one sentence."),
+    ];
+    for (line, web, message) in legs {
+        let runner = if web {
+            make_runner(Arc::new(AnthropicTransport::new()))
+        } else {
+            make_runner(Arc::new(HttpTransport::new()))
+        };
+        let texts: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+        let t = texts.clone();
+        tokio::time::timeout(
+            Duration::from_secs(240),
+            runner.run(
+                &provider,
+                &RunnerConfig {
+                    max_iterations: 6,
+                    write_policy: WritePolicy::Ask,
+                    web_search: web,
+                    reasoning_effort: Some("low".into()),
+                    ..Default::default()
+                },
+                &mut history,
+                Some(message.into()),
+                None,
+                vec![],
+                None,
+                &move |e| {
+                    if let AgentEvent::TextDelta { text } = e {
+                        t.lock().unwrap().push_str(&text);
+                    }
+                },
+                &AtomicBool::new(false),
+                &log,
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("the {line} leg timed out"))
+        .unwrap_or_else(|e| panic!("the {line} leg failed: {e}"));
+        let text = texts.lock().unwrap().clone();
+        eprintln!("=== [{line}] {text}");
+        assert!(!text.is_empty(), "the {line} leg produced no answer");
+    }
+    assert!(history.iter().any(|m| m.role == "tool"), "the first leg made no tool call, so the thinking replay was not exercised");
     assert!(
-        searched || !results.is_empty(),
-        "no web search activity observed — check /responses path, tool shape, and citation fields"
+        history.iter().any(|m| m.extra_items.iter().any(|i| i["type"] == "web_search_tool_result")),
+        "the second leg left no search block in the history"
     );
 }
 
-/// An action item from the comparison study (2026-08-19): probe whether
-/// DeepSeek Responses' web_search accepts OpenAI-style tool parameters
-/// (`filters.allowed_domains`). Three outcomes are possible: refused with a 400 /
+/// Probe whether the search tool honours the Anthropic-style `allowed_domains`
+/// parameter on this endpoint. Three outcomes are possible: refused with a 400 /
 /// accepted and ignored / accepted and effective — the first is decided by the
 /// error itself, and for the other two the printed queries and the source domains
 /// in the answer are read by hand (the same "weak but honest" assertions as
-/// live_responses_web_search). **The prompt deliberately names no domain**: name
+/// live_anthropic_web_search). **The prompt deliberately names no domain**: name
 /// one and the model writes its own site: query, which makes "the filter worked"
 /// indistinguishable from "it copied the prompt" (a confusion the first run on
 /// 2026-08-19 walked into). The criterion: queries that carry site:xinhuanet.com
@@ -273,14 +376,13 @@ async fn live_responses_web_search() {
 /// tool body is not part of the runner's injection surface, and whether that
 /// surface should take parameters at all depends on what this probe concludes.
 ///
-/// Measured conclusion (2026-08-19, deepseek-v4-flash): **accepted and completely
-/// ignored** — under a prompt that names no domain, all 8 queries carried no site:
-/// operator and the source domains (36kr/163/chinadaily/zaobao…) were not
-/// constrained by allowed_domains. The runner stays parameterless. Should DeepSeek
-/// document parameter support later, re-running this test rechecks it.
+/// Measured conclusion on the Responses line (2026-08-19, deepseek-v4-flash, the
+/// OpenAI-style `filters.allowed_domains`): **accepted and completely ignored**.
+/// On this line (the Anthropic-style `allowed_domains`): not yet measured; the
+/// runner stays parameterless until it is.
 #[tokio::test]
 #[ignore]
-async fn live_responses_web_search_params_probe() {
+async fn live_anthropic_web_search_params_probe() {
     use vemry_agent::types::{ChatMessage, ChatRequest, StreamChunk, ToolDef};
     use vemry_agent::ChatTransport;
 
@@ -290,10 +392,10 @@ async fn live_responses_web_search_params_probe() {
     };
     let provider = ProviderConfig {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
-        model: std::env::var("VEMRY_TEST_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into()),
+        model: test_model(),
         api_key,
     };
-    let transport = ResponsesTransport::new();
+    let transport = AnthropicTransport::new();
     let request = ChatRequest {
         model: provider.model.clone(),
         messages: vec![ChatMessage::user(
@@ -301,7 +403,7 @@ async fn live_responses_web_search_params_probe() {
         )],
         tools: Some(vec![ToolDef::Raw(serde_json::json!({
             "type": "web_search",
-            "filters": { "allowed_domains": ["xinhuanet.com"] }
+            "allowed_domains": ["xinhuanet.com"]
         }))]),
         stream: true,
         stream_options: None,
@@ -354,8 +456,8 @@ async fn live_responses_web_search_params_probe() {
 /// really are honoured by the official endpoint rather than "accepted and ignored"
 /// (the trap params_probe walked into with filters.allowed_domains — exposing a
 /// control surface that does nothing is worse than having none). Two halves:
-/// (a) The Responses line: run the same reasoning question twice, once with
-///     `reasoning:{effort:"none"}` and once with `"max"`, and compare how much
+/// (a) The Anthropic-format line: run the same reasoning question twice, once with
+///     thinking disabled and once at effort `"max"`, and compare how much
 ///     reasoning came out — none should produce almost no thinking stream, max
 ///     noticeably more (a weak but honest assertion: none < max, and the answer is
 ///     non-empty);
@@ -364,7 +466,7 @@ async fn live_responses_web_search_params_probe() {
 ///     with `thinking:{"type":"disabled"}`, printing the three possible verdicts
 ///     (refused / accepted but ignored / effective) to be read by hand. Should (b)
 ///     be refused, the two Chat Completions fields in types.rs simply stop being
-///     sent (a one-line change) and the Responses line is unaffected.
+///     sent (a one-line change) and the other line is unaffected.
 ///
 /// Measured conclusion (to be filled in):
 #[tokio::test]
@@ -379,7 +481,7 @@ async fn live_reasoning_effort_probe() {
     };
     let provider = ProviderConfig {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
-        model: std::env::var("VEMRY_TEST_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into()),
+        model: test_model(),
         api_key,
     };
     const PROMPT: &str = "One of 9 identical-looking coins is lighter. What is the smallest number of weighings on a balance that is guaranteed to find it? Give the procedure and prove the lower bound.";
@@ -427,18 +529,18 @@ async fn live_reasoning_effort_probe() {
         thinking: None,
     };
 
-    // ---- (a) the Responses line: none vs max ----
-    let responses = ResponsesTransport::new();
+    // ---- (a) the Anthropic-format line: none vs max ----
+    let anthropic = AnthropicTransport::new();
     let req_none =
         ChatRequest { thinking: Some(serde_json::json!({ "type": "disabled" })), ..base.clone() };
     let req_max = ChatRequest { reasoning_effort: Some("max".into()), ..base.clone() };
-    let (t_none, r_none, out_none) = probe(&responses, &provider, &req_none).await;
-    let (t_max, r_max, out_max) = probe(&responses, &provider, &req_max).await;
-    eprintln!("=== [responses] effort=none: text={t_none} reasoning={r_none} result={out_none:?}");
-    eprintln!("=== [responses] effort=max:  text={t_max} reasoning={r_max} result={out_max:?}");
+    let (t_none, r_none, out_none) = probe(&anthropic, &provider, &req_none).await;
+    let (t_max, r_max, out_max) = probe(&anthropic, &provider, &req_max).await;
+    eprintln!("=== [anthropic] effort=none: text={t_none} reasoning={r_none} result={out_none:?}");
+    eprintln!("=== [anthropic] effort=max:  text={t_max} reasoning={r_max} result={out_max:?}");
     match (&out_none, &out_max) {
         (Err(e), _) | (_, Err(e)) => {
-            eprintln!("=== [responses] verdict: effort param REJECTED — {e} (fix: the Responses line stops sending reasoning)");
+            eprintln!("=== [anthropic] verdict: effort param REJECTED — {e} (fix: the Anthropic line stops sending output_config)");
         }
         (Ok(()), Ok(())) => {
             assert!(t_none > 0 && t_max > 0, "accepted but no answer text");
@@ -446,7 +548,7 @@ async fn live_reasoning_effort_probe() {
             // than max's (zero is ideal); no clear difference in magnitude means
             // "accepted but ignored" — record that and withdraw the UI
             eprintln!(
-                "=== [responses] verdict: {}",
+                "=== [anthropic] verdict: {}",
                 if r_none * 4 < r_max.max(1) { "effort EFFECTIVE" } else { "accepted but possibly IGNORED — check by hand" }
             );
             assert!(r_none < r_max, "the none level's thinking stream is not shorter than max's — effort appears to have no effect");
@@ -489,7 +591,7 @@ async fn live_research_reads_the_skill_before_planning() {
     };
     let provider = ProviderConfig {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
-        model: std::env::var("VEMRY_TEST_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into()),
+        model: test_model(),
         api_key,
     };
     let dir = tempfile::tempdir().unwrap();

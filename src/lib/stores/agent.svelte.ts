@@ -28,11 +28,13 @@ import { clips } from "$lib/stores/clips.svelte";
 import { toast } from "$lib/stores/toast.svelte";
 import { CARD_TOOLS, parseSession, planReconciled } from "$lib/views/session";
 
-/** A source entry: a WebSearchResult plus the frontend's verification marker.
+/** A source entry: a WebSearchResult plus the frontend's markers.
  *  unverified = there was no web search at all this turn and the link appears only in
  *  the model's text (so it may be a hallucination); an already clipped one is exempted
- *  in the rendering layer. */
-export type SourceEntry = WebSearchResult & { unverified?: boolean };
+ *  in the rendering layer. cited = the answer (or a page read through the gate) named
+ *  it, which the end-of-turn settlement records; an entry without it is a search hit
+ *  the model saw and did not cite, and the card keeps those behind the citations. */
+export type SourceEntry = WebSearchResult & { unverified?: boolean; cited?: boolean };
 
 /** One item of the composer's context draft: a web page (whose body the frontend has
  *  already grabbed, outside the privacy domain) or a vault reference picked with @
@@ -117,6 +119,8 @@ export interface TurnUsage {
   prompt: number;
   completion: number;
   cacheHit: number;
+  /** Web searches so far this turn, summed over the model calls (each call reports its own). */
+  searches: number;
   iteration: number;
   max: number;
 }
@@ -921,10 +925,11 @@ class AgentStore {
       const prev = card.results.find((x) => x.url === r.url);
       if (prev) {
         prev.unverified = r.verified ? undefined : true;
+        prev.cited = true;
         if (!prev.title && r.title) prev.title = r.title;
         continue;
       }
-      const entry: SourceEntry = { title: r.title || domainOf(r.url), url: r.url, snippet: "", publish_date: null };
+      const entry: SourceEntry = { title: r.title || domainOf(r.url), url: r.url, snippet: "", publish_date: null, cited: true };
       if (!r.verified) entry.unverified = true;
       card.results.push(entry);
     }
@@ -1073,7 +1078,7 @@ class AgentStore {
       }
       case "web_search_results": {
         this.phase = null;
-        // Structured results (DeepSeek currently returns none; kept defensively); several batches in one turn are merged and deduplicated
+        // The search's hits (title, url, page age), several batches in one turn merged and deduplicated; the settlement at the end marks the cited ones
         const item = this.lastSources();
         const known = new Set(item.results.map((r) => r.url));
         item.results.push(...e.results.filter((r) => !known.has(r.url)));
@@ -1085,6 +1090,7 @@ class AgentStore {
           prompt: e.prompt_tokens,
           completion: e.completion_tokens,
           cacheHit: e.cache_hit_tokens,
+          searches: (this.usage?.searches ?? 0) + (e.web_search_requests ?? 0),
           iteration: e.iteration,
           max: e.max_iterations,
         };

@@ -105,15 +105,17 @@ impl PendingGates {
 }
 
 /// The session-level snapshot: the system prompt prefix is frozen and the
-/// web_search/plan_confirm switches are fixed for the session. Rebuilding the
-/// prompt between turns would invalidate the provider's prefix cache every time (on
-/// DeepSeek a hit is roughly 30× cheaper); switching web_search or plan_confirm
-/// mid-session changes the tool table, which blows the cache just as thoroughly. It
-/// lives as long as the session, is cleared when a session is created or switched
-/// and when the vault changes, and is rebuilt on the next turn's first send.
+/// plan_confirm switch is fixed for the session. Rebuilding the prompt between
+/// turns would invalidate the provider's prefix cache every time (on DeepSeek a
+/// hit is roughly 30× cheaper); switching plan_confirm mid-session changes the
+/// tool table, which blows the cache just as thoroughly. Web search is the one
+/// switch read afresh every turn — the composer's chip changes it, the prompt
+/// does not depend on it, and the one turn after a change pays the cache miss
+/// for the changed tool table. It lives as long as the session, is cleared when a
+/// session is created or switched and when the vault changes, and is rebuilt on
+/// the next turn's first send.
 pub struct SessionSetup {
     pub system: String,
-    pub web_search: bool,
     pub plan_confirm: bool,
 }
 
@@ -136,7 +138,7 @@ pub struct AgentState {
     /// The incremental parse cache behind the session list (the key is the full
     /// path, so switching vaults invalidates it naturally).
     pub session_meta: Mutex<vemry_agent::session::SessionMetaCache>,
-    /// The session-level prompt/web_search/plan_confirm snapshot; it moves with current_session.
+    /// The session-level prompt/plan_confirm snapshot; it moves with current_session.
     pub session_setup: Mutex<Option<SessionSetup>>,
     /// The cross-turn carrier of the session's standing write grants — "allow for this
     /// session", or the scoped grants under a folder or a note (the runner adds to it,
@@ -202,9 +204,8 @@ impl AgentState {
     /// the prompt at once — the promise that "PrivacyChanged takes effect
     /// immediately" must not be broken by a session-level freeze. A write grant has
     /// nothing to do with privacy, so session_grant is kept. The rebuilt snapshot
-    /// picks up whatever the web_search/plan_confirm settings are at that moment —
-    /// privacy outranks the cache, consistent with web_search's established
-    /// behaviour.
+    /// picks up whatever the plan_confirm setting is at that moment — privacy
+    /// outranks the cache.
     pub fn invalidate_prompt_snapshot(&self) {
         *self.session_setup.lock().unwrap() = None;
     }

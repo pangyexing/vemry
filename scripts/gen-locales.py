@@ -1247,11 +1247,6 @@ add("agentPanel.", {
     "backToMainWindow": ("Back to the main window", "回到主窗"),
     "cannotSwitchWhileRunning": ("The agent is running — sessions cannot be switched", "agent 运行中,无法切换会话"),
     "switchSession": ("Switch session", "切换会话"),
-    "searchInactive": ("Search inactive", "搜索未生效"),
-    "searchInactiveHint": (
-        "Web search is on, but this endpoint is not api.deepseek.com, so this session will not search. "
-        "Change the endpoint in Settings, or turn the switch off to hide this.",
-        "已开启「AI 联网搜索」,但当前端点不是 api.deepseek.com,会话不会联网——可在设置里换端点,或关掉开关消除此提示"),
     "newSessionHint": ("New session (the current conversation stays in the list)", "新建会话(当前对话保留在列表里)"),
     "newSessionButton": ("＋ New", "＋ 新建"),
     "closeSessionList": ("Close the session list", "关闭会话列表"),
@@ -1335,9 +1330,9 @@ add("chat.", {
     "unsupportedImage": ("{name} is in the vault, but this format cannot be sent to a model "
                          "(png/jpg/gif/webp only; use the system screenshot shortcut or save as PNG)",
                          "{name} 已存入 vault,但该格式不能发给模型(仅 png/jpg/gif/webp;截图请用系统截图快捷键或另存为 PNG)"),
-    "deepseekNoImages": ("The DeepSeek endpoint has no image support and will error on send; "
-                         "switch to glm-4.6v / qwen-vl in Settings",
-                         "DeepSeek 端点不支持图片,发送会报错;可在设置里换 glm-4.6v / qwen-vl 等多模态模型"),
+    "deepseekNoImages": ("deepseek-v4-pro has no image support and will error on send; "
+                         "switch to deepseek-flash or glm-4.6v in Settings",
+                         "deepseek-v4-pro 不支持图片,发送会报错;可在设置里换 deepseek-flash 或 glm-4.6v 等多模态模型"),
     "unreadableFile": ("{name} is in the vault, but it is not text or PDF — the model cannot read this format",
                        "{name} 已存入 vault,但不是文本/PDF,模型读不了这种格式"),
     "fileImages": ("Images", "图片"),
@@ -1460,6 +1455,17 @@ add("chat.", {
     "planExpandHint": ("Show the steps", "展开步骤"),
     "planCollapseHint": ("Collapse the steps", "收起步骤"),
     "sourcesCount": ("Sources · {n}", "来源 · {n}"),
+    "searchHits": ("Search hits · {n}", "搜索命中 · {n}"),
+    "moreHits": ("{n} more search hits the answer did not cite", "其余 {n} 条搜索命中(回答未引用)"),
+    "searchChip": ("Web", "联网"),
+    "searchChipOnHint": ("Web search is on: from the next message the model may search through the provider "
+                         "(searches are billed separately; the queries show on the timeline). Click to turn it off.",
+                         "联网搜索已开:从下一条消息起模型可自行通过 provider 搜索(搜索单独计费,搜索词会显示在时间线)。点击关闭"),
+    "searchChipOffHint": ("Web search is off. Click to allow it from the next message on — it takes effect at once; "
+                          "the first message after a switch misses the prompt cache once.",
+                          "联网搜索已关。点击后从下一条消息起允许联网,立即生效;切换后的第一条消息会错过一次提示缓存"),
+    "searchChipUnavailable": ("Web search needs the DeepSeek endpoint (Settings › AI)", "联网搜索需要 DeepSeek 端点(设置 › AI)"),
+    "usageSearches": (" · {n} web searches", " · 联网搜索 {n} 次"),
     "sourcesClipped": (" · {n} clipped", " · 已剪藏 {n}"),
     "searched": ("Searched the web", "已联网搜索"),
     "searching": ("Searching the web…", "正在联网搜索…"),
@@ -1546,16 +1552,15 @@ add("settings.", {
     "saved": ("Saved ✓", "已保存 ✓"),
     "endpoint": ("API endpoint (OpenAI-compatible)", "API 端点（OpenAI 兼容）"),
     "endpointZhipu": ("Zhipu BigModel", "智谱 BigModel"),
-    "endpointDeepseek": ("DeepSeek (web search needs this endpoint)", "DeepSeek(联网搜索需此端点)"),
+    "endpointDeepseek": ("DeepSeek (web search)", "DeepSeek(可联网搜索)"),
     "endpointOllama": ("Ollama, local", "Ollama 本机"),
     "endpointHint": ("Zhipu BigModel by default; any OpenAI-compatible endpoint works (Ollama, DeepSeek…)",
                      "默认智谱 BigModel；可换任意 OpenAI 兼容端点（Ollama、DeepSeek…）"),
     "model": ("Model", "模型"),
     "modelZhipuFlash": ("Zhipu · free, supports tool calls", "智谱 · 免费,支持工具调用"),
     "modelZhipu": ("Zhipu · flagship", "智谱 · 旗舰"),
-    "modelDeepseekFlash": ("DeepSeek · light", "DeepSeek · 轻量"),
-    "modelDeepseekChat": ("DeepSeek · chat", "DeepSeek · 对话"),
-    "modelDeepseekReasoner": ("DeepSeek · reasoning (thinking)", "DeepSeek · 推理(thinking)"),
+    "modelDeepseekFlash": ("DeepSeek · flash, reads images", "DeepSeek · flash,支持图片"),
+    "modelDeepseekPro": ("DeepSeek · pro, no images", "DeepSeek · pro,不支持图片"),
     "modelHint": ("glm-4.7-flash is free and supports tool calls; a change takes effect from the next AI "
                   "session, and the panel header shows the current model",
                   "glm-4.7-flash 免费且支持工具调用;改动自下一个 AI 会话生效,面板顶栏可见当前模型"),
@@ -1585,12 +1590,12 @@ add("settings.", {
                               "Turn it off and the editor and Reader fill the pane.",
                               "正文列宽随窗格增长但设上限:窄窗约 40 汉字/行,宽屏最多约 50;关闭后编辑器与阅读投影随窗口撑满"),
     "webSearch": ("AI web search", "AI 联网搜索"),
-    "webSearchHint": ("Uses the DeepSeek Responses API's server-side web_search, active only when the "
-                      "endpoint is api.deepseek.com. The provider bills searches separately from chat, "
-                      "and it is off by default. Sources show up in the AI timeline and open in the "
-                      "built-in browser.",
-                      "走 DeepSeek Responses API 的服务端 web_search,仅端点为 api.deepseek.com 时生效;"
-                      "搜索由 provider 按次计费,与本地功能无关,默认关闭。来源引用会显示在 AI 时间线,可点开内置浏览器。"),
+    "webSearchHint": ("The provider's server-side search (DeepSeek, any of its models; nothing runs locally), "
+                      "billed separately from chat and off by default. The chat composer's Web chip is this "
+                      "same switch and takes effect from the next message. Search hits and sources show on the "
+                      "AI timeline and open in the built-in browser.",
+                      "走 provider 的服务端搜索(DeepSeek 端点,任意模型;本地不联网),按次单独计费,默认关闭。"
+                      "对话输入栏的「联网」芯片就是这个开关,从下一条消息起生效。搜索命中与来源显示在 AI 时间线,可点开内置浏览器。"),
     "provenanceMarks": ("Mark unreviewed AI blocks", "标记未审阅的 AI 块"),
     "provenanceMarksHint": ("An amber bar and a status-bar count for blocks the AI wrote under a standing grant, until you mark them reviewed; a marker, never a prompt. The origin overlay is a separate command", "AI 在常设授权下写入的块显示琥珀色条并在状态栏计数，直到你标为已审阅；只是标记，不会打断。出处着色是另一条命令"),
     "planConfirm": ("AI plan confirmation", "AI 计划确认"),

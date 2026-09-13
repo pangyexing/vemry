@@ -435,9 +435,8 @@
               <datalist id="model-presets">
                 <option value="glm-4.7-flash">{t("settings.modelZhipuFlash")}</option>
                 <option value="glm-4.7">{t("settings.modelZhipu")}</option>
-                <option value="deepseek-v4-flash">{t("settings.modelDeepseekFlash")}</option>
-                <option value="deepseek-chat">{t("settings.modelDeepseekChat")}</option>
-                <option value="deepseek-reasoner">{t("settings.modelDeepseekReasoner")}</option>
+                <option value="deepseek-flash">{t("settings.modelDeepseekFlash")}</option>
+                <option value="deepseek-v4-pro">{t("settings.modelDeepseekPro")}</option>
               </datalist>
               <small>{t("settings.modelHint")}</small>
             </label>

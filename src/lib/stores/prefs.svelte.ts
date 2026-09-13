@@ -12,9 +12,11 @@ class PrefsStore {
   clickOpensLinks = $state(true);
   /** The current model's name (visible in the research panel's header); updated by refresh after the settings are saved. */
   model = $state("");
-  /** The value of the "AI web search" switch; together with webSearchActive it drives the panel's degradation hint. */
+  /** The value of the "AI web search" switch — the composer's chip and the settings page write the same field. */
   webSearchEnabled = $state(false);
-  /** Whether search will really take effect (the switch is on and the endpoint is DeepSeek) — derived on the Rust side, and the check is not reimplemented in the frontend. */
+  /** Whether the provider runs the search at all (the endpoint is DeepSeek) — derived on the Rust side, and the check is not reimplemented in the frontend; the chip is disabled without it. */
+  webSearchAvailable = $state(false);
+  /** Whether search will really take effect (the switch is on and the provider runs it) — derived on the Rust side. */
   webSearchActive = $state(false);
   /** The note body's font size (px), applied through the --fs-note variable; Editor's effect uses it to trigger requestMeasure. */
   noteFontSize = $state(16);
@@ -28,11 +30,10 @@ class PrefsStore {
   reasoningEffort = $state("high");
   /** Whether the level really takes effect (the endpoint is DeepSeek) — derived on the Rust side, and the check is not reimplemented in the frontend. */
   reasoningEffortActive = $state(false);
-  /** The endpoint is DeepSeek (which is known to have no vision model): the composer
-   *  warns once when an image is attached. It comes from the same source as
-   *  reasoningEffortActive but is its own field — "the level takes effect" is not used
-   *  as a proxy for "this is DeepSeek", since the two may diverge later. */
-  providerDeepseek = $state(false);
+  /** The selected model has no image understanding (DeepSeek's pro model): the
+   *  composer warns once when an image is attached. Decided on the Rust side next to
+   *  the other provider predicates; not reimplemented here. */
+  imagesUnsupported = $state(false);
   /** Side-by-side translation's target language ("" = the interface language): the status bar's chip asks whether the open note is already in it. */
   translateTarget = $state("");
 
@@ -43,6 +44,7 @@ class PrefsStore {
       this.clickOpensLinks = s.click_opens_links;
       this.model = s.model;
       this.webSearchEnabled = s.web_search_enabled;
+      this.webSearchAvailable = s.web_search_available;
       this.webSearchActive = s.web_search_active;
       this.applyNoteFontSize(s.note_font_size);
       this.applyReadableLineWidth(s.readable_line_width);
@@ -50,7 +52,7 @@ class PrefsStore {
       this.formatClips = s.format_clips;
       this.reasoningEffort = s.reasoning_effort;
       this.reasoningEffortActive = s.reasoning_effort_active;
-      this.providerDeepseek = s.provider_deepseek;
+      this.imagesUnsupported = s.images_unsupported;
       this.translateTarget = s.translate_target;
       return s;
     } catch {

@@ -1,11 +1,13 @@
 //! vemry-agent — the AI layer.
 //!
 //! Speaks the OpenAI-compatible Chat Completions protocol (Zhipu GLM by
-//! default). Depends on vemry-core for tool execution; has no UI/Tauri
+//! default), and DeepSeek's Anthropic-format line when a turn searches the web.
+//! Depends on vemry-core for tool execution; has no UI/Tauri
 //! dependency. The permission gate lives here, at the boundary that owns the
 //! file-write capability — a frontend can render decisions but never bypass
 //! them.
 
+pub mod anthropic;
 pub mod client;
 pub mod compact;
 pub mod context;
@@ -13,7 +15,6 @@ pub mod import;
 pub mod permission;
 pub mod prompt;
 pub mod provider;
-pub mod responses;
 pub mod runner;
 pub mod session;
 pub mod skills;
@@ -27,7 +28,7 @@ pub mod types;
 
 pub use client::{ChatTransport, HttpTransport};
 pub use context::ContextRef;
-pub use responses::ResponsesTransport;
+pub use anthropic::AnthropicTransport;
 pub use permission::{
     ActionsDecision, ActionsGate, ActionsRequest, FetchedPage, PermissionDecision, PermissionGate, PlanDecision, PlanGate,
     PlanRequest, ReadDecision, ReadGate, ReadRequest, WriteGrants, WriteRequest,

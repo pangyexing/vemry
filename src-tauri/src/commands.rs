@@ -896,10 +896,12 @@ pub struct SettingsView {
     /// no switch in the settings page.
     pub browser_docked: bool,
     pub web_search_enabled: bool,
-    /// Derived and read-only: the switch is on and the endpoint is DeepSeek (the
-    /// same source as agent_send's enablement check).
-    /// The frontend says "search is on but will not take effect" from it rather than
-    /// reimplementing the host check in TS.
+    /// Derived and read-only: the provider runs the search (the DeepSeek endpoint;
+    /// decided next to the other provider predicates, not reimplemented in TS). The
+    /// composer's search chip is enabled by it.
+    pub web_search_available: bool,
+    /// Derived and read-only: the switch is on and the provider runs the search (the
+    /// same source as agent_send's per-turn check).
     pub web_search_active: bool,
     /// The agent's plan confirmation (propose_plan plus a blocking gate); frozen per
     /// session, so a change takes effect from the next session.
@@ -920,10 +922,10 @@ pub struct SettingsView {
     /// Derived and read-only: effort is sent only when the endpoint is DeepSeek (the
     /// same "the check is not reimplemented in TS" as web_search_active).
     pub reasoning_effort_active: bool,
-    /// Derived and read-only: the endpoint is DeepSeek (which is known to have no
-    /// vision model) — the frontend warns once when the composer attaches an image;
-    /// the check is not reimplemented in TS.
-    pub provider_deepseek: bool,
+    /// Derived and read-only: the selected model has no image understanding
+    /// (DeepSeek's pro model) — the frontend warns once when the composer attaches an
+    /// image; the check is not reimplemented in TS.
+    pub images_unsupported: bool,
     /// Side-by-side translation: the target language ("" = the interface language),
     /// the model ("" = the chat model) and the user's extra rule.
     pub translate_target: String,
@@ -975,9 +977,10 @@ fn memory_template(app: &AppHandle) -> String {
 #[tauri::command]
 pub fn settings_get(app: AppHandle) -> SettingsView {
     let s = settings::load(&app);
+    let web_search_available = s.provider_config().web_search_available();
     let web_search_active = s.web_search_active();
     let reasoning_effort_active = s.reasoning_active();
-    let provider_deepseek = s.provider_config().is_deepseek();
+    let images_unsupported = s.provider_config().images_unsupported();
     SettingsView {
         base_url: s.base_url.clone(),
         model: s.model.clone(),
@@ -991,6 +994,7 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         click_opens_links: s.click_opens_links,
         browser_docked: s.browser_docked,
         web_search_enabled: s.web_search_enabled,
+        web_search_available,
         web_search_active,
         plan_confirm: s.plan_confirm,
         provenance_marks: s.provenance_marks,
@@ -1006,7 +1010,7 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         readable_line_width: s.readable_line_width,
         reasoning_effort: s.reasoning_effort,
         reasoning_effort_active,
-        provider_deepseek,
+        images_unsupported,
         translate_target: s.translate_target,
         translate_model: s.translate_model,
         translate_addendum: s.translate_addendum,
@@ -1337,42 +1341,34 @@ async fn run_agent_turn(
     }
 
     // The session-level snapshot: the system prompt prefix is frozen and
-    // web_search/plan_confirm are fixed per session (a settings change takes effect
-    // from the next session). Rebuilding the prompt between turns, or switching the
-    // tool table mid-session, writes off the provider's prefix cache — on DeepSeek a
-    // hit is roughly 30× cheaper.
-    let (system_snapshot, use_web_search, plan_confirm) = {
+    // plan_confirm is fixed per session (a change takes effect from the next
+    // session). Rebuilding the prompt between turns, or switching the tool table
+    // mid-session, writes off the provider's prefix cache — on DeepSeek a hit is
+    // roughly 30× cheaper.
+    let (system_snapshot, plan_confirm) = {
         let mut setup = state.agent.session_setup.lock().unwrap();
         match setup.as_ref() {
-            Some(s) => (s.system.clone(), s.web_search, s.plan_confirm),
+            Some(s) => (s.system.clone(), s.plan_confirm),
             None => {
                 let plan = settings.plan_confirm;
-                // Web search goes through the DeepSeek Responses API (server-side
-                // web_search, which only a DeepSeek endpoint knows); everything else
-                // stays on Chat Completions. The prompt says which, so a skill need not guess
-                let web = settings.web_search_active();
                 let system = {
                     let guard = state.vault.lock().unwrap();
                     let vault = guard.as_ref().ok_or("no vault open")?;
-                    vemry_agent::prompt::build_system_prompt(vault, plan, web)
+                    vemry_agent::prompt::build_system_prompt(vault, plan)
                 };
-                *setup = Some(crate::agent_bridge::SessionSetup {
-                    system: system.clone(),
-                    web_search: web,
-                    plan_confirm: plan,
-                });
-                (system, web, plan)
+                *setup = Some(crate::agent_bridge::SessionSetup { system: system.clone(), plan_confirm: plan });
+                (system, plan)
             }
         }
     };
-    // What the snapshot freezes is the intent "should this session search"; the
-    // endpoint, though, is read fresh every turn. When the user moves base_url away
-    // from DeepSeek mid-session, this turn must fall back to Chat Completions —
-    // otherwise the frozen true would send a Responses request to an endpoint that
-    // does not know /responses, and every remaining turn of the session would 4xx.
-    let use_web_search = use_web_search && provider.is_deepseek();
+    // Web search is read afresh every turn: the composer's chip is the switch, and
+    // the endpoint must still be one that runs the search (a base_url moved away
+    // from DeepSeek mid-session falls back to Chat Completions, where the chip is
+    // disabled anyway). A turn that searches goes through the Anthropic-format line;
+    // everything else stays on Chat Completions.
+    let use_web_search = settings.web_search_active();
     let transport: Arc<dyn vemry_agent::ChatTransport> = if use_web_search {
-        Arc::new(vemry_agent::ResponsesTransport::new())
+        Arc::new(vemry_agent::AnthropicTransport::new())
     } else {
         Arc::new(HttpTransport::new())
     };

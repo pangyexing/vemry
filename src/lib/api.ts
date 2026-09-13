@@ -295,7 +295,9 @@ export interface SettingsView {
    *  settings page. */
   browser_docked: boolean;
   web_search_enabled: boolean;
-  /** Derived and read-only: the switch is on and the endpoint is DeepSeek (decided on the Rust side; do not reimplement it in the frontend). */
+  /** Derived and read-only: the provider runs the search (the DeepSeek endpoint; decided on the Rust side, do not reimplement it in the frontend). The composer's search chip is enabled by it. */
+  web_search_available: boolean;
+  /** Derived and read-only: the switch is on and the provider runs the search (the same source as the per-turn check in agent_send). */
   web_search_active: boolean;
   /** The agent's plan confirmation (propose_plan plus a blocking gate); frozen per session, so a change takes effect from the next session. */
   plan_confirm: boolean;
@@ -316,8 +318,8 @@ export interface SettingsView {
   reasoning_effort: string;
   /** Derived and read-only: effort is only sent when the endpoint is DeepSeek (decided on the Rust side; do not reimplement it in the frontend). */
   reasoning_effort_active: boolean;
-  /** Derived and read-only: the endpoint is DeepSeek (which is known to have no vision model; the composer warns once when an image is attached). */
-  provider_deepseek: boolean;
+  /** Derived and read-only: the selected model has no image understanding (DeepSeek's pro model; the composer warns once when an image is attached). */
+  images_unsupported: boolean;
   /** Side-by-side translation: the target language ("" = the interface language), the model ("" = the chat model), the user's extra rule. */
   translate_target: string;
   translate_model: string;
@@ -532,6 +534,8 @@ export type AgentEvent =
       prompt_tokens: number;
       completion_tokens: number;
       cache_hit_tokens: number;
+      /** The server-side searches this call ran (billed separately; 0 on a line that reports none). */
+      web_search_requests: number;
       iteration: number;
       max_iterations: number;
     }

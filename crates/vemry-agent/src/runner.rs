@@ -95,20 +95,22 @@ pub enum AgentEvent {
     /// end of the turn (each with its verification); the audit jsonl has the same
     /// line, so a replay shows the same card.
     SourcesUpdated { turn: Option<String>, items: Vec<Source> },
-    /// A server-side web search is running (the Responses API's web_search).
+    /// A server-side web search is running (the provider's web_search tool).
     WebSearching,
-    /// The queries the server actually ran (visibility into the process; DeepSeek
-    /// returns no structured results).
+    /// The queries the server actually ran (shown on the timeline: what left the
+    /// machine).
     WebSearchQueries { queries: Vec<String> },
-    /// The citation sources of a search — the UI renders them as cards that open
-    /// in the built-in browser.
+    /// The results of a search — title, url, page age — the UI renders as the
+    /// source card before the answer is written.
     WebSearchResults { results: Vec<WebSearchResult> },
     /// Per-iteration token counts (only when the provider reports them; they drive
-    /// the frontend gauge and the compaction trigger).
+    /// the frontend gauge and the compaction trigger), and the searches the call
+    /// ran (billed separately; 0 when the line reports none).
     Usage {
         prompt_tokens: u64,
         completion_tokens: u64,
         cache_hit_tokens: u64,
+        web_search_requests: u64,
         iteration: usize,
         max_iterations: usize,
     },
@@ -143,12 +145,12 @@ pub enum WritePolicy {
 pub struct RunnerConfig {
     pub max_iterations: usize,
     pub write_policy: WritePolicy,
-    /// Inject the server-side web_search tool into the request (only a provider on
-    /// the Responses shape knows it; the search executes read-only on the provider
+    /// Inject the server-side web_search tool into the request (the transport
+    /// spells it for its line; the search executes read-only on the provider
     /// side, writes nothing to disk and does not pass through the PermissionGate,
     /// with visibility guaranteed by the WebSearch* events and the session log).
-    /// Fixed per session — switching it mid-session changes the tool table and
-    /// throws the prefix cache away.
+    /// Read afresh every turn: the composer's chip changes it, and the one turn
+    /// after a change pays a prefix-cache miss for the changed tool table.
     pub web_search: bool,
     /// The session-level system prompt snapshot (the glue layer takes it on the
     /// session's first turn and passes it in; the whole session reuses it — a
@@ -332,7 +334,7 @@ impl AgentRunner {
             let vault = guard.as_ref().ok_or_else(|| AgentError::Api("no vault open".into()))?;
             let system = match &config.system_prompt {
                 Some(s) => s.clone(),
-                None => build_system_prompt(vault, config.plan_confirm, config.web_search),
+                None => build_system_prompt(vault, config.plan_confirm),
             };
             // The current note is privacy-filtered here (a private note does not even
             // give the model the fact that it is open)
@@ -520,10 +522,11 @@ impl AgentRunner {
                 tools.push(propose_plan_def());
             }
             if config.web_search {
-                // Kept parameterless: measured live (2026-08-19, params_probe) that
-                // the OpenAI-style filters.allowed_domains is accepted by DeepSeek
-                // and then completely ignored — adding parameters would only fake a
-                // control surface that does not exist
+                // The provider-neutral spelling; the transport translates it (the
+                // Anthropic-format line adds its tool version and max_uses). Kept
+                // parameterless here: whether a domain filter takes effect on this
+                // line is not yet measured, and a control that does nothing is
+                // worse than none
                 tools.push(ToolDef::Raw(json!({ "type": "web_search" })));
             }
             // Thinking level → the two Chat Completions fields (the gating is already in
@@ -675,6 +678,7 @@ impl AgentRunner {
                     prompt_tokens: u.prompt_tokens,
                     completion_tokens: u.completion_tokens,
                     cache_hit_tokens: u.cache_hit_tokens(),
+                    web_search_requests: u.web_search_requests.unwrap_or(0),
                     iteration: iteration + 1,
                     max_iterations: config.max_iterations,
                 });
@@ -1339,10 +1343,13 @@ impl AgentRunner {
         on_event(AgentEvent::PlanUpdated { items });
     }
 
-    /// End of turn: the citations in this turn's assistant text (plus any structured
-    /// search results) are settled into the session's source table, and the turn's
-    /// list — each entry with its verification — goes to the ledger and the UI. A
-    /// turn that cites nothing records nothing.
+    /// End of turn: the citations in this turn's assistant text are settled into
+    /// the session's source table, and the turn's list — each entry with its
+    /// verification — goes to the ledger and the UI. A search's hits are not
+    /// sources by themselves (a turn may see fifty of them and cite three): they
+    /// only lend their titles to a citation that names the same URL bare, and the
+    /// UI keeps them on the card, behind the citations. A turn that cites nothing
+    /// records nothing.
     fn settle_sources(
         &self,
         turn: &[ChatMessage],
@@ -1352,9 +1359,6 @@ impl AgentRunner {
         log: &SessionLog,
     ) {
         let mut cites: Vec<sources::Citation> = Vec::new();
-        for r in web.results.iter().filter(|r| !r.url.is_empty()) {
-            sources::push_citation(&mut cites, sources::Citation { title: r.title.clone(), url: r.url.clone() });
-        }
         // The pages the read gate fetched come with their titles, ahead of the answer's
         // citations (which may name the same URL with no title)
         for c in &web.read {
@@ -1363,6 +1367,11 @@ impl AgentRunner {
         for text in turn.iter().filter(|m| m.role == "assistant").filter_map(|m| m.text()) {
             for c in sources::extract_citations(text) {
                 sources::push_citation(&mut cites, c);
+            }
+        }
+        for c in cites.iter_mut().filter(|c| c.title.is_empty()) {
+            if let Some(hit) = web.results.iter().find(|r| r.url == c.url && !r.title.is_empty()) {
+                c.title = hit.title.clone();
             }
         }
         if cites.is_empty() {
@@ -3105,7 +3114,7 @@ mod tests {
 
     /// web_search on: the Raw tool is injected into the request body, search chunks
     /// become events, and raw_items enter the assistant history (for
-    /// ResponsesTransport to replay next turn). With it off by default, the request
+    /// AnthropicTransport to replay next turn). With it off by default, the request
     /// body must not hold web_search.
     #[tokio::test]
     async fn web_search_flag_injects_tool_and_forwards_results() {
@@ -3225,6 +3234,7 @@ mod tests {
                 completion_tokens: 80,
                 prompt_cache_hit_tokens: Some(1000),
                 prompt_tokens_details: None,
+                web_search_requests: None,
             }),
             ..Default::default()
         };

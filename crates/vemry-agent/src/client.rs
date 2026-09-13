@@ -1,6 +1,7 @@
 //! The LLM channel boundary: streaming Chat Completions over SSE.
 //! `ChatTransport` is a trait so the agent loop is fully testable with a mock;
-//! responses.rs is the second implementation (DeepSeek Responses API, v0.4).
+//! anthropic.rs is the second implementation (the Anthropic-format line DeepSeek
+//! carries web search on).
 
 use async_trait::async_trait;
 use eventsource_stream::Eventsource;
@@ -47,6 +48,14 @@ pub trait ChatTransport: Send + Sync {
     ) -> Result<()>;
 }
 
+/// How the key travels: the OpenAI-compatible lines take a bearer token, the
+/// Anthropic-format line its own header pair.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Auth {
+    Bearer,
+    AnthropicKey,
+}
+
 /// Auth check → POST → every non-2xx truncated into an `AgentError::Status`
 /// (carrying the status code). Shared by both transports, so the transport-layer
 /// error contract (truncation length, message shape) is maintained in one place.
@@ -55,13 +64,17 @@ pub(crate) async fn post_streaming(
     url: String,
     config: &ProviderConfig,
     body: &(impl serde::Serialize + Sync),
+    auth: Auth,
 ) -> Result<reqwest::Response> {
     if config.api_key.is_empty() {
         return Err(AgentError::NoApiKey);
     }
-    let resp = client
-        .post(url)
-        .bearer_auth(&config.api_key)
+    let req = client.post(url);
+    let req = match auth {
+        Auth::Bearer => req.bearer_auth(&config.api_key),
+        Auth::AnthropicKey => req.header("x-api-key", &config.api_key).header("anthropic-version", "2023-06-01"),
+    };
+    let resp = req
         .json(body)
         .send()
         .await
@@ -135,7 +148,7 @@ impl ChatTransport for HttpTransport {
         on_chunk: &mut (dyn FnMut(StreamChunk) -> bool + Send),
     ) -> Result<()> {
         let resp =
-            post_streaming(shared_client(), config.chat_completions_url(), config, request).await?;
+            post_streaming(shared_client(), config.chat_completions_url(), config, request, Auth::Bearer).await?;
         read_sse(resp, cancel, &mut |_name, data| {
             if data.trim() == "[DONE]" {
                 return Ok(false);

@@ -288,12 +288,14 @@ impl Settings {
         }
     }
 
-    /// Whether web search is actually in effect: the switch is on and the endpoint is
-    /// DeepSeek. The settings page badge (web_search_active) and the agent side's
-    /// enablement check share this one implementation — writing the boolean
-    /// expression twice would drift sooner or later.
+    /// Whether web search is actually in effect: the switch is on and the provider
+    /// runs the search (the DeepSeek endpoint with the pro model; see
+    /// `ProviderConfig::web_search_available`). The settings page badge
+    /// (web_search_active) and the agent side's enablement check share this one
+    /// implementation — writing the boolean expression twice would drift sooner or
+    /// later.
     pub fn web_search_active(&self) -> bool {
-        self.web_search_enabled && self.provider_config().is_deepseek()
+        self.web_search_enabled && self.provider_config().web_search_available()
     }
 
     /// Whether the thinking level is actually in effect: the endpoint is DeepSeek.

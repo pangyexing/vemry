@@ -136,12 +136,6 @@
           {t("agentPanel.sources", { n: agent.sourceTable.length })}
         </button>
       {/if}
-      {#if prefs.webSearchEnabled && !prefs.webSearchActive}
-        <span
-          class="sess-nosearch"
-          title={t("agentPanel.searchInactiveHint")}
-        >{t("agentPanel.searchInactive")}</span>
-      {/if}
       <button
         class="sess-new"
         disabled={agent.running || (agent.timeline.length === 0 && !agent.sessionId)}
@@ -461,14 +455,4 @@
     opacity: 0.65;
   }
   /* The search switch is on but the endpoint does not support it: the one runtime sign of the silent degradation (the same colour as "unverified") */
-  .sess-nosearch {
-    flex-shrink: 0;
-    font-size: 10px;
-    color: var(--warning, #b58900);
-    border: 1px solid currentColor;
-    border-radius: 4px;
-    padding: 0 4px;
-    white-space: nowrap;
-    cursor: help;
-  }
 </style>

@@ -10,7 +10,7 @@
   import { fmtCount } from "$lib/stats";
   import { api, type SkillEntry, AGENT_IMAGE_EXTS, EFFORT_OPTIONS, type EffortValue, isAgentImage, type WebSearchResult } from "$lib/api";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { agent, blockHandle, type ComposerHandle, type DraftRef, type TimelineItem } from "$lib/stores/agent.svelte";
+  import { agent, blockHandle, type ComposerHandle, type DraftRef, type SourceEntry, type TimelineItem } from "$lib/stores/agent.svelte";
   import type { ReadRequest } from "$lib/api";
   import HoverCard, { type HoverCardData } from "./HoverCard.svelte";
   import { POSITIONAL_RE, TRANSIENT_CITE_RE, blocksOf, findBlock, materializeCitations, parseRefTarget } from "$lib/citation";
@@ -130,6 +130,8 @@
   let expandedToolRuns = $state<Record<number, boolean>>({});
   /** A source card is collapsed by default (past 4 entries), keyed by its timeline index. */
   let expandedSources = $state<Record<number, boolean>>({});
+  /** The uncited search hits of a source card, shown on demand (keyed by timeline index like expandedSources). */
+  let expandedHits = $state<Record<number, boolean>>({});
   /** Whether the user is stuck to the bottom of the timeline — only then does it follow the streaming output, so reading back is not yanked away. */
   let atBottom = $state(true);
   /** Whether the plan card (the task list the assistant recites) is expanded. */
@@ -616,7 +618,8 @@
     const u = agent.usage;
     if (!u) return "";
     const cache = u.prompt > 0 ? `${Math.round((u.cacheHit / u.prompt) * 100)}%` : "0%";
-    return t("chat.usageLastTurn", { calls: u.iteration, prompt: u.prompt.toLocaleString(), cache, completion: u.completion.toLocaleString() });
+    const searches = u.searches ? t("chat.usageSearches", { n: u.searches }) : "";
+    return `${t("chat.usageLastTurn", { calls: u.iteration, prompt: u.prompt.toLocaleString(), cache, completion: u.completion.toLocaleString() })}${searches}`;
   });
 
   /** On a session change, clear the expansion state keyed by timeline index, so it is not attached to the new timeline at the wrong place. */
@@ -624,6 +627,7 @@
     expandedTools = {};
     expandedToolRuns = {};
     expandedSources = {};
+    expandedHits = {};
     expandedPlans = {};
     blockCache.clear();
     atBottom = true;
@@ -1458,7 +1462,7 @@
           toast.push(t("chat.unsupportedImage", { name }));
           continue;
         }
-        if (pushRef({ kind: "image", path: rel }) && prefs.providerDeepseek && !warnedVision) {
+        if (pushRef({ kind: "image", path: rel }) && prefs.imagesUnsupported && !warnedVision) {
           warnedVision = true;
           toast.push(t("chat.deepseekNoImages"));
         }
@@ -1534,6 +1538,23 @@
   });
   /** The model chip's hover: the model (changed in Settings) and the thinking level; without a model, the level alone. */
   const modelChipHint = $derived(prefs.model ? t("chat.modelChipHint", { model: prefs.model }) : t("chat.effortHint"));
+
+  /** ---- The web search chip: the one switch (the settings page writes the same field), read
+   *  afresh by every send, so a click takes effect from the next message. Disabled with the
+   *  reason when the endpoint cannot search; lit when a search may run. */
+  const searchOn = $derived(prefs.webSearchAvailable && prefs.webSearchEnabled);
+  const searchChipHint = $derived(
+    !prefs.webSearchAvailable ? t("chat.searchChipUnavailable") : searchOn ? t("chat.searchChipOnHint") : t("chat.searchChipOffHint"),
+  );
+  async function toggleSearch() {
+    if (!prefs.webSearchAvailable) return;
+    try {
+      await api.settingsSet({ web_search_enabled: !prefs.webSearchEnabled });
+      await prefs.refresh();
+    } catch (err) {
+      toast.push(String(err));
+    }
+  }
   /** The model chip's menu: the model with the way to Settings (the main window's — the
    *  detached window has no settings dialog to open), then the thinking level's quick switch. */
   function modelMenu(e: MouseEvent) {
@@ -1642,6 +1663,23 @@
   {/if}
   <!-- The panel's disclosure caret: three collapsing heads (the sticky plan card, a decided
        plan card, a source card) turn the same drawing, each rotated by its own `.open` class. -->
+  {#snippet sourceRow(r: SourceEntry, n: number)}
+    <div class="source-row">
+      <button class="source-main" title={r.publish_date ? `${r.url} · ${r.publish_date}` : r.snippet || r.url} onclick={(e) => openCitation(r.url, e.metaKey || e.ctrlKey)}>
+        <span class="source-n">{n + 1}</span>
+        <span class="source-title">{r.title || r.url}</span>
+        {#if r.unverified && !clips.pathFor(r.url)}
+          <span class="src-unverified" title={t("chat.unverifiedHint")}>{t("chat.unverified")}</span>
+        {/if}
+        <span class="source-domain">{domainOf(r.url)}</span>
+      </button>
+      {#if clips.pathFor(r.url)}
+        <button class="source-clip clipped" title={t("reader.alreadyClippedHint")} onclick={() => openClipped(r.url)}>{t("reader.alreadyClipped")}</button>
+      {:else}
+        <button class="source-clip" title={t("chat.clipSourceHint")} onclick={() => void clipSource(r)}>{t("reader.clip")}</button>
+      {/if}
+    </div>
+  {/snippet}
   {#snippet caret()}
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
   {/snippet}
@@ -2000,11 +2038,20 @@
           <pre class="tool-output">{item.output}</pre>
         {/if}
       {:else if item.kind === "sources"}
-        {@const clippedCount = item.results.filter((r) => clips.pathFor(r.url)).length}
-        {@const headText = item.results.length
-          ? `${t("chat.sourcesCount", { n: item.results.length })}${clippedCount ? t("chat.sourcesClipped", { n: clippedCount }) : ""}`
-          : t("chat.searched")}
-        {@const collapsible = !item.searching && item.results.length > 4}
+        <!-- The citations lead; the search hits the model saw and did not cite stay behind a
+             second toggle (a turn may see fifty and cite three). Before the settlement every
+             entry is a hit, so the card reads "search hits" until the answer names its sources -->
+        {@const cited = item.results.filter((r) => r.cited)}
+        {@const hits = item.results.filter((r) => !r.cited)}
+        {@const main = cited.length ? cited : hits}
+        {@const extra = cited.length ? hits : []}
+        {@const clippedCount = main.filter((r) => clips.pathFor(r.url)).length}
+        {@const headText = cited.length
+          ? `${t("chat.sourcesCount", { n: cited.length })}${clippedCount ? t("chat.sourcesClipped", { n: clippedCount }) : ""}`
+          : hits.length
+            ? t("chat.searchHits", { n: hits.length })
+            : t("chat.searched")}
+        {@const collapsible = !item.searching && main.length > 4}
         {@const collapsed = collapsible && !expandedSources[i]}
         <div class="sources">
           {#if item.searching}
@@ -2030,23 +2077,25 @@
                 {t("chat.queries", { list: item.queries.join(" · ") })}
               </div>
             {/if}
-            {#each item.results as r, n (r.url)}
-              <div class="source-row">
-                <button class="source-main" title={r.snippet || r.url} onclick={(e) => openCitation(r.url, e.metaKey || e.ctrlKey)}>
-                  <span class="source-n">{n + 1}</span>
-                  <span class="source-title">{r.title || r.url}</span>
-                  {#if r.unverified && !clips.pathFor(r.url)}
-                    <span class="src-unverified" title={t("chat.unverifiedHint")}>{t("chat.unverified")}</span>
-                  {/if}
-                  <span class="source-domain">{domainOf(r.url)}</span>
-                </button>
-                {#if clips.pathFor(r.url)}
-                  <button class="source-clip clipped" title={t("reader.alreadyClippedHint")} onclick={() => openClipped(r.url)}>{t("reader.alreadyClipped")}</button>
-                {:else}
-                  <button class="source-clip" title={t("chat.clipSourceHint")} onclick={() => void clipSource(r)}>{t("reader.clip")}</button>
-                {/if}
-              </div>
+            {#each main as r, n (r.url)}
+              {@render sourceRow(r, n)}
             {/each}
+            {#if extra.length}
+              <button
+                class="sources-head sources-toggle sources-more"
+                onclick={() => (expandedHits[i] = !expandedHits[i])}
+              >
+                <span class="sources-caret" class:open={expandedHits[i]} aria-hidden="true">
+                  {@render caret()}
+                </span>
+                {t("chat.moreHits", { n: extra.length })}
+              </button>
+              {#if expandedHits[i]}
+                {#each extra as r, n (r.url)}
+                  {@render sourceRow(r, main.length + n)}
+                {/each}
+              {/if}
+            {/if}
             {/if}
           {/if}
         </div>
@@ -2199,6 +2248,21 @@
           {#if prefs.reasoningEffortActive}<span class="model-effort">{effortLabel}</span>{/if}
         </button>
       {/if}
+      <button
+        class="tool-btn search"
+        class:on={searchOn}
+        disabled={!prefs.webSearchAvailable}
+        aria-pressed={searchOn}
+        title={searchChipHint}
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => void toggleSearch()}
+      >
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+          <circle cx="10" cy="10" r="7" />
+          <path d="M3 10h14M10 3c-2.5 2.3-2.5 11.7 0 14M10 3c2.5 2.3 2.5 11.7 0 14" />
+        </svg>
+        <span>{t("chat.searchChip")}</span>
+      </button>
       {#if summonHint}
         <span class="ctx url-hint">{t("chat.popOutHint", { key: k("Mod+J") })}</span>
       {:else if modeInfo.hint}
@@ -2670,6 +2734,11 @@
   .sources-caret.open {
     transform: rotate(90deg);
   }
+  .sources-more {
+    margin-top: 4px;
+    text-transform: none;
+    letter-spacing: normal;
+  }
   .source-row {
     display: flex;
     align-items: baseline;
@@ -2985,6 +3054,17 @@
   .tool-btn.model {
     min-width: 0;
     flex-shrink: 1;
+  }
+  .tool-btn.search:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .tool-btn.search.on {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .tool-btn.search.on:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
   }
   .model-name {
     min-width: 0;
