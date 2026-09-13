@@ -1539,12 +1539,12 @@
   /** The model chip's hover: the model (changed in Settings) and the thinking level; without a model, the level alone. */
   const modelChipHint = $derived(prefs.model ? t("chat.modelChipHint", { model: prefs.model }) : t("chat.effortHint"));
 
-  /** ---- The web search chip: the one switch (the settings page writes the same field), read
+  /** ---- The web search toggle: the one switch (the settings page writes the same field), read
    *  afresh by every send, so a click takes effect from the next message. Disabled with the
    *  reason when the endpoint cannot search; lit when a search may run. */
   const searchOn = $derived(prefs.webSearchAvailable && prefs.webSearchEnabled);
-  const searchChipHint = $derived(
-    !prefs.webSearchAvailable ? t("chat.searchChipUnavailable") : searchOn ? t("chat.searchChipOnHint") : t("chat.searchChipOffHint"),
+  const searchToggleHint = $derived(
+    !prefs.webSearchAvailable ? t("chat.searchToggleUnavailable") : searchOn ? t("chat.searchToggleOnHint") : t("chat.searchToggleOffHint"),
   );
   async function toggleSearch() {
     if (!prefs.webSearchAvailable) return;
@@ -2253,7 +2253,7 @@
         class:on={searchOn}
         disabled={!prefs.webSearchAvailable}
         aria-pressed={searchOn}
-        title={searchChipHint}
+        title={searchToggleHint}
         onmousedown={(e) => e.preventDefault()}
         onclick={() => void toggleSearch()}
       >
@@ -2261,7 +2261,7 @@
           <circle cx="10" cy="10" r="7" />
           <path d="M3 10h14M10 3c-2.5 2.3-2.5 11.7 0 14M10 3c2.5 2.3 2.5 11.7 0 14" />
         </svg>
-        <span>{t("chat.searchChip")}</span>
+        <span>{t("chat.searchToggle")}</span>
       </button>
       {#if summonHint}
         <span class="ctx url-hint">{t("chat.popOutHint", { key: k("Mod+J") })}</span>

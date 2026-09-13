@@ -1457,14 +1457,14 @@ add("chat.", {
     "sourcesCount": ("Sources · {n}", "来源 · {n}"),
     "searchHits": ("Search hits · {n}", "搜索命中 · {n}"),
     "moreHits": ("{n} more search hits the answer did not cite", "其余 {n} 条搜索命中(回答未引用)"),
-    "searchChip": ("Web", "联网"),
-    "searchChipOnHint": ("Web search is on: from the next message the model may search through the provider "
+    "searchToggle": ("Web", "联网"),
+    "searchToggleOnHint": ("Web search is on: from the next message the model may search through the provider "
                          "(searches are billed separately; the queries show on the timeline). Click to turn it off.",
                          "联网搜索已开:从下一条消息起模型可自行通过 provider 搜索(搜索单独计费,搜索词会显示在时间线)。点击关闭"),
-    "searchChipOffHint": ("Web search is off. Click to allow it from the next message on — it takes effect at once; "
+    "searchToggleOffHint": ("Web search is off. Click to allow it from the next message on — it takes effect at once; "
                           "the first message after a switch misses the prompt cache once.",
                           "联网搜索已关。点击后从下一条消息起允许联网,立即生效;切换后的第一条消息会错过一次提示缓存"),
-    "searchChipUnavailable": ("Web search needs the DeepSeek endpoint (Settings › AI)", "联网搜索需要 DeepSeek 端点(设置 › AI)"),
+    "searchToggleUnavailable": ("Web search needs the DeepSeek endpoint (Settings › AI)", "联网搜索需要 DeepSeek 端点(设置 › AI)"),
     "usageSearches": (" · {n} web searches", " · 联网搜索 {n} 次"),
     "sourcesClipped": (" · {n} clipped", " · 已剪藏 {n}"),
     "searched": ("Searched the web", "已联网搜索"),
@@ -1591,11 +1591,11 @@ add("settings.", {
                               "正文列宽随窗格增长但设上限:窄窗约 40 汉字/行,宽屏最多约 50;关闭后编辑器与阅读投影随窗口撑满"),
     "webSearch": ("AI web search", "AI 联网搜索"),
     "webSearchHint": ("The provider's server-side search (DeepSeek, any of its models; nothing runs locally), "
-                      "billed separately from chat and off by default. The chat composer's Web chip is this "
+                      "billed separately from chat and off by default. The chat composer's Web toggle is this "
                       "same switch and takes effect from the next message. Search hits and sources show on the "
                       "AI timeline and open in the built-in browser.",
                       "走 provider 的服务端搜索(DeepSeek 端点,任意模型;本地不联网),按次单独计费,默认关闭。"
-                      "对话输入栏的「联网」芯片就是这个开关,从下一条消息起生效。搜索命中与来源显示在 AI 时间线,可点开内置浏览器。"),
+                      "对话输入栏的「联网」按钮就是这个开关,从下一条消息起生效。搜索命中与来源显示在 AI 时间线,可点开内置浏览器。"),
     "provenanceMarks": ("Mark unreviewed AI blocks", "标记未审阅的 AI 块"),
     "provenanceMarksHint": ("An amber bar and a status-bar count for blocks the AI wrote under a standing grant, until you mark them reviewed; a marker, never a prompt. The origin overlay is a separate command", "AI 在常设授权下写入的块显示琥珀色条并在状态栏计数，直到你标为已审阅；只是标记，不会打断。出处着色是另一条命令"),
     "planConfirm": ("AI plan confirmation", "AI 计划确认"),

@@ -71,7 +71,7 @@ step, done when finished, skipped with the reason in its text). Never restate th
 your prose — the UI shows it. Skip planning entirely for simple questions; reconcile every \
 item before finishing.";
 
-/// Web search comes and goes with the composer's chip, turn by turn, and only the
+/// Web search comes and goes with the composer's Web toggle, turn by turn, and only the
 /// tool table says whether it is there — so the prompt names the fact once, in a
 /// form true either way, and the prefix stays stable across the switch.
 const WEB_SEARCH_RULE: &str = "\

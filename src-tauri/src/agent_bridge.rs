@@ -109,7 +109,7 @@ impl PendingGates {
 /// turns would invalidate the provider's prefix cache every time (on DeepSeek a
 /// hit is roughly 30× cheaper); switching plan_confirm mid-session changes the
 /// tool table, which blows the cache just as thoroughly. Web search is the one
-/// switch read afresh every turn — the composer's chip changes it, the prompt
+/// switch read afresh every turn — the composer's Web toggle changes it, the prompt
 /// does not depend on it, and the one turn after a change pays the cache miss
 /// for the changed tool table. It lives as long as the session, is cleared when a
 /// session is created or switched and when the vault changes, and is rebuilt on

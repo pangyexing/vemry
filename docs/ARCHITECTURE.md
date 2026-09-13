@@ -1798,24 +1798,24 @@ is where the provider keeps the search (its `server_tool_use` /
 API, the carrier until 2026-09-14, began listing every built-in tool as ignored
 that day. A turn searches when `web_search_enabled && base_url == api.deepseek.com`
 (`ProviderConfig::web_search_available`, the one predicate behind the composer's
-chip, the per-turn check and the transport choice), on any DeepSeek model; the
+Web toggle, the per-turn check and the transport choice), on any DeepSeek model; the
 switch is off by default and the default path is unchanged.
 
-**The switch is per turn, not per session.** The chat composer's Web chip and the
+**The switch is per turn, not per session.** The chat composer's Web toggle and the
 settings page write the same field, and `agent_send` reads it afresh on every send:
 a click takes effect from the next message. The system prompt does not mention the
 switch (one sentence, true either way, says search exists only when the tool is in
 the list), so switching changes nothing but the tool table — the one message after
 a switch misses the prefix cache, and the next one hits again. That is the whole
 price of not freezing it, and it buys "click it and it is on" instead of "start a
-new session". The chip is disabled, with the reason, when the endpoint cannot
+new session". The toggle is disabled, with the reason, when the endpoint cannot
 search; there is no after-the-fact "search inactive" state to explain.
 
 Measured live (2026-09-14, deepseek-flash and deepseek-v4-pro,
 `live_anthropic_web_search`): the results come back **structured** — title, url,
 page age, the body only as `encrypted_content` — and the usage counts the
 searches (`server_tool_use.web_search_requests`); one message can carry a search
-and a function call together. A session moves between the lines when the chip
+and a function call together. A session moves between the lines when the toggle
 changes (`live_history_moves_between_the_lines`): a thinking block rebuilt from
 `reasoning_content` with no signature is accepted, and the Chat Completions line
 ignores the search blocks. What a search returns is shown as it is: the queries on

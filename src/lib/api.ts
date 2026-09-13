@@ -295,7 +295,7 @@ export interface SettingsView {
    *  settings page. */
   browser_docked: boolean;
   web_search_enabled: boolean;
-  /** Derived and read-only: the provider runs the search (the DeepSeek endpoint; decided on the Rust side, do not reimplement it in the frontend). The composer's search chip is enabled by it. */
+  /** Derived and read-only: the provider runs the search (the DeepSeek endpoint; decided on the Rust side, do not reimplement it in the frontend). The composer's Web toggle is enabled by it. */
   web_search_available: boolean;
   /** Derived and read-only: the switch is on and the provider runs the search (the same source as the per-turn check in agent_send). */
   web_search_active: boolean;

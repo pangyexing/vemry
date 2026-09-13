@@ -898,7 +898,7 @@ pub struct SettingsView {
     pub web_search_enabled: bool,
     /// Derived and read-only: the provider runs the search (the DeepSeek endpoint;
     /// decided next to the other provider predicates, not reimplemented in TS). The
-    /// composer's search chip is enabled by it.
+    /// composer's Web toggle is enabled by it.
     pub web_search_available: bool,
     /// Derived and read-only: the switch is on and the provider runs the search (the
     /// same source as agent_send's per-turn check).
@@ -1361,9 +1361,9 @@ async fn run_agent_turn(
             }
         }
     };
-    // Web search is read afresh every turn: the composer's chip is the switch, and
+    // Web search is read afresh every turn: the composer's Web toggle is the switch, and
     // the endpoint must still be one that runs the search (a base_url moved away
-    // from DeepSeek mid-session falls back to Chat Completions, where the chip is
+    // from DeepSeek mid-session falls back to Chat Completions, where the toggle is
     // disabled anyway). A turn that searches goes through the Anthropic-format line;
     // everything else stays on Chat Completions.
     let use_web_search = settings.web_search_active();
