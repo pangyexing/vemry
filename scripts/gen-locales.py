@@ -1342,8 +1342,8 @@ add("chat.", {
     "effortLabel": ("Thinking · {level}", "思考·{level}"),
     "effortThisSession": (" (this session)", "(本会话)"),
     "effortFollowGlobal": ("Follow the global setting ({level})", "跟随全局({level})"),
-    "modelChipHint": ("Model {model} · thinking depth. Click to adjust (the model itself is changed in Settings)",
-                      "模型 {model} · 思考深度,点击调整(模型本身在设置里更换)"),
+    "modelChipHint": ("Model {model} · thinking depth · web search. Click to adjust (the model itself is changed in Settings)",
+                      "模型 {model} · 思考深度 · 联网搜索,点击调整(模型本身在设置里更换)"),
     "changeModel": ("Change model… (Settings)", "更改模型…(设置)"),
     "copySelection": ("Copy the selected excerpt", "复制选中片段"),
     "copy": ("Copy", "复制"),
@@ -1457,13 +1457,10 @@ add("chat.", {
     "sourcesCount": ("Sources · {n}", "来源 · {n}"),
     "searchHits": ("Search hits · {n}", "搜索命中 · {n}"),
     "moreHits": ("{n} more search hits the answer did not cite", "其余 {n} 条搜索命中(回答未引用)"),
-    "searchToggle": ("Web", "联网"),
-    "searchToggleOnHint": ("Web search is on: from the next message the model may search through the provider "
-                         "(searches are billed separately; the queries show on the timeline). Click to turn it off.",
-                         "联网搜索已开:从下一条消息起模型可自行通过 provider 搜索(搜索单独计费,搜索词会显示在时间线)。点击关闭"),
-    "searchToggleOffHint": ("Web search is off. Click to allow it from the next message on — it takes effect at once; "
-                          "the first message after a switch misses the prompt cache once.",
-                          "联网搜索已关。点击后从下一条消息起允许联网,立即生效;切换后的第一条消息会错过一次提示缓存"),
+    "searchMenuItem": ("Web search (the model decides when)", "联网搜索(何时搜由模型决定)"),
+    "searchOnHint": ("Web search is on: from the next message the model may search through the provider "
+                     "(searches are billed separately; the queries show on the timeline). Turn it off in this menu.",
+                     "联网搜索已开:从下一条消息起模型可自行通过 provider 搜索(搜索单独计费,搜索词会显示在时间线)。在此菜单里可关闭"),
     "searchToggleUnavailable": ("Web search needs the DeepSeek endpoint (Settings › AI)", "联网搜索需要 DeepSeek 端点(设置 › AI)"),
     "usageSearches": (" · {n} web searches", " · 联网搜索 {n} 次"),
     "sourcesClipped": (" · {n} clipped", " · 已剪藏 {n}"),
@@ -1591,11 +1588,11 @@ add("settings.", {
                               "正文列宽随窗格增长但设上限:窄窗约 40 汉字/行,宽屏最多约 50;关闭后编辑器与阅读投影随窗口撑满"),
     "webSearch": ("AI web search", "AI 联网搜索"),
     "webSearchHint": ("The provider's server-side search (DeepSeek, any of its models; nothing runs locally), "
-                      "billed separately from chat and off by default. The chat composer's Web toggle is this "
-                      "same switch and takes effect from the next message. Search hits and sources show on the "
-                      "AI timeline and open in the built-in browser.",
+                      "billed separately from chat and off by default. The chat composer's model menu carries "
+                      "this same switch, and a change takes effect from the next message. Search hits and sources "
+                      "show on the AI timeline and open in the built-in browser.",
                       "走 provider 的服务端搜索(DeepSeek 端点,任意模型;本地不联网),按次单独计费,默认关闭。"
-                      "对话输入栏的「联网」按钮就是这个开关,从下一条消息起生效。搜索命中与来源显示在 AI 时间线,可点开内置浏览器。"),
+                      "对话输入栏的模型菜单里有同一个开关,改动从下一条消息起生效。搜索命中与来源显示在 AI 时间线,可点开内置浏览器。"),
     "provenanceMarks": ("Mark unreviewed AI blocks", "标记未审阅的 AI 块"),
     "provenanceMarksHint": ("An amber bar and a status-bar count for blocks the AI wrote under a standing grant, until you mark them reviewed; a marker, never a prompt. The origin overlay is a separate command", "AI 在常设授权下写入的块显示琥珀色条并在状态栏计数，直到你标为已审阅；只是标记，不会打断。出处着色是另一条命令"),
     "planConfirm": ("AI plan confirmation", "AI 计划确认"),

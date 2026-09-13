@@ -149,7 +149,7 @@ pub struct RunnerConfig {
     /// spells it for its line; the search executes read-only on the provider
     /// side, writes nothing to disk and does not pass through the PermissionGate,
     /// with visibility guaranteed by the WebSearch* events and the session log).
-    /// Read afresh every turn: the composer's Web toggle changes it, and the one turn
+    /// Read afresh every turn: the composer's web search switch changes it, and the one turn
     /// after a change pays a prefix-cache miss for the changed tool table.
     pub web_search: bool,
     /// The session-level system prompt snapshot (the glue layer takes it on the

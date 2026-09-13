@@ -1539,13 +1539,12 @@
   /** The model chip's hover: the model (changed in Settings) and the thinking level; without a model, the level alone. */
   const modelChipHint = $derived(prefs.model ? t("chat.modelChipHint", { model: prefs.model }) : t("chat.effortHint"));
 
-  /** ---- The web search toggle: the one switch (the settings page writes the same field), read
-   *  afresh by every send, so a click takes effect from the next message. Disabled with the
-   *  reason when the endpoint cannot search; lit when a search may run. */
+  /** ---- The web search switch: one item of the model menu (the settings page writes the same
+   *  field), read afresh by every send, so a click takes effect from the next message. The item
+   *  is disabled with the reason when the endpoint cannot search; while a search may run, a
+   *  globe sits on the model label — what the user sees before sending is whether the message
+   *  can leave the machine, and the switch itself stays out of the bar. */
   const searchOn = $derived(prefs.webSearchAvailable && prefs.webSearchEnabled);
-  const searchToggleHint = $derived(
-    !prefs.webSearchAvailable ? t("chat.searchToggleUnavailable") : searchOn ? t("chat.searchToggleOnHint") : t("chat.searchToggleOffHint"),
-  );
   async function toggleSearch() {
     if (!prefs.webSearchAvailable) return;
     try {
@@ -1583,6 +1582,12 @@
         }),
       );
     }
+    if (entries.length) entries.push({ separator: true });
+    entries.push(
+      prefs.webSearchAvailable
+        ? { label: t("chat.searchMenuItem"), checked: prefs.webSearchEnabled, action: () => void toggleSearch() }
+        : { label: t("chat.searchToggleUnavailable"), disabled: true },
+    );
     contextMenu.open(e, entries);
   }
 
@@ -2246,23 +2251,18 @@
           {#if prefs.model}<span class="model-name">{prefs.model}</span>{/if}
           {#if prefs.model && prefs.reasoningEffortActive}<span class="model-sep" aria-hidden="true">·</span>{/if}
           {#if prefs.reasoningEffortActive}<span class="model-effort">{effortLabel}</span>{/if}
+          {#if searchOn}
+            <!-- The globe: the search switch is on, so this message may leave the machine -->
+            <span class="model-sep" aria-hidden="true">·</span>
+            <span class="model-web" title={t("chat.searchOnHint")}>
+              <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+                <circle cx="10" cy="10" r="7" />
+                <path d="M3 10h14M10 3c-2.5 2.3-2.5 11.7 0 14M10 3c2.5 2.3 2.5 11.7 0 14" />
+              </svg>
+            </span>
+          {/if}
         </button>
       {/if}
-      <button
-        class="tool-btn search"
-        class:on={searchOn}
-        disabled={!prefs.webSearchAvailable}
-        aria-pressed={searchOn}
-        title={searchToggleHint}
-        onmousedown={(e) => e.preventDefault()}
-        onclick={() => void toggleSearch()}
-      >
-        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-          <circle cx="10" cy="10" r="7" />
-          <path d="M3 10h14M10 3c-2.5 2.3-2.5 11.7 0 14M10 3c2.5 2.3 2.5 11.7 0 14" />
-        </svg>
-        <span>{t("chat.searchToggle")}</span>
-      </button>
       {#if summonHint}
         <span class="ctx url-hint">{t("chat.popOutHint", { key: k("Mod+J") })}</span>
       {:else if modeInfo.hint}
@@ -3055,16 +3055,11 @@
     min-width: 0;
     flex-shrink: 1;
   }
-  .tool-btn.search:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .tool-btn.search.on {
+  .model-web {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-  }
-  .tool-btn.search.on:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 18%, transparent);
   }
   .model-name {
     min-width: 0;

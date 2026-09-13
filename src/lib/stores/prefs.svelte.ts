@@ -12,9 +12,9 @@ class PrefsStore {
   clickOpensLinks = $state(true);
   /** The current model's name (visible in the research panel's header); updated by refresh after the settings are saved. */
   model = $state("");
-  /** The value of the "AI web search" switch — the composer's Web toggle and the settings page write the same field. */
+  /** The value of the "AI web search" switch — the composer's model menu and the settings page write the same field. */
   webSearchEnabled = $state(false);
-  /** Whether the provider runs the search at all (the endpoint is DeepSeek) — derived on the Rust side, and the check is not reimplemented in the frontend; the toggle is disabled without it. */
+  /** Whether the provider runs the search at all (the endpoint is DeepSeek) — derived on the Rust side, and the check is not reimplemented in the frontend; the menu item is disabled without it. */
   webSearchAvailable = $state(false);
   /** Whether search will really take effect (the switch is on and the provider runs it) — derived on the Rust side. */
   webSearchActive = $state(false);

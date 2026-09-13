@@ -272,7 +272,7 @@ async fn live_anthropic_web_search() {
     assert!(searches > 0, "the usage did not count the searches");
 }
 
-/// A session may move between lines when the composer's Web toggle changes: a
+/// A session may move between lines when the composer's web search switch changes: a
 /// turn that ran on Chat Completions (thinking on, a tool call, so the history holds
 /// reasoning_content with no signature stub) is continued on the Anthropic-format
 /// line with the search tool — the provider must accept the rebuilt thinking blocks
