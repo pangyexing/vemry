@@ -297,7 +297,7 @@ pub fn note_write(app: AppHandle, state: State<'_, AppState>, path: String, cont
         if vemry_core::is_meta_id(&id) {
             return v.write_meta(&id, &content).map(|()| None).map_err(crate::i18n::err);
         }
-        v.write_note(&id, &content).map(Some).map_err(crate::i18n::err)
+        v.write_note_as(&id, &content, vemry_core::Writer::Editor).map(Some).map_err(crate::i18n::err)
     })?;
     if let Some(event) = event {
         broadcast(&app, &event);
@@ -322,6 +322,80 @@ pub fn note_create(
 /// at the end of that section, a missing or unspecified one at the end of the file
 /// (with blank lines normalised). Returns where it actually landed, which is how
 /// the frontend knows to say "that section does not exist".
+/// One kept state of a note, as the history dialog lists it.
+#[derive(Serialize)]
+pub struct HistorySnapshot {
+    pub id: String,
+    pub ts_ms: i64,
+    pub writer: vemry_core::Writer,
+    pub bytes: u64,
+}
+
+#[tauri::command]
+pub fn note_history_list(state: State<'_, AppState>, path: String) -> Result<Vec<HistorySnapshot>, String> {
+    with_vault(&state, |v| {
+        let id = v.note_id(&path).map_err(crate::i18n::err)?;
+        Ok(v.note_history(&id)
+            .into_iter()
+            .map(|s| HistorySnapshot { id: s.id, ts_ms: s.ts_ms, writer: s.writer, bytes: s.bytes })
+            .collect())
+    })
+}
+
+/// A kept state next to its difference from the note as it is on disk now — the
+/// diff is what the dialog shows, the content is what a copy takes.
+#[derive(Serialize)]
+pub struct HistoryEntry {
+    pub content: String,
+    pub diff: String,
+}
+
+#[tauri::command]
+pub fn note_history_read(state: State<'_, AppState>, path: String, snapshot: String) -> Result<HistoryEntry, String> {
+    with_vault(&state, |v| {
+        let id = v.note_id(&path).map_err(crate::i18n::err)?;
+        let content = v.note_history_read(&id, &snapshot).map_err(crate::i18n::err)?;
+        let current = v.read_note(&id).unwrap_or_default();
+        // The diff reads "what a restore would change": from now back to the kept state
+        let diff = vemry_agent::tools::unified_diff(&current, &content, id.as_str());
+        Ok(HistoryEntry { content, diff })
+    })
+}
+
+#[tauri::command]
+pub fn note_history_restore(app: AppHandle, state: State<'_, AppState>, path: String, snapshot: String) -> Result<(), String> {
+    let event = with_vault_mut(&state, |v| {
+        let id = v.note_id(&path).map_err(crate::i18n::err)?;
+        v.note_history_restore(&id, &snapshot).map_err(crate::i18n::err)
+    })?;
+    broadcast(&app, &event);
+    Ok(())
+}
+
+/// The quit handshake's question (see `AppState::quit_asked`): the first time, the
+/// main webview is asked to write its editor buffer out and `true` says "refuse
+/// this request"; every later time the request passes. A refused request that
+/// gets no answer (the webview hung) is unblocked by the next one.
+pub(crate) fn ask_before_quit(app: &AppHandle) -> bool {
+    use std::sync::atomic::Ordering;
+    let state: State<'_, AppState> = app.state();
+    if state.quit_asked.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    if app.emit_to("main", "vemry://quit-requested", ()).is_err() {
+        // Nobody to ask: let the request through, and the next one too
+        return false;
+    }
+    true
+}
+
+/// The main webview's answer to `vemry://quit-requested`: its buffer is on disk,
+/// so the app exits — with a code, which the exit handler lets pass.
+#[tauri::command]
+pub fn quit_confirmed(app: AppHandle) {
+    app.exit(0);
+}
+
 #[tauri::command]
 pub fn note_insert(
     app: AppHandle,

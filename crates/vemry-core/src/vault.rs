@@ -18,11 +18,14 @@ use crate::note::{Note, NoteId};
 use crate::parser::{extract_frontmatter, parse_note};
 use crate::privacy::{PrivacyScope, PRIVACY_FILE};
 use crate::blocktimes::BlockTimes;
+use crate::history::{History, Writer};
 use crate::provenance::{self, BlockProvenance, NoteFacts, Origin, ProvenanceEntry, ProvenanceLedger};
 use crate::search::{InMemorySearch, SearchHit, SearchProvider};
 use crate::{Result, VemryError};
 
 /// How long after our own write we ignore watcher events for that path.
+/// How long a `write_file` echo is swallowed (see `self_file_writes`). A note's
+/// echo is judged by content instead (see `handle_fs_change`).
 const SELF_WRITE_WINDOW: Duration = Duration::from_secs(2);
 
 /// User scripts live here (vault-relative). Edits under it emit
@@ -132,10 +135,10 @@ pub struct Vault {
     root: PathBuf,
     index: BlockIndex,
     search: Box<dyn SearchProvider>,
-    self_writes: HashMap<NoteId, Instant>,
-    /// Same suppression for non-Markdown `write_file` calls, keyed by rel
-    /// path — a script's own file write must not bounce back as
-    /// `FilesChanged` and re-trigger workflows.
+    /// Suppression of the watcher's echo for non-Markdown `write_file` calls,
+    /// keyed by rel path — a script's own file write must not bounce back as
+    /// `FilesChanged` and re-trigger workflows. A note's echo is told apart by
+    /// content (the index holds what was written), not by time.
     self_file_writes: HashMap<String, Instant>,
     privacy: PrivacyScope,
     /// Who wrote which block (see provenance.rs); loaded at open, appended on writes.
@@ -144,6 +147,8 @@ pub struct Vault {
     /// before it is indexed, and the table is saved after the vault's own writes
     /// and after external changes once `.vemry/` exists.
     times: BlockTimes,
+    /// The text of every note before each write (see history.rs).
+    history: History,
 }
 
 impl Vault {
@@ -175,12 +180,13 @@ impl Vault {
             privacy: PrivacyScope::load(&root),
             provenance: ProvenanceLedger::empty(&root),
             times: BlockTimes::load(&root),
+            history: History::new(&root),
             root,
             index: BlockIndex::new(),
             search: Box::new(InMemorySearch::new()),
-            self_writes: HashMap::new(),
             self_file_writes: HashMap::new(),
         };
+        vault.history.prune_old();
         // Stamped but not saved: opening leaves no trace in a directory that is
         // merely being browsed, and the stamps are recomputed identically next time
         for note in &mut notes {
@@ -456,8 +462,9 @@ impl Vault {
             fs::create_dir_all(parent)?;
         }
         fs::rename(&from_abs, &to_abs)?;
-        // A rename touches no content: the stamps travel with the note (or the folder)
+        // A rename touches no content: the stamps and the history travel with the note (or the folder)
         self.times.rename(&from_rel, &to_rel);
+        self.history.rename(&from_rel, &to_rel);
         self.rescan()?;
         Ok(to_rel)
     }
@@ -627,8 +634,19 @@ impl Vault {
         Ok(report)
     }
 
-    /// Write full raw content and re-index the note.
+    /// Write full raw content and re-index the note — the app's own writes (a
+    /// template, a translation, a migration). The editor, the agent, scripts and
+    /// clipping say who they are through `write_note_as`, which is what the
+    /// history's coalescing and its labels go by.
     pub fn write_note(&mut self, id: &NoteId, content: &str) -> Result<VaultEvent> {
+        self.write_note_as(id, content, Writer::App)
+    }
+
+    /// `write_note` by a named writer. The text being replaced is kept in the
+    /// history first (exactly, or coalesced for the editor's own typing — see
+    /// history.rs), so nothing an approved write or a stale buffer lands over is
+    /// lost with the session.
+    pub fn write_note_as(&mut self, id: &NoteId, content: &str, writer: Writer) -> Result<VaultEvent> {
         // Configuration is not a note: indexing it would surface a block type or a
         // skill in search and the graph until the next rescan. The editor's writes
         // under .vemry/ go through write_meta; nothing else may write there.
@@ -636,8 +654,12 @@ impl Vault {
             return Err(reject(PathReject::MetaNotANote, id.as_str()));
         }
         let existed = self.index.contains(id);
+        if let Ok(previous) = fs::read_to_string(self.abs_path(id)) {
+            if previous != content {
+                self.history.keep(id, &previous, writer);
+            }
+        }
         self.write_bytes(id, content)?;
-        self.self_writes.insert(id.clone(), Instant::now());
         self.reindex_note(id)?;
         self.times.save(true);
         Ok(if existed { VaultEvent::NoteModified { id: id.clone() } } else { VaultEvent::NoteAdded { id: id.clone() } })
@@ -673,15 +695,32 @@ impl Vault {
 
     /// The file write shared by notes and meta files: the parent directory is
     /// created on demand, and a path that does not exist yet must be portable.
+    /// The bytes land in a hidden temporary file beside the note and are renamed
+    /// over it: a crash or a power cut between truncating and writing (an autosave
+    /// runs about once a second while the user types) can otherwise leave an empty
+    /// or half-written note, and the disk Markdown is the only source of truth.
+    /// The rename replaces the inode — the note's permission bits are carried
+    /// over; a hard link to it, or a tag an OS stores on the file rather than in
+    /// its own database, is not.
     fn write_bytes(&self, id: &NoteId, content: &str) -> Result<()> {
         let path = self.abs_path(id);
         if !path.exists() {
             validate_portable_rel(id.as_str())?;
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+        let Some(parent) = path.parent() else { return Err(reject(PathReject::Empty, id.as_str())) };
+        fs::create_dir_all(parent)?;
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let tmp = parent.join(format!(".{name}.{}.vemry-tmp", std::process::id()));
+        let landed = fs::write(&tmp, content)
+            .and_then(|()| match fs::metadata(&path) {
+                Ok(meta) => fs::set_permissions(&tmp, meta.permissions()),
+                Err(_) => Ok(()),
+            })
+            .and_then(|()| fs::rename(&tmp, &path));
+        if let Err(e) = landed {
+            let _ = fs::remove_file(&tmp);
+            return Err(e.into());
         }
-        fs::write(&path, content)?;
         Ok(())
     }
 
@@ -707,7 +746,7 @@ impl Vault {
             offset.unwrap_or_else(|| crate::insert::content_end_offset(&existing)),
             text,
         );
-        let event = self.write_note(id, &content)?;
+        let event = self.write_note_as(id, &content, Writer::Clip)?;
         Ok((event, landed))
     }
 
@@ -934,6 +973,23 @@ impl Vault {
         provenance::plan_revert_ids(text, |h| self.provenance.lookup(h), local_ids)
     }
 
+    /// The kept states of a note, newest first (see history.rs).
+    pub fn note_history(&self, id: &NoteId) -> Vec<crate::history::Snapshot> {
+        self.history.list(id)
+    }
+
+    /// The text of one kept state of a note.
+    pub fn note_history_read(&self, id: &NoteId, snapshot: &str) -> Result<String> {
+        self.history.read(id, snapshot).ok_or_else(|| VemryError::NoteNotFound(format!("{}@{snapshot}", id.as_str())))
+    }
+
+    /// Put a kept state back as the note's text. The text it replaces is kept
+    /// first (as every write's is), so a restore can itself be undone.
+    pub fn note_history_restore(&mut self, id: &NoteId, snapshot: &str) -> Result<VaultEvent> {
+        let content = self.note_history_read(id, snapshot)?;
+        self.write_note_as(id, &content, Writer::Restore)
+    }
+
     /// Append text (with separating newline) — used by quick capture.
     pub fn append_note(&mut self, id: &NoteId, text: &str) -> Result<VaultEvent> {
         let existing = self.read_note(id).unwrap_or_default();
@@ -945,7 +1001,7 @@ impl Vault {
         if !content.ends_with('\n') {
             content.push('\n');
         }
-        self.write_note(id, &content)
+        self.write_note_as(id, &content, Writer::Clip)
     }
 
     /// Create an empty note with a unique, sanitized filename.
@@ -966,7 +1022,6 @@ impl Vault {
     pub fn delete_note(&mut self, id: &NoteId) -> Result<VaultEvent> {
         let path = self.abs_path(id);
         fs::remove_file(&path).map_err(|_| VemryError::NoteNotFound(id.to_string()))?;
-        self.self_writes.insert(id.clone(), Instant::now());
         self.index.remove(id);
         self.search.remove_note(id);
         self.times.remove(id.as_str());
@@ -979,8 +1034,15 @@ impl Vault {
     /// after the whole batch — so a checkout touching N notes offers the table for
     /// saving once rather than N times (and `BlockTimes::save` throttles even that).
     fn reindex_note(&mut self, id: &NoteId) -> Result<()> {
+        let raw = fs::read_to_string(self.abs_path(id))?;
+        self.reindex_note_raw(id, raw)
+    }
+
+    /// `reindex_note` for text already read (the watcher reads a changed note to
+    /// tell an echo from a change, and does not read it twice).
+    fn reindex_note_raw(&mut self, id: &NoteId, raw: String) -> Result<()> {
         let rel = PathBuf::from(id.as_str());
-        let mut note = load_note(&self.root, &rel)?;
+        let mut note = note_from_raw(&self.root, &rel, raw)?;
         self.times.stamp(&mut note);
         self.search.index_note(&note.id, note.effective_title(), &note.raw);
         self.index.upsert(&note);
@@ -1041,15 +1103,23 @@ impl Vault {
                 continue;
             }
             let id = NoteId::from_rel_path(rel);
-            if let Some(t) = self.self_writes.get(&id) {
-                if t.elapsed() < SELF_WRITE_WINDOW {
-                    continue;
-                }
-                self.self_writes.remove(&id);
-            }
             if path.exists() {
                 let existed = self.index.contains(&id);
-                if self.reindex_note(&id).is_ok() {
+                let previous = self.search.note_text(&id).map(str::to_string);
+                let Ok(raw) = fs::read_to_string(path) else { continue };
+                // The echo of the vault's own write: the file holds what the index
+                // holds. Judged by content rather than by a time window, because a
+                // program writing the same note right after the vault (a sync client
+                // catching up) is a real change, and a window would swallow it —
+                // and the buffer would then write the vault's copy back over it.
+                if existed && previous.as_deref() == Some(raw.as_str()) {
+                    continue;
+                }
+                if self.reindex_note_raw(&id, raw).is_ok() {
+                    // What the outside program replaced is kept before it is forgotten
+                    if let Some(previous) = previous {
+                        self.history.keep(&id, &previous, Writer::External);
+                    }
                     events.push(if existed {
                         VaultEvent::NoteModified { id }
                     } else {
@@ -1351,7 +1421,7 @@ impl Vault {
 
     /// Set/clear the frontmatter `private` flag in place, preserving every
     /// other field. Goes through `write_note` so index and search update and
-    /// the watcher self-write suppression applies.
+    /// the watcher's echo reads as the vault's own.
     pub fn set_note_private(&mut self, id: &NoteId, private: bool) -> Result<VaultEvent> {
         let raw = self.read_note(id)?;
         let (mut fm, body_offset) = extract_frontmatter(&raw);
@@ -1533,8 +1603,12 @@ fn truncate_chars(s: &str, max: usize) -> String {
 }
 
 fn load_note(root: &Path, rel: &Path) -> Result<Note> {
+    let raw = fs::read_to_string(root.join(rel))?;
+    note_from_raw(root, rel, raw)
+}
+
+fn note_from_raw(root: &Path, rel: &Path, raw: String) -> Result<Note> {
     let abs = root.join(rel);
-    let raw = fs::read_to_string(&abs)?;
     let mtime = fs::metadata(&abs).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
     let parsed = parse_note(&raw);
     let id = NoteId::from_rel_path(rel);
@@ -2036,6 +2110,58 @@ later still ^b2
         vault.write_note(&sleep, "rewritten\n").unwrap();
         let events = vault.handle_fs_change(&[vault.abs_path(&sleep)]);
         assert!(events.is_empty(), "self write must not produce events");
+        // The echo is told by content, not by time: a program writing the same note
+        // right after the vault is a real change and gets its event, and the text it
+        // replaced is kept in the history
+        fs::write(vault.abs_path(&sleep), "outside\n").unwrap();
+        let events = vault.handle_fs_change(&[vault.abs_path(&sleep)]);
+        assert!(matches!(events[..], [VaultEvent::NoteModified { .. }]), "a different text right after an own write is a change");
+        assert_eq!(vault.read_note(&sleep).unwrap(), "outside\n");
+        let kept = vault.note_history(&sleep);
+        assert_eq!(kept[0].writer, Writer::External);
+        assert_eq!(vault.note_history_read(&sleep, &kept[0].id).unwrap(), "rewritten\n");
+        // A touch (same text again) is nothing
+        fs::write(vault.abs_path(&sleep), "outside\n").unwrap();
+        assert!(vault.handle_fs_change(&[vault.abs_path(&sleep)]).is_empty());
+    }
+
+    #[test]
+    fn writes_keep_the_previous_text_and_a_restore_puts_it_back() {
+        let (_d, mut vault) = fixture_vault();
+        let sleep = NoteId::new("Sleep.md");
+        let original = vault.read_note(&sleep).unwrap();
+        vault.write_note_as(&sleep, "agent's version\n", Writer::Agent).unwrap();
+        vault.write_note_as(&sleep, "agent's version\n", Writer::Editor).unwrap();
+        let kept = vault.note_history(&sleep);
+        assert_eq!(kept.len(), 1, "an identical rewrite keeps nothing");
+        assert_eq!(kept[0].writer, Writer::Agent);
+        vault.note_history_restore(&sleep, &kept[0].id).unwrap();
+        assert_eq!(vault.read_note(&sleep).unwrap(), original);
+        let kept = vault.note_history(&sleep);
+        assert_eq!(kept.len(), 2, "the restore kept what it replaced");
+        assert_eq!(kept[0].writer, Writer::Restore);
+        assert_eq!(vault.note_history_read(&sleep, &kept[0].id).unwrap(), "agent's version\n");
+        // The snapshots are under .vemry and never indexed
+        assert!(vault.root().join(".vemry/history/Sleep.md").is_dir());
+        assert_eq!(vault.index().summaries().iter().filter(|n| n.id.as_str().contains("history")).count(), 0);
+        // A move takes the history along
+        vault.rename_path("Sleep.md", "sub/Sleep.md").unwrap();
+        assert!(vault.note_history(&sleep).is_empty());
+        assert_eq!(vault.note_history(&NoteId::new("sub/Sleep.md")).len(), 2);
+    }
+
+    #[test]
+    fn a_note_write_leaves_no_temporary_file_behind() {
+        let (_d, mut vault) = fixture_vault();
+        let id = NoteId::new("folder/Fresh.md");
+        vault.write_note(&id, "one\n").unwrap();
+        vault.write_note(&id, "two\n").unwrap();
+        let names: Vec<String> = fs::read_dir(vault.root().join("folder"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["Fresh.md"], "the temporary file is renamed over the note, never left beside it");
+        assert_eq!(vault.read_note(&id).unwrap(), "two\n");
     }
 
     #[test]

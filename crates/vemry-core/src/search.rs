@@ -20,6 +20,13 @@ pub trait SearchProvider: Send + Sync {
     fn index_note(&mut self, id: &NoteId, title: &str, content: &str);
     fn remove_note(&mut self, id: &NoteId);
     fn search(&self, query: &str, limit: usize) -> Vec<SearchHit>;
+    /// The text as indexed, for a provider that keeps it. The vault reads it to
+    /// tell the echo of its own write from a change made outside the app, and to
+    /// keep the text such a change replaced (history.rs); a provider that answers
+    /// `None` loses only those two — every note change still gets its event.
+    fn note_text(&self, _id: &NoteId) -> Option<&str> {
+        None
+    }
 }
 
 struct Doc {
@@ -55,6 +62,10 @@ impl SearchProvider for InMemorySearch {
 
     fn remove_note(&mut self, id: &NoteId) {
         self.docs.remove(id);
+    }
+
+    fn note_text(&self, id: &NoteId) -> Option<&str> {
+        self.docs.get(id).map(|d| d.content.as_str())
     }
 
     fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {

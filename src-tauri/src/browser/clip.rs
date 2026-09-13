@@ -399,7 +399,7 @@ pub(crate) fn land_note(
     let (rel, event) = with_vault_mut(state, |v| {
         let rel = v.dedup_rel(&clip_rel_path(meta));
         let id = v.note_id(&rel).map_err(|e| e.to_string())?;
-        let event = v.write_note(&id, &content).map_err(|e| e.to_string())?;
+        let event = v.write_note_as(&id, &content, vemry_core::Writer::Clip).map_err(|e| e.to_string())?;
         Ok((id.to_string(), event))
     })?;
     broadcast(app, &event);
@@ -676,7 +676,7 @@ async fn localize_clip_images(app: AppHandle, rel: String, page_url: String) {
         if next == current {
             return Ok(None);
         }
-        Ok(Some(v.write_note(&id, &next).map_err(|e| e.to_string())?))
+        Ok(Some(v.write_note_as(&id, &next, vemry_core::Writer::Clip).map_err(|e| e.to_string())?))
     });
     if let Ok(Some(event)) = written {
         broadcast(&app, &event);

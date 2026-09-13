@@ -40,6 +40,13 @@ pub struct AppState {
     pub translate: translate::TranslateState,
     /// The browser tabs being translated in place (see browser/pagetr.rs).
     pub browser_translate: browser::pagetr::PageTranslations,
+    /// The quit handshake: ⌘Q, the main window's close button and the last window
+    /// going all reach `ExitRequested`; the first request is refused and the main
+    /// webview is asked to write its editor buffer out (`vemry://quit-requested`),
+    /// and it answers with `quit_confirmed`, which exits for real. Set once the
+    /// question has been asked, so a second request — the webview dead, or the
+    /// user pressing again — is let through rather than refused forever.
+    pub quit_asked: std::sync::atomic::AtomicBool,
 }
 
 pub fn run() {
@@ -69,6 +76,7 @@ pub fn run() {
             agent_window: agent_window::AgentWindowState::default(),
             translate: translate::TranslateState::default(),
             browser_translate: browser::pagetr::PageTranslations::default(),
+            quit_asked: std::sync::atomic::AtomicBool::new(false),
         })
         .setup(|app| {
             let settings = settings::load(app.handle());
@@ -111,6 +119,13 @@ pub fn run() {
                 let handle = app.handle().clone();
                 main.on_window_event(move |event| match event {
                     tauri::WindowEvent::Resized(_) => browser::window::relayout(&handle),
+                    // The close button is a quit (the other windows cannot outlive the main
+                    // one): the same handshake as ⌘Q, so the editor buffer is written out first
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        if commands::ask_before_quit(&handle) {
+                            api.prevent_close();
+                        }
+                    }
                     // The main window is gone: the detached chat window should not outlive
                     // it (it would have nowhere to send anything back), and the same goes
                     // for the detached browser window (nowhere to relay to, every button
@@ -135,6 +150,10 @@ pub fn run() {
             commands::note_write,
             commands::note_create,
             commands::note_insert,
+            commands::note_history_list,
+            commands::note_history_read,
+            commands::note_history_restore,
+            commands::quit_confirmed,
             commands::search,
             commands::links_get,
             commands::query_blocks,
@@ -273,6 +292,16 @@ pub fn run() {
             browser::adblock::adblock_update_rules,
             browser::adblock::adblock_import_rules
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running vemry");
+        .build(tauri::generate_context!())
+        .expect("error while building vemry")
+        .run(|app, event| {
+            // A quit by user interaction (⌘Q, the dock) carries no code; the exit the
+            // handshake ends in (`quit_confirmed` → `app.exit`) and a restart carry one
+            // and pass — a restart's prevent_exit would be ignored anyway
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
+                if commands::ask_before_quit(app) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

@@ -365,7 +365,7 @@ fn call_write(env: &BindEnv, p: Value, append: bool) -> String {
             let ev = if append {
                 v.append_note(&id, &content).map_err(|e| e.to_string())?
             } else {
-                v.write_note(&id, &content).map_err(|e| e.to_string())?
+                v.write_note_as(&id, &content, vemry_core::Writer::Script).map_err(|e| e.to_string())?
             };
             Ok(ev)
         } else {

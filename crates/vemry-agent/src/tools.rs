@@ -1336,7 +1336,7 @@ pub fn prepare_write(
         args["content"] = Value::String(formatted);
     }
     let args = &args;
-    match name {
+    let mut req = match name {
         "write_note" => {
             let path = arg_str(args, "path")?;
             let content = arg_str(args, "content")?;
@@ -1718,7 +1718,23 @@ pub fn prepare_write(
             })
         }
         _ => Err(ToolError::Other(format!("unknown write tool: {name}"))),
+    }?;
+    // The note as it is at this moment, for execute_write to compare against: the
+    // gate awaits with the vault lock released, and what the dialog shows was
+    // computed against this text. A move rewrites nothing in place (its side
+    // writes carry their own expected texts).
+    if req.to_path.is_none() {
+        req.baseline = note_text_now(vault, &req.path);
     }
+    Ok(req)
+}
+
+/// The raw text of the note at `path` right now, `None` when there is none —
+/// resolved exactly as execute_write resolves it, so the two compare like for like.
+fn note_text_now(vault: &Vault, path: &str) -> Option<String> {
+    let id = vault.note_id(path).ok()?;
+    let id = vault.index().canonical_id(&id).unwrap_or(id);
+    vault.read_note(&id).ok()
 }
 
 /// What an executed write reports: the model's tool result, and the notes its side
@@ -1792,8 +1808,16 @@ pub fn execute_write(
     if req.tool != "write_note" && stale {
         return Err(format!("{} changed while the edit was awaiting review — read it again and retry", req.path));
     }
+    // And every write is refused when the note is not the text it was prepared
+    // against — the user typed into it while the dialog was open (the window
+    // losing focus saves the buffer), a sync client or a checkout replaced it, a
+    // note appeared where a new one was to be created. The diff the user approved
+    // would land over text nobody reviewed; the model reads again and retries.
+    if vault.read_note(&id).ok() != req.baseline {
+        return Err(format!("{} changed while the write was awaiting review — read it again and retry", req.path));
+    }
     let content = content_override.unwrap_or(&req.new_content);
-    vault.write_note(&id, content).map_err(|e| e.to_string())?;
+    vault.write_note_as(&id, content, vemry_core::Writer::Agent).map_err(|e| e.to_string())?;
     // Provenance is computed from the applied bytes (an AllowEdited override
     // included), as a multiset difference of block hashes: a block the model
     // merely moved is not new, a block it changed is
@@ -2591,9 +2615,42 @@ mod tests {
         let err = execute_write(&mut vault, &req, Some("plain edited!\n"), None, false).unwrap_err();
         assert!(err.contains("changed while the edit was awaiting review"), "{err}");
         assert!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap().contains("late"));
-        // the user's own rewrite of the proposal is applied as they wrote it
-        execute_write(&mut vault, &req, Some("plain edited\n\n> [!private] late\n"), None, false).unwrap();
-        assert_eq!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap(), "plain edited\n\n> [!private] late\n");
+        // and so is a rewrite that happens to keep it: the note is not the text the
+        // proposal was prepared against, and nothing lands on a text nobody reviewed
+        let err = execute_write(&mut vault, &req, Some("plain edited\n\n> [!private] late\n"), None, false).unwrap_err();
+        assert!(err.contains("changed while the write was awaiting review"), "{err}");
+        assert_eq!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap(), "plain\n\n> [!private] late\n");
+    }
+
+    #[test]
+    fn a_write_refuses_at_execute_when_the_note_changed_meanwhile() {
+        let (_d, mut vault) = fixture_with_private_block();
+        let req = prepare_write(
+            &vault,
+            "r".into(),
+            "append_note",
+            &json!({"path": "Plain.md", "content": "appended"}),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.baseline.as_deref(), Some("plain\n"));
+        // The user typed into the note while the dialog was open (a blur saved the buffer)
+        vault.write_note(&NoteId::new("Plain.md"), "plain, and more\n").unwrap();
+        let err = execute_write(&mut vault, &req, None, None, false).unwrap_err();
+        assert!(err.contains("changed while the write was awaiting review"), "{err}");
+        assert_eq!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap(), "plain, and more\n");
+        // Prepared again against the new text, it lands
+        let req = prepare_write(&vault, "r2".into(), "append_note", &json!({"path": "Plain.md", "content": "appended"}), None, None).unwrap();
+        execute_write(&mut vault, &req, None, None, false).unwrap();
+        assert!(std::fs::read_to_string(vault.root().join("Plain.md")).unwrap().contains("appended"));
+        // A note to be created that appeared meanwhile is refused the same way
+        let req = prepare_write(&vault, "r3".into(), "write_note", &json!({"path": "Brand New.md", "content": "hello"}), None, None).unwrap();
+        assert!(req.baseline.is_none());
+        vault.write_note(&NoteId::new("Brand New.md"), "someone else's\n").unwrap();
+        let err = execute_write(&mut vault, &req, None, None, false).unwrap_err();
+        assert!(err.contains("changed while the write was awaiting review"), "{err}");
+        assert_eq!(std::fs::read_to_string(vault.root().join("Brand New.md")).unwrap(), "someone else's\n");
     }
 
     #[test]

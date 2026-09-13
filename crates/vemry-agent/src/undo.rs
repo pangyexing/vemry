@@ -125,7 +125,7 @@ fn undo_note(vault: &mut Vault, rec: &WriteRecord, report: &mut UndoReport) {
         return;
     };
     let done = match (vault.read_note(&id), &rec.old) {
-        (Ok(cur), Some(old)) if cur == *new => vault.write_note(&id, old).is_ok().then_some(UndoChange::Modified(id)),
+        (Ok(cur), Some(old)) if cur == *new => vault.write_note_as(&id, old, vemry_core::Writer::Agent).is_ok().then_some(UndoChange::Modified(id)),
         // The write created the note: it goes to the trash (recoverable), never deleted outright
         (Ok(cur), None) if cur == *new => vault.delete_path(id.as_str()).is_ok().then_some(UndoChange::Removed(id)),
         _ => None,

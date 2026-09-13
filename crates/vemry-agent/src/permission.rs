@@ -55,6 +55,10 @@ pub struct WriteRequest {
     /// Lines for the model's tool result beyond "wrote …" (what landed unassigned, say).
     #[serde(skip)]
     pub notes: Vec<String>,
+    /// The note's raw text when the request was prepared (`None`: no note there
+    /// yet). execute_write lands only on this exact text — see there.
+    #[serde(skip)]
+    pub baseline: Option<String>,
 }
 
 impl WriteRequest {
@@ -74,6 +78,7 @@ impl WriteRequest {
             rewrite_texts: vec![],
             block_diff: None,
             notes: vec![],
+            baseline: None,
         }
     }
 
@@ -112,7 +117,7 @@ impl RewriteText {
     pub fn apply(&self, vault: &mut vemry_core::Vault, revert: bool) -> bool {
         let (expect, land) = if revert { (&self.new, &self.old) } else { (&self.old, &self.new) };
         let Ok(id) = vault.note_id(&self.path) else { return false };
-        matches!(vault.read_note(&id), Ok(cur) if cur == *expect) && vault.write_note(&id, land).is_ok()
+        matches!(vault.read_note(&id), Ok(cur) if cur == *expect) && vault.write_note_as(&id, land, vemry_core::Writer::Agent).is_ok()
     }
 }
 
