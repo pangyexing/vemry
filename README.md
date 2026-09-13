@@ -14,7 +14,7 @@ a diff before it writes, and never sees what you mark private.
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-![vemry — editor, file tree and outline](docs/assets/hero.png)
+![vemry — a chapter of a paper under study, with the source embedded block by block](docs/assets/hero.png)
 
 ---
 

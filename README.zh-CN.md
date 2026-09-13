@@ -13,7 +13,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-![vemry — 编辑器、文件树与大纲](docs/assets/hero.png)
+![vemry — 研读中的一章论文，原文按块嵌入](docs/assets/hero.png)
 
 ---
 
