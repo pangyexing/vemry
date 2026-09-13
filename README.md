@@ -36,7 +36,7 @@ local editor.
 ## What vemry is
 
 vemry is an editor for a folder of Markdown, with an AI that works inside that
-folder under your rules. Everything you see — the editor, ten views, the AI's tools,
+folder under your rules. Everything you see — the editor, every view, the AI's tools,
 your own scripts — reads the same block-level index built from your files. There is
 no second copy of your knowledge anywhere.
 
@@ -74,11 +74,13 @@ lands in a note with its source and its images saved into your vault; ad blockin
 is built in. A thought that does not belong anywhere yet goes to an inbox note
 with one palette command.
 
-### See your vault from ten angles
+### One vault, seen by the question you are asking
 
-Agenda, Board, Timeline, Graph, Claims, Evidence, Review, Reader, Translation and
-Session Replay are all queries over the one index. Write a `vemry-query` fence
-inside a note and it renders live results that follow the index.
+What is due today: Agenda. Where each thing stands: Board. What happened this
+month: Timeline. How your notes connect: Graph. Which claims have evidence behind
+them and which do not: Claims and Evidence. Which cards are due: Review. None of
+them stores anything of its own; each is a query over the one index, and a
+`vemry-query` fence inside a note renders the same query in place.
 
 ![Board view — every task in the vault, by state](docs/assets/kanban.png)
 
@@ -96,7 +98,7 @@ Fifteen built-in skills cover the work around reading: tidy a folder, restructur
 note, turn meeting notes into actions, write the weekly report, close the day. Add
 your own as a Markdown file in `.vemry/skills/`. Every write is a diff, a whole
 turn's writes can be undone, and every session is an audit log you can replay in
-the app.
+the Session Replay view.
 
 ![The write gate — the agent proposed this edit; nothing reaches disk until you answer](docs/assets/permission-diff.png)
 
@@ -186,15 +188,11 @@ complete dialect and each fallback: [docs/SYNTAX.md](docs/SYNTAX.md).
 
 ## Status
 
-As of September 2026, working on `main`: the editor and its live preview, the ten
-views, the block index and query API, the agent with its tools behind the write
-gate, privacy zones, the scripting sandbox, the built-in browser with clipping,
+As of September 2026, working on `main`: the editor and its live preview, the
+Agenda, Board, Timeline, Graph, Claims, Evidence and Review views, the block index
+and query API, the agent with its tools behind the write gate, privacy zones, the scripting sandbox, the built-in browser with clipping,
 side-by-side translation of a note, a web page or a PDF, and an interface in English
 and Chinese.
-
-**The published installers predate this README.** The English interface in
-particular has not shipped yet — the latest release is Chinese-only. Until 0.9.0 is
-released, build from source to get what is described here.
 
 Next, in the order the study loop needs them: PDF annotation that lands in the
 source note, reference management on source notes (DOI, BibTeX export), and reading
