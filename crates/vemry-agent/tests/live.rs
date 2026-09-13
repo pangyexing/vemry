@@ -310,7 +310,7 @@ async fn live_history_moves_between_the_lines() {
     let mut history = vec![];
     let legs: [(&str, bool, &str); 3] = [
         ("chat completions", false, "Read Apples.md and tell me in one sentence how to store apples."),
-        ("anthropic", true, "Search the web for how long apples keep in a fridge, and answer in one sentence with the source link."),
+        ("anthropic", true, "Search the web for how long apples keep in a fridge, then read Apples.md, and answer in one sentence with the source link — the search and the note read are both required."),
         ("chat completions", false, "Now, without searching, restate both facts in one sentence."),
     ];
     for (line, web, message) in legs {
@@ -329,7 +329,9 @@ async fn live_history_moves_between_the_lines() {
                     max_iterations: 6,
                     write_policy: WritePolicy::Ask,
                     web_search: web,
-                    reasoning_effort: Some("low".into()),
+                    // high: the model thinks between the search and the tool call, and the
+                    // replay must return that interleaving verbatim (the 400 the GUI hit)
+                    reasoning_effort: Some("high".into()),
                     ..Default::default()
                 },
                 &mut history,

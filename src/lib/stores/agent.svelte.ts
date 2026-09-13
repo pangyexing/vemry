@@ -977,6 +977,9 @@ class AgentStore {
         // A finished plan belongs to the task that is over; an unfinished one stays
         if (this.plan && planReconciled(this.plan)) this.plan = null;
         this.activeSkill = null;
+        // The search count sums this turn's model calls: it starts over with the turn
+        // (the other usage fields are replaced by each call as they come)
+        if (this.usage) this.usage = { ...this.usage, searches: 0 };
         break;
       }
       case "skill_activated": {

@@ -15,15 +15,22 @@
 //!
 //! The replay contract (what an assistant turn carries into the next request):
 //! - the text and the function calls live in `ChatMessage.content`/`tool_calls`
-//!   as on every line (so a session can move between lines when the search
-//!   switch changes);
-//! - the thinking text lives in `reasoning_content` as on the Chat Completions
-//!   line, and only its **signature** is kept in `extra_items` as a
-//!   `{"type":"thinking","signature":…}` stub — the block is rebuilt from the two
-//!   on replay, so the sidecar holds the text once;
-//! - `server_tool_use` and `web_search_tool_result` blocks are kept verbatim in
-//!   `extra_items` (the results travel as `encrypted_content`, which is how the
-//!   server restores them without the client ever holding the page text);
+//!   as on every line, and the thinking text in `reasoning_content` as on the
+//!   Chat Completions line — so a session can move between lines when the
+//!   search switch changes;
+//! - `extra_items` holds **every content block of the message, verbatim and in
+//!   order** (thinking with its signature, text, tool_use, server_tool_use,
+//!   web_search_tool_result), and a message that has them is replayed from them
+//!   alone. The order is not optional: the model thinks, searches, thinks again
+//!   and then calls a tool within one message, and a replay that gathered the
+//!   thinking into one leading block was refused with a 400 ("content[].thinking
+//!   in the thinking mode must be passed back") the moment a function call
+//!   followed a search (measured in the GUI, 2026-09-14). The search results
+//!   travel as `encrypted_content`, which is how the server restores them
+//!   without the client ever holding the page text;
+//! - a message without this line's blocks (a turn that ran on Chat Completions)
+//!   is composed: a thinking block from `reasoning_content` with an empty
+//!   signature (accepted, measured), the text, the tool calls;
 //! - an `extra_items` entry of another line's shape (a Responses
 //!   `web_search_call` from an older session) is not an Anthropic block and is
 //!   left out.
@@ -167,32 +174,27 @@ fn image_block(url: &str) -> Value {
 fn is_anthropic_block(item: &Value) -> bool {
     matches!(
         item.get("type").and_then(|t| t.as_str()),
-        Some("thinking") | Some("redacted_thinking") | Some("server_tool_use") | Some("web_search_tool_result")
+        Some("thinking")
+            | Some("redacted_thinking")
+            | Some("text")
+            | Some("tool_use")
+            | Some("server_tool_use")
+            | Some("web_search_tool_result")
     )
 }
 
-/// An assistant turn → its content blocks, in the order the API wants them: the
-/// thinking first (rebuilt from `reasoning_content` plus the signature stub, or
-/// emitted with an empty signature when the turn came from the Chat Completions
-/// line and has none), then the server tool blocks verbatim, then the text, then
-/// the function calls.
+/// An assistant turn → its content blocks: verbatim from `extra_items` when the
+/// turn ran on this line (see the module comment on why the order is kept), and
+/// otherwise composed — the thinking from `reasoning_content` with an empty
+/// signature, then the text, then the function calls.
 fn assistant_blocks(msg: &crate::types::ChatMessage) -> Vec<Value> {
+    let recorded: Vec<Value> = msg.extra_items.iter().filter(|i| is_anthropic_block(i)).cloned().collect();
+    if !recorded.is_empty() {
+        return recorded;
+    }
     let mut blocks = vec![];
     if let Some(reasoning) = msg.reasoning_content.as_deref().filter(|r| !r.is_empty()) {
-        let signature = msg
-            .extra_items
-            .iter()
-            .find(|i| i.get("type").and_then(|t| t.as_str()) == Some("thinking"))
-            .and_then(|i| i.get("signature"))
-            .and_then(|s| s.as_str())
-            .unwrap_or_default();
-        blocks.push(json!({ "type": "thinking", "thinking": reasoning, "signature": signature }));
-    }
-    for item in msg.extra_items.iter().filter(|i| is_anthropic_block(i)) {
-        if item.get("type").and_then(|t| t.as_str()) == Some("thinking") {
-            continue; // the stub was consumed above
-        }
-        blocks.push(item.clone());
+        blocks.push(json!({ "type": "thinking", "thinking": reasoning, "signature": "" }));
     }
     if let Some(text) = msg.text().filter(|t| !t.is_empty()) {
         blocks.push(text_block(text));
@@ -302,15 +304,17 @@ pub fn messages_request_body(request: &ChatRequest) -> Value {
 
 // ---- streaming ----
 
-/// What the parser remembers about one content block between its start and stop.
+/// What the parser remembers about one content block between its start and stop:
+/// enough to hand the runner the complete block at stop (see the module comment:
+/// every block is replayed verbatim), on top of the deltas that went out as they
+/// arrived.
 enum BlockState {
-    /// Only the signature is collected: the text goes out as reasoning deltas and
-    /// the runner keeps it.
-    Thinking { signature: String },
-    Text,
-    /// A function call: its tool-call slot (the runner's accumulator index) and
-    /// whether an arguments delta ever arrived (otherwise `{}` is emitted at stop).
-    ToolUse { slot: usize, got_args: bool },
+    Thinking { text: String, signature: String },
+    Text { text: String },
+    /// A function call: its tool-call slot (the runner's accumulator index), the
+    /// block as it started and the arguments JSON as it streams (`{}` is emitted
+    /// at stop when no delta ever arrived).
+    ToolUse { slot: usize, block: Value, input_json: String },
     /// A server-side search: the block as it started (the input is filled in from
     /// the JSON deltas at stop).
     ServerToolUse { block: Value, input_json: String },
@@ -375,12 +379,16 @@ impl MessagesParser {
         match block.get("type").and_then(|t| t.as_str()) {
             Some("thinking") => {
                 let signature = block.get("signature").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                self.set_block(index, BlockState::Thinking { signature });
-                text_of("thinking").map(reasoning_chunk).into_iter().collect()
+                let text = text_of("thinking").unwrap_or_default();
+                let first = (!text.is_empty()).then(|| reasoning_chunk(text.clone()));
+                self.set_block(index, BlockState::Thinking { text, signature });
+                first.into_iter().collect()
             }
             Some("text") => {
-                self.set_block(index, BlockState::Text);
-                text_of("text").map(content_chunk).into_iter().collect()
+                let text = text_of("text").unwrap_or_default();
+                let first = (!text.is_empty()).then(|| content_chunk(text.clone()));
+                self.set_block(index, BlockState::Text { text });
+                first.into_iter().collect()
             }
             Some("tool_use") => {
                 let slot = self.calls;
@@ -389,8 +397,9 @@ impl MessagesParser {
                 let name = block.get("name").and_then(|v| v.as_str()).unwrap_or_default();
                 // A complete input given at start (no deltas to follow) is emitted whole
                 let whole = block.get("input").filter(|i| i.as_object().is_some_and(|o| !o.is_empty())).map(Value::to_string);
-                self.set_block(index, BlockState::ToolUse { slot, got_args: whole.is_some() });
-                vec![tool_call_chunk(slot, Some(id), Some(name), whole.as_deref())]
+                let chunk = tool_call_chunk(slot, Some(id), Some(name), whole.as_deref());
+                self.set_block(index, BlockState::ToolUse { slot, block: block.clone(), input_json: whole.unwrap_or_default() });
+                vec![chunk]
             }
             Some("server_tool_use") => {
                 self.set_block(index, BlockState::ServerToolUse { block: block.clone(), input_json: String::new() });
@@ -421,12 +430,22 @@ impl MessagesParser {
         let Some(delta) = data.get("delta") else { return vec![] };
         let Some(Some(state)) = self.blocks.get_mut(index) else { return vec![] };
         match delta.get("type").and_then(|t| t.as_str()) {
-            Some("text_delta") => delta.get("text").and_then(|v| v.as_str()).map(|t| content_chunk(t.to_string())).into_iter().collect(),
+            Some("text_delta") => {
+                let t = delta.get("text").and_then(|v| v.as_str()).unwrap_or_default();
+                if let BlockState::Text { text } = state {
+                    text.push_str(t);
+                }
+                (!t.is_empty()).then(|| content_chunk(t.to_string())).into_iter().collect()
+            }
             Some("thinking_delta") => {
-                delta.get("thinking").and_then(|v| v.as_str()).map(|t| reasoning_chunk(t.to_string())).into_iter().collect()
+                let t = delta.get("thinking").and_then(|v| v.as_str()).unwrap_or_default();
+                if let BlockState::Thinking { text, .. } = state {
+                    text.push_str(t);
+                }
+                (!t.is_empty()).then(|| reasoning_chunk(t.to_string())).into_iter().collect()
             }
             Some("signature_delta") => {
-                if let BlockState::Thinking { signature } = state {
+                if let BlockState::Thinking { signature, .. } = state {
                     signature.push_str(delta.get("signature").and_then(|v| v.as_str()).unwrap_or_default());
                 }
                 vec![]
@@ -434,8 +453,8 @@ impl MessagesParser {
             Some("input_json_delta") => {
                 let partial = delta.get("partial_json").and_then(|v| v.as_str()).unwrap_or_default();
                 match state {
-                    BlockState::ToolUse { slot, got_args } => {
-                        *got_args = true;
+                    BlockState::ToolUse { slot, input_json, .. } => {
+                        input_json.push_str(partial);
                         vec![tool_call_chunk(*slot, None, None, Some(partial))]
                     }
                     BlockState::ServerToolUse { input_json, .. } => {
@@ -453,11 +472,29 @@ impl MessagesParser {
         let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let Some(slot) = self.blocks.get_mut(index) else { return vec![] };
         match slot.take() {
-            Some(BlockState::Thinking { signature }) => vec![StreamChunk {
-                raw_items: Some(vec![json!({ "type": "thinking", "signature": signature })]),
+            // An empty block is not replayed: the API refuses an empty text block, and
+            // an empty thinking block says nothing
+            Some(BlockState::Thinking { text, .. }) if text.is_empty() => vec![],
+            Some(BlockState::Text { text }) if text.is_empty() => vec![],
+            Some(BlockState::Thinking { text, signature }) => vec![StreamChunk {
+                raw_items: Some(vec![json!({ "type": "thinking", "thinking": text, "signature": signature })]),
                 ..Default::default()
             }],
-            Some(BlockState::ToolUse { slot, got_args: false }) => vec![tool_call_chunk(slot, None, None, Some("{}"))],
+            Some(BlockState::Text { text }) => vec![StreamChunk {
+                raw_items: Some(vec![json!({ "type": "text", "text": text })]),
+                ..Default::default()
+            }],
+            Some(BlockState::ToolUse { slot, mut block, input_json }) => {
+                // The complete block for the replay; the accumulator got `{}` when no
+                // arguments ever streamed
+                let missing = input_json.is_empty();
+                block["input"] = serde_json::from_str::<Value>(&input_json).ok().filter(|v| v.is_object()).unwrap_or_else(|| json!({}));
+                let mut chunks = vec![StreamChunk { raw_items: Some(vec![block]), ..Default::default() }];
+                if missing {
+                    chunks.insert(0, tool_call_chunk(slot, None, None, Some("{}")));
+                }
+                chunks
+            }
             Some(BlockState::ServerToolUse { mut block, input_json }) => {
                 let input = serde_json::from_str::<Value>(&input_json).ok().filter(|v| v.is_object());
                 if let Some(input) = input {
@@ -578,9 +615,9 @@ mod tests {
     }
 
     /// The whole multi-turn tool loop in one body: system → `system`; the assistant
-    /// turn rebuilt as thinking (text from reasoning_content, signature from the
-    /// stub) → the search blocks verbatim → text → tool_use; the two tool results
-    /// merged into one user message; a Responses-shaped leftover left out.
+    /// turn replayed verbatim from its recorded blocks in their order (thinking,
+    /// search, thinking again, text, tool_use — not regrouped), a Responses-shaped
+    /// leftover left out; the two tool results merged into one user message.
     #[test]
     fn request_maps_the_tool_loop_and_replays_search_blocks() {
         let mut assistant = ChatMessage::assistant(
@@ -590,11 +627,15 @@ mod tests {
                 ToolCall { id: "call_2".into(), kind: "function".into(), function: FunctionCall { name: "week".into(), arguments: "not json".into() } },
             ]),
         );
-        assistant.reasoning_content = Some("hmm".into());
+        assistant.reasoning_content = Some("hmm again".into());
         assistant.extra_items = vec![
-            json!({ "type": "thinking", "signature": "sig-1" }),
+            json!({ "type": "thinking", "thinking": "hmm", "signature": "sig-1" }),
             json!({ "type": "server_tool_use", "id": "srv_1", "name": "web_search", "input": { "query": "q" } }),
             json!({ "type": "web_search_tool_result", "tool_use_id": "srv_1", "content": [{ "type": "web_search_result", "url": "https://x.y", "encrypted_content": "…" }] }),
+            json!({ "type": "thinking", "thinking": " again", "signature": "sig-1" }),
+            json!({ "type": "text", "text": "Looking." }),
+            json!({ "type": "tool_use", "id": "call_1", "name": "read_note", "input": { "path": "A.md" } }),
+            json!({ "type": "tool_use", "id": "call_2", "name": "week", "input": {} }),
             json!({ "type": "web_search_call", "id": "ws_old" }),
         ];
         let req = ChatRequest {
@@ -621,11 +662,10 @@ mod tests {
         assert_eq!(msgs[0], json!({ "role": "user", "content": [{ "type": "text", "text": "hi" }] }));
         let blocks = msgs[1]["content"].as_array().unwrap();
         let kinds: Vec<&str> = blocks.iter().map(|b| b["type"].as_str().unwrap()).collect();
-        assert_eq!(kinds, ["thinking", "server_tool_use", "web_search_tool_result", "text", "tool_use", "tool_use"]);
+        assert_eq!(kinds, ["thinking", "server_tool_use", "web_search_tool_result", "thinking", "text", "tool_use", "tool_use"]);
         assert_eq!(blocks[0], json!({ "type": "thinking", "thinking": "hmm", "signature": "sig-1" }));
         assert_eq!(blocks[2]["content"][0]["encrypted_content"], "…", "the results travel back verbatim");
-        assert_eq!(blocks[4]["input"], json!({ "path": "A.md" }));
-        assert_eq!(blocks[5]["input"], json!({}), "unparseable arguments degrade to an empty object");
+        assert_eq!(blocks[5]["input"], json!({ "path": "A.md" }));
         assert_eq!(msgs[2]["role"], "user");
         assert_eq!(msgs[2]["content"][0], json!({ "type": "tool_result", "tool_use_id": "call_1", "content": "# A" }));
         assert_eq!(msgs[2]["content"][1]["tool_use_id"], "call_2");
@@ -653,11 +693,15 @@ mod tests {
 
     /// A multi-modal user message: text → text block, a data URL → a base64 image
     /// source with the media type split off; a Chat-Completions-line assistant turn
-    /// (reasoning, no signature stub) still gets its thinking block, with an empty
-    /// signature.
+    /// (reasoning and tool calls, no recorded blocks) is composed: a thinking block
+    /// with an empty signature, the text, the calls with their arguments parsed
+    /// (unparseable ones degrade to an empty object).
     #[test]
     fn request_maps_images_and_a_signatureless_thinking() {
-        let mut assistant = ChatMessage::assistant(Some("ok".into()), None);
+        let mut assistant = ChatMessage::assistant(
+            Some("ok".into()),
+            Some(vec![ToolCall { id: "c9".into(), kind: "function".into(), function: FunctionCall { name: "week".into(), arguments: "not json".into() } }]),
+        );
         assistant.reasoning_content = Some("why".into());
         let req = request(vec![
             ChatMessage::user_content(Content::Parts(vec![
@@ -673,6 +717,7 @@ mod tests {
         let assistant = body["messages"][1]["content"].as_array().unwrap();
         assert_eq!(assistant[0], json!({ "type": "thinking", "thinking": "why", "signature": "" }));
         assert_eq!(assistant[1], json!({ "type": "text", "text": "ok" }));
+        assert_eq!(assistant[2], json!({ "type": "tool_use", "id": "c9", "name": "week", "input": {} }));
     }
 
     /// The stream captured live on 2026-09-14 (deepseek-flash, thinking on, a
@@ -767,11 +812,12 @@ mod tests {
         assert_eq!((calls[0].id.as_str(), calls[0].function.name.as_str(), calls[0].function.arguments.as_str()), ("call_1", "note_lookup", r#"{"title": "DeepSeek"}"#));
         assert_eq!(finish.as_deref(), Some("tool_calls"));
         let kinds: Vec<&str> = raw.iter().map(|i| i["type"].as_str().unwrap()).collect();
-        assert_eq!(kinds, ["thinking", "server_tool_use", "web_search_tool_result"]);
-        assert_eq!(raw[0]["signature"], "msg-id-1");
-        assert!(raw[0].get("thinking").is_none(), "the stub carries no text");
+        assert_eq!(kinds, ["thinking", "server_tool_use", "tool_use", "web_search_tool_result", "text"], "every block, in stream order");
+        assert_eq!(raw[0], json!({ "type": "thinking", "thinking": "The user wants", "signature": "msg-id-1" }));
         assert_eq!(raw[1]["input"], json!({ "query": "DeepSeek V4.1 Flash release" }), "the input is filled in from the deltas");
-        assert_eq!(raw[2]["content"][0]["encrypted_content"], "abc");
+        assert_eq!(raw[2], json!({ "type": "tool_use", "id": "call_1", "name": "note_lookup", "input": { "title": "DeepSeek" } }));
+        assert_eq!(raw[3]["content"][0]["encrypted_content"], "abc");
+        assert_eq!(raw[4], json!({ "type": "text", "text": "Found it." }));
         let u = usage.unwrap();
         assert_eq!((u.prompt_tokens, u.completion_tokens, u.cache_hit_tokens(), u.web_search_requests), (365, 174, 65, Some(1)));
     }
@@ -814,7 +860,8 @@ mod tests {
         let calls = acc.finish();
         assert_eq!(calls[0].function.arguments, "{}");
         assert_eq!(results, 0);
-        assert_eq!(raw.len(), 1);
+        assert_eq!(raw.len(), 2, "the tool_use block and the error result block are both replayed");
+        assert_eq!(raw[0]["input"], json!({}));
         assert_eq!(finish.as_deref(), Some("length"));
     }
 }
