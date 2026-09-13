@@ -1586,7 +1586,7 @@
     entries.push(
       prefs.webSearchAvailable
         ? { label: t("chat.searchMenuItem"), checked: prefs.webSearchEnabled, action: () => void toggleSearch() }
-        : { label: t("chat.searchToggleUnavailable"), disabled: true },
+        : { label: t("chat.searchUnavailable"), disabled: true },
     );
     contextMenu.open(e, entries);
   }

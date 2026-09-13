@@ -1461,7 +1461,7 @@ add("chat.", {
     "searchOnHint": ("Web search is on: from the next message the model may search through the provider "
                      "(searches are billed separately; the queries show on the timeline). Turn it off in this menu.",
                      "联网搜索已开:从下一条消息起模型可自行通过 provider 搜索(搜索单独计费,搜索词会显示在时间线)。在此菜单里可关闭"),
-    "searchToggleUnavailable": ("Web search needs the DeepSeek endpoint (Settings › AI)", "联网搜索需要 DeepSeek 端点(设置 › AI)"),
+    "searchUnavailable": ("Web search needs the DeepSeek endpoint (Settings › AI)", "联网搜索需要 DeepSeek 端点(设置 › AI)"),
     "usageSearches": (" · {n} web searches", " · 联网搜索 {n} 次"),
     "sourcesClipped": (" · {n} clipped", " · 已剪藏 {n}"),
     "searched": ("Searched the web", "已联网搜索"),

@@ -454,5 +454,4 @@
   .sess-row.legacy {
     opacity: 0.65;
   }
-  /* The search switch is on but the endpoint does not support it: the one runtime sign of the silent degradation (the same colour as "unverified") */
 </style>

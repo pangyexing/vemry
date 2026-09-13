@@ -328,7 +328,7 @@
   "chat.searchHits": "Search hits · {n}",
   "chat.searchMenuItem": "Web search (the model decides when)",
   "chat.searchOnHint": "Web search is on: from the next message the model may search through the provider (searches are billed separately; the queries show on the timeline). Turn it off in this menu.",
-  "chat.searchToggleUnavailable": "Web search needs the DeepSeek endpoint (Settings › AI)",
+  "chat.searchUnavailable": "Web search needs the DeepSeek endpoint (Settings › AI)",
   "chat.searched": "Searched the web",
   "chat.searching": "Searching the web…",
   "chat.sendAria": "Send",

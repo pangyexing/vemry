@@ -328,7 +328,7 @@
   "chat.searchHits": "搜索命中 · {n}",
   "chat.searchMenuItem": "联网搜索(何时搜由模型决定)",
   "chat.searchOnHint": "联网搜索已开:从下一条消息起模型可自行通过 provider 搜索(搜索单独计费,搜索词会显示在时间线)。在此菜单里可关闭",
-  "chat.searchToggleUnavailable": "联网搜索需要 DeepSeek 端点(设置 › AI)",
+  "chat.searchUnavailable": "联网搜索需要 DeepSeek 端点(设置 › AI)",
   "chat.searched": "已联网搜索",
   "chat.searching": "正在联网搜索…",
   "chat.sendAria": "发送",
