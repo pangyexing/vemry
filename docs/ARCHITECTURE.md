@@ -56,7 +56,7 @@ Three constraints follow:
 |---|---|
 | `provider.rs` | `ProviderConfig`: base_url + model + key. Zhipu (`glm-4.7-flash`) by default, swappable for any OpenAI-compatible endpoint; `is_deepseek()` decides whether the Anthropic-format transport (and with it web search) is available |
 | `types.rs` | OpenAI Chat Completions wire types plus the streaming tool_call assembler. `ToolDef` is an untagged enum (`Function` plus `Raw`, which passes a server-side tool through verbatim); `ChatMessage.extra_items` carries the Anthropic-format line's replay blocks across turns |
-| `client.rs` | The `ChatTransport` trait (mockable) plus the reqwest SSE implementation — **the LLM channel boundary**. Since v0.4 the system has two further controlled network exits (see "The built-in knowledge browser"). v0.7: a process-wide shared connection pool, connect timeout, a 120 s stream-idle timeout and cancellation polling for a stalled stream; both transports share one read loop, `read_sse` |
+| `client.rs` | The `ChatTransport` trait (mockable) plus the reqwest SSE implementation — **the LLM channel boundary**. Since v0.4 the system has two further controlled network exits (see "The built-in browser"). v0.7: a process-wide shared connection pool, connect timeout, a 120 s stream-idle timeout and cancellation polling for a stalled stream; both transports share one read loop, `read_sse` |
 | `anthropic.rs` | The Anthropic-format transport (DeepSeek's `/anthropic/v1/messages`) — a second implementation of the same `ChatTransport` trait, and the carrier of web search. On the request side it maps messages→content blocks, system→`system`, tool results→`tool_result` blocks and function tools→`input_schema` tools, spelling the runner's `{"type":"web_search"}` as the `web_search_20250305` server tool; on the response side it synthesises `StreamChunk` from the semantic SSE events, so the runner and the mock need no changes. `server_tool_use` / `web_search_tool_result` blocks (the results as `encrypted_content`) and a thinking block's signature are replayed through `extra_items`. Used for a turn only when web search is on **and** the endpoint is api.deepseek.com |
 | `tools.rs` | The domain tools, in three classes. Read-level (list_notes / read_note / read_file / read_block / search_notes / get_links / clips_lookup / recent_changes / aggregate_blocks / query_blocks / read_skill) execute directly behind the privacy gate; write-level (write_note / edit_note / append_note / set_frontmatter / update_task / set_block_field / restructure_note / move_blocks / move_note / move_file) are first "prepared" into a `WriteRequest` — carrying the rendered diff and the exact content that would land on disk (a move is a path pair, `path → to_path`, with no diff) — and execute only after the gate; session-level (`is_session_tool`: update_plan / list_sources / propose_plan / propose_actions / open_for_reading) act on the session's own state, touch no note and pass no write gate (open_for_reading passes the read gate instead). `import_page` is the one tool of both kinds: the page passes the read gate, the app composes the source note from it (`import.rs`: the page's sections as headings, one block per paragraph with a stable `^s<section>p<n>` id, equations as `$$…$$` with their numbers, figures with their captions as `^figN`, table captions as `^tabN`, the reference list left out) and the note then lands as a write_note — the same diff, gate and provenance — with the outline of ids as the receipt, so a paper is archived without its text passing through the model as output tokens. `update_task` (state and dates in one rewrite of the task's own line) and `set_block_field` (one inline `[key:: value]` on a block's first line) go through `vemry_core::taskedit`, the Rust copy of the editor's `tasks.ts` / `fields.ts` grammar, so a task the AI ticks lands on disk byte for byte as one dragged on the board; `recent_changes` reads the block change times (`blocktimes.rs`) for "what changed since". `move_note` and `move_file` go through `Vault::rename_path`, the same implementation the file tree's move uses, **and rewrite the links that pointed at the moved thing in the same write** (`vemry_core::relink`: the plan is computed at prepare time, shown as the move's diff, and landed after the rename — rename first, rewrite second, a note edited meanwhile skipped rather than overwritten; private referrers are never rewritten). `list_files` and `audit_links` (unresolved links, orphans, dangling `supports::`, duplicate clips — `vemry_core::audit`, index only) are the read side of a tidy-up. `PlanItem`/`PlanStatus` and `parse_plan_items` are update_plan's grammar. `append_note` lands by the vault's own rule (`insert.rs`: the end of a heading's section, or the content end — the same landing as a clip or a quick capture; a missing heading is an error, never a silent fallback; a missing note is a Create) and its diff is only the addition; `set_frontmatter` goes through `vemry_core::set_frontmatter_key` (one top-level key: a scalar, a list, or removal; `private` and `vemry` are refused). `is_local_write` names the three that a followed note takes without a dialog |
 | `undo.rs` | The write journal and "undo this turn's writes": every landed write is recorded with what it replaced (the note's previous text; a move's path pair and link rewrites), and undoing a turn walks its records backwards — a note still holding what the write left gets its previous text back, a created note goes to the trash, a move moves back when nothing has taken its place, a rewrite is restored when its note is untouched; anything edited since is skipped and counted. The journal lives with the session in memory; the jsonl gets an `undo` marker (counts only). Not a snapshot, not git |
@@ -120,7 +120,7 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   holds the clip commands (`eval_with_callback` plus a oneshot to fetch the
   selection or DOM; writing goes through `write_note` + `broadcast`, so indexing,
   frontend refresh and workflow triggering are all free); `adblock.rs` is the rule
-  compilation pipeline (see "The built-in knowledge browser").
+  compilation pipeline (see "The built-in browser").
 - `translate.rs`: side-by-side translation's glue — the source (a note, the reader's
   page, a PDF) is cut into segments here (one in the privacy zone is refused whole), one job at a time is held,
   its events are relayed as `translate://event`, and `translate_save` writes the
@@ -558,9 +558,19 @@ The stamp reaches every consumer as
 
 ## Seams left for later
 
+The study loop's own next steps come first (the README's "next", in its order):
+
 | Future capability | The seam today |
 |---|---|
-| tantivy or semantic retrieval (unscheduled; the README roadmap's "next") | the `SearchProvider` trait |
+| PDF annotation that lands in the source note | `PdfViewer` exposes page numbers and jump-to-page; `import_page` already writes a source note whose blocks carry ids, so an annotation is a block reference plus a page number; the side-by-side translation's PDF segment alignment (see "Side-by-side translation") is the text-to-page map |
+| Reference management on source notes (DOI, BibTeX export) | a source note's frontmatter already carries `url` and the clipper's provenance; the session source table (`sources.rs`) is the per-session list; an exporter is a query over notes with those fields |
+| Reading across papers (one claim, every source that bears on it) | claims and evidence are indexed blocks with `supports:` edges; `query_blocks({kind: claim})` plus the link graph is the join, and `![[embed]]` is the rendering |
+
+Then the rest:
+
+| Future capability | The seam today |
+|---|---|
+| tantivy or semantic retrieval (unscheduled) | the `SearchProvider` trait |
 | vemry Publish (distant) | vemry-core has no Tauri dependency and can be reused server-side |
 | An AI gateway (distant) | the `ProviderConfig` abstraction |
 | PDF and image Q&A (below; side-by-side translation is done, see "Side-by-side translation") | `read_file_bytes` / `file_read_binary`; the `currentPath` context channel is type-agnostic; `FilePreview` renders a PDF through pdf.js (`PdfViewer`, page numbers and jump-to-page exposed); `tool_defs()` is an incrementally extensible registry |
@@ -1468,13 +1478,13 @@ consistent with "one `query()` serves three consumers". Error semantics should s
 Still undecided: unlock granularity (once per vault, an auto-lock timer, or every
 open), what recovery looks like after a forgotten password, and whether different
 directories may have different passwords.
-## The built-in knowledge browser (v0.4, implemented)
+## The built-in browser (v0.4, implemented)
 
-The target scenario: browsing knowledge on the internet inside the app — no ads,
-fast, clean — and turning a page into a vault note whenever it is worth keeping.
-The browser is the intake, the vault is the settling tank. It is positioned as a
-**knowledge browser**, not a general-purpose one: reading, retrieval and clipping;
-no extension ecosystem, no sync account.
+The target scenario: reading on the internet inside the app — no ads, fast, clean —
+and turning a page into a vault note whenever it is worth keeping. The browser is
+the intake, the vault is the settling tank. It is a **reading browser**, not a
+general-purpose one: reading, retrieval and clipping; no extension ecosystem, no
+sync account.
 
 ### Shape: one browser surface with two homes (v0.9)
 

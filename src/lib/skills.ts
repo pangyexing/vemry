@@ -8,12 +8,14 @@ import type { SkillEntry } from "$lib/api";
 
 /** The scenes the welcome groups the built-ins by, in the order they are shown; the names
  *  inside a scene are in the order of use, not alphabetical. A vault's own skills form the
- *  last group. */
-const SKILL_GROUPS: { id: "research" | "daily" | "product" | "tidy"; names: string[] }[] = [
-  { id: "research", names: ["research", "study", "tutor"] },
-  { id: "daily", names: ["daily-start", "daily-close", "weekly-report", "meeting-actions"] },
-  { id: "product", names: ["prd", "feedback-triage", "decision-log", "iteration-plan", "retro", "brief"] },
-  { id: "tidy", names: ["tidy", "tidy-note"] },
+ *  last group. The study scenes come first and are always open; the day-to-day and
+ *  product scenes are `secondary` — the welcome folds them behind one "more" button,
+ *  since a study workbench's first screen should not lead with sprint planning. */
+const SKILL_GROUPS: { id: "research" | "daily" | "product" | "tidy"; names: string[]; secondary?: boolean }[] = [
+  { id: "research", names: ["study", "research", "tutor"] },
+  { id: "tidy", names: ["tidy-note", "tidy"] },
+  { id: "daily", names: ["daily-start", "daily-close", "weekly-report", "meeting-actions"], secondary: true },
+  { id: "product", names: ["prd", "feedback-triage", "decision-log", "iteration-plan", "retro", "brief"], secondary: true },
 ];
 
 /** Which layer a row is, as the UI names it: a built-in, a vault's own skill, or a
@@ -56,10 +58,10 @@ export function skillDesc(s: SkillEntry): string {
 
 /** The enabled skills by scene: the built-in groups (skills still enabled, in the scene's
  *  order), then the vault's own under "this vault". A group with nothing in it is left out. */
-export function groupSkills(skills: SkillEntry[]): { label: string; skills: SkillEntry[] }[] {
+export function groupSkills(skills: SkillEntry[]): { label: string; skills: SkillEntry[]; secondary: boolean }[] {
   const byName = new Map(skills.map((s) => [s.name, s]));
   const placed = new Set<string>();
-  const out: { label: string; skills: SkillEntry[] }[] = [];
+  const out: { label: string; skills: SkillEntry[]; secondary: boolean }[] = [];
   for (const g of SKILL_GROUPS) {
     const members = g.names.flatMap((n) => {
       const s = byName.get(n);
@@ -67,9 +69,9 @@ export function groupSkills(skills: SkillEntry[]): { label: string; skills: Skil
       placed.add(n);
       return [s];
     });
-    if (members.length) out.push({ label: t(`skillGroup.${g.id}`), skills: members });
+    if (members.length) out.push({ label: t(`skillGroup.${g.id}`), skills: members, secondary: !!g.secondary });
   }
   const rest = skills.filter((s) => !placed.has(s.name));
-  if (rest.length) out.push({ label: t("skillGroup.vault"), skills: rest });
+  if (rest.length) out.push({ label: t("skillGroup.vault"), skills: rest, secondary: false });
   return out;
 }

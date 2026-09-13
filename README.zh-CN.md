@@ -1,9 +1,9 @@
 # vemry
 
-**知识留在 Markdown 里，一切视图由此生长。**
+**本地优先的 AI 研读工作台。**
 
-vemry 是本地优先、AI 原生的知识工作台。一份可重建的块索引驱动所有视图与工具；
-你标为隐私的内容，对模型不存在。
+论文、网页、PDF 都进来变成你自己磁盘上的纯 Markdown。你和 AI 一起读、对照翻译、提问、
+做卡片；它引用的是读过的那个块，写入前先停在一份 diff 上，你标为隐私的内容它看不见。
 
 [![CI](https://github.com/pangyexing/vemry/actions/workflows/ci.yml/badge.svg)](https://github.com/pangyexing/vemry/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/pangyexing/vemry?include_prereleases&sort=semver)](https://github.com/pangyexing/vemry/releases)
@@ -27,6 +27,18 @@ vemry 把你的知识存成自己磁盘上的纯 Markdown 文件。没有数据�
 不是「无权访问」，是不存在。
 
 ## 为什么是 vemry
+
+### 读透一篇论文，留住每一点理解
+
+贴一个 arXiv 链接、拖进一份 PDF，或者指一篇剪藏，说「研读这篇」。论文就成了知识库里一篇
+能随手翻的笔记——每个小节、公式、图、表都是独立的块——然后按你的节奏一章一章读下去。每一章
+都从你库里已经知道的东西讲起，标出哪些是新的；每一句都链到原文出处，随时一点就能回去核对。
+
+用你自己的话把一章复述一遍，你会看到自己和原文偏在哪里。想动手试试这个想法？要一个实验，
+章节里就多出一个可运行的块。没完全读懂的地方变成卡片，复习视图会在你快忘的时候把它们端回来。
+
+读外文吃力？原文和译文并排打开——笔记、网页、PDF 都行，逐段对齐。一路上产出的一切——原文、
+你的章节、你的卡片、译文——都是你文件夹里的纯 Markdown，走到哪里都打得开。
 
 ### 它就是个文件夹，你随时能走
 
@@ -108,8 +120,9 @@ pnpm tauri dev        # 需要先 source ~/.cargo/env
 2. **按 ⌘P。** vemry 能做的每一件事都在那一个列表里。
 3. **配一个 AI key**（可选）。设置 → API Key。默认端点是智谱，它的 `glm-4.7-flash`
    免费且支持工具调用；任何 OpenAI 兼容端点都能换，包括本机的 Ollama。
-4. **执行「初始化 VEMRY.md」。** agent 会先调研你的库，再起草它自己的那份指令，写入
-   由你以 diff 确认——这也是最快看清权限门长什么样的一条路。
+4. **研读一篇论文。** 打开 AI 面板，选「研读论文」，贴一个 arXiv 链接或拖进一份 PDF。
+   原文笔记、章节、卡片都以 diff 的形式到来，由你确认——这也是最快看清权限门长什么样的一条路。
+   示例库的 `papers/` 下已经有一篇读完的论文。
 
 ## Markdown 方言
 
@@ -148,8 +161,9 @@ pnpm tauri dev        # 需要先 source ~/.cargo/env
 **已发布的安装包早于本文。** 双语界面尤其还没随包发布——最新的发布版只有中文。在 0.9.0
 发布之前，想要本文描述的形态请从源码构建。
 
-接下来：语义检索、可安装的扩展与主题、主窗内的同窗分屏浏览。各自的设计预案在
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+接下来，按研读闭环需要的次序：落进原文笔记的 PDF 批注、原文笔记上的文献管理（DOI、BibTeX
+导出）、跨论文阅读（一条断言，每一篇与之相关的来源）。之后才是：语义检索、可安装的扩展与主题、
+主窗内的同窗分屏浏览。每一项从哪条接缝长出来，列在 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 参与贡献
 

@@ -1043,6 +1043,10 @@
    *  click attaches the skill and puts the caret in the box. */
   let welcomeSkills = $state<SkillEntry[]>([]);
   const welcomeGroups = $derived(groupSkills(welcomeSkills));
+  /** The secondary scenes (daily, product) unfolded on the welcome; folded to start, and kept as the user left it while the panel lives. */
+  let welcomeMoreOpen = $state(false);
+  const welcomeShown = $derived(welcomeMoreOpen ? welcomeGroups : welcomeGroups.filter((g) => !g.secondary));
+  const welcomeHidden = $derived(welcomeGroups.filter((g) => g.secondary).reduce((n, g) => n + g.skills.length, 0));
   $effect(() => {
     if (agent.timeline.length !== 0) return;
     api
@@ -1744,7 +1748,7 @@
             {t("chat.welcomeSkills")}<span class="faint"> · {t("chat.welcomeSkillsHint")}</span>
           </p>
           <div class="welcome-groups">
-            {#each welcomeGroups as g (g.label)}
+            {#each welcomeShown as g (g.label)}
               <span class="welcome-group-label">{g.label}</span>
               <div class="welcome-examples">
                 {#each g.skills as s (s.name)}
@@ -1752,6 +1756,14 @@
                 {/each}
               </div>
             {/each}
+            {#if welcomeHidden > 0}
+              <span class="welcome-group-label"></span>
+              <div class="welcome-examples">
+                <button class="example more" aria-expanded={welcomeMoreOpen} onclick={() => (welcomeMoreOpen = !welcomeMoreOpen)}>
+                  {welcomeMoreOpen ? t("chat.welcomeLess") : t("chat.welcomeMore", { n: welcomeHidden })}
+                </button>
+              </div>
+            {/if}
           </div>
         {/if}
         <p class="welcome-hint faint">
@@ -2428,6 +2440,11 @@
     color: var(--accent);
     border-color: var(--accent);
     background: var(--accent-soft);
+  }
+  /* the fold of the secondary scenes: dashed and faint, so it reads as a door, not a method */
+  .example.more {
+    color: var(--fg-faint);
+    border-style: dashed;
   }
   .faint {
     color: var(--fg-faint);

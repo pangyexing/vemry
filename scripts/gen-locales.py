@@ -148,7 +148,7 @@ CMD = {
     ),
     "open-url": (
         ("Open URL…", "打开网址…"),
-        ("Open in the built-in knowledge browser", "在内置知识浏览器中打开"),
+        ("Open in the built-in browser", "在内置浏览器中打开"),
     ),
     "open-browser": (
         ("Open browser", "打开浏览器"),
@@ -1423,10 +1423,13 @@ add("chat.", {
     "readAutoSources": ("Read without asking for the rest of this session", "本会话不再询问,自动读取"),
     "viewTitle": ("What the {view} shows right now goes in as context ({n} rows)", "{view} 此刻显示的内容作为上下文({n} 行)"),
     "planStatusSkipped": ("skipped", "已跳过"),
-    "welcomeBody": ("Ask, and the AI searches your notes (and the web) and answers with citations. "
-                    "Click a citation to read the article; clip what is worth keeping back into the "
-                    "vault, and the next answer uses it.",
-                    "提问,AI 检索你的笔记(与网络)后给出带引用的回答;点击引用读正文,值得留的剪藏回知识库,下次回答会直接用上。"),
+    "welcomeBody": ("Paste a paper, a page or a PDF to work through it: it arrives in your vault as "
+                    "blocks, each chapter links back to the passage it came from, and what you did "
+                    "not get becomes cards for later. Or ask a question — the answer draws on your "
+                    "notes (and the web), with citations you can open.",
+                    "贴一篇论文、网页或 PDF 来研读:原文以块落进你的知识库,每一章都链回出处,没读懂的地方变成卡片留给以后。也可以直接提问,回答基于你的笔记(与网络),引用点开即读。"),
+    "welcomeMore": ("More methods ({n})", "更多方法({n})"),
+    "welcomeLess": ("Fewer methods", "收起"),
     "welcomeHint": ("Type a URL to open the built-in browser ({key} works too); start with # to record a "
                     "convention in VEMRY.md; every write shows you a diff first.",
                     "输入网址可直接打开内置浏览器({key} 亦可);以 # 开头把一条约定记进 VEMRY.md;写入前都会展示 diff 请你确认。"),
@@ -1651,7 +1654,7 @@ add("settings.", {
                        "还没有规则——打开第一个页面时会自动下载,也可以现在就取。"),
     "openLinksIn": ("How links and citations open", "链接与引用的打开方式"),
     "openLinksReading": ("Reader (main window, centre pane — default)", "阅读投影(主窗中栏,默认)"),
-    "openLinksInternal": ("Built-in knowledge browser", "内置知识浏览器"),
+    "openLinksInternal": ("Built-in browser", "内置浏览器"),
     "openLinksSystem": ("System default browser", "系统默认浏览器"),
     "openLinksHint": ("Reader extracts the article and renders it in the main window; {key} always gives "
                       "you a real browser window.",
@@ -1829,9 +1832,12 @@ add("app.", {
     "collapseSidebarKey": ("Collapse the sidebar ({key})", "收起侧栏 ({key})"),
     "openSidebarKey": ("Open the sidebar ({key})", "打开侧栏 ({key})"),
     # Kept identical to the README hero — the welcome screen is the first thing a
-    # new user reads, and it should say what the project page said.
-    "tagline": ("Your knowledge stays in Markdown. Every view grows from it.",
-                "知识留在 Markdown 里，一切视图由此生长。"),
+    # new user reads, and it should say what the project page said: the positioning
+    # first (GLOSSARY: study workbench), the architecture line under it.
+    "tagline": ("A local-first AI study workbench.", "本地优先的 AI 研读工作台。"),
+    "taglineSub": ("Read papers, pages and PDFs with AI help. Everything stays as plain Markdown on "
+                   "your disk, and what you mark private never reaches the model.",
+                   "用 AI 读论文、网页和 PDF。一切都以纯 Markdown 留在你的磁盘上，你标为隐私的内容永远到不了模型。"),
     "openVaultFolder": ("Open a vault folder", "打开知识库文件夹"),
     "recent": ("Recent", "最近"),
     "resizeFileTree": ("Resize the file tree", "调整文件树宽度"),

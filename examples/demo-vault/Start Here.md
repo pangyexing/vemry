@@ -8,18 +8,21 @@ tags: [meta]
 This is a small, real vault. Every file is plain Markdown on disk — open the
 folder in Finder and you will see exactly what you see here.
 
-It is wired so that all seven projections have something to show. Open them from
-the activity bar on the far edge of the window, or with ⌘P.
+It holds one paper worked through end to end, and enough around it that all seven
+projections have something to show. Open them from the activity bar on the far
+edge of the window, or with ⌘P.
 
 ## What is in here
 
-- [[Sleep and Memory]] — the research thread, with claims that evidence points at
+- [[Attention Is All You Need]] — the paper under study: its source in blocks
+  (`papers/vaswani-2017/source.md`), a chapter with a lab block you can run and
+  drag, and the cards its gaps left. This is what *Study a paper* produces.
+- [[Sleep and Memory]] — the research thread, with claims that evidence points at,
+  and [[cards/Sleep and Memory|its cards]], the deck the Review view draws from
 - [[Open Questions]] — what is still unsettled
 - [[Self-Experiment]] — the project, with the tasks that fill Agenda and the board
 - [[Reading Queue]] — what is queued, in progress and done
 - [[2026-08-25]] — the most recent journal entry
-- [[Attention Is All You Need]] — a paper under study: its source in blocks, a
-  chapter with a lab block you can run and drag, and the cards its gaps left
 
 ## Everything below is live
 
@@ -43,8 +46,12 @@ Claims and evidence are ordinary callouts, so they survive anywhere:
 
 ## Try this
 
-1. ⌘P — every capability in the app is in that one list
-2. Click a `[[link]]` to follow it; ⌘⌥← comes back
-3. Open the graph and watch this note sit at the centre of it
-4. Mark `private/` as a privacy zone and ask the AI to list your notes — it will
+1. Open [[Attention Is All You Need]], then its chapter: every sentence links back
+   to the block of the source it came from, and the lab block runs in place
+2. Open the Review view (the stacked cards in the activity bar) and grade a card —
+   the grade is written onto the card's last line, in the note
+3. With an API key set, open the AI panel, pick *Study a paper* and paste an arXiv
+   link; or ask it to check your retelling of the chapter you just read
+4. ⌘P — every capability in the app is in that one list
+5. Mark `private/` as a privacy zone and ask the AI to list your notes — it will
    not see the folder, and it will not know it is missing

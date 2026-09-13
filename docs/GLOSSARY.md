@@ -106,6 +106,8 @@ These recur throughout both READMEs and are phrased identically every time:
 | Chinese | English |
 |---|---|
 | 本地优先 | local-first |
+| 研读工作台（产品定位，一句话里说 vemry 是什么） | study workbench |
+| 研读（把一篇论文、长文、书读通：导入、分章、复述、卡片） | study; the study loop |
 | 零锁定 | no lock-in |
 | 离线优先 | offline-first |
 | 纯 Markdown | plain Markdown |

@@ -1260,6 +1260,7 @@
     <div class="welcome-card">
       <h1>vemry</h1>
       <p class="tagline">{t("app.tagline")}</p>
+      <p class="tagline sub">{t("app.taglineSub")}</p>
       <div class="welcome-actions">
         <button class="open-btn" onclick={pickVault}>{t("app.openVaultFolder")}</button>
         <button class="open-btn ghost" onclick={createVaultFlow}>{t("cmd.create-vault.title")}</button>
@@ -1482,9 +1483,14 @@
     letter-spacing: -0.02em;
   }
   .tagline {
+    color: var(--fg);
+    font-size: var(--fs-md);
+    line-height: 1.6;
+  }
+  .tagline.sub {
     color: var(--fg-muted);
     font-size: var(--fs-sm);
-    line-height: 1.6;
+    margin-top: -6px;
   }
   .welcome-actions {
     margin-top: 12px;

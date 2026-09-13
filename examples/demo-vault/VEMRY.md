@@ -5,6 +5,8 @@ This file is injected into the AI agent's system prompt: it is the constitution 
 ## Structure
 
 - `Start Here.md` — the hub; every area of this vault is one link away
+- `papers/<key>/` — one folder per paper under study: `source.md` is the imported text in blocks, the hub note beside it maps known and to-learn, `chapters/` holds the reading, `cards.md` the deck
+- `cards/` — decks that are not tied to one paper; the Review view reads every `> [!card]` in the vault
 - `research/` — one note per question, claims carry `^id` so evidence can point at them
 - `research/evidence/` — one note per source, each `supports:` a claim
 - `projects/` — things with a next action; tasks live here, not in research notes

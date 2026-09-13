@@ -1,9 +1,10 @@
 # vemry
 
-**Your knowledge stays in Markdown. Every view grows from it.**
+**A local-first AI study workbench.**
 
-vemry is a local-first, AI-native knowledge workspace. One rebuildable block index
-powers every view and tool; anything you mark private does not exist to the model.
+Papers, pages and PDFs come in as plain Markdown on your own disk. You read,
+translate, question and card them with an AI that cites the block it read, stops at
+a diff before it writes, and never sees what you mark private.
 
 [![CI](https://github.com/pangyexing/vemry/actions/workflows/ci.yml/badge.svg)](https://github.com/pangyexing/vemry/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/pangyexing/vemry?include_prereleases&sort=semver)](https://github.com/pangyexing/vemry/releases)
@@ -30,6 +31,25 @@ And the boundary runs the other way too: anything you mark private is filtered o
 in Rust, at the layer that owns file access. Not "access denied" — absent.
 
 ## Why vemry
+
+### Understand a paper, and keep what you learned
+
+Paste an arXiv link, drop in a PDF or point at a clipped page and say *study
+this*. The paper arrives in your vault as a note you can move around in — every
+section, equation, figure and table its own block — and the reading unfolds
+chapter by chapter, at your pace. Each chapter starts from what your vault already
+knew about the idea and marks what is new, and every sentence links to the passage
+it came from, so the original is always one click away.
+
+Explain a chapter back in your own words, and you see exactly where your account
+drifts from the paper. Want to try the idea? Ask for an experiment and a runnable
+block appears in the chapter. What you did not fully get becomes flashcards, and
+the Review view brings them back just before you would have forgotten.
+
+Reading in a language you are less fluent in? Open the text beside its
+translation — a note, a web page or a PDF, aligned paragraph by paragraph. And
+everything you make along the way — the source, your chapters, your cards, the
+translation — is a plain Markdown file in your folder, yours to open anywhere.
 
 ### It is a folder. You can walk away.
 
@@ -123,9 +143,10 @@ Requires Rust (stable) and Node 22+.
 3. **Add an AI key** (optional). Settings → API key. The default endpoint is Zhipu,
    whose `glm-4.7-flash` is free and supports tool calls; any OpenAI-compatible
    endpoint works, including a local Ollama.
-4. **Run *Initialize VEMRY.md*.** The agent surveys your vault and drafts its own
-   instructions, and you approve the write as a diff — which is also the shortest
-   way to see the permission gate for yourself.
+4. **Study a paper.** Open the AI panel, pick *Study a paper* and paste an arXiv
+   link, or drop in a PDF. The source note, the chapters and the cards arrive as
+   diffs you approve — which is also the shortest way to see the permission gate for
+   yourself. The example vault has one paper already worked through, under `papers/`.
 
 ## The Markdown dialect
 
@@ -169,8 +190,11 @@ interface that speaks English and Chinese.
 particular has not shipped yet — the latest release is Chinese-only. Until 0.9.0 is
 released, build from source to get what is described here.
 
-Next: semantic retrieval, installable extensions and themes, and split-pane browsing
-in the main window. Design notes for each are in
+Next, in the order the study loop needs them: PDF annotation that lands in the
+source note, reference management on source notes (DOI, BibTeX export), and reading
+across papers (one claim, every source that bears on it). After that: semantic
+retrieval, installable extensions and themes, and split-pane browsing in the main
+window. The seam each one grows from is listed in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Contributing

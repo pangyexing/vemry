@@ -25,6 +25,9 @@
   },
   "bundle": {
     "active": true,
+    "category": "Productivity",
+    "shortDescription": "A local-first AI study workbench",
+    "longDescription": "vemry is a local-first AI study workbench. Papers, pages and PDFs come in as plain Markdown files on your own disk; you read, translate, question and card them with an AI whose writes stop at a diff you approve, and which never sees what you mark private. No account, no telemetry, no sync service.",
     "targets": ["app", "dmg", "nsis", "appimage", "deb", "rpm"],
     "createUpdaterArtifacts": true,
     "icon": [

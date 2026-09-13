@@ -660,7 +660,7 @@ export type VaultEvent =
   | { type: "scripts_changed" }
   | { type: "types_changed" };
 
-// ---- the built-in knowledge browser (v0.4) ----
+// ---- the built-in browser (v0.4) ----
 
 /** One browser tab: a `browser-N` child webview (of the main window while docked, of the detached window otherwise). */
 export interface BrowserTabView {
