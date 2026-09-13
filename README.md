@@ -1,152 +1,167 @@
+<div align="center">
+
 # vemry
 
-**A local-first AI study workbench.**
+**Understand a paper, and keep what you learned.**
 
-Papers, pages and PDFs come in as plain Markdown on your own disk. You read,
-translate, question and card them with an AI that cites the block it read, stops at
-a diff before it writes, and never sees what you mark private.
+A local-first AI study workbench. Papers, pages and PDFs come in as plain Markdown
+on your own disk, and the AI that works in that folder sees only what you allow.
 
-[![CI](https://github.com/pangyexing/vemry/actions/workflows/ci.yml/badge.svg)](https://github.com/pangyexing/vemry/actions/workflows/ci.yml)
+[**Download**](https://github.com/pangyexing/vemry/releases) · [Get started](#get-started) · [Docs](#learn-more) · [Discussions](https://github.com/pangyexing/vemry/discussions)
+
 [![Release](https://img.shields.io/github/v/release/pangyexing/vemry?include_prereleases&sort=semver)](https://github.com/pangyexing/vemry/releases)
+[![CI](https://github.com/pangyexing/vemry/actions/workflows/ci.yml/badge.svg)](https://github.com/pangyexing/vemry/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)](#license)
 ![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
-![No telemetry](https://img.shields.io/badge/telemetry-none-success)
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
+</div>
+
 ![vemry — a chapter of a paper under study, with the source embedded block by block](docs/assets/hero.png)
 
----
+<br>
 
-vemry keeps your knowledge as plain Markdown files on your own disk. No database,
-no account, no sync service.
+**Your notes are files.** Plain Markdown in a folder you chose. No database, no
+account, no sync service. Open the folder in any editor and you see exactly what
+vemry sees.
 
-On top of that folder it builds exactly one derived thing: a block-level index.
-Every view you see — agenda, board, timeline, graph, claims, evidence, review, session
-replay — is a query over that index. So are your scripts. So are the AI agent's
-tools. There is no second data path, which is what makes the AI native here rather
-than bolted on.
+**The AI asks before it writes.** Every edit stops at a diff you allow, deny, or
+edit and then apply. What you mark private, the model never sees.
 
-And the boundary runs the other way too: anything you mark private is filtered out
-in Rust, at the layer that owns file access. Not "access denied" — absent.
+**It works offline.** Nothing reaches the network unless you did something that
+needs it. No telemetry, no account, and without an API key it is still a complete
+local editor.
 
-## Why vemry
+## What vemry is
 
-### Understand a paper, and keep what you learned
+vemry is an editor for a folder of Markdown, with an AI that works inside that
+folder under your rules. Everything you see — the editor, ten views, the AI's tools,
+your own scripts — reads the same block-level index built from your files. There is
+no second copy of your knowledge anywhere.
 
-Paste an arXiv link, drop in a PDF or point at a clipped page and say *study
-this*. The paper arrives in your vault as a note you can move around in — every
-section, equation, figure and table its own block — and the reading unfolds
-chapter by chapter, at your pace. Each chapter starts from what your vault already
-knew about the idea and marks what is new, and every sentence links to the passage
-it came from, so the original is always one click away.
+It is not a cloud service, and it is not a chat window with a notes folder
+attached. The AI is one participant in your vault, with a permission gate in front
+of every write and a privacy boundary it cannot see across.
 
-Explain a chapter back in your own words, and you see exactly where your account
-drifts from the paper. Want to try the idea? Ask for an experiment and a runnable
-block appears in the chapter. What you did not fully get becomes flashcards, and
-the Review view brings them back just before you would have forgotten.
+## What you can do
 
-Reading in a language you are less fluent in? Open the text beside its
-translation — a note, a web page or a PDF, aligned paragraph by paragraph. And
-everything you make along the way — the source, your chapters, your cards, the
-translation — is a plain Markdown file in your folder, yours to open anywhere.
+### Read a paper chapter by chapter
 
-### It is a folder. You can walk away.
+Paste an arXiv link, drop in a PDF or point at a clipped page and pick *Study a
+paper*. The source arrives as a note you can move around in — every section,
+equation, figure and table its own block — and the reading unfolds one chapter at a
+time. Each chapter starts from what your vault already knew about the idea, marks
+what is new, and links every sentence to the passage it came from.
 
-Your vault is plain Markdown you could have written by hand. vemry recognises a
-superset of standard Markdown, and every extension it adds degrades to something
-readable in any other renderer — the dialect and each fallback are written down in
-[docs/SYNTAX.md](docs/SYNTAX.md), so "no lock-in" is a document you can check rather
-than a promise. The index is derived and rebuildable; delete it and nothing is lost.
+### Find out whether you actually got it
 
-### One index, every view
+Explain a chapter back in your own words and see exactly where your account drifts
+from the paper. Want to try the idea? Ask for an experiment and a runnable block
+appears in the chapter. What you did not fully get becomes flashcards, and the
+Review view brings them back just before you would have forgotten.
 
-```
-Markdown on disk  →  block index  →  agenda · board · timeline · graph
-(single truth)       (only derived    claims · evidence · review · session replay
-                      layer)          your JS scripts · the agent's tools
-```
+### Read in two languages at once
 
-Seven projections, all queries. Write a `vemry-query` fence inside a note and it
-renders live results that follow the index. Because the agent queries the same
-`query()` your views do, anything you can see it can compute, and nothing is
-computed for it alone.
+Open a note, a web page or a PDF beside its translation, aligned paragraph by
+paragraph. On a PDF, a translated paragraph lights up the passage it came from on
+the page.
+
+### Clip the web without leaving
+
+A built-in browser opens next to your notes. Clip a page or a selection and it
+lands in a note with its source and its images saved into your vault; ad blocking
+is built in. A thought that does not belong anywhere yet goes to an inbox note
+with one palette command.
+
+### See your vault from ten angles
+
+Agenda, Board, Timeline, Graph, Claims, Evidence, Review, Reader, Translation and
+Session Replay are all queries over the one index. Write a `vemry-query` fence
+inside a note and it renders live results that follow the index.
 
 ![Board view — every task in the vault, by state](docs/assets/kanban.png)
 
 ![Graph — the same index, drawn as links; the two private notes are visible to you and not to the model](docs/assets/graph.png)
 
-### Everything is a command; everything is scriptable
+### Ask, and check the answer
 
-Every capability in the app registers in one searchable palette (⌘P) — no feature
-hides in a menu. Drop a `.js` file into `.vemry/scripts/` and it is live on save:
-it runs in a QuickJS sandbox on the Rust side with no filesystem, no network and no
-processes, reaching the vault only through the `vemry.*` API. Scripts can register
-palette commands, subscribe to vault events, and run on a cron.
+Every answer cites the block it read, and the citation opens it. With web search on,
+each source is marked verified or not, and an answer you want to keep goes into a
+note as a block. Press `@` to hand the AI a note, a folder or the current selection.
 
-Arbitrary code never runs by itself. Opening a note is not running it: every
-execution path starts from something you did, and the agent has no tool that can
-run code at all.
+### Hand over the chores, on your terms
 
-### What you mark private does not exist
-
-Mark a folder, a note or a single `> [!private]` block private and the agent never
-reads it, never writes to it, and never sees it in a prompt. This is enforced at
-every read and write choke point in Rust, and a private file returns byte-for-byte
-the same error as a file that was never there — so the model cannot even infer that
-something is being withheld.
-
-The AI's writes stop at a diff you allow, deny, or edit and then apply. Every
-session — each read, each write, each permission decision, each privacy filter — is
-a JSONL audit log inside your vault, replayable in the app.
+Fifteen built-in skills cover the work around reading: tidy a folder, restructure a
+note, turn meeting notes into actions, write the weekly report, close the day. Add
+your own as a Markdown file in `.vemry/skills/`. Every write is a diff, a whole
+turn's writes can be undone, and every session is an audit log you can replay in
+the app.
 
 ![The write gate — the agent proposed this edit; nothing reaches disk until you answer](docs/assets/permission-diff.png)
 
-### Offline unless you ask otherwise
+### Automate with a script, not a plugin
 
-Exactly five things can reach the network, each triggered by something you did, each
-listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the LLM channel, a page you
-opened, the reader's image proxy, a blocking-rule download, and an update check. No
-telemetry, no account. Everything else works with the network off — including the
-editor, every view, search, and your scripts.
+Drop a `.js` file into `.vemry/scripts/` and it is live on save. Scripts register
+palette commands, subscribe to vault events and run on a cron, inside a sandbox
+with no filesystem, no network and no processes. Every capability in the app, yours
+included, is in one searchable palette (⌘P).
 
-The AI is optional. Without a key, vemry is a complete local editor.
+## Get started
 
-## Install
-
-Download for macOS (`.dmg`), Windows (`.exe`) or Linux (`.AppImage` / `.deb` /
-`.rpm`) from [Releases](https://github.com/pangyexing/vemry/releases). Updates are
-signed with minisign and verified against a public key compiled into the app;
-downloading and installing always need your confirmation, and the startup check is
-off by default.
-
-macOS is not yet notarised, so the first launch needs a right-click → Open, or
-`xattr -cr /Applications/vemry.app`.
-
-### From source
-
-```bash
-git clone https://github.com/pangyexing/vemry.git
-cd vemry
-pnpm install          # npm cannot install this: vite's devDependencies use link:
-pnpm tauri dev        # needs `source ~/.cargo/env` first
-```
-
-Requires Rust (stable) and Node 22+.
-
-## Quick start
-
-1. **Open the example vault.** Clone this repo, then ⌘P → *Open vault…* →
-   `examples/demo-vault`. It is a small real vault, wired so every projection has
-   something to show.
-2. **Press ⌘P.** Everything vemry can do is in that one list.
+1. **Install.** Download the `.dmg`, `.exe`, `.AppImage`, `.deb` or `.rpm` from
+   [Releases](https://github.com/pangyexing/vemry/releases), or
+   [build from source](#build-from-source). On macOS the first launch needs a
+   right-click → Open, because the app is not yet notarised.
+2. **Open the example vault.** Clone this repo, then ⌘P → *Open another vault…* →
+   `examples/demo-vault`. It is a small real vault with one paper worked through
+   end to end.
 3. **Add an AI key** (optional). Settings → API key. The default endpoint is Zhipu,
    whose `glm-4.7-flash` is free and supports tool calls; any OpenAI-compatible
    endpoint works, including a local Ollama.
 4. **Study a paper.** Open the AI panel, pick *Study a paper* and paste an arXiv
    link, or drop in a PDF. The source note, the chapters and the cards arrive as
-   diffs you approve — which is also the shortest way to see the permission gate for
-   yourself. The example vault has one paper already worked through, under `papers/`.
+   diffs you approve.
+
+That is the whole loop. Everything it made is a Markdown file in your folder.
+
+On Windows and Linux, read ⌘ as Ctrl.
+
+### First things to try
+
+Open the AI panel (⌘J from anywhere) and type one of these:
+
+```
+Study this: https://arxiv.org/abs/1706.03762
+Here is my retelling of chapter 3: … Where does it drift from the paper?
+Give me an experiment for section 3.2 that I can run here.
+Quiz me on the cards that are due today.
+What changed in this vault this week?
+Tidy the research/ folder.
+```
+
+Then mark `private/` as a privacy zone and ask the AI to list your notes. It will
+not see the folder, and it will not know that anything is missing.
+
+## What stays on your machine
+
+**Private means absent.** Mark a folder, a note or a single `> [!private]` block
+private and the agent never reads it, never writes to it and never sees it in a
+prompt. This is enforced in Rust at every read and write choke point, and a private
+file returns byte-for-byte the same error as a file that was never there.
+
+**Every write stops at a diff.** Allow it, deny it, or edit it and then apply. The
+gate lives in the same Rust layer that owns file access, so nothing in the interface
+can step around it.
+
+**Five network exits, each one triggered by you.** The LLM channel, a page you
+opened, the reader's image proxy, a blocking-rule download and an update check.
+They are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and everything
+else works with the network off.
+
+**Arbitrary code never runs by itself.** Opening a note is not running it. Every
+execution starts from something you did, and the agent has no tool that can run
+code at all.
 
 ## The Markdown dialect
 
@@ -169,22 +184,13 @@ Semantics are ordinary Markdown that other tools already understand:
 Every construct above renders as a list item or a blockquote anywhere else. The
 complete dialect and each fallback: [docs/SYNTAX.md](docs/SYNTAX.md).
 
-## Documentation
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the layers, the flows, the security
-  boundaries, and the network-exit list
-- [docs/SYNTAX.md](docs/SYNTAX.md) — the Markdown dialect and how it degrades
-- [docs/GLOSSARY.md](docs/GLOSSARY.md) — the terms this project uses, in both languages
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how to build it, and the design rules a PR is
-  reviewed against
-
 ## Status
 
-Working today on `main`: the editor and its live preview, seven projections, the
-block index and query API, the agent with its domain tools behind a write gate,
-privacy zones, the scripting sandbox, the built-in browser with clipping and a
-reading projection, side-by-side translation of a note, a web page or a PDF, and an
-interface that speaks English and Chinese.
+As of September 2026, working on `main`: the editor and its live preview, the ten
+views, the block index and query API, the agent with its tools behind the write
+gate, privacy zones, the scripting sandbox, the built-in browser with clipping,
+side-by-side translation of a note, a web page or a PDF, and an interface in English
+and Chinese.
 
 **The published installers predate this README.** The English interface in
 particular has not shipped yet — the latest release is Chinese-only. Until 0.9.0 is
@@ -197,14 +203,38 @@ retrieval, installable extensions and themes, and split-pane browsing in the mai
 window. The seam each one grows from is listed in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Contributing
+## Learn more
 
-vemry is developed by one person. The source is public so that you can audit it and
-build it yourself; external pull requests are off by default, and bug reports go
-through [Discussions](https://github.com/pangyexing/vemry/discussions). If you want
-to work on something, say so there first — [CONTRIBUTING.md](CONTRIBUTING.md) has a
-five-minute tour of where things live. If you only want to automate your own vault,
-you do not need to touch vemry at all: write a script in `.vemry/scripts/`.
+- [docs/SYNTAX.md](docs/SYNTAX.md) — the Markdown dialect and how it degrades
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the layers, the flows, the security
+  boundaries, and the network-exit list
+- [docs/GLOSSARY.md](docs/GLOSSARY.md) — the terms this project uses, in both languages
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to build it, and the design rules a PR is
+  reviewed against
+
+## Community and feedback
+
+| You want to… | Go to |
+|---|---|
+| Report a bug or ask a question | [Discussions](https://github.com/pangyexing/vemry/discussions) |
+| Work on something in vemry | Say so in Discussions first; then [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Automate your own vault | A script in `.vemry/scripts/` — vemry itself needs no change |
+
+vemry is developed by one person with limited time, so external pull requests are
+closed for now.
+
+## Build from source
+
+```bash
+git clone https://github.com/pangyexing/vemry.git
+cd vemry
+pnpm install          # npm cannot install this: vite's devDependencies use link:
+pnpm tauri dev        # needs `source ~/.cargo/env` first
+```
+
+Requires Rust (stable) and Node 22+. Updates to the packaged app are signed with
+minisign and verified against a public key compiled into the app; downloading and
+installing always need your confirmation, and the startup check is off by default.
 
 ## License
 

@@ -1,10 +1,8 @@
 # Contributing
 
-vemry is developed by one person. The source is public so that it can be audited
-and built from scratch, not because the project is staffed to review a stream of
-contributions: **external pull requests are off by default**, and the repository
-does not have an issue tracker. Bug reports and questions go through
-[Discussions](https://github.com/pangyexing/vemry/discussions); security reports
+vemry is developed by one person with limited time: **external pull requests are
+closed for now**, and the repository does not have an issue tracker. Bug reports
+and questions go through [Discussions](https://github.com/pangyexing/vemry/discussions); security reports
 follow [SECURITY.md](.github/SECURITY.md).
 
 If you want to work on something — a fix you have already tested on your platform,
