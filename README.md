@@ -175,10 +175,18 @@ in the main window. Design notes for each are in
 
 ## Contributing
 
-Most contributions do not require Rust — [CONTRIBUTING.md](CONTRIBUTING.md) has a
+vemry is developed by one person. The source is public so that you can audit it and
+build it yourself; external pull requests are off by default, and bug reports go
+through [Discussions](https://github.com/pangyexing/vemry/discussions). If you want
+to work on something, say so there first — [CONTRIBUTING.md](CONTRIBUTING.md) has a
 five-minute tour of where things live. If you only want to automate your own vault,
 you do not need to touch vemry at all: write a script in `.vemry/scripts/`.
 
 ## License
 
-FSL-1.1-ALv2.
+[Functional Source License 1.1, Apache-2.0 future license](LICENSE) (FSL-1.1-ALv2).
+
+You can use it, build it, modify it and deploy it inside your company. The one
+thing you may not do is offer it, or something substantially like it, as a
+competing commercial product or service. Two years after each version is released,
+that version becomes Apache-2.0 automatically.

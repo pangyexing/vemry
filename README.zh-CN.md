@@ -153,10 +153,15 @@ pnpm tauri dev        # 需要先 source ~/.cargo/env
 
 ## 参与贡献
 
-大多数贡献不需要写 Rust——[CONTRIBUTING.md](CONTRIBUTING.md) 里有一份五分钟的「改什么
-去哪里」导览。如果你只想给自己的库做点自动化，那连 vemry 本体都不用碰：往
+vemry 由一个人开发。源码公开是为了让你能审计、能自己编译；外部 PR 默认关闭，bug
+反馈走 [Discussions](https://github.com/pangyexing/vemry/discussions)。想动手改什么，
+先在那里说一声——[CONTRIBUTING.md](CONTRIBUTING.md) 里有一份五分钟的「改什么去哪里」
+导览。如果你只想给自己的库做点自动化，那连 vemry 本体都不用碰：往
 `.vemry/scripts/` 里写个脚本就行。
 
 ## 许可
 
-FSL-1.1-ALv2。
+[Functional Source License 1.1，附 Apache-2.0 未来许可](LICENSE)（FSL-1.1-ALv2）。
+
+你可以随意使用、编译、修改，也可以在公司内部部署。唯一不能做的，是把它或者实质相似
+的东西当成竞品拿去商业售卖或提供服务。每个版本发布满两年，自动转为 Apache-2.0。

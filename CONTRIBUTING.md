@@ -1,7 +1,18 @@
 # Contributing
 
-Thanks for your interest in vemry. The bar is layered — **most contributions do
-not require writing Rust**.
+vemry is developed by one person. The source is public so that it can be audited
+and built from scratch, not because the project is staffed to review a stream of
+contributions: **external pull requests are off by default**, and the repository
+does not have an issue tracker. Bug reports and questions go through
+[Discussions](https://github.com/pangyexing/vemry/discussions); security reports
+follow [SECURITY.md](.github/SECURITY.md).
+
+If you want to work on something — a fix you have already tested on your platform,
+a locale — say so in Discussions first. Pull requests are opened for
+collaborators case by case, and the licensing of your contribution is settled
+there before any code moves. The rest of this document is the map of the codebase
+that a collaborator (or a curious reader) needs; **most of it does not require
+writing Rust**.
 
 ## The architecture in five minutes
 
@@ -103,5 +114,8 @@ the rule against naming other products.
 
 ## License
 
-Dual-licensed FSL-1.1-ALv2. Opening a PR means you agree to release your
-contribution under both.
+[FSL-1.1-ALv2](LICENSE): source-available, any use except a competing commercial
+product, each version converting to Apache-2.0 two years after release. Because
+pull requests are not open, there is no contributor agreement to sign up front;
+a contributor grants the licensor the rights to their contribution as part of
+becoming a collaborator (see the top of this document).
