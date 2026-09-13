@@ -356,6 +356,19 @@ export interface SettingsUpdate {
   translate_addendum?: string;
 }
 
+/** Who wrote over a kept state of a note (history.rs). */
+export type HistoryWriter = "editor" | "agent" | "script" | "clip" | "restore" | "app" | "external";
+export interface HistorySnapshot {
+  id: string;
+  ts_ms: number;
+  writer: HistoryWriter;
+  bytes: number;
+}
+export interface HistoryEntry {
+  content: string;
+  diff: string;
+}
+
 export interface WriteRequest {
   id: string;
   tool: string;
@@ -989,6 +1002,14 @@ export const api = {
    *  section does not exist". */
   noteInsert: (path: string, text: string, section?: string) =>
     invoke<"section" | "tail">("note_insert", { path, text, section }),
+  /** The kept states of a note (the text before each write that replaced it), newest first. */
+  noteHistoryList: (path: string) => invoke<HistorySnapshot[]>("note_history_list", { path }),
+  /** One kept state, with its difference from the note as it is now (what a restore would change). */
+  noteHistoryRead: (path: string, snapshot: string) => invoke<HistoryEntry>("note_history_read", { path, snapshot }),
+  /** Put a kept state back as the note's text (the text it replaces is kept first, so this is itself undoable). */
+  noteHistoryRestore: (path: string, snapshot: string) => invoke<void>("note_history_restore", { path, snapshot }),
+  /** The answer to `vemry://quit-requested`: the editor buffer is on disk, the app may exit. */
+  quitConfirmed: () => invoke<void>("quit_confirmed"),
   search: (query: string, limit?: number) => invoke<SearchHit[]>("search", { query, limit }),
   linksGet: (path: string) => invoke<NoteLinks>("links_get", { path }),
   queryBlocks: (query: BlockQuery) => invoke<BlockHit[]>("query_blocks", { query }),
@@ -1303,6 +1324,11 @@ export function onBrowserEvent(handler: (e: BrowserEvent) => void): Promise<Unli
  *  src-tauri/src/menu.rs). */
 export function onMenuEvent(handler: (id: string) => void): Promise<UnlistenFn> {
   return listen<string>("menu://command", (event) => handler(event.payload));
+}
+
+/** Main window: ⌘Q or the close button — Rust holds the exit until `quitConfirmed` (the editor buffer is written out first). */
+export function onQuitRequested(handler: () => void): Promise<UnlistenFn> {
+  return listen<null>("vemry://quit-requested", () => handler());
 }
 
 export function onReadingEvent(handler: (e: ReadingEvent) => void): Promise<UnlistenFn> {

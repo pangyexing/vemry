@@ -988,6 +988,22 @@ class VaultStore {
     await this.refreshNotes();
     void this.refreshPendingVault();
     const changed = e.type === "note_modified" || e.type === "note_added" ? e.id : null;
+    if (changed && changed === this.currentPath && this.dirty) {
+      // A dirty buffer is not reloaded (below), and its next autosave lands over
+      // whatever is on disk. The echo of our own save holds what we last wrote; anything
+      // else is another writer — the agent, a sync client, an editor beside this one —
+      // whose text is about to be replaced. Said plainly, once per text, with where the
+      // replaced text can be found: the history keeps it exactly (the editor writing
+      // over another writer's text is never coalesced)
+      try {
+        const { content } = await api.noteRead(changed);
+        if (this.currentPath === changed && this.dirty && content !== this.currentContent) {
+          toast.push(t("vaultStore.changedUnderEdit", { path: changed }));
+        }
+      } catch {
+        /* removed under us — note_removed will handle it */
+      }
+    }
     if (changed && changed === this.currentPath && !this.dirty) {
       // reload externally-updated open note (agent edits land here too)
       try {

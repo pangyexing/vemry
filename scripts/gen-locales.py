@@ -295,6 +295,11 @@ CMD = {
         ("Review the AI changes", "开始审阅 AI 修改"),
         ("Open the first note with unreviewed AI blocks and land on its first change", "打开第一篇有未审阅 AI 块的笔记并落到第一处修改"),
     ),
+    "note-history": (
+        ("Note history", "笔记历史"),
+        ("The text of this note before each write that replaced it — restore any of them",
+         "这篇笔记每次被改写前的文本——可恢复到任一版本"),
+    ),
     "delete-current-note": (
         ("Delete current note", "删除当前笔记"),
         ("Move to the system trash (recoverable)", "移入系统废纸篓(可恢复)"),
@@ -1841,6 +1846,31 @@ add("app.", {
                         "当前没有可见的笔记编辑器——先打开一篇笔记,或用钉住目标"),
 })
 
+# ---------------------------------------------------------------- note history dialog
+add("history.", {
+    "title": ("Note history", "笔记历史"),
+    "versions": ("Kept versions", "保留的版本"),
+    "loading": ("Loading…", "加载中…"),
+    "empty": ("Nothing kept yet. A version is kept before every write that replaces this note's text — an AI "
+              "write, a script, a change made outside vemry — and about every five minutes of your own typing.",
+              "还没有保留的版本。每次有写入替换这篇笔记的文本时——AI 写入、脚本、vemry 之外的改动——都会先保留一份;你自己的输入约每五分钟保留一份。"),
+    "sameAsNow": ("This version is the same as the note is now", "这个版本与当前笔记相同"),
+    "hint": ("The diff reads as what a restore would change. Restoring keeps the current text, so it can be undone here too.",
+             "diff 显示恢复会改变什么。恢复前会先保留当前文本,所以恢复本身也能在这里撤销。"),
+    "copy": ("Copy text", "复制文本"),
+    "copied": ("Copied", "已复制"),
+    "restore": ("Restore this version", "恢复到此版本"),
+    "restored": ("Restored {path}", "已恢复 {path}"),
+    "notANote": ("Note history is for Markdown notes", "笔记历史只对 Markdown 笔记可用"),
+    "writer.editor": ("before your edit", "被你的编辑覆盖前"),
+    "writer.agent": ("before an AI write", "被 AI 写入覆盖前"),
+    "writer.script": ("before a script's write", "被脚本写入覆盖前"),
+    "writer.clip": ("before a clip landed", "被剪藏/速记覆盖前"),
+    "writer.restore": ("before a restore", "被恢复操作覆盖前"),
+    "writer.app": ("before an app write", "被应用写入覆盖前"),
+    "writer.external": ("before a change outside vemry", "被 vemry 之外的改动覆盖前"),
+})
+
 # ---------------------------------------------------------------- vault store toasts
 add("vaultStore.", {
     "fragmentMissing": ("Opened {path}; \"{fragment}\" is not in it", "已打开 {path}，其中没有「{fragment}」"),
@@ -1858,6 +1888,9 @@ add("vaultStore.", {
                      "仍在隐私区 — 有更宽的规则覆盖它（设置 › 隐私区）"),
     "deletedExternally": ("{path} was deleted or renamed outside vemry; unsaved changes were discarded",
                           "{path} 已被外部删除或改名,未保存的修改已丢弃"),
+    "changedUnderEdit": ("{path} changed on disk while you were editing it — your buffer will be saved over "
+                         "that change; the other text is kept in Note history",
+                         "{path} 在你编辑时被其他写入者改动了——你的编辑内容将覆盖那次改动;被覆盖的文本保存在「笔记历史」里"),
     "unreadableTabClosed": ("{path} is no longer readable — the tab was closed", "{path} 已不可读,标签已关闭"),
     "created": ("Created {path}", "已新建 {path}"),
     "insertFailedSwitching": ("Insert into {path} failed: the editor is switching documents",

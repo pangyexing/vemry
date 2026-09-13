@@ -2,7 +2,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { extractOutline } from "$lib/outline";
-  import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onMenuEvent, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
+  import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onMenuEvent, onQuitRequested, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
   import { runHostAction } from "$lib/host";
   import { executeCommand, registerCommand, syncScriptCommands } from "$lib/commands/registry";
   import { MEMORY_DRAFT_PROMPT, MEMORY_REVIEW_PROMPT } from "$lib/commands/memoryPrompts";
@@ -31,6 +31,8 @@
   import GlobeIcon from "$lib/components/GlobeIcon.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import PermissionDialog from "$lib/components/PermissionDialog.svelte";
+  import HistoryDialog from "$lib/components/HistoryDialog.svelte";
+  import { history } from "$lib/stores/history.svelte";
   import ContextMenu from "$lib/components/ContextMenu.svelte";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import ScriptGrantDialog from "$lib/components/ScriptGrantDialog.svelte";
@@ -198,7 +200,7 @@
   // drag beside the panel would never end
   const overlayOpen = $derived(
     paletteMode !== null || settingsOpen || !!agent.pendingPermission || !!scripts.pendingGrant
-      || !!scripts.pendingPrompt || browser.lightboxOpen || vault.resizing !== null,
+      || !!scripts.pendingPrompt || browser.lightboxOpen || vault.resizing !== null || history.path !== null,
   );
   $effect(() => {
     browser.veiled = overlayOpen;
@@ -317,6 +319,17 @@
   });
   // The native menu bar (macOS) → a command: the payload is a registry command id, and everything is a command
   void onMenuEvent((id) => void executeCommand(id));
+  // ⌘Q and the close button: Rust holds the exit until the editor buffer is on disk. The
+  // autosave is deferred the whole time the agent runs, so a quit right after a long turn
+  // would otherwise take those minutes of typing with it. A failed write still answers —
+  // an app that cannot quit is worse — after the store has toasted the failure
+  void onQuitRequested(async () => {
+    try {
+      await vault.flushEditor?.();
+    } finally {
+      void api.quitConfirmed();
+    }
+  });
   // The detached AI chat window: once closed it is taken over (the draft is taken back and the
   // timeline rebuilt from Rust's current session); the actions it wants the main window to run
   // (open a note, insert, pin, a command) are executed here
@@ -958,6 +971,13 @@
   });
   registerCommand({ id: "provenance-review-start", group: "note", run: () => void vault.reviewStart(null) });
   registerCommand({
+    id: "note-history", group: "note",
+    run: () => {
+      if (vault.currentPath?.endsWith(".md")) history.open(vault.currentPath);
+      else toast.push(t("history.notANote"));
+    },
+  });
+  registerCommand({
     id: "delete-current-note", group: "note",
     run: async () => {
       if (vault.currentPath) {
@@ -1436,6 +1456,7 @@
 <CommandPalette bind:mode={paletteMode} onPickNote={deliverPicked} onCaptureToNote={pickNoteForCapture} />
 <ContextMenu />
 <PermissionDialog />
+<HistoryDialog />
 <ScriptGrantDialog />
 <UpdateDialog />
 <SettingsModal bind:open={settingsOpen} bind:tab={settingsTab} />

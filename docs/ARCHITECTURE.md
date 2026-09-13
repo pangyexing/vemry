@@ -41,11 +41,12 @@ Three constraints follow:
 | `locate.rs` | One definition of "which block / which section": heading lookup (exact, then case-insensitive; a trailing ` ^id` is not part of a title), section spans, block by local id (explicit beats positional), block by offset, a list item's subtree. The insert landing rule, reference resolution and id minting all go through it |
 | `blockid.rs` | Block ids: the validity rule the parser applies, which blocks may carry one (not fences, table rows or rules), and minting — a random `a–z0–9` id unique within the note, written only on demand |
 | `provenance.rs` | Who authored each block: a normalized-content hash as the block's identity, the `.vemry/provenance.jsonl` ledger (written when text lands, compacted on load), the multiset difference that names the blocks a write added, and the origin priority (ledger → capture stamp → clip credit line → frontmatter `vemry.origin` → the user) |
+| `history.rs` | The text of a note before each write, kept on disk under `.vemry/history/<note path>/` so it outlives the session that wrote over it (undo.rs is in memory). One file per write, named by the moment and by who wrote next (`20260914-081522-417-agent.md`: editor / agent / script / clip / restore / app / external); every write that is not the user's own typing is kept exactly, the editor's autosaves are coalesced to one in five minutes — unless the text they land over was written by someone else, the stale-buffer case, which is always kept. Sixty per note, thirty days, pruned at open; a move takes them along; a restore writes through the vault, so the text it replaces is kept first and a restore is itself undoable |
 | `index.rs` | `BlockIndex`: note table, block table, link graph (backlinks derived), name resolution table (stem/alias, shortest path wins), tag table. Incremental update: reparse one file, then reparse links wholesale (O(total links), milliseconds at ten-thousand-note scale) |
 | `query.rs` | `BlockQuery` → `Vec<BlockHit>`: the one query entry point. Inline-field conditions (`FieldFilter`, parsed from the flat `key = v` grammar shared by query blocks, the agent tool and scripts) consult a block's own fields first, then the note's frontmatter scalars |
 | `search.rs` | The `SearchProvider` trait plus an in-memory multi-term AND substring match (no tokenisation, so CJK works by construction). tantivy or semantic retrieval would be another implementation of the same trait |
 | `segment.rs` | The translation units of a document: the parser's blocks sorted into what the model translates (prose, headings, list items, quotes, tables) and what is copied through (code, display maths, images, rules, private blocks), each with its structural marker (`## `, `- [ ] `) split off into a `prefix` so the translation keeps the heading level and the list shape by construction; and `segment_pages`, which rebuilds a PDF's paragraphs from extracted lines (the justification signal: padded lines are full, an unpadded one ends the paragraph). Pure; the byte span of each segment is the "jump to the source" anchor, a PDF segment's page its row |
-| `vault.rs` | Orchestrates disk ↔ parse ↔ index ↔ search; path validation (rejects `../` escapes); self-write suppression (watcher loop protection) |
+| `vault.rs` | Orchestrates disk ↔ parse ↔ index ↔ search; path validation (rejects `../` escapes). A note write names its writer (`write_note_as`) so the history knows whose text it keeps, lands through a hidden temporary file renamed over the note (a crash between truncating and writing leaves the previous text, never an empty one — the rename replaces the inode, so a hard link or a tag an OS stores on the file itself does not follow), and the watcher tells the echo of the vault's own write from an outside change by content: the file holding what the index holds is an echo, anything else is a change and its previous text is kept. Only `write_file` (non-Markdown) still swallows its echo by a time window |
 | `watcher.rs` | notify + 500 ms debounce → a batch of paths → `handle_fs_change` |
 | `event.rs` | `VaultEvent` (including the `ScriptsChanged` hot-reload signal). Since v0.3 workflows subscribe to these through the `broadcast` fan-out in src-tauri |
 
@@ -255,7 +256,12 @@ the model streams a tool_call(edit_note)
     or only this note) / always allow in this vault / edit then apply / deny
     (with a reason)
   → a oneshot wakes the loop
-  → allowed: vault.write_note() (registers self-write suppression → incremental reindex)
+  → allowed: the note is still the text the request was prepared against? (`WriteRequest.baseline`;
+    the gate awaits with the vault lock released, and a blur saves the buffer, a sync client
+    or a checkout replaces the note, a note appears where one was to be created — the
+    approved diff would land over text nobody reviewed, so the write is refused and the
+    model reads again)
+    → vault.write_note_as(Agent) (keeps the previous text in .vemry/history → incremental reindex)
     → vault.record_provenance(the blocks the applied bytes added, under the session id) — pending review
     → AgentEvent::VaultChanged (the NoteModified / NoteAdded / NoteRemoved the write means) → the app broadcasts it like an IPC write — the watcher would have swallowed the change as a self-write, and without this the open note's buffer kept the pre-edit text until reopened
     denied: an error tool result goes back to the model, which adjusts
@@ -288,9 +294,14 @@ per-write approval resumes from the next turn).
 
 ```
 a notify event → 500 ms debounce → handle_fs_change
-  → inside a self-write window? ignore it (loop protection)
-  → reparse the one file → update the index incrementally
-  → emit("vault://event") → the UI refreshes locally
+  → the file holds what the index holds? it is the echo of our own write: ignore it
+    (by content, not by a time window — a sync client writing the same note right
+    after us is a change, and a window would swallow it)
+  → keep the indexed text in .vemry/history (who: external) → reparse the one file
+  → update the index incrementally
+  → emit("vault://event") → the UI refreshes locally (a clean buffer reloads; a
+    dirty one keeps typing and is told, once, that its next save lands over that
+    change and where the change is kept)
 ```
 
 ### A clipboard paste (a Finder file or a screenshot → the vault)
@@ -1064,8 +1075,16 @@ immediately. The points that matter:
   clearing the undo stack. That was a latent bug back in the ⌘S-only days; autosave
   turned it into a hard blocker, which is how it got fixed. The Backlinks panel
   therefore does not watch `reloadCounter` and re-queries on `indexVersion`.
-- Known trade-off: there is no Tauri close hook, so quitting the app can lose at
-  most the last second of typing.
+- **The quit handshake**: ⌘Q, the main window's close button and the last window
+  going all reach Rust first (`RunEvent::ExitRequested` without a code, the main
+  window's `CloseRequested`); the first request is refused and the main webview is
+  asked (`vemry://quit-requested`) to flush its buffer, and it answers with
+  `quit_confirmed`, which exits with a code the handler lets pass. A second request
+  passes regardless (`AppState::quit_asked`), so a webview that never answers
+  cannot hold the app hostage; a relaunch after an update flushes on its own,
+  since a restart's exit cannot be held. Without this, the timer deferring every
+  save while the agent runs meant a quit right after a long turn took those
+  minutes of typing with it.
 
 ### Back and forward
 

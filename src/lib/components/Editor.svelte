@@ -982,6 +982,7 @@
     const block = isNote && pos != null ? blockAt(view.state, pos) : null;
     if (block) entries.push(...blockMenuEntries(view, block, blockHost, { compact: true }), { separator: true });
     if (isNote) entries.push({ label: t("cmd.translate-toggle.title"), hint: k("Mod+Shift+T"), action: () => void executeCommand("translate-toggle") });
+    if (isNote) entries.push({ label: t("cmd.note-history.title"), action: () => void executeCommand("note-history") });
     entries.push(
       { label: t("tabBar.revealInTree"), action: () => void executeCommand("reveal-in-tree") },
       privacyMenuItem(path, (op) => void executeCommand(op === "mark" ? "mark-private" : "unmark-private")),

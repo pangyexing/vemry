@@ -23,6 +23,7 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | Browser tabs and panel / detached window / clip commands / ad blocking | `src-tauri/src/browser/` + `src/lib/components/BrowserPanel.svelte` | Rust + TS |
 | The detached AI chat window (creation / handoff / close handshake / relay) | `src-tauri/src/agent_window.rs` + `src/AgentWindow.svelte` + `src/lib/host.ts` | Rust + TS |
 | Parsing / indexing / search | `crates/vemry-core/src/` | Rust |
+| Note history (what a write replaced, and restoring it) | `crates/vemry-core/src/history.rs` + `src/lib/components/HistoryDialog.svelte` | Rust + Svelte |
 | IPC commands | `src-tauri/src/commands.rs` + `src/lib/api.ts` | Rust + TS (change both together) |
 | Interface copy / adding a language | `scripts/gen-locales.py` → `locales/*.json` | Python + JSON (new terms go through `docs/GLOSSARY.md` first) |
 

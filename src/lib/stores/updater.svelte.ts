@@ -9,6 +9,7 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { toast } from "$lib/stores/toast.svelte";
+import { vault } from "$lib/stores/vault.svelte";
 import { t } from "$lib/i18n/i18n.svelte";
 
 export type UpdatePhase =
@@ -151,7 +152,9 @@ class UpdaterStore {
     }
   }
 
+  /** A relaunch exits with a code the quit handshake lets pass, so the buffer is written out here first. */
   async restart() {
+    await vault.flushEditor?.();
     await relaunch();
   }
 }
