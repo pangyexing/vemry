@@ -1,0 +1,4 @@
+# Every checkout is LF, on every platform: tests and include_str! read files
+# from the tree byte for byte, and a CRLF checkout (the Windows default) breaks
+# them. Binaries are detected by content and left alone.
+* text=auto eol=lf

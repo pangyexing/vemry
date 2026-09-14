@@ -763,7 +763,9 @@ pub fn browser_close_tab(app: AppHandle, state: State<'_, AppState>, label: Opti
     Ok(())
 }
 
-/// The menu bar's ⌘W when the keyboard focus is inside a page.
+/// macOS: the menu bar's ⌘W when the keyboard focus is inside a page (there is
+/// no window menu elsewhere, so the only caller is cfg macos too).
+#[cfg(target_os = "macos")]
 pub fn close_active_tab(app: &AppHandle) {
     let active = app.try_state::<AppState>().and_then(|s| s.browser.0.lock().unwrap().target(None));
     if let Some(label) = active {
