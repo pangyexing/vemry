@@ -8,7 +8,7 @@ the permission gate in `crates/vemry-agent`, the script sandbox in
 
 ## Reporting
 
-Report a vulnerability privately to **yexingpang@gmail.com** with "vemry
+Report a vulnerability privately to **security@vemry.app** with "vemry
 security" in the subject. Include the version (the Settings dialog shows it next to "Check for updates"), the platform,
 and steps to reproduce; a proof of concept is welcome, a full exploit is not
 needed.
