@@ -265,8 +265,78 @@ pub struct FunctionSpec {
     pub parameters: serde_json::Value,
 }
 
+/// What a model call is for. Never serialised into the request body: on the
+/// hosted provider it travels as the `X-Vemry-Feature` header (the relay's
+/// metering category, and the one data source behind "about N papers left"), and
+/// on a custom provider it goes nowhere. The wire names are the lower-case
+/// variant names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Feature {
+    #[default]
+    Chat,
+    Study,
+    Translate,
+    Cards,
+    Import,
+    Research,
+    Compact,
+}
+
+impl Feature {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Feature::Chat => "chat",
+            Feature::Study => "study",
+            Feature::Translate => "translate",
+            Feature::Cards => "cards",
+            Feature::Import => "import",
+            Feature::Research => "research",
+            Feature::Compact => "compact",
+        }
+    }
+
+    /// The priority a call of this feature carries on its own: a turn the user is
+    /// waiting on is interactive; translation, import and card generation run
+    /// behind the reading and may be queued at peak time. A summary (`Compact`)
+    /// never runs on its own — it is made mid-turn, on the critical path of the
+    /// turn whose history overflowed — so the runner gives it that turn's priority
+    /// (`ChatRequest::priority`); the value here only says what it would be alone.
+    pub fn priority(self) -> Priority {
+        match self {
+            Feature::Chat | Feature::Study | Feature::Research => Priority::Interactive,
+            Feature::Translate | Feature::Cards | Feature::Import | Feature::Compact => Priority::Background,
+        }
+    }
+}
+
+/// The `X-Vemry-Priority` value: what the relay may queue at peak time. Recorded
+/// per call today; the values are the wire contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Priority {
+    Interactive,
+    Background,
+}
+
+impl Priority {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Priority::Interactive => "interactive",
+            Priority::Background => "background",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ChatRequest {
+    /// The metering category (see `Feature`); a header on the hosted provider, not
+    /// a body field.
+    #[serde(skip)]
+    pub feature: Feature,
+    /// The queueing priority, a header beside the feature. Usually
+    /// `feature.priority()`; a summary made mid-turn carries the priority of the
+    /// turn it serves while staying metered as `compact`.
+    #[serde(skip)]
+    pub priority: Priority,
     pub model: String,
     pub messages: Vec<ChatMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]

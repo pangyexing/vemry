@@ -97,11 +97,13 @@ impl ChatTransport for AnthropicTransport {
             config,
             &body,
             Auth::AnthropicKey,
+            request.feature,
+            request.priority,
         )
         .await?;
 
         let mut parser = MessagesParser::default();
-        crate::client::read_sse(resp, cancel, &mut |event_name, data| {
+        crate::client::read_sse(resp, cancel, config.stream_idle_timeout(), &mut |event_name, data| {
             let Ok(data) = serde_json::from_str::<Value>(data) else {
                 return Ok(true); // tolerate an unknown event shape
             };
@@ -600,10 +602,12 @@ fn tool_call_chunk(index: usize, id: Option<&str>, name: Option<&str>, args: Opt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ChatMessage, FunctionCall, FunctionSpec, ImageUrl, ToolCall, ToolCallAccumulator};
+    use crate::types::{ChatMessage, Feature, FunctionCall, FunctionSpec, ImageUrl, ToolCall, ToolCallAccumulator};
 
     fn request(messages: Vec<ChatMessage>) -> ChatRequest {
         ChatRequest {
+            feature: Default::default(),
+            priority: Feature::default().priority(),
             model: "deepseek-flash".into(),
             messages,
             tools: None,

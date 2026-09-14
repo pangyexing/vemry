@@ -45,3 +45,32 @@ pub fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), String
 pub fn save<T: Serialize + ?Sized>(app: &AppHandle, name: &str, value: &T) -> Result<(), String> {
     write(&path(app, name).ok_or("no config dir")?, value)
 }
+
+/// Write by name with the file readable by its owner alone (mode 0600 on Unix;
+/// Windows has no mode bits and the app-config directory is per user anyway).
+/// For the one file that holds a credential (account.json).
+pub fn save_private<T: Serialize + ?Sized>(app: &AppHandle, name: &str, value: &T) -> Result<(), String> {
+    let p = path(app, name).ok_or("no config dir")?;
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    // Created with the mode from the start (rather than written and then chmod'ed),
+    // so the token never sits in a world-readable file even for a moment; an
+    // existing file's mode is fixed as well.
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(&p).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    }
+    use std::io::Write;
+    file.write_all(json.as_bytes()).map_err(|e| e.to_string())
+}

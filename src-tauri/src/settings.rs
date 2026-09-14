@@ -151,6 +151,26 @@ pub struct Settings {
     /// rules ("keep technical terms in English", say).
     #[serde(default)]
     pub translate_addendum: String,
+    /// Which provider the AI talks to: the user's own endpoint and key (`custom`,
+    /// the fields above — the default, and what every config from before the
+    /// field existed means), or vemry's hosted access (`hosted`: the relay, the
+    /// account's device token, the catalog's models). The bring-your-own-key
+    /// fields are untouched by the switch, so going back finds them as they were.
+    #[serde(default)]
+    pub provider: ProviderSetting,
+    /// The hosted model ("" = the catalog's default); kept apart from `model` so
+    /// switching between the two providers loses neither choice.
+    #[serde(default)]
+    pub hosted_model: String,
+}
+
+/// The provider setting's wire values, mirrored as `ProviderSetting` in api.ts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderSetting {
+    #[default]
+    Custom,
+    Hosted,
 }
 
 impl Settings {
@@ -271,21 +291,43 @@ impl Default for Settings {
             translate_target: String::new(),
             translate_model: String::new(),
             translate_addendum: String::new(),
+            provider: ProviderSetting::default(),
+            hosted_model: String::new(),
         }
     }
 }
 
 impl Settings {
+    /// The bring-your-own key: the ZHIPU_API_KEY environment variable wins over the
+    /// stored one. Custom provider only — hosted mode's key is the device token.
     pub fn effective_api_key(&self) -> String {
         std::env::var("ZHIPU_API_KEY").ok().filter(|k| !k.is_empty()).unwrap_or_else(|| self.api_key.clone())
     }
 
+    pub fn hosted(&self) -> bool {
+        self.provider == ProviderSetting::Hosted
+    }
+
+    /// The provider every request is built from. Hosted: the relay, the account's
+    /// device token as the key and the snapshot's catalog (from the account
+    /// module's in-process copy; signed out, the key is empty and run_agent_turn
+    /// says so). Custom: the three fields as stored.
     pub fn provider_config(&self) -> vemry_agent::ProviderConfig {
-        vemry_agent::ProviderConfig {
-            base_url: self.base_url.clone(),
-            model: self.model.clone(),
-            api_key: self.effective_api_key(),
+        match self.provider {
+            ProviderSetting::Custom => {
+                vemry_agent::ProviderConfig::custom(self.base_url.clone(), self.model.clone(), self.effective_api_key())
+            }
+            ProviderSetting::Hosted => {
+                let (token, catalog) = crate::account::hosted_credentials().unwrap_or_default();
+                vemry_agent::ProviderConfig::hosted(token, &self.hosted_model, catalog)
+            }
         }
+    }
+
+    /// The model requests actually name (the research panel's header shows it): the
+    /// hosted choice or the catalog's default in hosted mode, the custom field otherwise.
+    pub fn active_model(&self) -> String {
+        self.provider_config().model
     }
 
     /// Whether web search is actually in effect: the switch is on and the provider
@@ -298,12 +340,12 @@ impl Settings {
         self.web_search_enabled && self.provider_config().web_search_available()
     }
 
-    /// Whether the thinking level is actually in effect: the endpoint is DeepSeek.
-    /// The settings page hint, whether the composer's quick switch is shown, and the
-    /// agent side's send check share this one implementation (it is not reimplemented
-    /// in TS).
+    /// Whether the thinking level is actually in effect: the endpoint is DeepSeek,
+    /// or the relay in front of it. The settings page hint, whether the composer's
+    /// quick switch is shown, and the agent side's send check share this one
+    /// implementation (it is not reimplemented in TS).
     pub fn reasoning_active(&self) -> bool {
-        self.provider_config().is_deepseek()
+        self.provider_config().reasoning_supported()
     }
 }
 
@@ -518,6 +560,36 @@ mod tests {
         assert!(s.browser_window.is_none());
         let s: Settings = serde_json::from_str(r#"{"browser_docked":false}"#).unwrap();
         assert!(!s.browser_docked);
+    }
+
+    /// The provider is a field added later: an old config missing it is the custom
+    /// (bring-your-own-key) one, and a stored hosted must be kept — along with the
+    /// custom fields, which the switch never touches.
+    #[test]
+    fn provider_defaults_custom_keeps_stored() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.provider, ProviderSetting::Custom);
+        assert!(!s.hosted() && s.hosted_model.is_empty());
+        let s: Settings = serde_json::from_str(r#"{"provider":"hosted","hosted_model":"deepseek-v4-pro","model":"glm-4.7","api_key":"k"}"#).unwrap();
+        assert!(s.hosted());
+        assert_eq!(s.hosted_model, "deepseek-v4-pro");
+        assert_eq!((s.model.as_str(), s.api_key.as_str()), ("glm-4.7", "k"));
+    }
+
+    /// Hosted with no account in the process (signed out, or a test): the relay's
+    /// URLs and an empty key — the turn is refused with "sign in", never sent bare.
+    #[test]
+    fn hosted_provider_without_an_account_has_no_key() {
+        let s = Settings { provider: ProviderSetting::Hosted, hosted_model: "deepseek-flash".into(), api_key: "own".into(), ..Default::default() };
+        let p = s.provider_config();
+        assert!(p.is_hosted() && p.api_key.is_empty());
+        assert_eq!(p.model, "deepseek-flash");
+        assert!(p.chat_completions_url().ends_with("/v1/chat/completions"));
+        assert!(s.reasoning_active());
+        assert_eq!(s.active_model(), "deepseek-flash");
+        // The custom fields are untouched and come back when the switch goes back
+        let back = Settings { provider: ProviderSetting::Custom, ..s };
+        assert_eq!(back.provider_config().api_key, "own");
     }
 
     /// Click-opens-links is a switch added later: an old config missing it takes the

@@ -253,6 +253,25 @@ pub(crate) fn light_effort(config_effort: Option<&str>) -> Option<&'static str> 
     }
 }
 
+/// The metering category of a turn, from the skill the user chose in the composer
+/// (`/study`, `/research`): those two name the job; every other turn — with
+/// another skill, or none — is a chat turn. Only matters on the hosted provider
+/// (the `X-Vemry-Feature` header); the refs are read as picked, before any
+/// privacy filtering, since a skill name is not vault content.
+pub(crate) fn feature_of_refs(refs: &[ContextRef]) -> crate::types::Feature {
+    refs.iter()
+        .filter_map(|r| match r {
+            ContextRef::Skill { path } => match path.trim() {
+                "study" => Some(crate::types::Feature::Study),
+                "research" => Some(crate::types::Feature::Research),
+                _ => None,
+            },
+            _ => None,
+        })
+        .next()
+        .unwrap_or_default()
+}
+
 /// What a light (pre-plan) response may do and still be kept: read — the vault, a
 /// skill, the sources, a page through its gate — and propose the plan. A write, a
 /// plan update or an action list means the model went to work without a plan, and
@@ -450,10 +469,14 @@ impl AgentRunner {
         } else {
             config.session_allow.as_ref().map(|g| g.lock().unwrap().clone()).unwrap_or_default()
         };
-        // stream_options is sent to DeepSeek only (a Zhipu stream carries usage by
-        // default, and an unknown parameter risks a 400); the Responses shape
-        // ignores the field.
-        let stream_options = provider.is_deepseek().then(|| json!({ "include_usage": true }));
+        // stream_options is sent where the usage tail has to be asked for — DeepSeek,
+        // and the relay in front of it (a Zhipu stream carries usage by default, and an
+        // unknown parameter risks a 400 there); the Responses shape ignores the field.
+        let stream_options = provider.include_usage().then(|| json!({ "include_usage": true }));
+        // The metering category of this turn's calls: a skill the user chose names
+        // the job (study, research); anything else is a chat turn. Decided from the
+        // refs as picked — a regenerate carries no refs and counts as chat.
+        let feature = feature_of_refs(&refs);
         // The plan phase. In a plan-gated turn at high or max, the calls before the
         // plan is settled go at "low": reading and naming the steps need no deep
         // thinking, and the design belongs after the user's decision (measured on a
@@ -488,7 +511,7 @@ impl AgentRunner {
                         && !did_summary
                     {
                         did_summary = true;
-                        self.do_summary(provider, config, history, cancel, on_event, log).await?;
+                        self.do_summary(provider, config, feature, history, cancel, on_event, log).await?;
                     }
                 }
             }
@@ -536,6 +559,8 @@ impl AgentRunner {
             // A light response's text is held back until it is known to be kept
             let withhold = planning;
             let request = ChatRequest {
+                feature,
+                priority: feature.priority(),
                 model: provider.model.clone(),
                 messages,
                 tools: Some(tools),
@@ -653,7 +678,7 @@ impl AgentRunner {
                     }
                     if !did_summary {
                         did_summary = true;
-                        self.do_summary(provider, config, history, cancel, on_event, log).await?;
+                        self.do_summary(provider, config, feature, history, cancel, on_event, log).await?;
                         continue;
                     }
                     return Err(e);
@@ -819,17 +844,20 @@ impl AgentRunner {
     /// to continue. The one exception is the user cancelling: that is not a "failed
     /// summary", and the history is kept untouched to the character — otherwise one
     /// press of stop would permanently hard-truncate the earlier context and
-    /// persist that at the end of the turn.
+    /// persist that at the end of the turn. `turn` is the feature of the turn being
+    /// served: the summary call is metered as compaction but queued as that turn.
+    #[allow(clippy::too_many_arguments)]
     async fn do_summary(
         &self,
         provider: &ProviderConfig,
         config: &RunnerConfig,
+        turn: crate::types::Feature,
         history: &mut Vec<ChatMessage>,
         cancel: &AtomicBool,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
     ) -> Result<()> {
-        match self.summarize(provider, config, history, cancel).await {
+        match self.summarize(provider, config, turn, history, cancel).await {
             Ok(s) if !s.trim().is_empty() => compact::apply_summary(history, s.trim()),
             Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
             _ => compact::hard_truncate(history),
@@ -843,6 +871,7 @@ impl AgentRunner {
         &self,
         provider: &ProviderConfig,
         config: &RunnerConfig,
+        turn: crate::types::Feature,
         history: &[ChatMessage],
         cancel: &AtomicBool,
     ) -> Result<String> {
@@ -863,6 +892,10 @@ impl AgentRunner {
         let (reasoning_effort, thinking) =
             effort_fields(light_effort(config.reasoning_effort.as_deref()));
         let request = ChatRequest {
+            feature: crate::types::Feature::Compact,
+            // The user is waiting on the turn this summary unblocks: a background
+            // priority here would let the relay queue the whole turn at peak time
+            priority: turn.priority(),
             model: provider.model.clone(),
             messages,
             tools: None,
@@ -2100,10 +2133,18 @@ mod tests {
                 vec![text_chunk("see [x](https://x.io/a)"), finish_chunk("stop")],
             ]),
         });
-        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
         let (result, events) = run_turn(&r, &f, &mut history, "and now?").await;
         result.unwrap();
         assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { level: 2 })));
+        // The summary call is metered as compaction but queued as the turn it
+        // unblocks: the user is waiting on it
+        {
+            let reqs = transport.inner.requests.lock().unwrap();
+            assert_eq!(reqs[0].feature, crate::types::Feature::Compact);
+            assert_eq!(reqs[0].priority, crate::types::Priority::Interactive);
+            assert_eq!(reqs[1].feature, crate::types::Feature::Chat);
+        }
         // [summary, envelope, assistant]: the settlement found the answer's citation
         assert_eq!(history.len(), 3, "{history:?}");
         assert!(events.iter().any(|e| matches!(e, AgentEvent::SourcesUpdated { items, .. } if items.len() == 1 && items[0].url == "https://x.io/a")));

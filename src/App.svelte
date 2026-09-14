@@ -18,6 +18,7 @@
   import { toast } from "$lib/stores/toast.svelte";
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
+  import { account } from "$lib/stores/account.svelte";
   import { updater } from "$lib/stores/updater.svelte";
   import { isMac, k } from "$lib/shortcut";
   import Editor from "$lib/components/Editor.svelte";
@@ -220,6 +221,8 @@
     updater.applySettings(s);
     if (s.updater_auto_check) void updater.check(false);
   });
+  // The hosted account's snapshot (from disk, no network) and its change events
+  void account.init();
 
   // ---- user scripts: palette sync + toasts + blocking dialogs ----
   function applyScripts(infos: ScriptInfo[]) {
@@ -824,7 +827,8 @@
       // error inside the panel), and the static template path must not become unreachable —
       // offline or without a key it falls back to v0.5's template behaviour
       const s = await api.settingsGet().catch(() => undefined);
-      const noKey = s ? !s.api_key && !s.env_key_present : false;
+      // In hosted mode the credential is the account's sign-in, not the key fields (which the settings page hides there)
+      const noKey = s ? (s.provider === "hosted" ? !account.loggedIn : !s.api_key && !s.env_key_present) : false;
       // A nearly empty vault has nothing to survey, so it falls back to the static template for the user to fill in
       if (!exists && (vault.notes.length < 3 || noKey)) {
         if (noKey) toast.push(t("app.noKeyStaticTemplate"));
@@ -1161,6 +1165,7 @@
   });
   registerCommand({ id: "settings", group: "system", run: () => { settingsTab = "general"; settingsOpen = true; } });
   registerCommand({ id: "settings-ai", group: "system", run: () => { settingsTab = "ai"; settingsOpen = true; } });
+  registerCommand({ id: "settings-account", group: "system", run: () => { settingsTab = "account"; settingsOpen = true; } });
   // The whole flow (checking, the version found, download, restart) runs in the update dialog
   registerCommand({ id: "check-updates", group: "system", run: () => void updater.check(true) });
   registerCommand({

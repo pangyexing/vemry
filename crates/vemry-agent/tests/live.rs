@@ -14,6 +14,7 @@ use std::time::Duration;
 use vemry_agent::permission::AutoAllow;
 use vemry_agent::runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};
 use vemry_agent::session::SessionLog;
+use vemry_agent::provider::ProviderKind;
 use vemry_agent::{AnthropicTransport, HttpTransport, ProviderConfig};
 use vemry_core::Vault;
 
@@ -33,6 +34,8 @@ async fn live_agent_creates_note_via_tools() {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
         model: test_model(),
         api_key,
+        kind: ProviderKind::Custom,
+        catalog: None,
     };
 
     let dir = tempfile::tempdir().unwrap();
@@ -110,6 +113,8 @@ async fn live_plan_phase_lightens_until_the_plan() {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
         model: test_model(),
         api_key,
+        kind: ProviderKind::Custom,
+        catalog: None,
     };
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("Apples.md"), "# Apples\n\nApples keep best in a cool, dark place.\n").unwrap();
@@ -195,6 +200,8 @@ async fn live_anthropic_web_search() {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
         model: test_model(),
         api_key,
+        kind: ProviderKind::Custom,
+        catalog: None,
     };
 
     let dir = tempfile::tempdir().unwrap();
@@ -290,6 +297,8 @@ async fn live_history_moves_between_the_lines() {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
         model: test_model(),
         api_key,
+        kind: ProviderKind::Custom,
+        catalog: None,
     };
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("Apples.md"), "# Apples\n\nApples keep best in a cool, dark place.\n").unwrap();
@@ -385,7 +394,7 @@ async fn live_history_moves_between_the_lines() {
 #[tokio::test]
 #[ignore]
 async fn live_anthropic_web_search_params_probe() {
-    use vemry_agent::types::{ChatMessage, ChatRequest, StreamChunk, ToolDef};
+    use vemry_agent::types::{ChatMessage, ChatRequest, Feature, StreamChunk, ToolDef};
     use vemry_agent::ChatTransport;
 
     let Some(api_key) = std::env::var("VEMRY_TEST_API_KEY").ok().filter(|k| !k.is_empty()) else {
@@ -396,9 +405,13 @@ async fn live_anthropic_web_search_params_probe() {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
         model: test_model(),
         api_key,
+        kind: ProviderKind::Custom,
+        catalog: None,
     };
     let transport = AnthropicTransport::new();
     let request = ChatRequest {
+        feature: Default::default(),
+        priority: Feature::default().priority(),
         model: provider.model.clone(),
         messages: vec![ChatMessage::user(
             "Search the web: important artificial-intelligence news from the past week. Pick three stories, summarise each in one sentence, and give the source links.".to_string(),
@@ -474,7 +487,7 @@ async fn live_anthropic_web_search_params_probe() {
 #[tokio::test]
 #[ignore]
 async fn live_reasoning_effort_probe() {
-    use vemry_agent::types::{ChatMessage, ChatRequest, StreamChunk};
+    use vemry_agent::types::{ChatMessage, ChatRequest, Feature, StreamChunk};
     use vemry_agent::ChatTransport;
 
     let Some(api_key) = std::env::var("VEMRY_TEST_API_KEY").ok().filter(|k| !k.is_empty()) else {
@@ -485,6 +498,8 @@ async fn live_reasoning_effort_probe() {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
         model: test_model(),
         api_key,
+        kind: ProviderKind::Custom,
+        catalog: None,
     };
     const PROMPT: &str = "One of 9 identical-looking coins is lighter. What is the smallest number of weighings on a balance that is guaranteed to find it? Give the procedure and prove the lower bound.";
 
@@ -522,6 +537,8 @@ async fn live_reasoning_effort_probe() {
     }
 
     let base = ChatRequest {
+        feature: Default::default(),
+        priority: Feature::default().priority(),
         model: provider.model.clone(),
         messages: vec![ChatMessage::user(PROMPT.to_string())],
         tools: None,
@@ -595,6 +612,8 @@ async fn live_research_reads_the_skill_before_planning() {
         base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
         model: test_model(),
         api_key,
+        kind: ProviderKind::Custom,
+        catalog: None,
     };
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("research")).unwrap();

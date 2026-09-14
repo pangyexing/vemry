@@ -1,11 +1,13 @@
 <script lang="ts" module>
   /** The category page ids; App's settings commands pick the page to open on through this */
-  export type SettingsTab = "general" | "ai" | "browser" | "vault" | "updates";
+  export type SettingsTab = "general" | "ai" | "account" | "browser" | "vault" | "updates";
 </script>
 
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, EFFORT_OPTIONS, type LangSetting, type LinkOpenMode, type SkillEntry, type TypeExample } from "$lib/api";
+  import { api, EFFORT_OPTIONS, type LangSetting, type LinkOpenMode, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
+  import { account } from "$lib/stores/account.svelte";
+  import AccountPanel from "./AccountPanel.svelte";
   import { scaffold } from "$lib/scaffold";
   import { skillDesc, skillSourceLabel } from "$lib/skills";
   import { setLanguage, t } from "$lib/i18n/i18n.svelte";
@@ -28,12 +30,16 @@
   const TABS: { id: SettingsTab; needsVault?: boolean }[] = [
     { id: "general" },
     { id: "ai" },
+    { id: "account" },
     { id: "browser" },
     { id: "vault", needsVault: true },
     { id: "updates" },
   ];
 
   let language = $state<LangSetting>("auto");
+  /** vemry hosted or bring your own key; the hosted model choice ("" = the catalog's default). */
+  let provider = $state<ProviderSetting>("custom");
+  let hostedModel = $state("");
   let baseUrl = $state("");
   let model = $state("");
   let apiKey = $state("");
@@ -100,6 +106,8 @@
     dirty = false;
     api.settingsGet().then((s) => {
       if (dirty) return; // the user started typing before the request returned, so it is not overwritten
+      provider = s.provider;
+      hostedModel = s.hosted_model;
       baseUrl = s.base_url;
       model = s.model;
       apiKey = s.api_key;
@@ -285,6 +293,8 @@
   async function save() {
     await api.settingsSet({
       language,
+      provider,
+      hosted_model: hostedModel,
       base_url: baseUrl.trim(),
       model: model.trim(),
       api_key: apiKey.trim(),
@@ -406,6 +416,41 @@
               </select>
               <small>{t("settings.language.hint")}</small>
             </label>
+            <div class="field">
+              <span class="field-title">{t("settings.provider")}</span>
+              <!-- a two-state toggle: hosted (the account's models) or the user's own endpoint and key -->
+              <div class="segmented" role="radiogroup" aria-label={t("settings.provider")}>
+                <button
+                  role="radio"
+                  aria-checked={provider === "hosted"}
+                  class:active={provider === "hosted"}
+                  onclick={() => { provider = "hosted"; dirty = true; }}
+                >{t("settings.providerHosted")}</button>
+                <button
+                  role="radio"
+                  aria-checked={provider === "custom"}
+                  class:active={provider === "custom"}
+                  onclick={() => { provider = "custom"; dirty = true; }}
+                >{t("settings.providerCustom")}</button>
+              </div>
+              <small>{t("settings.providerHint")}</small>
+            </div>
+            {#if provider === "hosted"}
+              <label>
+                <span>{t("settings.hostedModel")}</span>
+                <select bind:value={hostedModel} onchange={() => (dirty = true)} disabled={!account.loggedIn}>
+                  <option value="">{t("settings.hostedModelDefault", { model: account.models.find((m) => m.default)?.id ?? "…" })}</option>
+                  {#each account.models as m (m.id)}
+                    <option value={m.id}>{m.id}</option>
+                  {/each}
+                </select>
+                {#if account.loggedIn}
+                  <small>{t("settings.hostedModelHint")}</small>
+                {:else}
+                  <small class="err-text">{t("settings.hostedSignedOut")} <button class="link" onclick={() => (tab = "account")}>{t("settings.tab.account")} →</button></small>
+                {/if}
+              </label>
+            {:else}
             <label>
               <span>{t("settings.endpoint")}</span>
               <input
@@ -440,14 +485,6 @@
               </datalist>
               <small>{t("settings.modelHint")}</small>
             </label>
-            {#if vault.root && writePolicy === "allow"}
-              <div class="grant-row">
-                <button class="grant-badge" title={t("settings.revokeWritePolicyHint")} onclick={revokeWritePolicy}>
-                  {t("settings.revokeWritePolicy")}
-                </button>
-                <small>{t("settings.revokeWritePolicyNote")}</small>
-              </div>
-            {/if}
             <label>
               <span>{t("settings.apiKey")}</span>
               <input
@@ -463,6 +500,16 @@
                 <small>{t("settings.apiKeyNote")}</small>
               {/if}
             </label>
+            {/if}
+            <!-- the vault's standing write grant belongs to neither provider: shown whichever one is selected -->
+            {#if vault.root && writePolicy === "allow"}
+              <div class="grant-row">
+                <button class="grant-badge" title={t("settings.revokeWritePolicyHint")} onclick={revokeWritePolicy}>
+                  {t("settings.revokeWritePolicy")}
+                </button>
+                <small>{t("settings.revokeWritePolicyNote")}</small>
+              </div>
+            {/if}
             <label>
               <span>{t("settings.fontSize")}</span>
               <select bind:value={noteFontSize} onchange={() => (dirty = true)}>
@@ -555,6 +602,8 @@
                 <small>{t("settings.translate.addendumHint")}</small>
               </label>
             </section>
+          {:else if tab === "account"}
+            <AccountPanel />
           {:else if tab === "updates"}
             <section class="privacy">
               <h3>{t("settings.appUpdates")}</h3>
@@ -917,6 +966,39 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+  .field-title {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+  }
+  /* the provider toggle: two states side by side, the chosen one filled */
+  .segmented {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    align-self: flex-start;
+  }
+  .segmented button {
+    font-size: var(--fs-sm);
+    padding: 6px 14px;
+    color: var(--fg-muted);
+  }
+  .segmented button + button {
+    border-left: 1px solid var(--border);
+  }
+  .segmented button.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .err-text {
+    color: var(--danger);
+  }
+  .link {
+    color: var(--accent);
+    font-size: var(--fs-xs);
+    padding: 0;
   }
   /* Clicking the overlay with unsaved changes: a nudge, saying the dialog is deliberately staying */
   .dialog.nudge {

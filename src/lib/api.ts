@@ -277,6 +277,62 @@ export type LinkOpenMode = "reading" | "internal" | "system";
 /** The interface language. Matches Rust's settings::LangSetting exactly. */
 export type LangSetting = "auto" | "zh-CN" | "en";
 
+/** Which provider the AI talks to (Rust's settings::ProviderSetting): the user's own endpoint
+ *  and key, or vemry hosted (the relay, the account's device token, the catalog's models). */
+export type ProviderSetting = "custom" | "hosted";
+
+/** One row of the hosted model catalog (mirroring vemry_agent::provider::ModelCap). */
+export interface ModelCap {
+  id: string;
+  default: boolean;
+  /** Web search is available on this model. */
+  search: boolean;
+  /** Image input is accepted. */
+  images: boolean;
+  max_tokens: number | null;
+}
+
+/** The entitlement snapshot of the hosted account (mirroring account.rs::Me; the shape of `GET /v1/me`). */
+export interface Me {
+  email: string;
+  plan: "free" | "pro" | "founder" | string;
+  pro_until: string | null;
+  /** Hosted model access is open to this account. */
+  hosted: boolean;
+  quota: { total_fen: number; used_fen: number; resets_at: string | null } | null;
+  /** The credit pack in fen; negative while an overdraft awaits the next credit. */
+  pack_fen: number;
+  subscription: {
+    status: "active" | "canceling" | "canceled" | "past_due" | string;
+    cancel_at_period_end: boolean;
+    next_charge_at: string | null;
+    price: string | null;
+  } | null;
+  estimates: { study_fen: number; translate_fen: number };
+  models: ModelCap[];
+  workflow_free_uses: number;
+  portal_url: string;
+  server_time: string;
+  peak: boolean;
+}
+
+/** How old the account snapshot is: fresh (≤ 10 min), stale (≤ 7 days, the offline grace — it
+ *  still applies), expired (past that: the account counts as free until a refresh succeeds). */
+export type Freshness = "fresh" | "stale" | "expired";
+
+/** What the account module reports (mirroring account.rs::AccountStatus). */
+export interface AccountStatus {
+  logged_in: boolean;
+  /** The last snapshot, possibly stale; null when signed out. */
+  me: Me | null;
+  fetched_at: string | null;
+  freshness: Freshness;
+  /** Hosted requests may go out: signed in, hosted access, and the snapshot not expired. */
+  hosted_ok: boolean;
+  /** floor(quota remaining / study estimate); null without a quota or an estimate. */
+  study_left: number | null;
+}
+
 export interface SettingsView {
   base_url: string;
   model: string;
@@ -324,11 +380,18 @@ export interface SettingsView {
   translate_target: string;
   translate_model: string;
   translate_addendum: string;
+  /** Which provider the AI talks to, and the hosted model choice ("" = the catalog's default). */
+  provider: ProviderSetting;
+  hosted_model: string;
+  /** Derived and read-only: the model requests actually name (the hosted choice or the catalog's default in hosted mode, `model` otherwise). */
+  active_model: string;
 }
 
 /** A partial update: a field left out keeps its value. */
 export interface SettingsUpdate {
   base_url?: string;
+  provider?: ProviderSetting;
+  hosted_model?: string;
   language?: LangSetting;
   model?: string;
   api_key?: string;
@@ -1175,6 +1238,16 @@ export const api = {
     invoke<void>("provenance_record", { path, text, origin, session, url }),
   settingsGet: () => invoke<SettingsView>("settings_get"),
   settingsSet: (update: SettingsUpdate) => invoke<void>("settings_set", { update }),
+  // ---- the hosted account (account.rs); every change also arrives on onAccountChanged ----
+  accountStatus: () => invoke<AccountStatus>("account_status"),
+  /** Ask for a sign-in code by e-mail (the server answers the same whether or not the address is known). */
+  accountLoginStart: (email: string) => invoke<void>("account_login_start", { email }),
+  /** Turn the code into this device's token; the account becomes the current one. */
+  accountLoginVerify: (email: string, code: string) => invoke<AccountStatus>("account_login_verify", { email, code }),
+  accountLogout: () => invoke<void>("account_logout"),
+  /** Fetch the entitlement snapshot again (a 304 when nothing changed). */
+  accountRefresh: () => invoke<AccountStatus>("account_refresh"),
+  accountRedeem: (code: string) => invoke<AccountStatus>("account_redeem", { code }),
   agentStart: (
     message: string,
     currentNote: string | null,
@@ -1305,6 +1378,11 @@ export function emitLanguage(lang: LangSetting) {
 
 export function onLanguageChange(handler: (lang: LangSetting) => void): Promise<UnlistenFn> {
   return listen<LangSetting>("settings://language", (event) => handler(event.payload));
+}
+
+/** Every change of account state (sign-in, sign-out, a refresh, a revoked token noticed by any request). */
+export function onAccountChanged(handler: (s: AccountStatus) => void): Promise<UnlistenFn> {
+  return listen<AccountStatus>("account://changed", (event) => handler(event.payload));
 }
 
 export function onVaultEvent(handler: (e: VaultEvent) => void): Promise<UnlistenFn> {

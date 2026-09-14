@@ -120,7 +120,10 @@ included, is in one searchable palette (⌘P).
    end to end.
 3. **Add an AI key** (optional). Settings → API key. The default endpoint is Zhipu,
    whose `glm-4.7-flash` is free and supports tool calls; any OpenAI-compatible
-   endpoint works, including a local Ollama.
+   endpoint works, including a local Ollama. Or switch the provider to *vemry
+   hosted* and sign in with your e-mail address: the models come with the
+   account, and a request goes through vemry's relay to the model vendor
+   unchanged.
 4. **Study a paper.** Open the AI panel, pick *Study a paper* and paste an arXiv
    link, or drop in a PDF. The source note, the chapters and the cards arrive as
    diffs you approve.

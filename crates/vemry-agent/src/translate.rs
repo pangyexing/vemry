@@ -636,6 +636,8 @@ impl TranslateJob {
         // level is sent at all (a DeepSeek endpoint); elsewhere nothing is sent
         let (reasoning_effort, thinking) = effort_fields(self.effort.as_deref().map(|_| "none"));
         let request = ChatRequest {
+            feature: crate::types::Feature::Translate,
+            priority: crate::types::Feature::Translate.priority(),
             model: self.provider.model.clone(),
             messages: vec![
                 ChatMessage::system(system_prompt(&self.target, &self.addendum)),
@@ -643,8 +645,8 @@ impl TranslateJob {
             ],
             tools: None,
             stream: true,
-            // usage rides on the stream's tail; DeepSeek sends it only when asked (the same gate the agent uses)
-            stream_options: self.provider.is_deepseek().then(|| serde_json::json!({ "include_usage": true })),
+            // usage rides on the stream's tail; DeepSeek (and the relay in front of it) sends it only when asked (the same gate the agent uses)
+            stream_options: self.provider.include_usage().then(|| serde_json::json!({ "include_usage": true })),
             reasoning_effort,
             thinking,
         };

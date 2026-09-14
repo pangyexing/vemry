@@ -19,6 +19,9 @@ futures-util = "0.3"
 # Image references filled in as data URLs (only while the runner assembles a
 # request; never written to a sidecar)
 base64 = "0.22"
+# The per-call request id the hosted relay settles and logs by (already in the
+# tree through tauri; this only turns v4 on)
+uuid = { version = "1", features = ["v4"] }
 # Text extraction from PDF attachments into <file-context> (pure Rust; when a
 # scan yields nothing, it says so)
 pdf-extract = "0.12.0"

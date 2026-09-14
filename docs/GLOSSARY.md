@@ -38,6 +38,17 @@ three months later, and each translation drifts on its own. A new user-visible t
 | 块引用 | block citation | block reference, block link |
 | 位置 id | positional id | temporary id, transient id |
 
+## The hosted account
+
+| Chinese | English | Do not use |
+|---|---|---|
+| vemry 托管 | vemry hosted | cloud, managed, official API |
+| 自带 key | bring your own key | custom endpoint (that is the setting's internal name), own API |
+| 账户 | account | membership, profile |
+| 算力包 | credit pack | top-up, balance (the pack has a balance; it is not one), tokens |
+| 配额 | quota | allowance, limit (that is a cap) |
+| 设备令牌 | device token | API key (it doubles as one, but the user never sees it as such), session |
+
 ## Interface elements
 
 | Chinese | English | Do not use |

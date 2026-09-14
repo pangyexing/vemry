@@ -14,6 +14,7 @@
   import { k } from "$lib/shortcut";
   import { i18n } from "$lib/i18n/i18n.svelte";
   import { readsForeign } from "$lib/langdetect";
+  import { account } from "$lib/stores/account.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
 
   const inPrivate = $derived(vault.currentPath !== null && vault.privatePaths.has(vault.currentPath));
@@ -65,6 +66,10 @@
   {/if}
   {#if foreign}
     <button class="pending translate" title={t("statusBar.translateHint", { key: k("Mod+Shift+T") })} onclick={() => void executeCommand("translate-toggle")}>{t("statusBar.translate")}</button>
+  {/if}
+  {#if prefs.provider === "hosted" && account.hostedOk && account.studyLeft != null}
+    <!-- this month's hosted quota as papers (the one figure the account shows in the interface); the click opens the account page -->
+    <button class="pending quota" title={t("statusBar.studyLeftHint", { n: account.studyLeft })} onclick={() => void executeCommand("settings-account")}>{t("statusBar.studyLeft", { n: account.studyLeft })}</button>
   {/if}
   {#if vault.editorOrigin && vault.editorOrigin.origin !== "you"}
     <span class="origin origin-{vault.editorOrigin.origin}" title={originLabel(vault.editorOrigin)}>{originLabel(vault.editorOrigin, { withState: false })}</span>
@@ -148,7 +153,8 @@
   .origin-capture {
     color: var(--prov-capture);
   }
-  .pending.translate {
+  .pending.translate,
+  .pending.quota {
     color: var(--accent);
     border-color: var(--accent);
   }

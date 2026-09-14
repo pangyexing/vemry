@@ -391,6 +391,10 @@ CMD = {
         ("AI settings", "AI 设置"),
         ("Model / API key / endpoint / thinking depth", "模型 / API key / 端点 / 思考深度"),
     ),
+    "settings-account": (
+        ("Account", "账户"),
+        ("Sign in to vemry hosted, see the quota and the credit pack, redeem a code", "登录 vemry 托管,查看配额与算力包,兑换码"),
+    ),
     "check-updates": (
         ("Check for updates", "检查更新"),
         ("Ask GitHub Releases for a newer version and offer to install it",
@@ -432,6 +436,64 @@ add("statusBar.", {
     "translate": ("Translate", "译"),
     "translateHint": ("This note is not in your language — read it side by side with a translation ({key})",
                       "这篇不是你的语言——按段对照译文阅读 ({key})"),
+    "studyLeft": ("≈ {n} papers", "≈ {n} 篇"),
+    "studyLeftHint": ("About {n} papers left in this month's hosted quota (click for the account page)",
+                      "本月托管配额还能精读约 {n} 篇(点击打开账户页)"),
+})
+
+# ---------------------------------------------------------------- the account page (settings › account)
+add("account.", {
+    "title": ("vemry account", "vemry 账户"),
+    "intro": ("One account for vemry hosted: the models, the monthly quota and the credit pack. Sign in with your "
+              "e-mail address — a 6-digit code, no password. Bring-your-own-key mode needs no account.",
+              "一个账户对应 vemry 托管:模型、每月配额与算力包。用邮箱登录——6 位验证码,没有密码。自带 key 模式不需要账户。"),
+    "email": ("E-mail address", "邮箱"),
+    "emailPlaceholder": ("you@example.com", "you@example.com"),
+    "sendCode": ("Send code", "发送验证码"),
+    "sending": ("Sending…", "发送中…"),
+    "codeSent": ("A 6-digit code is on its way to {email}; it is valid for 10 minutes", "6 位验证码已发往 {email},10 分钟内有效"),
+    "code": ("Code", "验证码"),
+    "codePlaceholder": ("6 digits", "6 位数字"),
+    "signIn": ("Sign in", "登录"),
+    "signingIn": ("Signing in…", "登录中…"),
+    "resend": ("Send a new code", "重新发送"),
+    "changeEmail": ("Use another address", "换一个邮箱"),
+    "signedInAs": ("Signed in as {email}", "已登录:{email}"),
+    "plan.free": ("Free", "免费"),
+    "plan.pro": ("Pro", "Pro"),
+    "plan.founder": ("Founder", "创始会员"),
+    "proUntil": ("Pro until {date}", "Pro 有效至 {date}"),
+    "hostedOn": ("Hosted models: on", "托管模型:已开通"),
+    "hostedOff": ("Hosted models: not included in this account — see the pricing page",
+                  "托管模型:此账户未开通——见定价页"),
+    "studyLeft": ("About {n} papers left this month", "本月还能精读约 {n} 篇"),
+    "quota": ("Monthly quota: ¥{left} of ¥{total} left", "本月配额:剩 ¥{left} / ¥{total}"),
+    "quotaResets": ("resets {date}", "{date} 重置"),
+    "pack": ("Credit pack: ¥{amount}", "算力包余额:¥{amount}"),
+    "packNegative": ("Credit pack: ¥{amount} pending offset (deducted from the next credit)",
+                     "算力包:待抵扣 ¥{amount}(下次入账时扣回)"),
+    "subscriptionOn": ("Auto-renew on · next charge {date}{price}", "自动续订:开 · 下次扣费 {date}{price}"),
+    "subscriptionCancelled": ("Auto-renew cancelled · Pro until {date}", "已取消自动续订 · Pro 有效至 {date}"),
+    "subscriptionPastDue": ("Payment failed — update the card in the account page", "扣款失败——请到账户页更换卡片"),
+    "manageSubscription": ("Manage subscription", "管理订阅"),
+    "buy": ("Buy / top up…", "购买 / 充值…"),
+    "buyHint": ("Opens vemry.app in your browser; payment never goes through the app", "在系统浏览器打开 vemry.app;支付不经过应用"),
+    "redeem": ("Redeem a code", "兑换码"),
+    "redeemPlaceholder": ("VEMRY-XXXX-XXXX-XXXX", "VEMRY-XXXX-XXXX-XXXX"),
+    "redeemBtn": ("Redeem", "兑换"),
+    "redeemed": ("Code redeemed", "已兑换"),
+    "refresh": ("Refresh", "刷新"),
+    "refreshing": ("Refreshing…", "刷新中…"),
+    "signOut": ("Sign out", "退出登录"),
+    "offlineStale": ("Offline — using the entitlements from {days} days ago (they hold for 7 days)",
+                     "离线——按 {days} 天前的权益执行(7 天内有效)"),
+    "offlineToday": ("Offline — using the last entitlements fetched today", "离线——按今天最后一次取得的权益执行"),
+    "expired": ("Could not reach the account service for 7 days: hosted requests are off until a refresh succeeds",
+                "已 7 天未能连上账户服务:托管请求暂停,刷新成功后恢复"),
+    "peak": ("Peak hours: model prices are doubled right now", "高峰时段:此刻模型价格翻倍"),
+    "useHosted": ("Use vemry hosted for the AI", "AI 使用 vemry 托管"),
+    "useHostedHint": ("The provider switch in General; the hosted models come from this account",
+                      "即「通用」页的提供方开关;托管模型来自本账户"),
 })
 
 # ---------------------------------------------------------------- tab bar
@@ -1550,11 +1612,26 @@ add("settings.", {
     "needsVault": ("Available once a vault is open", "打开知识库后可用"),
     "tab.general": ("General", "通用"),
     "tab.ai": ("AI & search", "AI 与搜索"),
+    "tab.account": ("Account", "账户"),
     "tab.browser": ("Browser", "浏览器"),
     "tab.vault": ("Vault", "知识库"),
     "tab.updates": ("Updates", "更新"),
     "save": ("Save", "保存"),
     "saved": ("Saved ✓", "已保存 ✓"),
+    "provider": ("AI provider", "AI 提供方"),
+    "providerHosted": ("vemry hosted", "vemry 托管"),
+    "providerCustom": ("Bring your own key", "自带 key"),
+    "providerHint": ("vemry hosted: sign in on the Account page and the models, the key and the endpoint come with the "
+                     "account — requests go through vemry's relay to the model vendor unchanged. Bring your own key: your "
+                     "endpoint, your key, no account.",
+                     "vemry 托管:在「账户」页登录后,模型、key 与端点都随账户而来——请求经 vemry 中继原样转给模型厂商。"
+                     "自带 key:你的端点、你的 key,不需要账户。"),
+    "hostedModel": ("Model (hosted)", "模型(托管)"),
+    "hostedModelDefault": ("{model} (default)", "{model}(默认)"),
+    "hostedModelHint": ("What the account offers; a change takes effect from the next AI session",
+                        "账户可用的模型;改动自下一个 AI 会话生效"),
+    "hostedSignedOut": ("Not signed in — sign in on the Account page before the first hosted request",
+                        "尚未登录——第一次托管请求前请到「账户」页登录"),
     "endpoint": ("API endpoint (OpenAI-compatible)", "API 端点（OpenAI 兼容）"),
     "endpointZhipu": ("Zhipu BigModel", "智谱 BigModel"),
     "endpointDeepseek": ("DeepSeek (web search)", "DeepSeek(可联网搜索)"),
@@ -2350,6 +2427,44 @@ add("ipc.", {
     # Rendered as one item of settings.rulesPartial's list, after "{url}: " — hence
     # the lower case, unlike every standalone message above
     "notAFilterList": ("the response is not a filter list", "返回的内容不是规则表"),
+    # The hosted account and relay. The `hosted.<code>` keys are the relay's error
+    # codes verbatim (account.rs looks them up by name and falls back to the HTTP
+    # status's default code); the rest are the client's own states.
+    "hosted.signIn": ("vemry hosted is selected but no account is signed in: sign in under Settings › Account, "
+                      "or switch to bring your own key",
+                      "已选 vemry 托管但尚未登录:请到「设置 › 账户」登录,或改为自带 key"),
+    "hosted.expired": ("The account service has been unreachable for 7 days, so the hosted entitlements no longer "
+                       "apply — check the connection and refresh under Settings › Account",
+                       "已 7 天连不上账户服务,托管权益不再生效——请检查网络并到「设置 › 账户」刷新"),
+    "hosted.network": ("Could not reach the account service: {error}", "连不上账户服务:{error}"),
+    "hosted.failed": ("The account service refused the request: {error}", "账户服务拒绝了请求:{error}"),
+    "hosted.auth_invalid": ("This device's sign-in is no longer valid — sign in again under Settings › Account",
+                            "本设备的登录已失效——请到「设置 › 账户」重新登录"),
+    "hosted.insufficient_balance": ("The hosted balance is used up — top up a credit pack under Settings › Account, "
+                                    "or wait for the monthly quota to reset",
+                                    "托管余额已用完——到「设置 › 账户」充值算力包,或等本月配额重置"),
+    "hosted.hosted_not_allowed": ("This account has no hosted model access (it is part of Pro and the credit packs — "
+                                  "see the pricing page); bring your own key keeps working",
+                                  "此账户未开通托管模型(Pro 与算力包含此权益,见定价页);自带 key 不受影响"),
+    "hosted.rate_limited": ("Too many hosted requests at once — wait a moment and try again",
+                            "托管请求过于密集——稍等片刻再试"),
+    "hosted.daily_cap": ("Today's hosted spending limit for this account is reached; it resets at midnight, Beijing time",
+                         "本账户今日托管消费已达上限,北京时间零点重置"),
+    "hosted.upstream_unavailable": ("The model vendor could not be reached — try again in a moment",
+                                    "模型厂商暂时连不上——稍后再试"),
+    "hosted.upstream_busy": ("The model vendor is busy — try again in a moment", "模型厂商繁忙——稍后再试"),
+    "hosted.spend_cap": ("vemry hosted has reached its daily spending limit — try again tomorrow, or use your own key",
+                         "vemry 托管今日总支出已达上限——明天再试,或改用自己的 key"),
+    "hosted.hosted_disabled": ("vemry hosted is paused for maintenance — use your own key meanwhile",
+                               "vemry 托管暂停维护中——期间可改用自己的 key"),
+    "hosted.model_unknown": ("The selected model is not offered by vemry hosted — pick another under Settings",
+                             "vemry 托管不提供所选模型——请到设置里换一个"),
+    "hosted.payload_too_large": ("The request is too large for the relay (16 MB) — remove an attachment",
+                                 "请求超过中继上限(16 MB)——请去掉一个附件"),
+    "hosted.moderation_refused": ("The request was refused by content moderation", "请求被内容审核拒绝"),
+    "hosted.email_invalid": ("That is not an e-mail address", "这不是一个邮箱地址"),
+    "hosted.otp_invalid": ("The code is wrong or has expired — send a new one", "验证码错误或已过期——请重新发送"),
+    "hosted.code_invalid": ("The code is unknown, already used or expired", "兑换码无效、已使用或已过期"),
 })
 
 out = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

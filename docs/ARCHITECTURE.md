@@ -54,9 +54,9 @@ Three constraints follow:
 
 | Module | Responsibility |
 |---|---|
-| `provider.rs` | `ProviderConfig`: base_url + model + key. Zhipu (`glm-4.7-flash`) by default, swappable for any OpenAI-compatible endpoint; `is_deepseek()` decides whether the Anthropic-format transport (and with it web search) is available |
+| `provider.rs` | `ProviderConfig`: base_url + model + key, plus a `ProviderKind` (`Custom`, the default, or `Hosted`) and the hosted model catalog. Zhipu (`glm-4.7-flash`) by default, swappable for any OpenAI-compatible endpoint; `is_deepseek()` decides whether the Anthropic-format transport (and with it web search) is available on a custom provider, and the catalog row decides it on the hosted one (see "Hosted mode" under the network-exit list) |
 | `types.rs` | OpenAI Chat Completions wire types plus the streaming tool_call assembler. `ToolDef` is an untagged enum (`Function` plus `Raw`, which passes a server-side tool through verbatim); `ChatMessage.extra_items` carries the Anthropic-format line's replay blocks across turns |
-| `client.rs` | The `ChatTransport` trait (mockable) plus the reqwest SSE implementation — **the LLM channel boundary**. Since v0.4 the system has two further controlled network exits (see "The built-in browser"). v0.7: a process-wide shared connection pool, connect timeout, a 120 s stream-idle timeout and cancellation polling for a stalled stream; both transports share one read loop, `read_sse` |
+| `client.rs` | The `ChatTransport` trait (mockable) plus the reqwest SSE implementation — **the LLM channel boundary**. Since v0.4 the system has further controlled network exits (see "The built-in browser" and "The network-exit list"). v0.7: a process-wide shared connection pool, connect timeout, a stream-idle timeout (120 s; 600 s through the hosted relay) and cancellation polling for a stalled stream; both transports share one read loop, `read_sse`. In hosted mode `post_streaming` adds the relay's four request headers (`X-Vemry-Feature` from `ChatRequest.feature`, a request id, the priority, the user agent) and nothing else |
 | `anthropic.rs` | The Anthropic-format transport (DeepSeek's `/anthropic/v1/messages`) — a second implementation of the same `ChatTransport` trait, and the carrier of web search. On the request side it maps messages→content blocks, system→`system`, tool results→`tool_result` blocks and function tools→`input_schema` tools, spelling the runner's `{"type":"web_search"}` as the `web_search_20250305` server tool; on the response side it synthesises `StreamChunk` from the semantic SSE events, so the runner and the mock need no changes. `server_tool_use` / `web_search_tool_result` blocks (the results as `encrypted_content`) and a thinking block's signature are replayed through `extra_items`. Used for a turn only when web search is on **and** the endpoint is api.deepseek.com |
 | `tools.rs` | The domain tools, in three classes. Read-level (list_notes / read_note / read_file / read_block / search_notes / get_links / clips_lookup / recent_changes / aggregate_blocks / query_blocks / read_skill) execute directly behind the privacy gate; write-level (write_note / edit_note / append_note / set_frontmatter / update_task / set_block_field / restructure_note / move_blocks / move_note / move_file) are first "prepared" into a `WriteRequest` — carrying the rendered diff and the exact content that would land on disk (a move is a path pair, `path → to_path`, with no diff) — and execute only after the gate; session-level (`is_session_tool`: update_plan / list_sources / propose_plan / propose_actions / open_for_reading) act on the session's own state, touch no note and pass no write gate (open_for_reading passes the read gate instead). `import_page` is the one tool of both kinds: the page passes the read gate, the app composes the source note from it (`import.rs`: the page's sections as headings, one block per paragraph with a stable `^s<section>p<n>` id, equations as `$$…$$` with their numbers, figures with their captions as `^figN`, table captions as `^tabN`, the reference list left out) and the note then lands as a write_note — the same diff, gate and provenance — with the outline of ids as the receipt, so a paper is archived without its text passing through the model as output tokens. `update_task` (state and dates in one rewrite of the task's own line) and `set_block_field` (one inline `[key:: value]` on a block's first line) go through `vemry_core::taskedit`, the Rust copy of the editor's `tasks.ts` / `fields.ts` grammar, so a task the AI ticks lands on disk byte for byte as one dragged on the board; `recent_changes` reads the block change times (`blocktimes.rs`) for "what changed since". `move_note` and `move_file` go through `Vault::rename_path`, the same implementation the file tree's move uses, **and rewrite the links that pointed at the moved thing in the same write** (`vemry_core::relink`: the plan is computed at prepare time, shown as the move's diff, and landed after the rename — rename first, rewrite second, a note edited meanwhile skipped rather than overwritten; private referrers are never rewritten). `list_files` and `audit_links` (unresolved links, orphans, dangling `supports::`, duplicate clips — `vemry_core::audit`, index only) are the read side of a tidy-up. `PlanItem`/`PlanStatus` and `parse_plan_items` are update_plan's grammar. `append_note` lands by the vault's own rule (`insert.rs`: the end of a heading's section, or the content end — the same landing as a clip or a quick capture; a missing heading is an error, never a silent fallback; a missing note is a Create) and its diff is only the addition; `set_frontmatter` goes through `vemry_core::set_frontmatter_key` (one top-level key: a scalar, a list, or removal; `private` and `vemry` are refused). `is_local_write` names the three that a followed note takes without a dialog |
 | `undo.rs` | The write journal and "undo this turn's writes": every landed write is recorded with what it replaced (the note's previous text; a move's path pair and link rewrites), and undoing a turn walks its records backwards — a note still holding what the write left gets its previous text back, a created note goes to the trash, a move moves back when nothing has taken its place, a rewrite is restored when its note is untouched; anything edited since is skipped and counted. The journal lives with the session in memory; the jsonl gets an `undo` marker (counts only). Not a snapshot, not git |
@@ -144,7 +144,15 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   (adblock, how links open, web search), v0.5's reader image proxy and clip image
   localisation, v0.6's check-for-updates-at-startup, v0.9's interface language, and
   appearance preferences (body text size, clamped to 15..=18 in `settings_set`).
-  Stored in the OS app-config directory, never inside a vault.
+  The `provider` field picks bring-your-own-key (the fields above) or vemry hosted,
+  and `provider_config()` builds the hosted `ProviderConfig` from the account
+  module's in-process copy. Stored in the OS app-config directory, never inside a
+  vault.
+- `account.rs`: the hosted account — `account.json` (0600), sign-in by e-mail code,
+  the device token, the `/v1/me` snapshot with its freshness rule, redeeming a
+  code, the `account://changed` event, and `localize_relay_error`, the one place a
+  relay error code becomes the user's wording and a 401 clears the token. See
+  "Hosted mode" under the network-exit list.
 
 ### src — the Svelte 5 frontend
 
@@ -2008,7 +2016,7 @@ still allowing only http(s)) renders it into `mainView = "reading"`.
 
 ### The network-exit list (after v0.4)
 
-"Offline first" is stated not as "the only network call is the LLM API" but as five
+"Offline first" is stated not as "the only network call is the LLM API" but as six
 **controlled exits**, with everything else fully usable offline:
 
 1. The LLM channel (chat completions / the Anthropic-format line, server-side search included) —
@@ -2043,6 +2051,61 @@ still allowing only http(s)) renders it into `mainView = "reading"`.
    (the public key is compiled into the app and the private key exists only in the
    publisher's CI secrets; the version's single source of truth is the workspace
    Cargo.toml, and the release process is in docs/RELEASING.md).
+6. The hosted account and relay (`api.vemry.app`, `src-tauri/src/account.rs`) — taken
+   only when the user signs in, or has switched the AI provider to *vemry hosted*.
+   What leaves the machine: the e-mail address at sign-in (and the device's name,
+   platform and app version, for the account's device list); from then on, in hosted
+   mode, the model requests themselves — **byte for byte what bring-your-own-key
+   mode would send to the vendor**, plus four headers (a metering category, a request
+   id, a priority, the client version). The relay is not a new read path: privacy
+   zones, the permission gate and the audit log are unchanged and all client-side,
+   and the request is assembled by the same runner before either provider sees it.
+   Signing out, or switching back to bring your own key, closes the exit; the account
+   snapshot cached on disk is read without any network.
+
+### Hosted mode (the client side of the account protocol)
+
+The user's own endpoint and key stay exactly as they were (`ProviderKind::Custom`,
+the default and the meaning of every existing config). *vemry hosted*
+(`ProviderKind::Hosted`) is a second provider kind rather than a special host name:
+the relay speaks the two shapes the two transports already speak, at
+`<api base>/v1/chat/completions` and `<api base>/anthropic/v1/messages`, so the
+hosted `ProviderConfig` is the relay's `/v1` as base_url, the account's **device
+token** as the key, and the **model catalog** the account snapshot carries. The three
+provider predicates read that catalog in hosted mode (`web_search_available`,
+`images_unsupported`; `include_usage` and `reasoning_supported` are true because the
+upstream is DeepSeek) — the composer's search switch and image warning follow the
+catalog with no TS reimplementation, as before.
+
+The account lives in `account.json` (app-config directory, mode 0600, separate from
+settings.json so an exported settings file never carries the token): the token, the
+last `/v1/me` snapshot, when it was fetched and its ETag. Sign-in is an e-mail
+address and a 6-digit code — no password, no deep link, the same flow on the desktop
+and on the account page. **Freshness** is the offline rule: a snapshot fetched
+within ten minutes is fresh; within seven days it is stale and still applies (a
+machine that cannot reach the service keeps its Pro); past that it is expired and the
+account counts as free and not hosted until a refresh succeeds. A hosted turn
+refreshes a non-fresh snapshot first, and every hosted turn refreshes once more when
+it ends (with the ETag, so an unchanged one is a 304); the account panel and the
+status bar follow through the `account://changed` event. A 401 from any request —
+the relay, a refresh — means the token was revoked: the file is cleared and the
+frontend told, in one place (`localize_relay_error`).
+
+Relay errors carry a code (`{"error":{"code":…}}`); the glue layer maps the code to
+the user's wording with an action (sign in, top up, wait, use your own key) and
+leaves every other error as it was. A request in hosted mode adds `X-Vemry-Feature`
+(chat / study / translate / cards / import / research / compact — the runner sets it
+from the skill the user chose, translation and compaction set their own; it is the
+relay's metering category and the one data source behind "about N papers left this
+month"), a fresh `X-Vemry-Request-Id`, `X-Vemry-Priority` (interactive for a turn
+the user is waiting on, background for translation; a mid-turn summary is metered
+as compaction but carries the priority of the turn it unblocks, since the user is
+waiting on that turn) and a `User-Agent` naming the client version; none of these
+is a body field, and none is sent to a custom provider. The stream-idle limit is 600 s through the relay (the vendor's
+peak-time queue sends only comment lines for up to ten minutes, and the read loop
+counts events) and 120 s otherwise. The development override `VEMRY_API_BASE`
+replaces the relay's origin and is never persisted.
+
 ## The rest of the app shell (implemented)
 
 "The app shell" covered the activity bar, the menu bar and context menus. These came

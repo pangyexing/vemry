@@ -1005,6 +1005,14 @@ pub struct SettingsView {
     pub translate_target: String,
     pub translate_model: String,
     pub translate_addendum: String,
+    /// Which provider the AI talks to (custom = bring your own key, hosted = vemry
+    /// hosted) and the hosted model choice ("" = the catalog's default).
+    pub provider: settings::ProviderSetting,
+    pub hosted_model: String,
+    /// Derived and read-only: the model requests actually name (the research
+    /// panel's header) — the hosted choice or the catalog's default in hosted mode,
+    /// `model` otherwise.
+    pub active_model: String,
 }
 
 /// A partial update: `None` = keep the existing value. The frontend fetches
@@ -1012,6 +1020,8 @@ pub struct SettingsView {
 #[derive(Deserialize)]
 pub struct SettingsUpdate {
     pub base_url: Option<String>,
+    pub provider: Option<settings::ProviderSetting>,
+    pub hosted_model: Option<String>,
     pub language: Option<settings::LangSetting>,
     pub model: Option<String>,
     pub api_key: Option<String>,
@@ -1055,6 +1065,7 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
     let web_search_active = s.web_search_active();
     let reasoning_effort_active = s.reasoning_active();
     let images_unsupported = s.provider_config().images_unsupported();
+    let active_model = s.active_model();
     SettingsView {
         base_url: s.base_url.clone(),
         model: s.model.clone(),
@@ -1088,6 +1099,9 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         translate_target: s.translate_target,
         translate_model: s.translate_model,
         translate_addendum: s.translate_addendum,
+        provider: s.provider,
+        hosted_model: s.hosted_model,
+        active_model,
     }
 }
 
@@ -1103,6 +1117,12 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     }
     if let Some(api_key) = update.api_key {
         s.api_key = api_key;
+    }
+    if let Some(v) = update.provider {
+        s.provider = v;
+    }
+    if let Some(v) = update.hosted_model {
+        s.hosted_model = v.trim().to_string();
     }
     let language_changed = update.language.is_some_and(|v| v != s.language);
     if let Some(v) = update.language {
@@ -1363,9 +1383,34 @@ async fn run_agent_turn(
     on_event: &Channel<AgentEvent>,
 ) -> Result<String, String> {
     let settings: Settings = settings::load(app);
+    let hosted = settings.hosted();
+    if hosted {
+        // The account has to be in hand before a hosted turn goes out: signed in,
+        // with hosted access, and a snapshot within the grace. A snapshot older than
+        // ten minutes is refreshed first (a stale one still passes if the refresh
+        // fails; an expired one does not), so a day-old entitlement never refuses a
+        // user whose purchase went through this morning.
+        let st = crate::account::status(app);
+        if !st.logged_in {
+            return Err(crate::i18n::t(crate::i18n::current(), "ipc.hosted.signIn"));
+        }
+        if st.freshness != crate::account::Freshness::Fresh {
+            let _ = crate::account::refresh(app).await;
+        }
+        let st = crate::account::status(app);
+        if !st.logged_in {
+            return Err(crate::i18n::t(crate::i18n::current(), "ipc.hosted.signIn"));
+        }
+        if st.freshness == crate::account::Freshness::Expired {
+            return Err(crate::i18n::t(crate::i18n::current(), "ipc.hosted.expired"));
+        }
+        if !st.hosted_ok {
+            return Err(crate::i18n::t(crate::i18n::current(), "ipc.hosted.hosted_not_allowed"));
+        }
+    }
     let provider = settings.provider_config();
     if provider.api_key.is_empty() {
-        return Err(crate::i18n::t(crate::i18n::current(), "ipc.noApiKey"));
+        return Err(crate::i18n::t(crate::i18n::current(), if hosted { "ipc.hosted.signIn" } else { "ipc.noApiKey" }));
     }
 
     let (root, meta_dir, write_policy) = {
@@ -1517,13 +1562,32 @@ async fn run_agent_turn(
     // Persist the model context at the end of the turn (written on an error or a cancellation too: it stays consistent with the in-memory state, so a restart can resume)
     write_history(&meta_dir, &session_id, &history);
     drop(history);
+    // A hosted turn moved the balance: the snapshot is refreshed once the turn is
+    // over, whatever its outcome (with the ETag, so an unchanged one is a 304), and
+    // the account panel and the status bar follow through the account event
+    if hosted {
+        let app_for_refresh = app.clone();
+        tokio::spawn(async move {
+            let _ = crate::account::refresh(&app_for_refresh).await;
+        });
+    }
 
     // notes may have been written by the agent — let the UI refresh
     broadcast(app, &VaultEvent::IndexReady {
         note_count: state.vault.lock().unwrap().as_ref().map(|v| v.index().note_count()).unwrap_or(0),
     });
 
-    run_result.map_err(|e| e.to_string())?;
+    // A relay error carries a code the user can act on (sign in, top up, wait):
+    // rendered in their words, with a 401 clearing the token on the way (see
+    // account::localize_relay_error). Everything else keeps its text as before.
+    run_result.map_err(|e| {
+        let text = e.to_string();
+        if hosted {
+            crate::account::localize_relay_error(app, &text).unwrap_or(text)
+        } else {
+            text
+        }
+    })?;
     Ok(session_id)
 }
 

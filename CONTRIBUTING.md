@@ -27,6 +27,8 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | Editor behaviour | `src/lib/editor/` | CodeMirror 6 |
 | AI tools / prompts / skills | `crates/vemry-agent/src/{tools,prompt,skills}.rs` + the built-in skills in `crates/vemry-agent/skills/` | Rust |
 | LLM transport (Chat Completions / DeepSeek's Anthropic-format line + search) | `crates/vemry-agent/src/{client,anthropic}.rs` | Rust |
+| The provider (bring your own key / vemry hosted) and the hosted model catalog | `crates/vemry-agent/src/provider.rs` + `src-tauri/src/settings.rs` | Rust |
+| The hosted account (sign-in, the device token, the entitlement snapshot, relay errors) | `src-tauri/src/account.rs` + `src/lib/components/AccountPanel.svelte` + `src/lib/stores/account.svelte.ts` | Rust + Svelte |
 | Script sandbox / `vemry.*` API / workflows | `crates/vemry-script/src/` | Rust |
 | Clipping (extraction / html→md / frontmatter) | `crates/vemry-clip/src/` | Rust |
 | Browser tabs and panel / detached window / clip commands / ad blocking | `src-tauri/src/browser/` + `src/lib/components/BrowserPanel.svelte` | Rust + TS |
@@ -80,12 +82,13 @@ VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt 
    private formats.
 3. **The permission boundary lives in Rust**: every AI write path goes through
    `PermissionGate`; the frontend only renders the decision.
-4. **Offline first**: exactly five controlled network exits — the LLM channel
+4. **Offline first**: exactly six controlled network exits — the LLM channel
    (server-side search included), a browser window the user opened, a
    blocking-rule download, the image proxy for the reader and the clipper
-   (`vemry-asset://`), and the update check and download (user-triggered by
-   default; see ARCHITECTURE's "The network-exit list"). No other network calls, and no
-   telemetry.
+   (`vemry-asset://`), the update check and download (user-triggered by
+   default), and the hosted account and relay (only after signing in or switching
+   the provider to vemry hosted; see ARCHITECTURE's "The network-exit list"). No
+   other network calls, and no telemetry.
 5. **Everything is a command**: a new capability registers in the command
    registry, not just as a button somewhere.
 6. **Core depends on neither UI nor AI**: `vemry-core` stays free of Tauri and

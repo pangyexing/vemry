@@ -43,6 +43,13 @@ pub fn t(lang: Lang, key: &str) -> String {
         .unwrap_or_else(|| key.to_string())
 }
 
+/// Whether the catalog carries a key — for a key assembled at runtime (the
+/// hosted relay's error codes, `ipc.hosted.<code>`), where "unknown" must fall
+/// back to something else rather than render the key.
+pub fn has_key(key: &str) -> bool {
+    catalog(Lang::En).contains_key(key)
+}
+
 /// Resolve the stored preference. `Auto` follows the OS locale — the frontend
 /// resolves `auto` against `navigator.language` separately, and the two agree
 /// in every case that matters (both ask the same OS).
@@ -200,6 +207,27 @@ mod tests {
         "ipc.noRuleSource",
         "ipc.noRuleFile",
         "ipc.notAFilterList",
+        // The hosted account and relay (account.rs): the sign-in states, the relay's
+        // error codes (`ipc.hosted.<code>`, looked up through has_key), the fallbacks
+        "ipc.hosted.signIn",
+        "ipc.hosted.expired",
+        "ipc.hosted.network",
+        "ipc.hosted.failed",
+        "ipc.hosted.auth_invalid",
+        "ipc.hosted.insufficient_balance",
+        "ipc.hosted.hosted_not_allowed",
+        "ipc.hosted.rate_limited",
+        "ipc.hosted.daily_cap",
+        "ipc.hosted.upstream_unavailable",
+        "ipc.hosted.upstream_busy",
+        "ipc.hosted.spend_cap",
+        "ipc.hosted.hosted_disabled",
+        "ipc.hosted.model_unknown",
+        "ipc.hosted.payload_too_large",
+        "ipc.hosted.moderation_refused",
+        "ipc.hosted.email_invalid",
+        "ipc.hosted.otp_invalid",
+        "ipc.hosted.code_invalid",
         // Path rejections, reached through `err()` above rather than by name: the
         // keys live in `PathReject::key()` in vemry-core, so grepping this crate for
         // a string literal will not find them. Renaming one is a two-file edit

@@ -3,15 +3,19 @@
 // synchronously (a click gesture cannot await an IPC round trip). App refreshes it once
 // at startup, and SettingsModal writes the mirrored fields directly after a successful
 // save — outside those two there is no writer.
-import { api, type SettingsView } from "$lib/api";
+import { api, type ProviderSetting, type SettingsView } from "$lib/api";
 
 class PrefsStore {
   /** An ordinary click on a rendered link in the editor opens it; with it off, only
    *  ⌘/Ctrl+click does. The default matches Rust's default_true, so the behaviour is
    *  already right before the IPC returns. */
   clickOpensLinks = $state(true);
-  /** The current model's name (visible in the research panel's header); updated by refresh after the settings are saved. */
+  /** The model requests actually name (visible in the research panel's header): the hosted
+   *  choice or the catalog's default in hosted mode, the custom field otherwise — Rust's
+   *  active_model; updated by refresh after the settings are saved. */
   model = $state("");
+  /** Which provider the AI talks to; the status bar shows the hosted quota only in hosted mode. */
+  provider = $state<ProviderSetting>("custom");
   /** The value of the "AI web search" switch — the composer's model menu and the settings page write the same field. */
   webSearchEnabled = $state(false);
   /** Whether the provider runs the search at all (the endpoint is DeepSeek) — derived on the Rust side, and the check is not reimplemented in the frontend; the menu item is disabled without it. */
@@ -42,7 +46,8 @@ class PrefsStore {
     try {
       const s = await api.settingsGet();
       this.clickOpensLinks = s.click_opens_links;
-      this.model = s.model;
+      this.model = s.active_model;
+      this.provider = s.provider;
       this.webSearchEnabled = s.web_search_enabled;
       this.webSearchAvailable = s.web_search_available;
       this.webSearchActive = s.web_search_active;

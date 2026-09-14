@@ -1,3 +1,4 @@
+mod account;
 mod agent_bridge;
 mod agent_window;
 mod browser;
@@ -82,6 +83,9 @@ pub fn run() {
             let settings = settings::load(app.handle());
             // The language is settled first; the menu and the error wording both read it
             i18n::set_current(i18n::resolve(settings.language));
+            // The account file into its in-process copy: the hosted provider is built
+            // from it on every request without a disk read
+            account::warm(app.handle());
             // The browser's shape is the last session's choice: the registry starts
             // there, so the first tab already opens in it
             if !settings.browser_docked {
@@ -191,6 +195,12 @@ pub fn run() {
             commands::type_set_disabled,
             commands::settings_get,
             commands::settings_set,
+            account::account_status,
+            account::account_login_start,
+            account::account_login_verify,
+            account::account_logout,
+            account::account_refresh,
+            account::account_redeem,
             commands::agent_start,
             commands::agent_retry,
             commands::agent_history_truncate,
