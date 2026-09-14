@@ -51,6 +51,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY0Qzk2QzVFNzhBQzBCMUUKUldRZUM2eDRYbXpKOUhzVitwdWlBQVlJVVM4Wk9VcDg3S2xvL2cyMVFNQmFDQ3VXVWxURUtiRzUK",
       "endpoints": [
+        "https://dl.vemry.app/latest.json",
         "https://github.com/pangyexing/vemry/releases/latest/download/latest.json"
       ]
     }

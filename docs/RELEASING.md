@@ -56,7 +56,10 @@ Then:
      `darwin-x86_64`, `windows-x86_64`, `linux-x86_64`
 5. Write the release notes (include the Gatekeeper instructions while there is no
    Apple certificate), then publish.
-6. **Test the upgrade for real**: install an older version → *Check for updates*
+6. Mirror the release to `dl.vemry.app`, the updater's first endpoint (the
+   tooling for that lives outside this repository). Until the mirror is done,
+   the updater still serves the previous version.
+7. **Test the upgrade for real**: install an older version → *Check for updates*
    in the app → *Install update* in the dialog → *Restart now* and confirm the
    version.
 
@@ -83,9 +86,9 @@ measured not to work for signing at package time. `pnpm tauri dev` is unaffected
 ## Pre-releases and dry runs
 
 - A tag containing `-` (such as `v0.6.0-rc.1`) is marked as a prerelease
-  automatically. The updater endpoint points at `releases/latest`, and GitHub's
-  `latest` excludes prereleases, so **an rc is never pushed to existing users** —
-  which makes it a good way to exercise the whole pipeline.
+  automatically. A prerelease is mirrored without its `latest.json`, and
+  GitHub's `releases/latest` excludes prereleases, so **an rc is never pushed to
+  existing users** — which makes it a good way to exercise the whole pipeline.
 - A manual `workflow_dispatch` from the Actions page is a dry run: it builds
   without creating a release.
 
