@@ -86,6 +86,19 @@
   const markedNotes = $derived(vault.notes.filter((n) => n.private).sort((a, b) => a.id.localeCompare(b.id, "zh")));
   /** There are unsaved changes: a stray click on the overlay should not evaporate a half-pasted key */
   let dirty = $state(false);
+  /** Which fields the user changed since the dialog opened. The load on open fills every
+   *  field *not* in it: a keystroke or a click that lands before settingsGet answers keeps
+   *  that one field and the others still come from disk — otherwise the first save after
+   *  an app start would write the component's initial values (an empty key, the default
+   *  endpoint) over the file. */
+  let touched = new Set<string>();
+  /** The load in flight for this open: Save waits for it, so a click on Save before the
+   *  answer arrives cannot write the initial values of the fields it would have filled. */
+  let loading: Promise<void> | null = null;
+  function touch(field: string) {
+    touched.add(field);
+    dirty = true;
+  }
   /** Whether the mouse was pressed on the overlay. A click's target is the common ancestor
    *  of the mousedown and the mouseup, so dragging to select text in an input and releasing
    *  outside the dialog lands the click on the overlay */
@@ -104,42 +117,48 @@
     if (untrack(() => TABS.find((tb) => tb.id === tab)?.needsVault) && !root) tab = "general";
     saved = false;
     dirty = false;
-    api.settingsGet().then((s) => {
-      if (dirty) return; // the user started typing before the request returned, so it is not overwritten
-      provider = s.provider;
-      hostedModel = s.hosted_model;
-      baseUrl = s.base_url;
-      model = s.model;
-      apiKey = s.api_key;
+    touched = new Set();
+    loading = api.settingsGet().then((s) => {
+      // Applied field by field: what the user already touched keeps the draft
+      const fill = (field: string, apply: () => void) => {
+        if (!touched.has(field)) apply();
+      };
+      fill("provider", () => (provider = s.provider));
+      fill("hostedModel", () => (hostedModel = s.hosted_model));
+      fill("baseUrl", () => (baseUrl = s.base_url));
+      fill("model", () => (model = s.model));
+      fill("apiKey", () => (apiKey = s.api_key));
       envKeyPresent = s.env_key_present;
-      language = s.language;
-      adblockEnabled = s.adblock_enabled;
-      webSearchEnabled = s.web_search_enabled;
-      planConfirm = s.plan_confirm;
-      provenanceMarks = s.provenance_marks;
-      reasoningEffort = s.reasoning_effort;
+      fill("language", () => (language = s.language));
+      fill("adblockEnabled", () => (adblockEnabled = s.adblock_enabled));
+      fill("webSearchEnabled", () => (webSearchEnabled = s.web_search_enabled));
+      fill("planConfirm", () => (planConfirm = s.plan_confirm));
+      fill("provenanceMarks", () => (provenanceMarks = s.provenance_marks));
+      fill("reasoningEffort", () => (reasoningEffort = s.reasoning_effort));
       reasoningActive = s.reasoning_effort_active;
-      openLinksIn = s.open_links_in;
-      clickOpensLinks = s.click_opens_links;
-      readingImagesEnabled = s.reading_images_enabled;
-      clipLocalizeImages = s.clip_localize_images;
-      formatAgentWrites = s.format_agent_writes;
-      formatClips = s.format_clips;
-      formatCjkSpacing = s.format_cjk_spacing;
-      formatPunctuation = s.format_punctuation;
-      updaterAutoCheck = s.updater_auto_check;
-      noteFontSize = s.note_font_size;
-      readableLineWidth = s.readable_line_width;
-      if (s.translate_target === "" || (TARGET_TAGS as readonly string[]).includes(s.translate_target)) {
-        translateTarget = s.translate_target;
-        translateTargetCustom = "";
-      } else {
-        translateTarget = "custom";
-        translateTargetCustom = s.translate_target;
-      }
-      translateModel = s.translate_model;
-      translateAddendum = s.translate_addendum;
-      ruleUrls = s.adblock_rule_urls.join("\n");
+      fill("openLinksIn", () => (openLinksIn = s.open_links_in));
+      fill("clickOpensLinks", () => (clickOpensLinks = s.click_opens_links));
+      fill("readingImagesEnabled", () => (readingImagesEnabled = s.reading_images_enabled));
+      fill("clipLocalizeImages", () => (clipLocalizeImages = s.clip_localize_images));
+      fill("formatAgentWrites", () => (formatAgentWrites = s.format_agent_writes));
+      fill("formatClips", () => (formatClips = s.format_clips));
+      fill("formatCjkSpacing", () => (formatCjkSpacing = s.format_cjk_spacing));
+      fill("formatPunctuation", () => (formatPunctuation = s.format_punctuation));
+      fill("updaterAutoCheck", () => (updaterAutoCheck = s.updater_auto_check));
+      fill("noteFontSize", () => (noteFontSize = s.note_font_size));
+      fill("readableLineWidth", () => (readableLineWidth = s.readable_line_width));
+      fill("translateTarget", () => {
+        if (s.translate_target === "" || (TARGET_TAGS as readonly string[]).includes(s.translate_target)) {
+          translateTarget = s.translate_target;
+          translateTargetCustom = "";
+        } else {
+          translateTarget = "custom";
+          translateTargetCustom = s.translate_target;
+        }
+      });
+      fill("translateModel", () => (translateModel = s.translate_model));
+      fill("translateAddendum", () => (translateAddendum = s.translate_addendum));
+      fill("ruleUrls", () => (ruleUrls = s.adblock_rule_urls.join("\n")));
     });
     // Opening it allows pasting straight away, and only then does Escape have a focus to land on
     queueMicrotask(() => firstInput?.focus());
@@ -291,6 +310,7 @@
   }
 
   async function save() {
+    await loading?.catch(() => undefined);
     await api.settingsSet({
       language,
       provider,
@@ -409,7 +429,7 @@
           {#if tab === "general"}
             <label>
               <span>{t("settings.language.label")}</span>
-              <select bind:value={language} onchange={() => (dirty = true)}>
+              <select bind:value={language} onchange={() => touch("language")}>
                 <option value="auto">{t("settings.language.auto")}</option>
                 <option value="zh-CN">{t("settings.language.zh")}</option>
                 <option value="en">{t("settings.language.en")}</option>
@@ -424,13 +444,13 @@
                   role="radio"
                   aria-checked={provider === "hosted"}
                   class:active={provider === "hosted"}
-                  onclick={() => { provider = "hosted"; dirty = true; }}
+                  onclick={() => { provider = "hosted"; touch("provider"); }}
                 >{t("settings.providerHosted")}</button>
                 <button
                   role="radio"
                   aria-checked={provider === "custom"}
                   class:active={provider === "custom"}
-                  onclick={() => { provider = "custom"; dirty = true; }}
+                  onclick={() => { provider = "custom"; touch("provider"); }}
                 >{t("settings.providerCustom")}</button>
               </div>
               <small>{t("settings.providerHint")}</small>
@@ -439,7 +459,7 @@
               {@const catalogDefault = account.models.find((m) => m.default)?.id}
               <label>
                 <span>{t("settings.hostedModel")}</span>
-                <select bind:value={hostedModel} onchange={() => (dirty = true)} disabled={!account.loggedIn}>
+                <select bind:value={hostedModel} onchange={() => touch("hostedModel")} disabled={!account.loggedIn}>
                   <option value="">{catalogDefault ? t("settings.hostedModelDefault", { model: catalogDefault }) : t("settings.hostedModelDefaultSignedOut")}</option>
                   {#each account.models as m (m.id)}
                     <option value={m.id}>{m.id}</option>
@@ -457,7 +477,7 @@
               <input
                 bind:this={firstInput}
                 bind:value={baseUrl}
-                oninput={() => (dirty = true)}
+                oninput={() => touch("baseUrl")}
                 placeholder="https://open.bigmodel.cn/api/paas/v4"
                 spellcheck="false"
                 list="base-url-presets"
@@ -473,7 +493,7 @@
               <span>{t("settings.model")}</span>
               <input
                 bind:value={model}
-                oninput={() => (dirty = true)}
+                oninput={() => touch("model")}
                 placeholder="glm-4.7-flash"
                 spellcheck="false"
                 list="model-presets"
@@ -490,7 +510,7 @@
               <span>{t("settings.apiKey")}</span>
               <input
                 bind:value={apiKey}
-                oninput={() => (dirty = true)}
+                oninput={() => touch("apiKey")}
                 type="password"
                 placeholder={t("settings.apiKeyPlaceholder")}
                 spellcheck="false"
@@ -513,7 +533,7 @@
             {/if}
             <label>
               <span>{t("settings.fontSize")}</span>
-              <select bind:value={noteFontSize} onchange={() => (dirty = true)}>
+              <select bind:value={noteFontSize} onchange={() => touch("noteFontSize")}>
                 <option value={15}>{t("settings.fontSizeCompact")}</option>
                 <option value={16}>{t("settings.fontSizeDefault")}</option>
                 <option value={17}>17 px</option>
@@ -523,7 +543,7 @@
             </label>
             <div class="field">
               <label class="inline-toggle">
-                <input type="checkbox" bind:checked={readableLineWidth} onchange={() => (dirty = true)} />
+                <input type="checkbox" bind:checked={readableLineWidth} onchange={() => touch("readableLineWidth")} />
                 <span>{t("settings.readableLineWidth")}</span>
               </label>
               <small>
@@ -533,7 +553,7 @@
           {:else if tab === "ai"}
             <div class="field">
               <label class="inline-toggle">
-                <input type="checkbox" bind:checked={webSearchEnabled} onchange={() => (dirty = true)} />
+                <input type="checkbox" bind:checked={webSearchEnabled} onchange={() => touch("webSearchEnabled")} />
                 <span>{t("settings.webSearch")}</span>
               </label>
               <small>
@@ -542,7 +562,7 @@
             </div>
             <div class="field">
               <label class="inline-toggle">
-                <input type="checkbox" bind:checked={planConfirm} onchange={() => (dirty = true)} />
+                <input type="checkbox" bind:checked={planConfirm} onchange={() => touch("planConfirm")} />
                 <span>{t("settings.planConfirm")}</span>
               </label>
               <small>
@@ -551,7 +571,7 @@
             </div>
             <div class="field">
               <label class="inline-toggle">
-                <input type="checkbox" bind:checked={provenanceMarks} onchange={() => (dirty = true)} />
+                <input type="checkbox" bind:checked={provenanceMarks} onchange={() => touch("provenanceMarks")} />
                 <span>{t("settings.provenanceMarks")}</span>
               </label>
               <small>
@@ -560,7 +580,7 @@
             </div>
             <div class="field">
               <label for="reasoning-effort">{t("settings.reasoningEffort")}</label>
-              <select id="reasoning-effort" bind:value={reasoningEffort} onchange={() => (dirty = true)}>
+              <select id="reasoning-effort" bind:value={reasoningEffort} onchange={() => touch("reasoningEffort")}>
                 {#each EFFORT_OPTIONS as o (o.value)}
                   {@const hint = t(`settings.effort.${o.value}Hint`)}
                   <option value={o.value}
@@ -581,7 +601,7 @@
               <p class="note">{t("settings.translate.disclosure")}</p>
               <label>
                 <span>{t("settings.translate.target")}</span>
-                <select bind:value={translateTarget} onchange={() => (dirty = true)}>
+                <select bind:value={translateTarget} onchange={() => touch("translateTarget")}>
                   <option value="">{t("settings.translate.targetAuto")}</option>
                   {#each TARGET_TAGS as tag (tag)}
                     <option value={tag}>{targetLabel(tag)}</option>
@@ -589,17 +609,17 @@
                   <option value="custom">{t("settings.translate.targetCustom")}</option>
                 </select>
                 {#if translateTarget === "custom"}
-                  <input bind:value={translateTargetCustom} oninput={() => (dirty = true)} placeholder={t("settings.translate.targetCustomPlaceholder")} spellcheck="false" />
+                  <input bind:value={translateTargetCustom} oninput={() => touch("translateTarget")} placeholder={t("settings.translate.targetCustomPlaceholder")} spellcheck="false" />
                 {/if}
               </label>
               <label>
                 <span>{t("settings.translate.model")}</span>
-                <input bind:value={translateModel} oninput={() => (dirty = true)} placeholder={model || "glm-4.7-flash"} spellcheck="false" list="model-presets" />
+                <input bind:value={translateModel} oninput={() => touch("translateModel")} placeholder={model || "glm-4.7-flash"} spellcheck="false" list="model-presets" />
                 <small>{t("settings.translate.modelHint")}</small>
               </label>
               <label>
                 <span>{t("settings.translate.addendum")}</span>
-                <input bind:value={translateAddendum} oninput={() => (dirty = true)} spellcheck="false" />
+                <input bind:value={translateAddendum} oninput={() => touch("translateAddendum")} spellcheck="false" />
                 <small>{t("settings.translate.addendumHint")}</small>
               </label>
             </section>
@@ -635,7 +655,7 @@
                 <small class="err">{updater.error}</small>
               {/if}
               <label class="inline-toggle">
-                <input type="checkbox" bind:checked={updaterAutoCheck} onchange={() => (dirty = true)} />
+                <input type="checkbox" bind:checked={updaterAutoCheck} onchange={() => touch("updaterAutoCheck")} />
                 <span>{t("settings.autoCheck")}</span>
               </label>
               <small>
@@ -646,7 +666,7 @@
             <section class="privacy">
               <h3>{t("settings.tab.browser")}</h3>
               <label class="inline-toggle">
-                <input type="checkbox" bind:checked={adblockEnabled} onchange={() => (dirty = true)} />
+                <input type="checkbox" bind:checked={adblockEnabled} onchange={() => touch("adblockEnabled")} />
                 <span>{t("settings.adblock")}</span>
               </label>
               {#if browser.adblock?.state === "ready"}
@@ -662,7 +682,7 @@
               {/if}
               <label>
                 <span>{t("settings.openLinksIn")}</span>
-                <select bind:value={openLinksIn} onchange={() => (dirty = true)}>
+                <select bind:value={openLinksIn} onchange={() => touch("openLinksIn")}>
                   <option value="reading">{t("settings.openLinksReading")}</option>
                   <option value="internal">{t("settings.openLinksInternal")}</option>
                   <option value="system">{t("settings.openLinksSystem")}</option>
@@ -671,7 +691,7 @@
               </label>
               <div class="field">
                 <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={clickOpensLinks} onchange={() => (dirty = true)} />
+                  <input type="checkbox" bind:checked={clickOpensLinks} onchange={() => touch("clickOpensLinks")} />
                   <span>{t("settings.clickOpensLinks")}</span>
                 </label>
                 <small>
@@ -680,7 +700,7 @@
               </div>
               <div class="field">
                 <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={readingImagesEnabled} onchange={() => (dirty = true)} />
+                  <input type="checkbox" bind:checked={readingImagesEnabled} onchange={() => touch("readingImagesEnabled")} />
                   <span>{t("settings.readingImages")}</span>
                 </label>
                 <small>
@@ -689,7 +709,7 @@
               </div>
               <div class="field">
                 <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={clipLocalizeImages} onchange={() => (dirty = true)} />
+                  <input type="checkbox" bind:checked={clipLocalizeImages} onchange={() => touch("clipLocalizeImages")} />
                   <span>{t("settings.clipLocalizeImages")}</span>
                 </label>
                 <small>
@@ -699,32 +719,32 @@
               <h4>{t("settings.formatSection")}</h4>
               <div class="field">
                 <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={formatAgentWrites} onchange={() => (dirty = true)} />
+                  <input type="checkbox" bind:checked={formatAgentWrites} onchange={() => touch("formatAgentWrites")} />
                   <span>{t("settings.formatAgentWrites")}</span>
                 </label>
                 <small>{t("settings.formatAgentWritesHint")}</small>
               </div>
               <div class="field">
                 <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={formatClips} onchange={() => (dirty = true)} />
+                  <input type="checkbox" bind:checked={formatClips} onchange={() => touch("formatClips")} />
                   <span>{t("settings.formatClips")}</span>
                 </label>
                 <small>{t("settings.formatClipsHint")}</small>
               </div>
               <div class="field">
                 <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={formatCjkSpacing} onchange={() => (dirty = true)} />
+                  <input type="checkbox" bind:checked={formatCjkSpacing} onchange={() => touch("formatCjkSpacing")} />
                   <span>{t("settings.formatCjkSpacing")}</span>
                 </label>
                 <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={formatPunctuation} onchange={() => (dirty = true)} />
+                  <input type="checkbox" bind:checked={formatPunctuation} onchange={() => touch("formatPunctuation")} />
                   <span>{t("settings.formatPunctuation")}</span>
                 </label>
                 <small>{t("settings.formatOptInHint")}</small>
               </div>
               <label>
                 <span>{t("settings.ruleUrls")}</span>
-                <textarea rows="2" bind:value={ruleUrls} oninput={() => (dirty = true)} spellcheck="false"></textarea>
+                <textarea rows="2" bind:value={ruleUrls} oninput={() => touch("ruleUrls")} spellcheck="false"></textarea>
                 <small>
                   {t("settings.ruleUrlsHint")}
                   <button class="btn small" disabled={updatingRules} onclick={updateRules}>
