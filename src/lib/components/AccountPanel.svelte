@@ -86,13 +86,21 @@
     }
   }
 
+  /** The wording of a failed action. A 401 has already cleared the account by the time
+   *  the error arrives (Rust acts on it before answering), so the panel is showing the
+   *  sign-in form again: the relay's "sign in again under Settings › Account" would point
+   *  at the page the user is on, and the panel's own line says it. */
+  function failed(e: unknown): string {
+    return account.loggedIn ? String(e) : t("account.sessionRevoked");
+  }
+
   async function refresh() {
     refreshing = true;
     error = null;
     try {
       await account.refresh();
     } catch (e) {
-      error = String(e);
+      error = failed(e);
     } finally {
       refreshing = false;
     }
@@ -108,7 +116,7 @@
       redeemCode = "";
       toast.push(t("account.redeemed"));
     } catch (e) {
-      error = String(e);
+      error = failed(e);
     } finally {
       redeemBusy = false;
     }

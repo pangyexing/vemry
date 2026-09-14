@@ -436,10 +436,11 @@
               <small>{t("settings.providerHint")}</small>
             </div>
             {#if provider === "hosted"}
+              {@const catalogDefault = account.models.find((m) => m.default)?.id}
               <label>
                 <span>{t("settings.hostedModel")}</span>
                 <select bind:value={hostedModel} onchange={() => (dirty = true)} disabled={!account.loggedIn}>
-                  <option value="">{t("settings.hostedModelDefault", { model: account.models.find((m) => m.default)?.id ?? "…" })}</option>
+                  <option value="">{catalogDefault ? t("settings.hostedModelDefault", { model: catalogDefault }) : t("settings.hostedModelDefaultSignedOut")}</option>
                   {#each account.models as m (m.id)}
                     <option value={m.id}>{m.id}</option>
                   {/each}

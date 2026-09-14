@@ -350,18 +350,26 @@ fn device_info(app: &AppHandle) -> Value {
     json!({ "name": device_name(), "platform": platform, "app_version": app.package_info().version.to_string() })
 }
 
-/// The machine's name: the environment's, else the `hostname` command's, else
-/// the platform — a label the user recognises in the device list, nothing more.
+/// The machine's name — a label the user recognises in the device list, nothing
+/// more. On macOS the name set in System Settings ("Ada's MacBook Pro"), which is
+/// what `scutil --get ComputerName` answers; `hostname` there is often the login
+/// name or a `.local` name. Elsewhere the environment's, else the `hostname`
+/// command's, else the platform.
 fn device_name() -> String {
+    let command = |program: &str, args: &[&str]| {
+        std::process::Command::new(program)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let computer_name = if cfg!(target_os = "macos") { command("scutil", &["--get", "ComputerName"]) } else { None };
     let from_env = ["HOSTNAME", "COMPUTERNAME"].iter().filter_map(|k| std::env::var(k).ok()).find(|v| !v.trim().is_empty());
-    from_env
-        .or_else(|| {
-            std::process::Command::new("hostname")
-                .output()
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
+    computer_name
+        .or(from_env)
+        .or_else(|| command("hostname", &[]))
         .map(|s| s.trim_end_matches(".local").to_string())
         .unwrap_or_else(|| format!("{} {}", std::env::consts::OS, std::env::consts::ARCH))
 }
