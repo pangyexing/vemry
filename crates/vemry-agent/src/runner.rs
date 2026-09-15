@@ -284,6 +284,21 @@ fn planning_move(name: &str) -> bool {
     !crate::tools::is_write_tool(name) && !matches!(name, "import_page" | "update_plan" | "propose_actions")
 }
 
+/// What a rejected plan does to the rest of its batch (skipped either way) and to the
+/// turn: with a reason the model revises on its next iteration; without one — the UI's
+/// one-click rejection — the turn ends, and the user's next message is the steer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlanRejected {
+    No,
+    Revise,
+    EndTurn,
+}
+
+/// What the model reads when its plan stands — confirmed by the user, or by the
+/// runner for a turn whose plan needed no decision.
+const PLAN_CONFIRMED: &str =
+    "The plan is confirmed; begin. Track progress with update_plan (the whole list each time: doing / done / skipped) and do not restate it in prose.";
+
 /// Transient errors that are safe to resend: rate limiting, a server error, a
 /// broken stream. Retried only while the stream has produced no output at all, so
 /// the user never sees content repeated.
@@ -490,6 +505,25 @@ impl AgentRunner {
         // goes to work without a plan, is not kept: it is retaken at the session's
         // level (below), so no answer and no write is ever produced at the light level.
         let mut planning = config.plan_confirm && matches!(config.reasoning_effort.as_deref(), Some("high") | Some("max"));
+        // Whose decision the plan is. The gate opens for the user only when the plan is
+        // theirs to steer: a request they typed, at a thinking level worth steering before
+        // the expensive part. A routine they chose (a skill ref) has its plan in the
+        // skill's own Plan section — confirming it again is a formality, measured as one
+        // click per routine — and a light turn's plan arrives in seconds and is cheap to
+        // stop; both are confirmed by the runner itself (`execute_plan`), and the card
+        // shows as the progress tracker alone. An unset level is the provider's default,
+        // not known to be light, so it keeps the gate.
+        let skill_turn = refs.iter().any(|r| matches!(r, ContextRef::Skill { .. }));
+        let light_level = matches!(config.reasoning_effort.as_deref(), Some("none") | Some("low"));
+        let plan_auto: Option<&str> = if !config.plan_confirm {
+            None
+        } else if skill_turn {
+            Some("skill")
+        } else if light_level {
+            Some("light")
+        } else {
+            None
+        };
 
         let mut iteration = 0usize;
         let mut transient_retries = 0u32;
@@ -749,7 +783,7 @@ impl AgentRunner {
                 return Ok(());
             }
 
-            let mut plan_rejected = false;
+            let mut plan_rejected = PlanRejected::No;
             for (idx, call) in tool_calls.iter().enumerate() {
                 if cancel.load(Ordering::Relaxed) {
                     // A cancellation must still fill in the remaining tool_results:
@@ -768,7 +802,7 @@ impl AgentRunner {
                 // gets placeholder results (the same filling-in as a cancellation, so
                 // the history structure never dangles), and the model revises the
                 // plan on its next iteration
-                if plan_rejected {
+                if plan_rejected != PlanRejected::No {
                     history.push(ChatMessage::tool_result(
                         call.id.clone(),
                         "(skipped: the plan was rejected; this tool call was not executed — revise the plan first)",
@@ -777,7 +811,7 @@ impl AgentRunner {
                 }
                 let follow = follow_note.as_deref().filter(|_| config.follow_auto);
                 let result = self
-                    .execute_tool(call, &mut grants, &config.session_allow, follow, turn_id.as_deref(), config.format.as_ref(), &web, &mut plan_rejected, on_event, log)
+                    .execute_tool(call, &mut grants, &config.session_allow, follow, turn_id.as_deref(), config.format.as_ref(), &web, &mut plan_rejected, plan_auto, on_event, log)
                     .await;
                 let (ok, output) = match result {
                     Ok(o) => (true, o),
@@ -819,6 +853,20 @@ impl AgentRunner {
                     }
                 }
                 history.push(ChatMessage::tool_result(call.id.clone(), output));
+            }
+            // A rejection without a reason ends the turn here: the user's next message is
+            // the steer, and a model call to ask for it (or to revise blind) would only
+            // cost the wait. The history is whole — the plan call and every skipped call
+            // have their results — so the next turn starts from the rejected plan.
+            if plan_rejected == PlanRejected::EndTurn {
+                // A stop resolved the gate: the turn ends as the cancellation it is
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(AgentError::Cancelled);
+                }
+                let span = compact::last_user_index(history).unwrap_or(0);
+                self.settle_sources(&history[span..], turn_id.as_deref(), &web.lock().unwrap(), on_event, log);
+                on_event(AgentEvent::TurnFinished { truncated: false });
+                return Ok(());
             }
             // The budget wrap-up hint: appended to the last tool result (producing no
             // message of its own and not polluting the conversation structure), which
@@ -934,7 +982,8 @@ impl AgentRunner {
         turn: Option<&str>,
         config_format: Option<&vemry_core::FormatOptions>,
         web: &Mutex<TurnWeb>,
-        plan_rejected: &mut bool,
+        plan_rejected: &mut PlanRejected,
+        plan_auto: Option<&str>,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
     ) -> std::result::Result<String, String> {
@@ -972,7 +1021,7 @@ impl AgentRunner {
 
         if is_session_tool(name) {
             return match name {
-                "propose_plan" => self.execute_plan(call, &args, plan_rejected, on_event, log).await,
+                "propose_plan" => self.execute_plan(call, &args, plan_rejected, plan_auto, on_event, log).await,
                 "propose_actions" => self.execute_actions(call, &args, on_event, log).await,
                 "open_for_reading" => self.execute_read(call, &args, web, on_event, log).await,
                 "update_plan" => self.execute_plan_update(&args, on_event, log),
@@ -1057,7 +1106,16 @@ impl AgentRunner {
 
         let content_override = match &decision {
             PermissionDecision::Deny { reason } => {
-                return Err(format!("denied by user: {reason}"));
+                // The dialog's one-click deny carries no reason; a reason (a scripted gate,
+                // a client that asks for one) is passed through; a stop while the dialog
+                // waited reads as the cancellation it is
+                return Err(if reason == crate::permission::CANCELLED {
+                    "(cancelled: the user stopped this turn while the write awaited their decision; nothing was written)".into()
+                } else if reason.trim().is_empty() {
+                    "denied by user".into()
+                } else {
+                    format!("denied by user: {reason}")
+                });
             }
             PermissionDecision::AllowSession | PermissionDecision::AllowAlways => {
                 grants.all = true;
@@ -1136,12 +1194,18 @@ impl AgentRunner {
     /// propose_plan: record the plan line → emit the event → suspend awaiting the
     /// plan gate → record the plan_decision line → hand the decision back to the
     /// model as a tool result. A Reject sets `plan_rejected`, and the rest of the
-    /// batch is skipped by the caller.
+    /// batch is skipped by the caller — which then either lets the model revise
+    /// (a reason was given) or ends the turn (none was).
+    /// With `plan_auto` set (a skill turn, a light level — decided in `run`) the
+    /// gate is not asked: the list is published as the progress card straight away,
+    /// under a `plan_auto` ledger line rather than a `plan` one, so a replay raises
+    /// no card that looks pending, and the model reads the same confirmation.
     async fn execute_plan(
         &self,
         call: &ToolCall,
         args: &Value,
-        plan_rejected: &mut bool,
+        plan_rejected: &mut PlanRejected,
+        plan_auto: Option<&str>,
         on_event: &(dyn Fn(AgentEvent) + Send + Sync),
         log: &SessionLog,
     ) -> std::result::Result<String, String> {
@@ -1159,6 +1223,11 @@ impl AgentRunner {
             // raised and no plan line is recorded
             return Err("plan must have 2-9 non-empty items".into());
         }
+        if let Some(why) = plan_auto {
+            log.append("plan_auto", json!({ "id": &call.id, "items": &items, "why": why }));
+            self.publish_plan(pending_items(&items), on_event, log);
+            return Ok(PLAN_CONFIRMED.into());
+        }
         log.append("plan", json!({ "id": &call.id, "items": &items }));
         let request = PlanRequest { id: call.id.clone(), items };
         on_event(AgentEvent::PlanRequest { request: request.clone() });
@@ -1167,7 +1236,7 @@ impl AgentRunner {
             PlanDecision::Approve => {
                 log.append("plan_decision", json!({ "id": &request.id, "decision": "approve" }));
                 self.publish_plan(pending_items(&request.items), on_event, log);
-                Ok("The plan is confirmed; begin. Track progress with update_plan (the whole list each time: doing / done / skipped) and do not restate it in prose.".into())
+                Ok(PLAN_CONFIRMED.into())
             }
             PlanDecision::ApproveEdited { items } => {
                 log.append("plan_decision", json!({ "id": &request.id, "decision": "approve_edited", "items": &items }));
@@ -1179,10 +1248,24 @@ impl AgentRunner {
             }
             PlanDecision::Reject { reason } => {
                 log.append("plan_decision", json!({ "id": &request.id, "decision": "reject", "reason": &reason }));
-                *plan_rejected = true;
-                Err(format!(
-                    "The user rejected the plan: {reason}. Revise it accordingly and call propose_plan again — run no other tool until a plan is confirmed."
-                ))
+                if reason == crate::permission::CANCELLED {
+                    // Nobody decided: the turn was stopped while the card waited. The result
+                    // must not carry an instruction past the turn — the revise wording below
+                    // would have the model propose this plan again on whatever the user asks
+                    // next (seen: a stopped tidy-up re-proposed under an unrelated question)
+                    *plan_rejected = PlanRejected::EndTurn;
+                    Err("(cancelled: the user stopped this turn while the plan awaited their decision; it is not confirmed — do not resume or propose it again unless asked)".into())
+                } else if reason.trim().is_empty() {
+                    // The UI's one-click rejection: nothing to revise by, so the turn ends
+                    // (run's batch loop) and the user's next message says what to change
+                    *plan_rejected = PlanRejected::EndTurn;
+                    Err("The user rejected the plan and will say what to change in their next message; nothing else runs this turn.".into())
+                } else {
+                    *plan_rejected = PlanRejected::Revise;
+                    Err(format!(
+                        "The user rejected the plan: {reason}. Revise it accordingly and call propose_plan again — run no other tool until a plan is confirmed."
+                    ))
+                }
             }
         }
     }
@@ -1208,7 +1291,7 @@ impl AgentRunner {
             ActionsDecision::Approve { items } => {
                 log.append("actions_decision", json!({ "id": &request.id, "decision": "approve", "items": &items }));
                 if items.is_empty() {
-                    return Ok("The user kept none of the items; write nothing.".into());
+                    return Ok("The user kept none of the items; write nothing — what was proposed stays where it is.".into());
                 }
                 Ok(format!(
                     "The user kept {} item(s), as edited below. Write each into its target now — append_note as a task line (`- [ ] text [owner:: x] 📅 due`) under the right heading, or update_task for an existing task — and write nothing that is not on this list:\n{}",
@@ -1218,7 +1301,16 @@ impl AgentRunner {
             }
             ActionsDecision::Reject { reason } => {
                 log.append("actions_decision", json!({ "id": &request.id, "decision": "reject", "reason": &reason }));
-                Err(format!("The user rejected the action list: {reason}. Write nothing from it."))
+                // The card's one click discards the whole list, and that ends the task: the
+                // model is told so, or it keeps the plan alive with a "propose it again once
+                // the user names a home" step (seen on the sticky card after a discard)
+                Err(if reason == crate::permission::CANCELLED {
+                    "(cancelled: the user stopped this turn while the action list awaited their decision; nothing from it was written)".into()
+                } else if reason.trim().is_empty() {
+                    "The user discarded the action list. Write nothing from it and do not propose it again unless asked: the task ends here — reconcile the plan (the remaining steps skipped, reason: discarded), then close with what you found and what the user could ask for next.".into()
+                } else {
+                    format!("The user rejected the action list: {reason}. Write nothing from it.")
+                })
             }
         }
     }
@@ -1323,7 +1415,11 @@ impl AgentRunner {
                 }
                 ReadDecision::Deny { reason } => {
                     log.append("read_decision", json!({ "id": &request.id, "decision": "deny", "reason": &reason }));
-                    return Err(format!("The user declined to open these pages: {reason}. Work from what you have, or ask."));
+                    return Err(if reason == crate::permission::CANCELLED {
+                        "(cancelled: the user stopped this turn while the pages awaited their decision; nothing was read)".into()
+                    } else {
+                        format!("The user declined to open these pages: {reason}. Work from what you have, or ask.")
+                    });
                 }
             }
         }
@@ -2354,6 +2450,202 @@ mod tests {
         assert!(
             !events.iter().any(|e| matches!(e, AgentEvent::ToolCallStarted { id, .. } if id == "c2")),
             "a skipped call must not actually start"
+        );
+    }
+
+    /// Rejection without a reason (the UI's one click): the plan call and the skipped
+    /// call both get their results, and the turn ends there — no second model call, the
+    /// user's next message is the steer.
+    #[tokio::test]
+    async fn plan_reject_without_reason_ends_the_turn() {
+        struct RejectPlanSilently;
+        #[async_trait]
+        impl PlanGate for RejectPlanSilently {
+            async fn request(&self, _req: &PlanRequest) -> PlanDecision {
+                PlanDecision::Reject { reason: String::new() }
+            }
+        }
+        let f = fixture();
+        // One scripted response only: a second model call would panic the mock
+        let transport = Arc::new(MockTransport::new(vec![tool_batch(&[
+            ("c1", "propose_plan", r#"{"items": ["a", "b"]}"#),
+            ("c2", "read_note", r#"{"path": "Hello.md"}"#),
+        ])]));
+        let r = AgentRunner {
+            transport: transport.clone(),
+            gate: Arc::new(AutoAllow),
+            plan_gate: Arc::new(RejectPlanSilently),
+            actions_gate: Arc::new(crate::permission::AutoApproveActions),
+            read_gate: Arc::new(crate::permission::DenyReads),
+            vault: f.vault.clone(),
+            sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
+        };
+        let mut history = vec![];
+        let (_log, events) = run_plan_turn(&r, &f, &mut history).await;
+        assert_eq!(transport.requests.lock().unwrap().len(), 1, "the turn ends without another model call");
+        assert!(matches!(events.last(), Some(AgentEvent::TurnFinished { truncated: false })));
+        let c1 = history.iter().find(|m| m.tool_call_id.as_deref() == Some("c1")).unwrap();
+        assert!(c1.text().unwrap().contains("rejected the plan"), "{}", c1.text().unwrap());
+        let c2 = history.iter().find(|m| m.tool_call_id.as_deref() == Some("c2")).unwrap();
+        assert!(c2.text().unwrap().contains("skipped"), "{}", c2.text().unwrap());
+        assert!(matches!(history.last(), Some(m) if m.role == "tool"), "the history ends on the batch's results, nothing dangling");
+    }
+
+    /// A plan turn whose gate would refuse: the runner must never reach it when the
+    /// plan is auto-confirmed.
+    struct NeverAskPlan;
+    #[async_trait]
+    impl PlanGate for NeverAskPlan {
+        async fn request(&self, _req: &PlanRequest) -> PlanDecision {
+            panic!("the plan gate must not be asked");
+        }
+    }
+
+    async fn run_auto_plan_turn(f: &Fixture, config: RunnerConfig, refs: Vec<ContextRef>) -> (Vec<ChatMessage>, Vec<AgentEvent>, String) {
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_batch(&[("c1", "propose_plan", r#"{"items": ["a", "b"]}"#)]),
+            vec![text_chunk("开始"), finish_chunk("stop")],
+        ]));
+        let r = AgentRunner {
+            transport: transport.clone(),
+            gate: Arc::new(AutoAllow),
+            plan_gate: Arc::new(NeverAskPlan),
+            actions_gate: Arc::new(crate::permission::AutoApproveActions),
+            read_gate: Arc::new(crate::permission::DenyReads),
+            vault: f.vault.clone(),
+            sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
+        };
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ev = events.clone();
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        r.run(
+            &ProviderConfig::zhipu("test-key".into()),
+            &config,
+            &mut history,
+            Some("整理".into()),
+            None,
+            refs,
+            None,
+            &move |e| ev.lock().unwrap().push(e),
+            &AtomicBool::new(false),
+            &log,
+        )
+        .await
+        .unwrap();
+        let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
+        (history, Arc::try_unwrap(events).unwrap().into_inner().unwrap(), jsonl)
+    }
+
+    fn assert_plan_auto(history: &[ChatMessage], events: &[AgentEvent], jsonl: &str, why: &str) {
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::PlanRequest { .. })), "no card waits for the user");
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::PlanUpdated { items } if items.len() == 2)), "the list is the progress card");
+        let c1 = history.iter().find(|m| m.tool_call_id.as_deref() == Some("c1")).unwrap();
+        assert!(c1.text().unwrap().contains("The plan is confirmed"), "{}", c1.text().unwrap());
+        assert!(matches!(events.last(), Some(AgentEvent::TurnFinished { .. })), "the turn goes on to the answer");
+        assert!(jsonl.lines().any(|l| l.contains(r#""kind":"plan_auto""#) && l.contains(&format!(r#""why":"{why}""#))), "{jsonl}");
+        assert!(!jsonl.lines().any(|l| l.contains(r#""kind":"plan""#)), "no plan line: a replay would raise a card that looks pending\n{jsonl}");
+    }
+
+    /// A routine the user chose: its plan is the skill's own, so the gate is not
+    /// asked (at any level — here the session's, which would otherwise gate).
+    #[tokio::test]
+    async fn plan_is_auto_confirmed_for_a_skill_turn() {
+        let f = fixture();
+        let config = RunnerConfig { plan_confirm: true, reasoning_effort: Some("high".into()), ..Default::default() };
+        let (history, events, jsonl) = run_auto_plan_turn(&f, config, vec![ContextRef::Skill { path: "tidy-inbox".into() }]).await;
+        assert_plan_auto(&history, &events, &jsonl, "skill");
+    }
+
+    /// A typed request at a light level: the plan arrives in seconds and is cheap to
+    /// stop, so it is the progress card alone.
+    #[tokio::test]
+    async fn plan_is_auto_confirmed_at_a_light_level() {
+        let f = fixture();
+        let config = RunnerConfig { plan_confirm: true, reasoning_effort: Some("low".into()), ..Default::default() };
+        let (history, events, jsonl) = run_auto_plan_turn(&f, config, vec![]).await;
+        assert_plan_auto(&history, &events, &jsonl, "light");
+    }
+
+    /// A stop while the plan card waits: the gate falls back to the cancelled reason,
+    /// and the plan's tool result reads as a cancellation — the wording that asks for a
+    /// revision would have the model propose the plan again on whatever the user asks
+    /// next. The run ends as a cancellation, not a finish.
+    #[tokio::test]
+    async fn a_stop_at_the_plan_gate_leaves_no_revise_instruction() {
+        struct StopAtPlan(Arc<AtomicBool>);
+        #[async_trait]
+        impl PlanGate for StopAtPlan {
+            async fn request(&self, _req: &PlanRequest) -> PlanDecision {
+                // What agent_cancel does: the flag first, then every pending gate falls back
+                self.0.store(true, Ordering::SeqCst);
+                PlanDecision::Reject { reason: crate::permission::CANCELLED.into() }
+            }
+        }
+        let f = fixture();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let transport = Arc::new(MockTransport::new(vec![tool_batch(&[
+            ("c1", "propose_plan", r#"{"items": ["a", "b"]}"#),
+            ("c2", "read_note", r#"{"path": "Hello.md"}"#),
+        ])]));
+        let r = AgentRunner {
+            transport: transport.clone(),
+            gate: Arc::new(AutoAllow),
+            plan_gate: Arc::new(StopAtPlan(cancel.clone())),
+            actions_gate: Arc::new(crate::permission::AutoApproveActions),
+            read_gate: Arc::new(crate::permission::DenyReads),
+            vault: f.vault.clone(),
+            sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
+        };
+        let log = SessionLog::create(f.log_dir.path()).unwrap();
+        let mut history = vec![];
+        let result = r
+            .run(&ProviderConfig::zhipu("test-key".into()), &plan_config(), &mut history, Some("整理".into()), None, vec![], None, &|_| {}, &cancel, &log)
+            .await;
+        assert!(matches!(result, Err(AgentError::Cancelled)), "{result:?}");
+        let c1 = history.iter().find(|m| m.tool_call_id.as_deref() == Some("c1")).unwrap().text().unwrap().to_string();
+        assert!(c1.contains("(cancelled") && !c1.contains("propose_plan again"), "{c1}");
+        let c2 = history.iter().find(|m| m.tool_call_id.as_deref() == Some("c2")).unwrap();
+        assert!(c2.text().unwrap().contains("cancelled"), "{}", c2.text().unwrap());
+        assert_eq!(transport.requests.lock().unwrap().len(), 1, "no model call after the stop");
+    }
+
+    /// A discarded list (the card's one click, no reason): the result ends the task —
+    /// nothing written, the plan to reconcile, no re-proposal unless asked — so the
+    /// model does not leave a "propose it again" step alive on the plan card.
+    #[tokio::test]
+    async fn a_discarded_action_list_ends_the_task() {
+        struct DiscardActions;
+        #[async_trait]
+        impl ActionsGate for DiscardActions {
+            async fn request(&self, _req: &ActionsRequest) -> ActionsDecision {
+                ActionsDecision::Reject { reason: String::new() }
+            }
+        }
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            tool_call_chunks("a1", "propose_actions", r#"{"items": [{"text": "x"}]}"#),
+            vec![text_chunk("好"), finish_chunk("stop")],
+        ]));
+        let r = AgentRunner {
+            transport,
+            gate: Arc::new(AutoAllow),
+            plan_gate: Arc::new(crate::permission::AutoApprovePlan),
+            actions_gate: Arc::new(DiscardActions),
+            read_gate: Arc::new(crate::permission::DenyReads),
+            vault: f.vault.clone(),
+            sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
+        };
+        let mut history = vec![];
+        run_plan_turn(&r, &f, &mut history).await;
+        let result = history[2].text().unwrap();
+        assert!(
+            result.contains("discarded the action list") && result.contains("do not propose it again") && result.contains("reconcile the plan"),
+            "{result}"
         );
     }
 

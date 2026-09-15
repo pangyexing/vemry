@@ -9,8 +9,6 @@
   /** A block-level request (a restructure, a block move) opens on its block diff; this switches to the raw line diff. */
   let rawDiff = $state(false);
   let editedContent = $state("");
-  let denyReason = $state("");
-  let showDeny = $state(false);
   let allowBtn = $state<HTMLButtonElement | null>(null);
 
   let req = $derived(agent.pendingPermission);
@@ -20,8 +18,6 @@
       editing = false;
       rawDiff = false;
       editedContent = req.new_content;
-      denyReason = "";
-      showDeny = false;
       // The initial focus lands on "allow": return approves, and Tab reaches the other buttons
       queueMicrotask(() => allowBtn?.focus());
     }
@@ -66,6 +62,11 @@
       void agent.respond({ kind: "allow" });
     }
   }
+  /** One click, no reason asked (the reason field that used to follow the click was skipped
+   *  nearly every time); the model reads a plain "denied by user" and carries on. */
+  function deny() {
+    void agent.respond({ kind: "deny", reason: "" });
+  }
 
   /** The keyboard channel: Enter allows, Esc denies. It is attached with capture and stops
    *  propagation: the dialog is the topmost overlay, and Esc must not also be consumed by a
@@ -91,7 +92,7 @@
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      void agent.respond({ kind: "deny", reason: denyReason || t("permission.deniedByUser") });
+      deny();
       return;
     }
     if (e.key === "Enter") {
@@ -99,7 +100,7 @@
       if (t && (t.closest("button, textarea, input") != null || t.isContentEditable)) return;
       e.preventDefault();
       e.stopPropagation();
-      if (!showDeny) allow();
+      allow();
     }
   }
 </script>
@@ -148,40 +149,31 @@
 </span>{/each}</pre>
       {/if}
 
-      {#if showDeny}
-        <div class="deny-row">
-          <input bind:value={denyReason} placeholder={t("permission.denyReasonPlaceholder")} />
-          <button class="btn danger" onclick={() => agent.respond({ kind: "deny", reason: denyReason || t("permission.deniedByUser") })}>
-            {t("permission.confirmDeny")}
+      <footer>
+        {#if !req.to_path}
+          <button class="btn subtle" onclick={() => (editing = !editing)}>
+            {editing ? t("permission.viewDiff") : t("permission.editThenApply")}
           </button>
-        </div>
-      {:else}
-        <footer>
-          {#if !req.to_path}
-            <button class="btn subtle" onclick={() => (editing = !editing)}>
-              {editing ? t("permission.viewDiff") : t("permission.editThenApply")}
-            </button>
-          {/if}
-          <span class="spacer"></span>
-          <button class="btn subtle" onclick={() => (showDeny = true)} title={t("permission.denyHint")}>{t("permission.deny")}</button>
-          <button
-            class="btn subtle"
-            onclick={() => agent.respond({ kind: "allow_always" })}
-            title={t("permission.alwaysAllowVaultHint")}
-          >
-            {t("permission.alwaysAllowVault")}
+        {/if}
+        <span class="spacer"></span>
+        <button class="btn subtle" onclick={deny} title={t("permission.denyHint")}>{t("permission.deny")}</button>
+        <button
+          class="btn subtle"
+          onclick={() => agent.respond({ kind: "allow_always" })}
+          title={t("permission.alwaysAllowVaultHint")}
+        >
+          {t("permission.alwaysAllowVault")}
+        </button>
+        <span class="split">
+          <button class="btn subtle" onclick={() => agent.respond({ kind: "allow_session" })} title={t("permission.allowSessionHint")}>
+            {t("permission.allowSession")}
           </button>
-          <span class="split">
-            <button class="btn subtle" onclick={() => agent.respond({ kind: "allow_session" })} title={t("permission.allowSessionHint")}>
-              {t("permission.allowSession")}
-            </button>
-            <button class="btn subtle more" onclick={openScopeMenu} title={t("permission.scopeHint")} aria-label={t("permission.scopeHint")}>
-              <Chevron size={9} />
-            </button>
-          </span>
-          <button class="btn primary" bind:this={allowBtn} onclick={allow} title={t("permission.allowHint")}>{t("permission.allow")}</button>
-        </footer>
-      {/if}
+          <button class="btn subtle more" onclick={openScopeMenu} title={t("permission.scopeHint")} aria-label={t("permission.scopeHint")}>
+            <Chevron size={9} />
+          </button>
+        </span>
+        <button class="btn primary" bind:this={allowBtn} onclick={allow} title={t("permission.allowHint")}>{t("permission.allow")}</button>
+      </footer>
     </div>
   </div>
 {/if}
@@ -323,17 +315,11 @@
     padding: 10px;
     resize: none;
   }
-  footer,
-  .deny-row {
+  footer {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 12px 16px;
-  }
-  .deny-row input {
-    flex: 1;
-    padding: 6px 10px;
-    font-size: var(--fs-sm);
   }
   .spacer {
     flex: 1;
@@ -355,9 +341,6 @@
   .btn.primary:hover {
     opacity: 0.9;
     background: var(--accent);
-  }
-  .btn.danger {
-    color: var(--danger);
   }
   .btn.subtle {
     color: var(--fg-muted);

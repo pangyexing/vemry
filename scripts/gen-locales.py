@@ -690,9 +690,6 @@ add("permission.", {
     "blockKind.changed": ("Changed ({n})", "修改({n})"),
     "blockKind.added": ("Added ({n})", "新增({n})"),
     "blockKind.moved": ("Moved ({n})", "移动({n})"),
-    "deniedByUser": ("Denied by the user", "用户拒绝"),
-    "denyReasonPlaceholder": ("Tell the agent why (optional)", "告诉 agent 为什么拒绝（可选）"),
-    "confirmDeny": ("Confirm deny", "确认拒绝"),
     "viewDiff": ("View diff", "查看 diff"),
     "editThenApply": ("Edit, then apply", "编辑后应用"),
     "deny": ("Deny", "拒绝"),
@@ -1416,7 +1413,6 @@ add("chat.", {
     "thisNote": ("this note", "本笔记"),
     "citationsMaterialized": ("Wrote {n} block ids into the cited notes", "已为引用的 {n} 个块写入 id"),
     "citationsDropped": ("{n} citations could not be pinned to a block and point to the note instead", "{n} 条引用无法定位到块，改为指向笔记"),
-    "planRejectedByUser": ("Rejected by the user", "用户否决"),
     "planApproved": ("Approved ✓", "已确认 ✓"),
     "planApprovedEdited": ("Approved with edits ✓", "已修改并确认 ✓"),
     "planCancelled": ("Cancelled", "已取消"),
@@ -1528,7 +1524,12 @@ add("chat.", {
     "actionsTarget": ("target note", "目标笔记"),
     "actionsSource": ("from: {source}", "来自:{source}"),
     "actionsDuplicate": ("looks like an existing task → {path}", "疑似已有 → {path}"),
-    "actionsRejectPlaceholder": ("Tell the agent why (optional)", "告诉 agent 为什么放弃(可选)"),
+    "actionsStayTarget": ("stays in {note} — a target note moves it", "留在 {note},填去处即移动"),
+    "actionsStayPut": ("stays put — a target note moves it", "留在原处,填去处即移动"),
+    "actionsStayHint": ("No home yet, so it stays; give it a target note to move it", "暂无去处,先留在原处;填一个目标笔记就会移过去"),
+    "actionsStayTick": ("Give it a target note first", "先填目标笔记才能移动"),
+    "actionsStayAll": ("Leave them", "都留在原处"),
+    "actionsStayShort": ("stays", "留在原处"),
     "turnWrote": ("This turn wrote {m} notes · {n} blocks await review", "本轮写入 {m} 篇 · {n} 块待审阅"),
     "reviewStart": ("Review", "开始审阅"),
     "reviewStartHint": ("Open the first of those notes on its first AI change; {accept} marks a change reviewed and moves on, {next} steps without deciding", "打开第一篇，落到第一处 AI 修改；{accept} 标为已审阅并前进，{next} 只前进不决定"),
@@ -1541,7 +1542,7 @@ add("chat.", {
     "undoneSkipped": (", {n} skipped (edited since)", ",{n} 项已被编辑过跳过"),
     "viewTag": ("view", "视图"),
     "skillTag": ("method", "方法"),
-    "skillTitle": ("This message follows the {name} skill", "本条消息按 {name} 方法处理"),
+    "skillModeHint": ("Runs “{name}”", "按「{name}」"),
     "statusSkill": ("by {name}", "按 {name}"),
     "skillPlaceholder": ("What should “{name}” work on? Enter alone runs it as is", "要按「{name}」处理什么?直接回车也可以"),
     "welcomeSkills": ("Start from a method", "从一个方法开始"),
@@ -1590,8 +1591,6 @@ add("chat.", {
     "regenerateHint": ("Regenerate this turn's answer", "重新生成这一轮回答"),
     "planTitle": ("Plan", "计划"),
     "planWaiting": ("Waiting for you", "等待确认"),
-    "planRejectPlaceholder": ("Tell the agent why (optional)", "告诉 agent 为什么否决（可选）"),
-    "planConfirmReject": ("Confirm rejection", "确认否决"),
     "planReject": ("✕ Reject", "✕ 否决"),
     "planRestore": ("Restore the list", "还原清单"),
     "planEdit": ("✎ Edit", "✎ 修改"),
@@ -1758,11 +1757,13 @@ add("settings.", {
     "provenanceMarks": ("Mark unreviewed AI blocks", "标记未审阅的 AI 块"),
     "provenanceMarksHint": ("An amber bar and a status-bar count for blocks the AI wrote under a standing grant, until you mark them reviewed; a marker, never a prompt. The origin overlay is a separate command", "AI 在常设授权下写入的块显示琥珀色条并在状态栏计数，直到你标为已审阅；只是标记，不会打断。出处着色是另一条命令"),
     "planConfirm": ("AI plan confirmation", "AI 计划确认"),
-    "planConfirmHint": ("A multi-step task shows you a plan card first and waits for “run it / edit / "
-                        "reject”; approving continues the same turn. Turned off, the AI recites the plan "
-                        "and keeps going. Frozen per session along with the tool list, so a change takes "
-                        "effect from the next session.",
-                        "多步任务先出计划卡等你「确认执行 / 修改 / 否决」,确认后同轮继续;关闭后 AI 只复诵计划不停下。"
+    "planConfirmHint": ("A multi-step request you typed, at high or max thinking, shows you a plan card "
+                        "first and waits for “run it / edit / reject”; approving continues the same turn. "
+                        "A skill you chose, and lighter turns, keep going with the plan as a progress card. "
+                        "Turned off, the AI recites the plan and keeps going. Frozen per session along with "
+                        "the tool list, so a change takes effect from the next session.",
+                        "你输入的多步请求在思考「高 / 最高」时先出计划卡等你「确认执行 / 修改 / 否决」,确认后同轮继续;"
+                        "你选的技能和较轻的思考档位不停下,计划只作进度卡。关闭后 AI 只复诵计划不停下。"
                         "与工具表一同按会话冻结,变更从新会话生效。"),
     "reasoningEffort": ("Thinking depth", "思考深度"),
     "reasoningDefaultSuffix": ("(default)", "(默认)"),

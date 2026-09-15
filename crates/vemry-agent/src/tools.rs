@@ -185,7 +185,7 @@ pub const ACTIONS_MAX_ITEMS: usize = 20;
 pub fn propose_actions_def() -> ToolDef {
     ToolDef::function(FunctionSpec {
         name: "propose_actions".into(),
-        description: "Propose a list of items to write into the vault — action items from a meeting, tasks from an inbox, moves in a tidy-up — and wait for the user's review. Each item: text (a task line without the checkbox), owner, due (YYYY-MM-DD, resolved from relative dates against today), target (the note it belongs in, vault-relative path) and source (the sentence or block it came from). Call it once with the whole list, before writing anything; the result is the list the user kept, as edited — then write each item into its target with append_note (as `- [ ] text [owner:: x] 📅 due`) or update_task.".into(),
+        description: "Propose a list of items to write into the vault — action items from a meeting, tasks from an inbox, moves in a tidy-up — and wait for the user's review. Each item: text (a task line without the checkbox), owner, due (YYYY-MM-DD, resolved from relative dates against today), target (the note it belongs in, vault-relative path) and source (the sentence or block it came from). An item with no home stays where it is: stay = true and no target — the card shows it as staying, and it comes back only if the user gives it a target. Call it once with the whole list, before writing anything; the result is the list the user kept, as edited — then write each item into its target with append_note (as `- [ ] text [owner:: x] 📅 due`) or update_task.".into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -199,6 +199,7 @@ pub fn propose_actions_def() -> ToolDef {
                             "due": {"type": "string", "description": "YYYY-MM-DD"},
                             "target": {"type": "string", "description": "Vault-relative note path the item should land in"},
                             "source": {"type": "string", "description": "Where it came from: a [[note#handle]] or the quoted sentence"},
+                            "stay": {"type": "boolean", "description": "true for an item that stays where it already is (a capture with no home): shown as staying and unticked, written only if the user gives it a target; leave target out"},
                             "fields": {"type": "object", "description": "Extra editable fields, key → value (a scoring's reach / impact / confidence / effort); write them afterwards with set_block_field", "additionalProperties": {"type": "string"}}
                         },
                         "required": ["text"]
@@ -240,7 +241,8 @@ pub fn parse_action_items(args: &Value) -> Result<Vec<crate::permission::ActionI
                     .collect()
             })
             .unwrap_or_default();
-        out.push(crate::permission::ActionItem { text: text.to_string(), owner: opt("owner"), due, target: opt("target"), source: opt("source"), fields });
+        let stay = it.get("stay").and_then(|v| v.as_bool()).unwrap_or(false);
+        out.push(crate::permission::ActionItem { text: text.to_string(), owner: opt("owner"), due, target: opt("target"), source: opt("source"), fields, stay });
     }
     if out.is_empty() || out.len() > ACTIONS_MAX_ITEMS {
         return Err(format!("an action list has 1-{ACTIONS_MAX_ITEMS} items"));
@@ -2310,6 +2312,21 @@ mod tests {
         // the private block is the fourth block now (## Dogs, ## Cats, ^c1, private): positional b3
         assert!(prepare_write(&vault, "m2".into(), "move_blocks", &json!({"from": "Messy.md", "blocks": ["b3"], "to": "Dogs.md"}), None, None).is_err());
         assert!(prepare_write(&vault, "m3".into(), "move_blocks", &json!({"from": "Messy.md", "blocks": ["^c1"], "to": "Dogs.md", "anchor": "Nowhere"}), None, None).unwrap_err().to_string().contains("heading not found"));
+    }
+
+    /// propose_actions' `stay`: parsed as the flag it is, absent by default, and kept out of
+    /// the serialised item unless set (the card and the ledger read the same shape).
+    #[test]
+    fn action_items_parse_stay() {
+        let items = parse_action_items(&json!({ "items": [
+            { "text": "Test job 7788", "source": "[[inbox#^b1]]", "stay": true },
+            { "text": "reply to the SOW", "target": "projects/Buy.md" }
+        ] }))
+        .unwrap();
+        assert!(items[0].stay && items[0].target.is_none());
+        assert!(!items[1].stay);
+        let j = serde_json::to_string(&items).unwrap();
+        assert_eq!(j.matches("\"stay\"").count(), 1, "{j}");
     }
 
     /// update_plan's argument grammar: statuses, the item cap, and the wording the model corrects itself by.

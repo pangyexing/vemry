@@ -29,17 +29,17 @@ pub trait Cancellable: Send + 'static {
 }
 impl Cancellable for PermissionDecision {
     fn cancelled() -> Self {
-        PermissionDecision::Deny { reason: "cancelled".into() }
+        PermissionDecision::Deny { reason: vemry_agent::permission::CANCELLED.into() }
     }
 }
 impl Cancellable for PlanDecision {
     fn cancelled() -> Self {
-        PlanDecision::Reject { reason: "cancelled".into() }
+        PlanDecision::Reject { reason: vemry_agent::permission::CANCELLED.into() }
     }
 }
 impl Cancellable for ActionsDecision {
     fn cancelled() -> Self {
-        ActionsDecision::Reject { reason: "cancelled".into() }
+        ActionsDecision::Reject { reason: vemry_agent::permission::CANCELLED.into() }
     }
 }
 
@@ -54,7 +54,7 @@ pub enum ReadAnswer {
 }
 impl Cancellable for ReadAnswer {
     fn cancelled() -> Self {
-        ReadAnswer::Deny { reason: "cancelled".into() }
+        ReadAnswer::Deny { reason: vemry_agent::permission::CANCELLED.into() }
     }
 }
 

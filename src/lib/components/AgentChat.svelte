@@ -11,7 +11,7 @@
   import { api, type SkillEntry, AGENT_IMAGE_EXTS, EFFORT_OPTIONS, type EffortValue, isAgentImage, type WebSearchResult } from "$lib/api";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { agent, blockHandle, type ComposerHandle, type DraftRef, type SourceEntry, type TimelineItem } from "$lib/stores/agent.svelte";
-  import type { ReadRequest } from "$lib/api";
+  import type { ActionItem, ReadRequest } from "$lib/api";
   import HoverCard, { type HoverCardData } from "./HoverCard.svelte";
   import { POSITIONAL_RE, TRANSIENT_CITE_RE, blocksOf, findBlock, materializeCitations, parseRefTarget } from "$lib/citation";
   import AtPicker, { linesLabel } from "./AtPicker.svelte";
@@ -166,10 +166,19 @@
    *  share it, so the two paths do not grow apart. */
   async function dispatch(text: string) {
     const draft = draftForSend();
+    // The method rides as a reference: a head `/name` that names an enabled skill becomes the
+    // ContextRef::Skill the chip used to feed (its text joins the envelope first), while the
+    // message keeps the token as typed — `/tidy-inbox 只处理今天的` reads the same in the
+    // transcript as in the input
+    const m = SKILL_HEAD_RE.exec(text.trimStart());
+    const refs = m && knownSkills.has(m[1]) ? [{ kind: "skill" as const, path: m[1] }, ...draft.filter((d) => d.kind !== "skill")] : draft;
     agent.contextDraft = [];
-    await agent.send(text, noteForSend, draft);
+    await agent.send(text, noteForSend, refs);
     await vault.refreshNotes();
   }
+  /** The head token of a message: `/name` as its first word (the memo's `#` and a URL are
+   *  head-tested the same way). Whether it is a method is decided against the enabled skills. */
+  const SKILL_HEAD_RE = /^\/([^\s/]+)(?=\s|$)/;
 
   /** The one-shot highlight ⌘J lands with (class:summon, the same bool + setTimeout as
    *  SettingsModal's nudge) plus the "press ⌘J again for a detached window" hint (2s, dismissed
@@ -441,14 +450,10 @@
    *  arrival (the same as PermissionDialog's $effect). */
   let planEditing = $state(false);
   let planEditText = $state("");
-  let planRejecting = $state(false);
-  let planRejectReason = $state("");
   $effect(() => {
     void agent.pendingPlan;
     planEditing = false;
     planEditText = "";
-    planRejecting = false;
-    planRejectReason = "";
   });
   type PlanCard = Extract<TimelineItem, { kind: "plan" }>;
   function togglePlanEdit(item: PlanCard) {
@@ -458,7 +463,6 @@
     }
     planEditText = item.items.join("\n");
     planEditing = true;
-    planRejecting = false;
   }
   function submitPlanApprove(item: PlanCard) {
     if (planEditing) {
@@ -473,15 +477,17 @@
       void agent.respondPlan({ kind: "approve" });
     }
   }
+  /** One click and no reason asked: the reason field that used to sit between the click and the
+   *  decision was skipped nearly every time. Sent empty, the rejection ends the turn on the Rust
+   *  side (runner.rs, PlanRejected::EndTurn), and what should change is the next message. */
   function submitPlanReject() {
-    void agent.respondPlan({ kind: "reject", reason: planRejectReason.trim() || t("chat.planRejectedByUser") });
+    void agent.respondPlan({ kind: "reject", reason: "" });
   }
   function planBadge(d: NonNullable<PlanCard["decision"]>): string {
     if (d.kind === "approve") return t("chat.planApproved");
     if (d.kind === "approve_edited") return t("chat.planApprovedEdited");
     if (d.reason === "cancelled") return t("chat.planCancelled");
-    const own = t("chat.planRejectedByUser");
-    return `${t("chat.planRejected")}${d.reason && d.reason !== own ? ` · ${d.reason}` : ""}`;
+    return `${t("chat.planRejected")}${d.reason ? ` · ${d.reason}` : ""}`;
   }
 
   /** ---- The action-list card (propose_actions): editable while pending — untick, fix the
@@ -489,28 +495,43 @@
    *  list to write. `actionRows` is the working copy; a duplicate hint comes from a quick
    *  task query per row (a task with the same key words already in the vault). */
   type ActionsCard = Extract<TimelineItem, { kind: "actions" }>;
-  type ActionRow = { keep: boolean; text: string; owner: string; due: string; target: string; source: string; dup: string | null; fields: { key: string; value: string }[] };
+  type ActionRow = { keep: boolean; text: string; owner: string; due: string; target: string; source: string; dup: string | null; stay: boolean; fields: { key: string; value: string }[] };
+  /** The note a source handle or a target path names, for telling "stays put" from a move:
+   *  `[[inbox#^b1]]`, `inbox.md` and `inbox` all read as `inbox`. */
+  function noteOf(s: string): string {
+    return baseOf(s.replace(/^\[\[/, "").split(/[#|\]]/)[0].trim())
+      .replace(/\.md$/i, "")
+      .toLowerCase();
+  }
+  /** A row the model meant to leave put: flagged `stay`, or — the older shape — a target that is the source's own note. */
+  function staysPut(it: ActionItem): boolean {
+    if (it.stay) return true;
+    return !!it.target && !!it.source && noteOf(it.target) === noteOf(it.source);
+  }
   let actionRows = $state<ActionRow[]>([]);
-  let actionsRejecting = $state(false);
-  let actionsRejectReason = $state("");
   $effect(() => {
     const req = agent.pendingActions;
-    actionsRejecting = false;
-    actionsRejectReason = "";
     if (!req) {
       actionRows = [];
       return;
     }
-    actionRows = req.items.map((it) => ({
-      keep: true,
-      text: it.text,
-      owner: it.owner ?? "",
-      due: it.due ?? "",
-      target: it.target ?? "",
-      source: it.source ?? "",
-      dup: null,
-      fields: Object.entries(it.fields ?? {}).map(([key, value]) => ({ key, value })),
-    }));
+    // A staying row starts unticked with its target empty: the tick follows the target (a
+    // home typed in makes it a move, cleared again it stays), so "write N" only ever counts
+    // moves the user asked for
+    actionRows = req.items.map((it) => {
+      const stay = staysPut(it);
+      return {
+        keep: !stay,
+        text: it.text,
+        owner: it.owner ?? "",
+        due: it.due ?? "",
+        target: stay ? "" : (it.target ?? ""),
+        source: it.source ?? "",
+        dup: null,
+        stay,
+        fields: Object.entries(it.fields ?? {}).map(([key, value]) => ({ key, value })),
+      };
+    });
     // Untracked: the scan reads `actionRows`, which this effect has just replaced with a fresh
     // array — tracking that read would re-run the effect on its own write, without end.
     void untrack(() => findDuplicates(req.id));
@@ -534,6 +555,14 @@
     }
   }
   const keptCount = $derived(actionRows.filter((r) => r.keep).length);
+  /** Nothing ticked and every unticked row a staying one: the button says "leave them" rather
+   *  than "keep none", which would read as throwing the captures away. */
+  const allStay = $derived(actionRows.length > 0 && actionRows.every((r) => r.keep || r.stay));
+  /** What a staying row's empty target box says: the note it stays in when the source names one. */
+  function stayPlaceholder(r: ActionRow): string {
+    const note = r.source ? noteOf(r.source) : "";
+    return note ? t("chat.actionsStayTarget", { note }) : t("chat.actionsStayPut");
+  }
   function submitActions() {
     const items = actionRows
       .filter((r) => r.keep && r.text.trim())
@@ -547,8 +576,9 @@
       }));
     void agent.respondActions({ kind: "approve", items });
   }
+  /** The same one click as the plan's; the model is told to write nothing from the list and carries on. */
   function submitActionsReject() {
-    void agent.respondActions({ kind: "reject", reason: actionsRejectReason.trim() || t("chat.actionsRejected") });
+    void agent.respondActions({ kind: "reject", reason: "" });
   }
   function actionsBadge(d: NonNullable<ActionsCard["decision"]>): string {
     if (d.kind === "approve") return t("chat.actionsApproved", { n: d.items.length });
@@ -1054,13 +1084,16 @@
       .then((s) => (welcomeSkills = s.filter((x) => !x.disabled)))
       .catch(() => (welcomeSkills = []));
   });
-  /** A welcome chip toggles: the chosen method reads as pressed, and clicking it again takes it
-   *  off the row (the same as its ✕) — so a slip of the mouse costs one more click, not a hunt
-   *  for the chip in the composer. */
+  /** A welcome chip toggles the head token: the chosen method reads as pressed, and clicking it
+   *  again takes `/name ` back out of the draft — so a slip of the mouse costs one more click.
+   *  Another method replaces the token; whatever was typed after it stays. */
   function useSkill(name: string) {
-    if (draftSkill === name) agent.contextDraft = agent.contextDraft.filter((d) => d.kind !== "skill");
-    else pushRef({ kind: "skill", path: name });
-    composerEl?.focus();
+    const rest = draftSkill ? agent.draft.trimStart().replace(SKILL_HEAD_RE, "").trimStart() : agent.draft;
+    agent.draft = draftSkill === name ? rest : `/${name} ${rest}`;
+    knownSkills = new Set([...knownSkills, name]);
+    const el = composerEl;
+    el?.focus();
+    queueMicrotask(() => el?.setSelectionRange(el.value.length, el.value.length));
   }
 
   // The placeholder carousel: the main sentence leads, and the three syntaxes @ / # / a URL take
@@ -1077,11 +1110,34 @@
     t("chat.placeholder4"),
   ]);
   const PH_INTERVAL = 4000;
-  /** The skill chip on the row, if any: the placeholder then asks for what that method takes. */
-  const draftSkill = $derived(agent.contextDraft.find((d) => d.kind === "skill")?.path ?? null);
-  const skillAsk = $derived(
-    draftSkill ? (skillAskByName(draftSkill) ?? t("chat.skillPlaceholder", { name: skillTitleByName(draftSkill) })) : "",
-  );
+  /** The enabled skills' names — what makes a head `/name` the message's method. Fetched on
+   *  mount and again whenever the picker opens (a directory scan; the list is short); a name
+   *  just picked or pressed joins on the spot, so the mode never lags the fetch. */
+  let knownSkills = $state(new Set<string>());
+  function refreshSkills() {
+    api
+      .skillsList()
+      .then((s) => (knownSkills = new Set(s.filter((x) => !x.disabled).map((x) => x.name))))
+      .catch(() => {});
+  }
+  $effect(() => {
+    refreshSkills();
+  });
+  /** The message's method: the draft's head token when it names an enabled skill. It stays
+   *  where it was typed, as the coding agents' slash commands do — the picker only completes
+   *  it — rather than turning into a chip in the row meant for the material. */
+  const draftSkill = $derived.by(() => {
+    const m = SKILL_HEAD_RE.exec(agent.draft.trimStart());
+    return m && knownSkills.has(m[1]) ? m[1] : null;
+  });
+  /** The hint strip while a method leads the draft: the method by its title, then what it asks
+   *  for (a topic, a note to @, or nothing but Enter); a vault's own skill has no ask line. */
+  const skillHint = $derived.by(() => {
+    if (!draftSkill) return "";
+    const name = skillTitleByName(draftSkill);
+    const ask = skillAskByName(draftSkill);
+    return ask ? `${t("chat.skillModeHint", { name })} · ${ask}` : t("chat.skillPlaceholder", { name });
+  });
   let phIdx = $state(0);
   $effect(() => {
     if (agent.draft !== "" || agent.running) {
@@ -1104,10 +1160,7 @@
   }
 
   async function send() {
-    let text = agent.draft.trim();
-    // A skill chip with nothing typed: the routine is the whole request (`/daily-start`)
-    const skill = agent.contextDraft.find((d) => d.kind === "skill");
-    if (!text && skill) text = `/${skill.path}`;
+    const text = agent.draft.trim();
     if (!text) return;
     // Nothing is muted while a turn runs: one message is queued (sending again overwrites it) and sent automatically when the turn ends
     if (agent.running) {
@@ -1142,7 +1195,7 @@
    *  button's title and aria are — four places read this one table rather than each copying the
    *  same `urlLike ? … : memoLike ? …` chain (the title and the aria-label used to be kept
    *  consistent by eye). */
-  const mode = $derived(urlLike ? "url" : memoLike ? "memo" : agent.running ? "queue" : "send");
+  const mode = $derived(urlLike ? "url" : memoLike ? "memo" : draftSkill ? "skill" : agent.running ? "queue" : "send");
   const MODES = $derived<Record<string, { hint: string; title: string; aria: string; run: () => void }>>({
     url: {
       hint: t(isMac ? "chat.urlHintMac" : "chat.urlHintPc"),
@@ -1158,6 +1211,13 @@
     },
     queue: { hint: "", title: t("chat.queueTitle"), aria: t("chat.queueAria"), run: () => void send() },
     send: { hint: "", title: t("chat.sendTitle"), aria: t("chat.sendAria"), run: () => void send() },
+    // A method at the head: ⏎ sends (or queues) as usual, and the strip says what the method asks for
+    skill: {
+      hint: skillHint,
+      title: t(agent.running ? "chat.queueTitle" : "chat.sendTitle"),
+      aria: t(agent.running ? "chat.queueAria" : "chat.sendAria"),
+      run: () => void send(),
+    },
   });
   const modeInfo = $derived(MODES[mode]);
 
@@ -1203,15 +1263,16 @@
   /** null = not triggered; non-null = the filter text between the / and the cursor. */
   let slashQuery = $state<string | null>(null);
   let slashStart = -1;
-  /** The / triggers at the start of the draft or after whitespace, and the token is a run of
-   *  non-whitespace without another slash — so a URL (`https://…`) and a path (`research/x`)
-   *  never open it, and the memo (`#`) and URL modes, which test the whole draft, are untouched. */
-  const SLASH_RE = /(^|\s)\/([^\s/]*)$/;
+  /** The / triggers only as the draft's first token (the caret inside it), since the method is
+   *  the head of the message — a URL (`https://…`) or a path (`research/x`) further in never
+   *  opens it, and the memo (`#`) and URL modes, which test the whole draft, are untouched. */
+  const SLASH_RE = /^\s*\/([^\s/]*)$/;
   function detectSlash(upto: string) {
     const m = SLASH_RE.exec(upto);
     if (m) {
-      slashQuery = m[2];
-      slashStart = upto.length - m[2].length - 1;
+      if (slashQuery == null) refreshSkills();
+      slashQuery = m[1];
+      slashStart = upto.length - m[1].length - 1;
     } else {
       closeSlash();
     }
@@ -1220,20 +1281,23 @@
     slashQuery = null;
     slashStart = -1;
   }
-  /** A skill was chosen: the /token goes, the chip comes (the same consume-then-push shape as @). */
+  /** A skill was chosen: the token is completed in place to `/name ` with the caret after it,
+   *  ready for what the method takes — nothing moves and nothing is renamed (the chip that used
+   *  to replace the token jumped to the material row under a translated title, and read as odd). */
   function onSlashPick(name: string) {
     const el = composerEl;
+    knownSkills = new Set([...knownSkills, name]);
     if (slashStart >= 0) {
       const end = slashStart + 1 + (slashQuery?.length ?? 0);
-      const caret = slashStart;
-      agent.draft = agent.draft.slice(0, slashStart) + agent.draft.slice(end);
+      const token = `/${name} `;
+      agent.draft = agent.draft.slice(0, slashStart) + token + agent.draft.slice(end);
+      const caret = slashStart + token.length;
       queueMicrotask(() => {
         el?.focus();
         el?.setSelectionRange(caret, caret);
       });
     }
     closeSlash();
-    pushRef({ kind: "skill", path: name });
   }
   /** The toolbar's "+" button: it inserts an @ at the cursor to trigger the same candidate layer
    *  (going through exactly the same detectAt/onAtPick path as typing @ by hand, with the token
@@ -1260,7 +1324,6 @@
   function refLabel(d: DraftRef): string {
     if (d.kind === "page") return d.page.title || d.page.url;
     if (d.kind === "view") return d.label;
-    if (d.kind === "skill") return skillTitleByName(d.path);
     if (d.kind === "block") return baseOf(d.path);
     const name = baseOf(d.path);
     return d.kind === "folder" ? `${name}/` : name;
@@ -1269,7 +1332,6 @@
   function refTitle(d: DraftRef): string {
     if (d.kind === "page") return d.page.url;
     if (d.kind === "view") return t("chat.viewTitle", { view: d.label, n: d.rows ?? 0 });
-    if (d.kind === "skill") return `${t("chat.skillTitle", { name: skillTitleByName(d.path) })}\n/${d.path}`;
     // The image chip's permanent hint: no table of model capabilities is attempted (it cannot be judged reliably), and a text-only model will error on one
     if (d.kind === "image") return t("chat.needsMultimodal", { path: d.path });
     if (d.kind === "block") return `${d.path} ¶${blockHandle(d.local_id)}${d.label ? `\n\n${d.label}` : ""}`;
@@ -1429,11 +1491,6 @@
   function pushRef(ref: DraftRef): boolean {
     if (ref.kind === "page") {
       agent.attachPage(ref.page);
-      return true;
-    }
-    // One method per message: a second skill replaces the first, and it leads the row
-    if (ref.kind === "skill") {
-      agent.contextDraft = [ref, ...agent.contextDraft.filter((d) => d.kind !== "skill")];
       return true;
     }
     if (agent.contextDraft.some((d) => refKey(d) === refKey(ref))) return false;
@@ -1693,7 +1750,9 @@
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
   {/snippet}
   {#if agent.plan}
-    <div class="plan-card">
+    <!-- `live` while a turn runs: a step in progress pulses only then. A plan a stopped or
+         ended turn left half-done stays as a reminder, and must not look alive -->
+    <div class="plan-card" class:live={agent.running}>
       <button class="plan-head" title={t(planOpen ? "chat.planCollapseHint" : "chat.planExpandHint")} onclick={() => (planOpen = !planOpen)}>
         <span class="plan-caret" class:open={planOpen} aria-hidden="true">
           {@render caret()}
@@ -1935,14 +1994,27 @@
           </div>
           {#if pendingActs}
             {#each actionRows as r, ri (ri)}
-              <div class="act-row" class:off={!r.keep}>
-                <label class="act-keep"><input type="checkbox" bind:checked={r.keep} /></label>
+              {@const untargeted = r.stay && !r.target.trim()}
+              <div class="act-row" class:off={!r.keep} class:stay={r.stay}>
+                <!-- A staying row cannot be ticked without a home: the tick follows the target box -->
+                <label class="act-keep" title={untargeted ? t("chat.actionsStayTick") : undefined}>
+                  <input type="checkbox" bind:checked={r.keep} disabled={untargeted} />
+                </label>
                 <div class="act-body">
                   <input class="act-text" bind:value={r.text} spellcheck="false" />
                   <div class="act-meta">
                     <input class="act-owner" bind:value={r.owner} placeholder={t("chat.actionsOwner")} spellcheck="false" />
                     <input class="act-due" type="date" bind:value={r.due} title={t("chat.actionsDue")} />
-                    <input class="act-target" bind:value={r.target} list="act-notes" placeholder={t("chat.actionsTarget")} spellcheck="false" />
+                    <input
+                      class="act-target"
+                      bind:value={r.target}
+                      oninput={(e) => {
+                        if (r.stay) r.keep = e.currentTarget.value.trim().length > 0;
+                      }}
+                      list="act-notes"
+                      placeholder={r.stay ? stayPlaceholder(r) : t("chat.actionsTarget")}
+                      spellcheck="false"
+                    />
                   </div>
                   {#if r.fields.length}
                     <!-- The extra fields (a scoring's numbers, say): each editable on the row, written afterwards as [key:: value] -->
@@ -1954,6 +2026,8 @@
                   {/if}
                   {#if r.dup}
                     <div class="act-hint">{t("chat.actionsDuplicate", { path: r.dup })}</div>
+                  {:else if r.stay && !r.keep}
+                    <div class="act-hint">{t("chat.actionsStayHint")}</div>
                   {:else if r.source}
                     <div class="act-hint">{t("chat.actionsSource", { source: r.source })}</div>
                   {/if}
@@ -1963,24 +2037,16 @@
             <datalist id="act-notes">
               {#each vault.notes as n (n.id)}<option value={n.id}></option>{/each}
             </datalist>
-            {#if actionsRejecting}
-              <div class="plan-actions">
-                <!-- svelte-ignore a11y_autofocus -->
-                <input class="plan-reason" bind:value={actionsRejectReason} placeholder={t("chat.actionsRejectPlaceholder")} autofocus />
-                <button class="btn danger" onclick={submitActionsReject}>{t("chat.actionsReject")}</button>
-              </div>
-            {:else}
-              <div class="plan-actions">
-                <button class="btn subtle" onclick={() => (actionsRejecting = true)}>{t("chat.actionsReject")}</button>
-                <span class="plan-spacer"></span>
-                <button class="btn primary" onclick={submitActions}>{keptCount ? t("chat.actionsWrite", { n: keptCount }) : t("chat.actionsWriteNone")}</button>
-              </div>
-            {/if}
+            <div class="plan-actions">
+              <button class="btn subtle" onclick={submitActionsReject}>{t("chat.actionsReject")}</button>
+              <span class="plan-spacer"></span>
+              <button class="btn primary" onclick={submitActions}>{keptCount ? t("chat.actionsWrite", { n: keptCount }) : allStay ? t("chat.actionsStayAll") : t("chat.actionsWriteNone")}</button>
+            </div>
           {:else}
             {#each shownActs as a, ai (ai)}
               <div class="plan-item">
                 <span class="plan-check">{ai + 1}.</span>
-                <span>{a.text}{a.owner ? ` · ${a.owner}` : ""}{a.due ? ` · ${a.due}` : ""}{a.fields ? Object.entries(a.fields).map(([k, v]) => ` · ${k} ${v}`).join("") : ""}{a.target ? ` → ${a.target}` : ""}</span>
+                <span>{a.text}{a.owner ? ` · ${a.owner}` : ""}{a.due ? ` · ${a.due}` : ""}{a.fields ? Object.entries(a.fields).map(([k, v]) => ` · ${k} ${v}`).join("") : ""}{a.target ? ` → ${a.target}` : a.stay ? ` · ${t("chat.actionsStayShort")}` : ""}</span>
               </div>
             {/each}
           {/if}
@@ -2025,20 +2091,12 @@
             {/each}
           {/if}
           {#if pendingPlan}
-            {#if planRejecting}
-              <div class="plan-actions">
-                <!-- svelte-ignore a11y_autofocus -->
-                <input class="plan-reason" bind:value={planRejectReason} placeholder={t("chat.planRejectPlaceholder")} autofocus />
-                <button class="btn danger" onclick={submitPlanReject}>{t("chat.planConfirmReject")}</button>
-              </div>
-            {:else}
-              <div class="plan-actions">
-                <button class="btn subtle" onclick={() => (planRejecting = true)}>{t("chat.planReject")}</button>
-                <button class="btn subtle" onclick={() => togglePlanEdit(item)}>{planEditing ? t("chat.planRestore") : t("chat.planEdit")}</button>
-                <span class="plan-spacer"></span>
-                <button class="btn primary" onclick={() => submitPlanApprove(item)}>{t("chat.planApprove")}</button>
-              </div>
-            {/if}
+            <div class="plan-actions">
+              <button class="btn subtle" onclick={submitPlanReject}>{t("chat.planReject")}</button>
+              <button class="btn subtle" onclick={() => togglePlanEdit(item)}>{planEditing ? t("chat.planRestore") : t("chat.planEdit")}</button>
+              <span class="plan-spacer"></span>
+              <button class="btn primary" onclick={() => submitPlanApprove(item)}>{t("chat.planApprove")}</button>
+            </div>
           {/if}
         </div>
       {:else if item.kind === "notice"}
@@ -2218,8 +2276,6 @@
         <div class="ph" aria-hidden="true">
           {#if agent.running}
             <span>{t("chat.runningQueueHint")}</span>
-          {:else if draftSkill}
-            <span>{skillAsk}</span>
           {:else}
             {#key phIdx}<span class="ph-item">{PH_HINTS[phIdx]}</span>{/key}
           {/if}
@@ -2288,7 +2344,13 @@
              in reach, unlike a control at the end of the scrolling timeline; a draft turns it back
              into ↑, which queues -->
         <button class="send stop" title={t("chat.stopHint")} aria-label={t("chat.stop")} onclick={stopTurn}>
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /></svg>
+          <!-- The ring is drawn in the SVG rather than by a box-shadow so that one arc of it can turn
+               while the turn runs: the button's own "working" signal, next to the elapsed time -->
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+            <circle class="stop-track" cx="14" cy="14" r="13.25" stroke="currentColor" stroke-width="1.5" />
+            <circle class="stop-arc" cx="14" cy="14" r="13.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="26 57.25" />
+            <rect x="10.25" y="10.25" width="7.5" height="7.5" rx="1.25" fill="currentColor" />
+          </svg>
         </button>
       {:else}
       <button
@@ -2296,7 +2358,7 @@
         title={modeInfo.title}
         aria-label={modeInfo.aria}
         onclick={() => submit(false)}
-        disabled={!agent.draft.trim() && !draftSkill}
+        disabled={!agent.draft.trim()}
       >
         {#if mode === "url"}
           <!-- A URL-shaped draft: ↵ opens the page in the browser, and the button says so -->
@@ -3113,11 +3175,52 @@
   .send.stop {
     background: transparent;
     color: var(--danger);
-    box-shadow: inset 0 0 0 1.5px currentColor;
+  }
+  .send.stop svg {
+    display: block;
+  }
+  /* The ring: a faint full track, and one bright arc on it while the turn runs — a slow
+     sweep (2.4s a turn) with the arc breathing between short and long on its own period, so
+     it reads as steady work rather than a loading spinner. The two dash values always sum to
+     the circumference (2π · 13.25), or a second dash would show */
+  .stop-track {
+    opacity: 0.25;
+  }
+  .stop-arc {
+    transform-box: view-box;
+    transform-origin: center;
+    animation: stop-sweep 2.4s linear infinite, stop-breathe 1.8s ease-in-out infinite;
+  }
+  @keyframes stop-sweep {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes stop-breathe {
+    0%, 100% {
+      stroke-dasharray: 10 73.25;
+    }
+    50% {
+      stroke-dasharray: 36 47.25;
+    }
   }
   .send.stop:hover {
     background: var(--danger);
     color: #fff;
+  }
+  /* Hovered, the button is a plain filled circle: the ring would only be a white rim on red */
+  .send.stop:hover .stop-track,
+  .send.stop:hover .stop-arc {
+    opacity: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* No animation: the static full ring the button always had */
+    .stop-arc {
+      display: none;
+    }
+    .stop-track {
+      opacity: 1;
+    }
   }
   /* ---- The plan card: the recited task list pinned at the top of the timeline, progress at a glance ---- */
   .plan-card {
@@ -3192,6 +3295,9 @@
   .plan-item.doing .plan-check,
   .plan-head-step.doing .plan-check {
     color: var(--accent);
+  }
+  .plan-card.live .plan-item.doing .plan-check,
+  .plan-card.live .plan-head-step.doing .plan-check {
     animation: plan-pulse 1.4s ease-in-out infinite;
   }
   .plan-item.skipped {
@@ -3204,8 +3310,8 @@
     50% { opacity: 0.35; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .plan-item.doing .plan-check,
-    .plan-head-step.doing .plan-check { animation: none; }
+    .plan-card.live .plan-item.doing .plan-check,
+    .plan-card.live .plan-head-step.doing .plan-check { animation: none; }
   }
   .act-row {
     display: flex;
@@ -3216,6 +3322,10 @@
   }
   .act-row.off .act-body {
     opacity: 0.55;
+  }
+  /* A staying row's target box invites a home: dashed until one is typed */
+  .act-row.stay.off .act-target {
+    border-style: dashed;
   }
   .act-keep {
     flex-shrink: 0;
@@ -3395,11 +3505,6 @@
   .plan-spacer {
     flex: 1;
   }
-  .plan-reason {
-    flex: 1;
-    padding: 5px 8px;
-    font-size: var(--fs-xs);
-  }
   .plan-actions .btn {
     font-size: var(--fs-xs);
     padding: 4px 10px;
@@ -3422,9 +3527,6 @@
   }
   .plan-actions .btn.subtle {
     color: var(--fg-muted);
-  }
-  .plan-actions .btn.danger {
-    color: var(--danger);
   }
   /* ---- The action bar at the end of an answer: the shortest path for getting an answer back
      into a note. It rests at the end of each turn's final answer — where the hand already is after

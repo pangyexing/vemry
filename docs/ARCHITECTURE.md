@@ -862,14 +862,19 @@ VEMRY.md is the resident constitution; skills load on demand, by two paths. The 
 only, with the rule that a matching skill is read **before the plan** — the plan rules
 say the same, and the skill's Plan section is then the list) and the model calls the
 `read_skill` tool for the full text (read-level, truncated at 30k characters). The
-user's: `/` in the composer opens the skill picker (the enabled skills, matched on
-name, description and the frontmatter `triggers`), and the chosen skill becomes a chip
-— a `ContextRef::Skill { path: name }`, riding the same pipeline as every other
-reference (the audit's `refs`, the window handoff, edit-and-resend) — whose text Rust
-injects into the turn's user envelope as `<skill-context path="name">` with an intro
-that says it is the method to follow, first among the envelopes and outside the
-reference cap. A message with a skill chip and nothing typed goes out as `/name`: a
-routine is a whole request by itself. Both paths write a `skill` line to the ledger
+user's: `/` as the draft's first token opens the skill picker (the enabled skills,
+matched on name, description and the frontmatter `triggers`), and a choice completes
+the token in place to `/name ` — the method stays at the head of the message where it
+was typed, as the coding agents' slash commands do, with the hint strip saying what
+that method asks for; it does not turn into a chip in the row meant for the material
+(that jump, under a translated title, read as odd). At send, a head token that names
+an enabled skill becomes a `ContextRef::Skill { path: name }`, riding the same pipeline
+as every other reference (the audit's `refs`, the window handoff, edit-and-resend, the
+queued message — the token travels in the text) — whose text Rust injects into the
+turn's user envelope as `<skill-context path="name">` with an intro that says it is
+the method to follow, first among the envelopes and outside the reference cap. A
+message that is the token alone goes out as `/name`: a routine is a whole request by
+itself. Both paths write a `skill` line to the ledger
 (`via: attached` / `via: read`) and raise `SkillActivated`, which the status strip
 shows as "by name" for the rest of the turn. Two things keep the method in hand until
 the task ends: the first-level compaction never turns a `read_skill` result into a
@@ -2273,7 +2278,31 @@ The `propose_plan` tool plus a blocking gate is the confirmation in front of tha
 multi-step task presents a plan card first and waits for "run it / edit / reject",
 then continues in the same turn once approved — and the approval publishes the
 confirmed list as the first `plan_update` (every step pending), so the two paths
-share one projection. Like `web_search` it is a **session-frozen addition to the
+share one projection. The gate opens for the user only when the plan is theirs to
+steer: a request they typed, at high or max thinking. A routine they chose (a skill
+ref in the turn) has its plan in the skill's own Plan section, and a turn at a
+light level has a plan that arrives in seconds and is cheap to stop — for both,
+`execute_plan` confirms the list itself (`plan_auto` in the ledger, with the
+reason, and no `plan` line, so a replay raises no card that looks pending), the
+progress card is the only projection, and the model reads the same confirmation.
+An unset level is the provider's default and keeps the gate. A rejection is one
+click and carries no reason: the runner
+ends the turn there (`PlanRejected::EndTurn`, the plan call and the rest of its
+batch given their results so the history never dangles), and what should change
+is the user's next message — the model neither revises blind nor spends a call
+asking. A rejection that does carry a reason (a scripted gate) keeps the older
+path: the model revises and proposes again within the turn. The write dialog's
+deny and the action list's discard are one click for the same reason — the
+reason field that used to sit between the click and the decision was skipped
+nearly every time. A discarded list ends the task: its result tells the model to
+write nothing, reconcile the plan and not propose the list again unless asked
+(without that, the model kept a "propose it again once the user names a home"
+step alive on the sticky card). A gate resolved by a stop rather than a decision
+(the app's fallback sends `permission::CANCELLED`) words its result as the
+cancellation it is, for all four gates: a "revise and propose again" left in
+the history would have the model re-propose the plan on whatever the user asks
+next. The sticky card's in-progress pulse runs only while a turn runs — a plan
+a stopped turn left half-done stays as a reminder, and must not look alive. Like `web_search` it is a **session-frozen addition to the
 tool table** — a change to the switch takes effect from the next session, because
 the tool table freezes along with the system prompt when a session begins.
 
@@ -2324,8 +2353,13 @@ corrected (a quick task query marks rows that look like an existing task and unt
 them), and "write N items" hands the kept list back as the tool result — the model
 then writes each item into its target through the ordinary write tools, which have
 their own gate or the working note's grant. Discarding tells the model to write
-nothing. The proposal itself touches no note: the dry run is free, and the only
-things that land are the rows the user kept.
+nothing. An item with no home rides the card as a staying row (`stay: true`, no
+target): unticked, its target box empty and inviting a home, its tick following
+that box — typed in, it is a move; cleared, it stays — so "write N" only ever
+counts moves the user asked for, and with nothing ticked the button reads "leave
+them" rather than "keep none" (the older shape, a target that is the source's own
+note, is read as staying too). The proposal itself touches no note: the dry run
+is free, and the only things that land are the rows the user kept.
 
 ### Reading input: files, PDFs, and the read gate
 
@@ -2636,8 +2670,10 @@ anchors section (`[[note#heading]]` / `[[note#^id]]` whose note exists but whose
 anchor does not). The tidy-note skill: read whole, propose the outline in prose,
 restructure once, wording fixes afterwards as separate edits. The tidy-inbox
 skill works the captures inside one note the same way: read whole, group, one
-`propose_actions` card with a home per capture, then `move_blocks` per
-destination for what the user kept — never a retype, never a whole-note rewrite.
+`propose_actions` card with a home per capture (a capture with no home is a
+staying row, its reason in the prose before the card rather than in the item's
+text), then `move_blocks` per destination for what the user kept — never a
+retype, never a whole-note rewrite.
 
 ### The Markdown formatter (format.rs)
 

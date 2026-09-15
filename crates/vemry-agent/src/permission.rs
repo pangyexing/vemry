@@ -6,6 +6,13 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// The reason a gate's decision carries when nobody decided: the turn was stopped,
+/// the window closed or the vault switched while the request waited. The app's
+/// fallbacks send it, the runner words the tool result from it (a cancellation,
+/// never a request to revise or retry that would outlive the turn), and the
+/// frontend keys its "cancelled" badge on the same literal.
+pub const CANCELLED: &str = "cancelled";
+
 /// What kind of write a `WriteRequest` proposes. Carried as a value rather than
 /// as a rendered sentence: this layer cannot know the user's language, and the
 /// wording belongs with the rest of it in `locales/*.json`.
@@ -252,6 +259,11 @@ pub struct ActionItem {
     /// set_block_field. Sorted by key (the order the model gave them is not kept).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, String>,
+    /// The item stays where it already is (a capture with no home in a tidy-up): the
+    /// card shows it as staying, unticked, and it comes back in the kept list only if
+    /// the user gives it a target there. Proposed without a target.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stay: bool,
 }
 
 /// The action-list gate (propose_actions): the same family as the plan gate — the

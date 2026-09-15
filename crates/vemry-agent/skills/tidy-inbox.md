@@ -42,12 +42,18 @@ not this.
   for it — a project note for a thought about that project, a reading note for a
   remark on that paper, the note a capture links to when it links to one. A
   capture that is a task belongs where that project's tasks live. A capture with
-  no home stays in the inbox and goes on the list as "leave it"; do not invent a
+  no home stays in the inbox: on the list with `stay: true` and no target, its
+  text the capture's own words — the reason goes in your prose before the card,
+  one line for the group, never inside the item's text. The card shows a staying
+  row unticked, with a box for the home the user may give it. Do not invent a
   note for one stray line — propose a new note only when three or more captures
-  would fill it, and say so.
+  would fill it, and say so. When nothing has a home, say so in one line and
+  still raise the card: the homes are the user's to give.
 - propose_actions once with the whole list, then wait: text is the capture's
   first words, target the destination note, source the capture's handle as
-  [[inbox#^id]] (or its bN). Nothing moves before the user has reviewed the list.
+  [[inbox#^id]] (or its bN); owner and due only when the capture itself names
+  them — its stamp is when it was taken, not a due date. Nothing moves before the
+  user has reviewed the list.
 - Move only what came back: move_blocks from the inbox to each destination, one
   call per destination note with every block going there, anchor = the section
   agreed. A block travels whole — its stamp, its continuation lines, its embed —
@@ -64,7 +70,8 @@ nothing else.
 ## Shape
 
 Before the card: the groups, one line each — the theme, the proposed home, the
-handles under it. After the moves: what went where, what stayed and why.
+handles under it — and the ones staying, with why, in one line. After the moves:
+what went where, what stayed and why.
 
 ## Never
 

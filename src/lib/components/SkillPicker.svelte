@@ -1,7 +1,8 @@
 <script lang="ts">
-  // The composer's `/` candidate overlay: the enabled skills, chosen by name. The chip it
-  // yields attaches the skill's text to the message as the method to follow (the `@` chips
-  // are the material, this is the how). Positioned like AtPicker (overlaypos.ts), styled by
+  // The composer's `/` candidate overlay: the enabled skills, chosen by name. A choice
+  // completes the head token to `/name ` in place; at send that token attaches the skill's
+  // text to the message as the method to follow (the `@` chips are the material, this is the
+  // how). Positioned like AtPicker (overlaypos.ts), styled by
   // the same `at-*` rules in app.css; the focus stays in the textarea — AgentChat forwards
   // the keys through handleKey and a mouse press keeps the focus with preventDefault.
   import { t } from "$lib/i18n/i18n.svelte";

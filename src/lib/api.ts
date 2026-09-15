@@ -691,6 +691,8 @@ export interface ActionItem {
   source?: string | null;
   /** Extra editable fields (a scoring's reach / impact / confidence / effort), key → value. */
   fields?: Record<string, string>;
+  /** Stays where it already is (a capture with no home): shown as staying and unticked; a target the user gives it makes it a move. */
+  stay?: boolean;
 }
 
 /** The actions gate's request and decision (propose_actions; the same family as the plan gate). */
