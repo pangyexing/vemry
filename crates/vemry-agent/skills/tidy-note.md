@@ -1,7 +1,7 @@
 ---
 name: tidy-note
 description: Restructure one messy note — outline first, blocks moved not retyped
-triggers: [restructure, reorganise, reorganize, clean up this note, outline this, 重整, 重构笔记, 理一下这篇, ノートを整理, 構成し直す, 노트 정리, 구조 다시 잡기, restructurer cette note, réorganiser, Notiz umstrukturieren, neu gliedern]
+triggers: [restructure, reorganise, reorganize, clean up this note, outline this, 重整, 重构笔记, 理一下这篇, ノートを整理, 構成し直す, 노트 정리, 구조 다시 잡기, restructurer cette note, réorganiser, Notiz umstrukturieren, neu gliedern, reestructurar esta nota, reorganizar]
 version: 2
 ---
 

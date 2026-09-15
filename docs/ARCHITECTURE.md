@@ -2672,7 +2672,7 @@ layers, which is why it has its own section.
 **One generator, two complete catalogs, N overlays.** `scripts/gen-locales.py`
 holds English and Chinese as one `key -> (en, zh)` table — a new message physically
 cannot enter one of the two and miss the other. Every other interface language
-(Japanese, Korean, French, German today) is an overlay in `locales/src/<tag>.json`
+(Japanese, Korean, French, German, Spanish today) is an overlay in `locales/src/<tag>.json`
 carrying only the keys that have been translated; the generator validates it
 (unknown keys, placeholder names, the CLDR plural forms the language needs) and
 writes `locales/<tag>.json`, and both consumers fall back to English key by key.
@@ -2694,11 +2694,11 @@ Three consumers:
 
 **Resolution.** "Match system" resolves `navigator.language` (frontend) and
 `sys_locale` (Rust) by primary subtag: `zh-*` is Simplified Chinese for now, `ja`,
-`ko`, `fr`, `de` exact, anything else English; both sides apply the same rule
+`ko`, `fr`, `de`, `es` exact, anything else English; both sides apply the same rule
 (`langForTag` / `Lang::for_tag`). The resolved tag is stamped on `<html lang>` at
 init and on every change, and the editor body carries a note's own `lang:`
 frontmatter — fonts, `line-break` (strict for Japanese and Chinese), `word-break:
-keep-all` (Korean), `hyphens` (German, French) and the reading measure all hang off
+keep-all` (Korean), `hyphens` (German, French, Spanish) and the reading measure all hang off
 that attribute in `app.css`. The model is told the interface language in the
 system prompt (so a message with no prose of its own, a URL or a paste, is answered
 in it) and otherwise follows the language the user writes in.
@@ -2712,7 +2712,7 @@ accent-insensitive), search folds both sides with NFKC and lowercase (half-width
 kana, full-width digits, decomposed filenames all meet), note names and paths fold
 by NFC only (a compatibility character is a different file), and plural messages
 ask `Intl.PluralRules` for the form (`_one`/`_other` in English and German,
-`_one`/`_many`/`_other` in French, `_other` alone in Japanese, Korean and Chinese).
+`_one`/`_many`/`_other` in French and Spanish, `_other` alone in Japanese, Korean and Chinese).
 Parsing is tolerant of full-width digits (an IME artefact) while what is written
 to disk stays ASCII.
 

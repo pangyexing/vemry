@@ -117,7 +117,7 @@ VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt 
    breaking follow the `lang` attribute. What is written to disk never follows the
    interface language — ISO dates, `every 2 weeks`, `3d2h`, callout type names,
    the `/` commands — so a note is the same file on a Japanese and a German
-   machine. No `Ctrl+Alt+<letter>` shortcut: on French and German layouts AltGr
+   machine. No `Ctrl+Alt+<letter>` shortcut: on French, German and Spanish layouts AltGr
    is Ctrl+Alt, so such a binding steals a character key.
 
 ## Writing

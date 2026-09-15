@@ -214,6 +214,6 @@ export function targetLabel(tag: string): string {
 export const fmtTokens = fmtCount;
 
 /** The target languages the header offers; a custom tag typed in Settings is shown in addition. */
-export const TARGET_TAGS = ["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de"] as const;
+export const TARGET_TAGS = ["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es"] as const;
 
 export const translate = new TranslateStore();

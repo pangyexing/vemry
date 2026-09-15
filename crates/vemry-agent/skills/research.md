@@ -1,7 +1,7 @@
 ---
 name: research
 description: Look into a topic — the vault first, verified web sources, one note
-triggers: [research, look into, survey, investigate, 调研, 研究, 了解一下, 综述, 調査, リサーチ, 調べて, 조사, 리서치, 알아봐, rechercher, faire une synthèse, se renseigner, recherchieren, Überblick, nachschauen]
+triggers: [research, look into, survey, investigate, 调研, 研究, 了解一下, 综述, 調査, リサーチ, 調べて, 조사, 리서치, 알아봐, rechercher, faire une synthèse, se renseigner, recherchieren, Überblick, nachschauen, investigar, hacer una síntesis, averiguar]
 version: 2
 ---
 

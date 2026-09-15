@@ -43,7 +43,7 @@
         "uninstallerIcon": "icons/icon.ico",
         "headerImage": "icons/nsis-header.bmp",
         "sidebarImage": "icons/nsis-sidebar.bmp",
-        "languages": ["English", "SimpChinese", "Japanese", "Korean", "French", "German"]
+        "languages": ["English", "SimpChinese", "Japanese", "Korean", "French", "German", "Spanish"]
       }
     }
   },

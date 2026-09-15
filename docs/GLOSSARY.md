@@ -9,9 +9,9 @@ three months later, and each translation drifts on its own. A new user-visible t
 **enters this table before it enters a catalog**.
 
 The interface languages beyond English and Chinese (Japanese, Korean, French,
-German) are overlays in `locales/src/`; each gets a column here as its translation
+German, Spanish) are overlays in `locales/src/`; each gets a column here as its translation
 starts, and `locales/src/README.md` fixes the register per language (です・ます,
-하세요체, du, vous). A concept word is decided here, never by the translator.
+하세요체, du, vous, tú). A concept word is decided here, never by the translator.
 
 ## Core concepts
 

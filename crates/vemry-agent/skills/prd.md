@@ -1,7 +1,7 @@
 ---
 name: prd
 description: Scattered input into a PRD — requirement, decision and question blocks
-triggers: [prd, requirements, spec, product document, 需求文档, 产品文档, 写需求, 要件定義, 仕様書, 요구사항 문서, 기획서, cahier des charges, spécification, Anforderungsdokument, Spezifikation]
+triggers: [prd, requirements, spec, product document, 需求文档, 产品文档, 写需求, 要件定義, 仕様書, 요구사항 문서, 기획서, cahier des charges, spécification, Anforderungsdokument, Spezifikation, documento de requisitos, especificación]
 version: 2
 ---
 

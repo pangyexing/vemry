@@ -1,7 +1,7 @@
 ---
 name: brief
 description: An implementation brief for a coding agent, and its summary recorded back
-triggers: [brief, implementation brief, hand off, backfill, coding agent, 简报, 交给编码 agent, 回填, 実装ブリーフ, 引き継ぎ, 구현 브리프, 인계, brief d'implémentation, passer la main, Implementierungsbrief, Übergabe]
+triggers: [brief, implementation brief, hand off, backfill, coding agent, 简报, 交给编码 agent, 回填, 実装ブリーフ, 引き継ぎ, 구현 브리프, 인계, brief d'implémentation, passer la main, Implementierungsbrief, Übergabe, brief de implementación, traspaso]
 version: 2
 ---
 

@@ -363,23 +363,23 @@ pub fn translated_title(title: &str, target: &str) -> String {
 /// The heading a page's translations sit under in a saved PDF translation, in the
 /// target language.
 pub fn page_heading(page: u32, target: &str) -> String {
-    match words_of(target).map(|w| w.1) {
-        Some("页") => format!("## 第 {page} 页"),
-        Some("頁") => format!("## 第 {page} 頁"),
-        Some(word) => format!("## {page} {word}"),
-        None => format!("## Page {page}"),
-    }
+    let heading = words_of(target).map(|w| w.1).unwrap_or("Page {n}");
+    format!("## {}", heading.replace("{n}", &page.to_string()))
 }
 
-/// What a saved translation is called in the target language, and the word its page
-/// headings use: one table, so a new language is one row rather than two match arms.
+/// What a saved translation is called in the target language, and its page heading
+/// with `{n}` for the page number (the word order differs per language): one table,
+/// so a new language is one row rather than two match arms.
 fn words_of(target: &str) -> Option<(&'static str, &'static str)> {
     match target {
-        "zh-CN" | "zh" => Some(("中译", "页")),
-        "zh-TW" | "zh-HK" => Some(("中譯", "頁")),
-        "en" => Some(("English", "Page")),
-        "ja" => Some(("日本語訳", "ページ")),
-        "ko" => Some(("한국어 번역", "쪽")),
+        "zh-CN" | "zh" => Some(("中译", "第 {n} 页")),
+        "zh-TW" | "zh-HK" => Some(("中譯", "第 {n} 頁")),
+        "en" => Some(("English", "Page {n}")),
+        "ja" => Some(("日本語訳", "{n} ページ")),
+        "ko" => Some(("한국어 번역", "{n} 쪽")),
+        "fr" => Some(("Traduction française", "Page {n}")),
+        "de" => Some(("Deutsche Übersetzung", "Seite {n}")),
+        "es" => Some(("Traducción al español", "Página {n}")),
         _ => None,
     }
 }
@@ -520,5 +520,11 @@ mod tests {
         assert_eq!(compose_translation(&[p1, p2], &tr, "zh-CN"), "## 第 1 页\n\n一\n\n## 第 2 页\n\ntwo\n");
         assert_eq!(translated_title("Paper", "zh-CN"), "Paper (中译)");
         assert_eq!(translated_title("论文", "en"), "论文 (English)");
+        assert_eq!(translated_title("论文", "es"), "论文 (Traducción al español)");
+        assert_eq!(translated_title("论文", "pt"), "论文 (pt)");
+        assert_eq!(page_heading(3, "en"), "## Page 3");
+        assert_eq!(page_heading(3, "ja"), "## 3 ページ");
+        assert_eq!(page_heading(3, "es"), "## Página 3");
+        assert_eq!(page_heading(3, "pt"), "## Page 3");
     }
 }

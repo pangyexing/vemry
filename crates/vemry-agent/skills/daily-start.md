@@ -1,7 +1,7 @@
 ---
 name: daily-start
 description: The morning start — overdue, due today, in progress, three things
-triggers: [start my day, today, this morning, what should I do, 今日启动, 今天做什么, 早上好, 今日の予定, 一日を始める, 하루 시작, 오늘 할 일, commencer ma journée, quoi faire aujourd'hui, Tagesstart, was steht heute an]
+triggers: [start my day, today, this morning, what should I do, 今日启动, 今天做什么, 早上好, 今日の予定, 一日を始める, 하루 시작, 오늘 할 일, commencer ma journée, quoi faire aujourd'hui, Tagesstart, was steht heute an, empezar el día, qué hago hoy]
 version: 2
 ---
 

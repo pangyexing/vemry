@@ -223,6 +223,8 @@ pub enum LangSetting {
     Fr,
     #[serde(rename = "de")]
     De,
+    #[serde(rename = "es")]
+    Es,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]

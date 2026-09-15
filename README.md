@@ -203,7 +203,7 @@ As of September 2026, working on `main`: the editor and its live preview, the
 Agenda, Board, Timeline, Graph, Claims, Evidence and Review views, the block index
 and query API, the agent with its tools behind the write gate, privacy zones, the scripting sandbox, the built-in browser with clipping,
 side-by-side translation of a note, a web page or a PDF, and an interface in English
-and Chinese (Japanese, Korean, French and German follow as their translations land).
+and Chinese (Japanese, Korean, French, German and Spanish follow as their translations land).
 
 Next, in the order the study loop needs them: PDF annotation that lands in the
 source note, reference management on source notes (DOI, BibTeX export), and reading

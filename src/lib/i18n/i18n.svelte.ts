@@ -14,10 +14,11 @@ import ja from "../../../locales/ja.json";
 import ko from "../../../locales/ko.json";
 import fr from "../../../locales/fr.json";
 import de from "../../../locales/de.json";
+import es from "../../../locales/es.json";
 
 /** The interface languages, in the order the settings picker lists them. Mirrored
  *  by LANGS in scripts/gen-locales.py and the Lang enum in src-tauri/src/i18n.rs. */
-export const LANGS = ["en", "zh-CN", "ja", "ko", "fr", "de"] as const;
+export const LANGS = ["en", "zh-CN", "ja", "ko", "fr", "de", "es"] as const;
 export type Lang = (typeof LANGS)[number];
 /** What the user picked; "auto" resolves against the browser locale. */
 export type LangSetting = "auto" | Lang;
@@ -35,8 +36,9 @@ export type _NoStaleJaKeys = Assert<Exclude<keyof typeof ja, MessageKey>>;
 export type _NoStaleKoKeys = Assert<Exclude<keyof typeof ko, MessageKey>>;
 export type _NoStaleFrKeys = Assert<Exclude<keyof typeof fr, MessageKey>>;
 export type _NoStaleDeKeys = Assert<Exclude<keyof typeof de, MessageKey>>;
+export type _NoStaleEsKeys = Assert<Exclude<keyof typeof es, MessageKey>>;
 
-const CATALOGS: Record<Lang, Partial<Record<MessageKey, string>>> = { en: EN, "zh-CN": ZH, ja, ko, fr, de };
+const CATALOGS: Record<Lang, Partial<Record<MessageKey, string>>> = { en: EN, "zh-CN": ZH, ja, ko, fr, de, es };
 
 /** The interface language a BCP 47 tag resolves to: `zh-*` is Simplified Chinese
  *  for now (the translation feature knows Traditional; the interface does not yet),

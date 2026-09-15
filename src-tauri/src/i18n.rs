@@ -26,9 +26,10 @@ pub enum Lang {
     Ko,
     Fr,
     De,
+    Es,
 }
 
-pub const LANGS: [Lang; 6] = [Lang::En, Lang::ZhCn, Lang::Ja, Lang::Ko, Lang::Fr, Lang::De];
+pub const LANGS: [Lang; 7] = [Lang::En, Lang::ZhCn, Lang::Ja, Lang::Ko, Lang::Fr, Lang::De, Lang::Es];
 
 impl Lang {
     /// The BCP 47 tag, as the settings wire value and the frontend spell it.
@@ -40,6 +41,7 @@ impl Lang {
             Lang::Ko => "ko",
             Lang::Fr => "fr",
             Lang::De => "de",
+            Lang::Es => "es",
         }
     }
 
@@ -59,23 +61,24 @@ impl Lang {
             "ko" => Lang::Ko,
             "fr" => Lang::Fr,
             "de" => Lang::De,
+            "es" => Lang::Es,
             _ => Lang::En,
         }
     }
 }
 
-const JSON: [&str; 6] = [
+const JSON: [&str; 7] = [
     include_str!("../../locales/en.json"),
     include_str!("../../locales/zh-CN.json"),
     include_str!("../../locales/ja.json"),
     include_str!("../../locales/ko.json"),
     include_str!("../../locales/fr.json"),
     include_str!("../../locales/de.json"),
+    include_str!("../../locales/es.json"),
 ];
 
 fn catalog(lang: Lang) -> &'static HashMap<String, String> {
-    static CATALOGS: [OnceLock<HashMap<String, String>>; 6] =
-        [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    static CATALOGS: [OnceLock<HashMap<String, String>>; 7] = [const { OnceLock::new() }; 7];
     let i = lang.index();
     CATALOGS[i].get_or_init(|| serde_json::from_str(JSON[i]).unwrap_or_else(|e| panic!("locales/{}.json: {e}", lang.tag())))
 }
@@ -108,6 +111,7 @@ pub fn resolve(setting: LangSetting) -> Lang {
         LangSetting::Ko => Lang::Ko,
         LangSetting::Fr => Lang::Fr,
         LangSetting::De => Lang::De,
+        LangSetting::Es => Lang::Es,
         LangSetting::Auto => system_lang(),
     }
 }
@@ -323,6 +327,7 @@ mod tests {
         }
         assert_eq!(Lang::for_tag("zh-TW"), Lang::ZhCn);
         assert_eq!(Lang::for_tag("de_AT"), Lang::De);
+        assert_eq!(Lang::for_tag("es-MX"), Lang::Es);
         assert_eq!(Lang::for_tag("en-GB"), Lang::En);
         assert_eq!(Lang::for_tag("pt-BR"), Lang::En);
     }

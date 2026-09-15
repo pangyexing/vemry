@@ -200,8 +200,10 @@
 }
 [lang="de"],
 [lang="fr"],
+[lang="es"],
 .cm-editor .cm-scroller .cm-content[lang="de"],
-.cm-editor .cm-scroller .cm-content[lang="fr"] {
+.cm-editor .cm-scroller .cm-content[lang="fr"],
+.cm-editor .cm-scroller .cm-content[lang="es"] {
   --hyphens: auto;
 }
 /* Latin prose reads best at 60-75 characters; the CJK-tuned column (42-54em, about 40-50
@@ -209,7 +211,8 @@
    line width setting's inline override on :root still wins. */
 :root[lang="en"],
 :root[lang="fr"],
-:root[lang="de"] {
+:root[lang="de"],
+:root[lang="es"] {
   --content-width: clamp(36em, 66%, 44em);
 }
 

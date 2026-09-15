@@ -14,7 +14,8 @@ Rules for a translator, human or model:
   there before it enters a file.
 - `{name}` placeholders stay exactly as in the English string.
 - Plural keys carry the CLDR forms the language needs (`_one`/`_other` for German,
-  `_one`/`_many`/`_other` for French, `_other` alone for Japanese and Korean).
+  `_one`/`_many`/`_other` for French and Spanish, `_other` alone for Japanese and
+  Korean).
 - `slash.*` stays English in every language: those are typed commands.
 - `langName.*` stays as generated: a language's own name is not translated.
 - No anthropomorphic phrasing for the AI, and headings say what the reader gets.
@@ -27,6 +28,7 @@ Tone per language:
 | `ko` | 하세요체 (polite, the interface convention) |
 | `de` | du, not Sie |
 | `fr` | vous |
+| `es` | tú, not usted; neutral Spanish, no regional forms |
 
 A language is offered in the settings picker once its high-exposure groups (`app.`,
 `chat.`, `settings.`, `menu.`, `cmd.`, `permission.`, `skill.`) are complete and a

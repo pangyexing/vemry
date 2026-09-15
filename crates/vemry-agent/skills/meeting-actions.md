@@ -1,7 +1,7 @@
 ---
 name: meeting-actions
 description: Meeting notes into action items — who, what, by when, reviewed on a card
-triggers: [action items, meeting notes, minutes, todos from the meeting, 会议记录, 行动项, 待办, 議事録, アクションアイテム, 회의록, 액션 아이템, compte rendu de réunion, actions à faire, Besprechungsnotizen, Aufgaben aus dem Meeting]
+triggers: [action items, meeting notes, minutes, todos from the meeting, 会议记录, 行动项, 待办, 議事録, アクションアイテム, 회의록, 액션 아이템, compte rendu de réunion, actions à faire, Besprechungsnotizen, Aufgaben aus dem Meeting, acta de reunión, acciones pendientes]
 version: 2
 ---
 

@@ -276,7 +276,7 @@ export type LinkOpenMode = "reading" | "internal" | "system";
 
 /** The interface language. Matches Rust's settings::LangSetting exactly; the list
  *  of tags is LANGS in i18n.svelte.ts and the Lang enum in src-tauri/src/i18n.rs. */
-export type LangSetting = "auto" | "en" | "zh-CN" | "ja" | "ko" | "fr" | "de";
+export type LangSetting = "auto" | "en" | "zh-CN" | "ja" | "ko" | "fr" | "de" | "es";
 
 /** Which provider the AI talks to (Rust's settings::ProviderSetting): the user's own endpoint
  *  and key, or vemry hosted (the relay, the account's device token, the catalog's models). */

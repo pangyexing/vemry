@@ -589,11 +589,12 @@ add("langName.", {
     "ko": ("한국어", "한국어"),
     "fr": ("Français", "Français"),
     "de": ("Deutsch", "Deutsch"),
+    "es": ("Español", "Español"),
 })
 
 # Modifier-key names in shortcut hints on Windows and Linux (the Mac shows glyphs).
 # English in both columns: a Chinese Windows labels the keys Ctrl/Shift/Alt too; a
-# German overlay says Strg/Umschalt.
+# German overlay says Strg/Umschalt, a Spanish one Mayús.
 add("key.", {
     "ctrl": ("Ctrl", "Ctrl"),
     "shift": ("Shift", "Shift"),
@@ -1225,6 +1226,7 @@ add("translate.", {
     "lang.ko": ("Korean", "韩语"),
     "lang.fr": ("French", "法语"),
     "lang.de": ("German", "德语"),
+    "lang.es": ("Spanish", "西班牙语"),
     "lang.other": ("Other…", "其他…"),
     "langPrompt": ("Target language (a name or a tag such as fr, de-DE):", "目标语言(名称或代码,如 fr、de-DE):"),
     "modelHint": ("The model translating; change it under Settings › AI", "翻译所用模型;在「设置 › AI」里更换"),
@@ -2503,7 +2505,7 @@ add("ipc.", {
 # LANGS in src/lib/i18n/i18n.svelte.ts and the Lang enum in src-tauri/src/i18n.rs;
 # `langName.<tag>` above must carry every entry. The first two come from the table,
 # the rest from overlays in locales/src/.
-LANGS = ["en", "zh-CN", "ja", "ko", "fr", "de"]
+LANGS = ["en", "zh-CN", "ja", "ko", "fr", "de", "es"]
 
 # CLDR plural categories a language needs: an overlay's `<base>_<form>` keys must
 # cover exactly these (the runtime asks Intl.PluralRules and falls back to _other).
@@ -2514,6 +2516,7 @@ PLURAL_FORMS = {
     "ko": ("other",),
     "fr": ("one", "many", "other"),
     "de": ("one", "other"),
+    "es": ("one", "many", "other"),
 }
 PLURAL_SUFFIXES = ("_zero", "_one", "_two", "_few", "_many", "_other")
 
