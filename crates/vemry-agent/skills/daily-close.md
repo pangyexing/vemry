@@ -1,7 +1,7 @@
 ---
 name: daily-close
 description: The evening close — done today, notes touched, carry-over, into the journal
-triggers: [close my day, end of day, what did I do today, wrap up, 今日收尾, 今天做了什么, 收工]
+triggers: [close my day, end of day, what did I do today, wrap up, 今日收尾, 今天做了什么, 收工, 今日のまとめ, 一日を締める, 하루 마무리, 오늘 한 일, clôturer ma journée, bilan du jour, Tagesabschluss, was habe ich heute gemacht]
 version: 2
 ---
 

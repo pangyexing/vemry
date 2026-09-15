@@ -1,7 +1,7 @@
 ---
 name: decision-log
 description: Decisions and their evidence — which have none, what contradicts, what superseded
-triggers: [decision log, decisions, why did we decide, evidence for, 决策记录, 决策依据, 为什么这么定]
+triggers: [decision log, decisions, why did we decide, evidence for, 决策记录, 决策依据, 为什么这么定, 意思決定ログ, なぜそう決めた, 의사결정 기록, 왜 그렇게 결정했나, journal des décisions, pourquoi cette décision, Entscheidungslog, warum wurde das entschieden]
 version: 2
 ---
 

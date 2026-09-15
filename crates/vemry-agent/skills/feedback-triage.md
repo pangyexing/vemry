@@ -1,7 +1,7 @@
 ---
 name: feedback-triage
 description: Feedback into evidence blocks — feature, sentiment, source, linked to its claim
-triggers: [feedback, triage, reviews, interview notes, complaints, 反馈, 归集, 用户评价]
+triggers: [feedback, triage, reviews, interview notes, complaints, 反馈, 归集, 用户评价, フィードバック整理, レビューをまとめる, 피드백 분류, 사용자 리뷰, trier les retours, avis utilisateurs, Feedback sichten, Nutzerbewertungen]
 version: 2
 ---
 

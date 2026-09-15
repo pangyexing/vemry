@@ -101,7 +101,10 @@ pub const MEMORY_INJECT_MAX_CHARS: usize = 8_000;
 /// DeepSeek a hit is roughly 30× cheaper). Volatile information (the date, the
 /// current note) travels in compose_user_message's turn context and does not
 /// belong here.
-pub fn build_system_prompt(vault: &Vault, plan_tool: bool) -> String {
+/// `interface_lang` is the interface's BCP 47 tag ("en", "ja"): it settles which
+/// language a message with no prose of its own (a URL, a paste) is answered in.
+/// It is part of the session-level prefix like everything else here.
+pub fn build_system_prompt(vault: &Vault, plan_tool: bool, interface_lang: &str) -> String {
     let mut prompt = String::from(BASE_RULES);
     prompt.push('\n');
     prompt.push_str(if plan_tool { PLAN_RULE_GATE } else { PLAN_RULE_TRACK });
@@ -109,6 +112,10 @@ pub fn build_system_prompt(vault: &Vault, plan_tool: bool) -> String {
     prompt.push_str(WEB_SEARCH_RULE);
     prompt.push('\n');
     prompt.push_str(BASE_RULES_TAIL);
+    prompt.push_str(&format!(
+        "\n- The interface is set to {interface_lang}. Answer in the language the user writes in; when a \
+message carries no prose of its own (a URL, a pasted text, a bare command), use the interface language."
+    ));
 
     if !vault.is_private_rel("VEMRY.md", false) {
         // through the redacting gate: a private block in VEMRY.md stays out
@@ -570,10 +577,10 @@ mod tests {
     #[test]
     fn plan_rule_follows_plan_tool_flag() {
         let (_d, vault) = fixture();
-        let recite = build_system_prompt(&vault, false);
+        let recite = build_system_prompt(&vault, false, "en");
         assert!(recite.contains("call update_plan FIRST"));
         assert!(!recite.contains("propose_plan"));
-        let gated = build_system_prompt(&vault, true);
+        let gated = build_system_prompt(&vault, true, "en");
         assert!(gated.contains("FIRST call propose_plan"));
         assert!(gated.contains("Propose before working anything out"));
         assert!(gated.contains("track progress with update_plan"));
@@ -586,7 +593,7 @@ mod tests {
     #[test]
     fn citation_rule_names_both_forms() {
         let (_d, vault) = fixture();
-        let p = build_system_prompt(&vault, false);
+        let p = build_system_prompt(&vault, false, "en");
         assert!(p.contains("[[path#^id]]") && p.contains("[[path#block]]"));
         assert!(p.contains("Never invent a block id"));
     }
@@ -594,12 +601,12 @@ mod tests {
     #[test]
     fn block_types_injected_only_when_present() {
         let (_d, vault) = fixture();
-        assert!(!build_system_prompt(&vault, false).contains("## Block types"));
+        assert!(!build_system_prompt(&vault, false, "en").contains("## Block types"));
         let dir = vault.meta_dir().join("types");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("book.md"), vemry_core::BOOK_TYPE_TEMPLATE).unwrap();
         std::fs::write(dir.join("off.md"), "---\nname: off\ndisabled: true\n---\n").unwrap();
-        let p = build_system_prompt(&vault, false);
+        let p = build_system_prompt(&vault, false, "en");
         assert!(p.contains("## Block types"), "{p}");
         assert!(p.contains("- book (bullet #book): author, status (state: to-read → reading → done), rating"), "{p}");
         assert!(!p.contains("- off"));
@@ -615,14 +622,14 @@ mod tests {
             "---\nname: chapter\nkind: paragraph\ntag: chapter\nfields:\n  - key: status\n    type: state\n    values: [unread, reading, retold, done]\n  - key: mood\n    values: [good, bad]\n---\n",
         )
         .unwrap();
-        let p = build_system_prompt(&vault, false);
+        let p = build_system_prompt(&vault, false, "en");
         assert!(p.contains("- chapter (paragraph #chapter): status (state: unread → reading → retold → done), mood"), "{p}");
     }
 
     #[test]
     fn overview_excludes_privacy_zone() {
         let (_d, vault) = fixture();
-        let p = build_system_prompt(&vault, false);
+        let p = build_system_prompt(&vault, false, "en");
         assert!(!p.contains("secret"), "private folder name leaked");
         assert!(!p.contains("Diary"), "private note leaked via tags/folders");
         assert!(!p.contains("leaktag"), "private-only tag leaked");
@@ -634,7 +641,7 @@ mod tests {
     fn skills_inject_summaries_not_bodies() {
         let (_d, vault) = fixture();
         // the built-ins alone give the section (they ship with the binary)
-        let p = build_system_prompt(&vault, false);
+        let p = build_system_prompt(&vault, false, "en");
         assert!(p.contains("## Skills"));
         assert!(p.contains("- research — "), "{p}");
 
@@ -646,7 +653,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(skills.join("off.md"), "---\ndescription: 已停用\ndisabled: true\n---\nHIDDEN\n").unwrap();
-        let p = build_system_prompt(&vault, false);
+        let p = build_system_prompt(&vault, false, "en");
         assert!(p.contains("## Skills"));
         assert!(p.contains("- weekly — 周报怎么写"));
         assert!(!p.contains("SKILLBODY"), "bodies stay out of the prompt");
@@ -660,7 +667,7 @@ mod tests {
         std::fs::write(dir.path().join("VEMRY.md"), "public rule\n\n> [!private] MEMSECRET #hiddentag\n").unwrap();
         std::fs::write(dir.path().join("A.md"), "a #seen\n\n> [!private] x #unseen\n").unwrap();
         let vault = Vault::open(dir.path()).unwrap();
-        let p = build_system_prompt(&vault, false);
+        let p = build_system_prompt(&vault, false, "en");
         assert!(p.contains("public rule"));
         assert!(!p.contains("MEMSECRET"));
         assert!(p.contains("#seen(1)"), "{p}");
@@ -672,7 +679,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("VEMRY.md"), "---\nprivate: true\n---\nsecret constitution\n").unwrap();
         let vault = Vault::open(dir.path()).unwrap();
-        let p = build_system_prompt(&vault, false);
+        let p = build_system_prompt(&vault, false, "en");
         assert!(!p.contains("secret constitution"));
         assert!(!p.contains("Vault instructions"));
     }
@@ -683,7 +690,7 @@ mod tests {
         let big = format!("# 约定\n\n{}", "长".repeat(MEMORY_INJECT_MAX_CHARS + 5000));
         std::fs::write(dir.path().join("VEMRY.md"), &big).unwrap();
         let vault = Vault::open(dir.path()).unwrap();
-        let p = build_system_prompt(&vault, false);
+        let p = build_system_prompt(&vault, false, "en");
         assert!(p.contains("[VEMRY.md truncated"), "must note the truncation");
         // The prompt length stays bounded: the body is cut near the limit rather
         // than inlined whole. The slack is the rest of the prompt (rules, the
@@ -912,6 +919,6 @@ mod tests {
         };
         let plan = std::env::var("VEMRY_PROMPT_PLAN").is_ok_and(|v| v == "1");
         let vault = Vault::open(root).expect("open the vault");
-        println!("{}", build_system_prompt(&vault, plan));
+        println!("{}", build_system_prompt(&vault, plan, "en"));
     }
 }

@@ -1,7 +1,7 @@
 ---
 name: tutor
 description: Learn from the notes — explain, make flashcards, quiz from the due cards
-triggers: [explain, teach me, flashcards, make cards, quiz me, what do I not know, 讲讲, 教我, 做卡片, 考我]
+triggers: [explain, teach me, flashcards, make cards, quiz me, what do I not know, 讲讲, 教我, 做卡片, 考我, 説明して, 教えて, フラッシュカード, クイズ, 설명해줘, 가르쳐줘, 플래시카드, 퀴즈, explique, apprends-moi, cartes mémoire, interroge-moi, erklär mir, bring mir bei, Karteikarten, frag mich ab]
 version: 3
 ---
 

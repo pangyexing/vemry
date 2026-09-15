@@ -381,7 +381,9 @@ pub async fn login_start(app: &AppHandle, email: &str) -> Result<(), String> {
     if email.is_empty() || !email.contains('@') {
         return Err(t(i18n::current(), "ipc.hosted.email_invalid"));
     }
-    send(app, client().post(format!("{}/v1/auth/otp", base())).json(&json!({ "email": email }))).await?;
+    // The interface language rides along so the sign-in mail arrives in it (the account has no language of its own yet)
+    let lang = i18n::current().tag();
+    send(app, client().post(format!("{}/v1/auth/otp", base())).json(&json!({ "email": email, "lang": lang }))).await?;
     Ok(())
 }
 

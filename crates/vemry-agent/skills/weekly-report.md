@@ -1,7 +1,7 @@
 ---
 name: weekly-report
 description: The week's report — shipped, slipped, next week, appended to the week's note
-triggers: [weekly report, weekly review, this week, week in review, 周报, 周复盘, 本周总结]
+triggers: [weekly report, weekly review, this week, week in review, 周报, 周复盘, 本周总结, 週報, 今週のまとめ, 주간 보고, 이번 주 정리, rapport hebdomadaire, bilan de la semaine, Wochenbericht, Wochenrückblick]
 version: 2
 ---
 

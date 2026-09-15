@@ -1,7 +1,7 @@
 ---
 name: iteration-plan
 description: Plan the next iteration — score the backlog, pick within capacity, tag, write
-triggers: [iteration, sprint, next version, plan the release, backlog, 迭代规划, 下一轮, 排期]
+triggers: [iteration, sprint, next version, plan the release, backlog, 迭代规划, 下一轮, 排期, イテレーション計画, 次のバージョン, 이터레이션 계획, 다음 버전, planifier l'itération, prochaine version, Iterationsplanung, nächste Version]
 version: 2
 ---
 

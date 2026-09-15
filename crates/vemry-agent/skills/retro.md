@@ -1,7 +1,7 @@
 ---
 name: retro
 description: Close an iteration — shipped, hypotheses, decisions, carry-over, release notes
-triggers: [retro, retrospective, release notes, close the iteration, 复盘, 迭代总结, 发布说明]
+triggers: [retro, retrospective, release notes, close the iteration, 复盘, 迭代总结, 发布说明, ふりかえり, リリースノート, 회고, 릴리스 노트, rétrospective, notes de version, Retrospektive, Release-Notes]
 version: 2
 ---
 

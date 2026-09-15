@@ -179,6 +179,9 @@ pub struct RunnerConfig {
     /// glue layer pins it when it snapshots the session, so a settings change takes
     /// effect from the next session. Default false, so tests are undisturbed.
     pub plan_confirm: bool,
+    /// The interface language's BCP 47 tag, named in the system prompt so a message
+    /// without prose of its own is answered in it. Part of the session prefix.
+    pub language: String,
     /// The note the session follows (the user's "keep your findings in this note"):
     /// named in the turn context, and with `follow_auto` its local writes (append /
     /// frontmatter / edit) pass the gate without a dialog — the follow is itself the
@@ -204,6 +207,7 @@ impl Default for RunnerConfig {
             context_soft_limit: 80_000,
             reasoning_effort: None,
             plan_confirm: false,
+            language: "en".into(),
             follow_note: None,
             follow_auto: true,
             format: None,
@@ -353,7 +357,7 @@ impl AgentRunner {
             let vault = guard.as_ref().ok_or_else(|| AgentError::Api("no vault open".into()))?;
             let system = match &config.system_prompt {
                 Some(s) => s.clone(),
-                None => build_system_prompt(vault, config.plan_confirm),
+                None => build_system_prompt(vault, config.plan_confirm, &config.language),
             };
             // The current note is privacy-filtered here (a private note does not even
             // give the model the fact that it is open)

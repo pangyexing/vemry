@@ -1,7 +1,7 @@
 ---
 name: study
 description: Study a paper or a long text — import it, read it in chapters, check the retelling, cards from the gaps
-triggers: [study, read this paper, work through, deep read, add an experiment, check my retelling, 精读, 研读, 学这篇, 读这篇论文, 带我读, 加实验, 可加的实验, 检查复述]
+triggers: [study, read this paper, work through, deep read, add an experiment, check my retelling, 精读, 研读, 学这篇, 读这篇论文, 带我读, 加实验, 可加的实验, 检查复述, 精読, この論文を読む, 一緒に読んで, 要約を確認, 정독, 이 논문 읽기, 같이 읽자, 내 요약 확인, étudier, lire cet article, lecture approfondie, vérifier ma reformulation, durcharbeiten, dieses Paper lesen, gründlich lesen, meine Nacherzählung prüfen]
 version: 2
 ---
 

@@ -1473,7 +1473,7 @@ async fn run_agent_turn(
                 let system = {
                     let guard = state.vault.lock().unwrap();
                     let vault = guard.as_ref().ok_or("no vault open")?;
-                    vemry_agent::prompt::build_system_prompt(vault, plan)
+                    vemry_agent::prompt::build_system_prompt(vault, plan, crate::i18n::current().tag())
                 };
                 *setup = Some(crate::agent_bridge::SessionSetup { system: system.clone(), plan_confirm: plan });
                 (system, plan)
@@ -1529,6 +1529,7 @@ async fn run_agent_turn(
         system_prompt: Some(system_snapshot),
         session_allow: Some(Arc::clone(&state.agent.session_grant)),
         reasoning_effort: settings.reasoning_active().then_some(effort),
+        language: crate::i18n::current().tag().to_string(),
         plan_confirm,
         follow_note,
         follow_auto,
