@@ -118,6 +118,11 @@
   let firstInput = $state<HTMLInputElement | null>(null);
 
   $effect(() => {
+    // The shortcut recorder is component state, not markup: it is disarmed on close as
+    // well as on open, so neither its window listener nor its "press the keys" label
+    // outlives the dialog it was armed in
+    recording = false;
+    recordingError = null;
     if (!open) return;
     // The fallback for having stopped on a needsVault page last time and opening with no
     // vault this time. untrack: this loading effect should only rerun with open — were tab
@@ -327,9 +332,20 @@
 
   /** The shortcut recorder: the field takes the next combination pressed (a modifier plus a
    *  key; Esc keeps the current one). The grammar and the "usable shortcut" rule live in
-   *  capture.ts; Rust registers it at save time and refuses one another app holds. */
-  function recordHotkey(e: KeyboardEvent) {
+   *  capture.ts; Rust registers it at save time and refuses one another app holds.
+   *
+   *  The keys are taken at the window, in the capture phase, for as long as the field is
+   *  armed — not by a handler on the field itself. A mouse click does not focus a button
+   *  on macOS WebKit, so a keydown handler there would never see the press: it would go
+   *  to whatever still had focus (the editor, on this tab) and the field would stay armed
+   *  for good. Capture phase, plus stopPropagation, also keeps the combination from
+   *  reaching the editor and the dialog's own Escape (which would close it). */
+  $effect(() => {
     if (!recording) return;
+    window.addEventListener("keydown", recordHotkey, true);
+    return () => window.removeEventListener("keydown", recordHotkey, true);
+  });
+  function recordHotkey(e: KeyboardEvent) {
     e.preventDefault();
     e.stopPropagation();
     if (e.key === "Escape") {
@@ -813,14 +829,21 @@
               <div class="field">
                 <span class="field-title">{t("settings.capture.hotkey")}</span>
                 <div class="hotkey-row">
-                  <!-- A button, not an input: the keys pressed are the value, and nothing may be typed into it -->
+                  <!-- A button, not an input: the keys pressed are the value, and nothing may be typed into it.
+                       Focused by hand on click (a mouse click does not focus a button on macOS WebKit), so that
+                       clicking anywhere else — Cancel, another tab, a radio — blurs it and disarms the recorder.
+                       Already armed: a no-op, so Space's keyup activation cannot wipe the "needs a modifier" error. -->
                   <button
                     class="hotkey-field"
                     class:recording
                     class:bad={!!captureHotkeyError}
                     aria-label={t("settings.capture.hotkey")}
-                    onclick={() => { recording = true; recordingError = null; }}
-                    onkeydown={recordHotkey}
+                    onclick={(e) => {
+                      if (recording) return;
+                      e.currentTarget.focus();
+                      recording = true;
+                      recordingError = null;
+                    }}
                     onblur={() => (recording = false)}
                   >
                     {recording ? t("settings.capture.hotkeyRecording") : hotkeyLabel(captureHotkey)}
