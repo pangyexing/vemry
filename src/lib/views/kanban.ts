@@ -16,7 +16,7 @@
 // the change time, the source order, the text, a field) applies to every column alike,
 // ascending or descending, so the label never hides a special case. doing stays on top
 // under every one of them.
-import { t } from "$lib/i18n/i18n.svelte";
+import { compareNames, t } from "$lib/i18n/i18n.svelte";
 import type { BlockHit } from "$lib/api";
 import { cmpMissingLast, cmpValue } from "$lib/views/queryrows";
 import type { BlockType } from "$lib/api";
@@ -126,7 +126,7 @@ export function cardCol(card: Card, mode: GroupMode, types: BlockType[], declare
 export function fieldKeysOf(cards: Card[]): string[] {
   const counts = new Map<string, number>();
   for (const c of cards) for (const k of Object.keys(c.fields)) counts.set(k, (counts.get(k) ?? 0) + 1);
-  return [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)! || a.localeCompare(b));
+  return [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)! || compareNames(a, b));
 }
 
 /** The task-line payload of a quick create inside a column: it carries what the column
@@ -271,7 +271,7 @@ function cardComparator(order: CardOrder, types: BlockType[]): (a: Card, b: Card
     if (doing) return doing;
     let c: number;
     if (k.by === "note") c = bySource(a, b);
-    else if (k.by === "text") c = a.text.localeCompare(b.text);
+    else if (k.by === "text") c = compareNames(a.text, b.text);
     else if (k.by === "modified") c = a.modified - b.modified;
     else return cmpMissingLast(a, b, valueOf(a), valueOf(b), dir, bySource, order_);
     return c * dir || bySource(a, b);

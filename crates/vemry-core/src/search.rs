@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 use std::collections::HashMap;
+use unicode_normalization::{is_nfkc, UnicodeNormalization};
 
 use crate::note::NoteId;
 
@@ -14,6 +15,37 @@ pub struct SearchHit {
     pub snippet: String,
     pub line: usize,
     pub score: f32,
+}
+
+/// One string as every lookup in the vault reads it: NFKC, then lower case.
+///
+/// NFKC folds the forms a keyboard or a filesystem can hand over without the user
+/// meaning anything by them — half-width kana (`ｶ` → `カ`), full-width digits (`３` →
+/// `3`), the compatibility ligatures — and it composes the decomposed accents a macOS
+/// filename carries (NFD `café` → NFC `café`), so a Hangul or Latin name typed in one
+/// form finds a note stored in the other. Both the stored key and the probe go through
+/// this one function; nothing compares a folded string against an unfolded one.
+pub fn fold(s: &str) -> String {
+    normalize(s).to_lowercase()
+}
+
+/// The key a note name or path is looked up by: canonical equivalence (NFC, so a
+/// name typed on a Mac's decomposed filesystem meets its composed spelling) and
+/// case-insensitive, but no compatibility folding — `①.md` and `1.md` are two
+/// files and must stay two keys.
+pub fn fold_name(s: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    s.nfc().collect::<String>().to_lowercase()
+}
+
+/// NFKC alone, and only where it changes something: for the overwhelming majority of
+/// documents the normalised text is the text, and the caller keeps the original.
+pub fn normalize(s: &str) -> std::borrow::Cow<'_, str> {
+    if is_nfkc(s) {
+        std::borrow::Cow::Borrowed(s)
+    } else {
+        std::borrow::Cow::Owned(s.nfkc().collect())
+    }
 }
 
 pub trait SearchProvider: Send + Sync {
@@ -31,9 +63,24 @@ pub trait SearchProvider: Send + Sync {
 
 struct Doc {
     title: String,
+    /// The text as it is on disk — what `note_text` hands back, and what the vault
+    /// diffs its own writes against. Never used for matching.
     content: String,
+    /// The NFKC form, kept only when it differs from `content` — the text the snippet
+    /// and the line number are read out of. `lower` is its lower case, so the two share
+    /// every byte offset except where case folding changes a character's length
+    /// (`İ` → `i̇`), which `make_snippet` snaps back from. Reading the snippet out of
+    /// `content` instead would not work: NFKC moves offsets much further than case does.
+    norm: Option<String>,
     lower: String,
     title_lower: String,
+}
+
+impl Doc {
+    /// The text the offsets in `lower` point into.
+    fn snippet_src(&self) -> &str {
+        self.norm.as_deref().unwrap_or(&self.content)
+    }
 }
 
 #[derive(Default)]
@@ -54,8 +101,12 @@ impl SearchProvider for InMemorySearch {
             Doc {
                 title: title.to_string(),
                 content: content.to_string(),
-                lower: content.to_lowercase(),
-                title_lower: title.to_lowercase(),
+                norm: match normalize(content) {
+                    std::borrow::Cow::Borrowed(_) => None,
+                    std::borrow::Cow::Owned(n) => Some(n),
+                },
+                lower: fold(content),
+                title_lower: fold(title),
             },
         );
     }
@@ -75,7 +126,7 @@ impl SearchProvider for InMemorySearch {
         }
         let mut hits = Vec::new();
         for (id, doc) in &self.docs {
-            if let Some((score, snippet, line)) = score_doc(&doc.title_lower, &doc.lower, &doc.content, &terms) {
+            if let Some((score, snippet, line)) = score_doc(&doc.title_lower, &doc.lower, doc.snippet_src(), &terms) {
                 hits.push(SearchHit { note: id.clone(), title: doc.title.clone(), snippet, line, score });
             }
         }
@@ -85,9 +136,9 @@ impl SearchProvider for InMemorySearch {
     }
 }
 
-/// The query's terms, lowercased (empty = nothing to search for).
+/// The query's terms, folded (empty = nothing to search for).
 pub fn query_terms(query: &str) -> Vec<String> {
-    query.split_whitespace().map(|t| t.to_lowercase()).filter(|t| !t.is_empty()).collect()
+    query.split_whitespace().map(fold).filter(|t| !t.is_empty()).collect()
 }
 
 /// Score one document against the terms the way `InMemorySearch` does —
@@ -95,7 +146,8 @@ pub fn query_terms(query: &str) -> Vec<String> {
 /// a caller can re-match a document over an altered text (the agent's
 /// search re-checks notes with private blocks against a blanked copy).
 pub fn match_doc(title: &str, content: &str, terms: &[String]) -> Option<(f32, String, usize)> {
-    score_doc(&title.to_lowercase(), &content.to_lowercase(), content, terms)
+    let norm = normalize(content);
+    score_doc(&fold(title), &norm.to_lowercase(), &norm, terms)
 }
 
 /// Score order, ties by note id — the one ordering every search result uses.
@@ -124,10 +176,11 @@ fn score_doc(title_lower: &str, lower: &str, content: &str, terms: &[String]) ->
     Some((score, snippet, line))
 }
 
-/// The line containing `pos`, trimmed to ~160 chars around the hit. `pos`
-/// was found in the lowercased text, whose byte offsets drift from the
-/// original's where a character changes length when folded (`İ` → `i̇`),
-/// so it is snapped back to a character boundary before slicing.
+/// The line containing `pos`, trimmed to ~160 chars around the hit. `content` is the
+/// NFKC text and `pos` was found in its lower case, whose byte offsets drift from it
+/// where a character changes length when folded (`İ` → `i̇`), so it is snapped back to
+/// a character boundary before slicing. Newlines survive both foldings, so the line
+/// number is the one the file has.
 fn make_snippet(content: &str, pos: usize) -> (String, usize) {
     let mut pos = pos.min(content.len());
     while !content.is_char_boundary(pos) {
@@ -162,5 +215,41 @@ mod tests {
         assert_eq!(hits[0].line, 1);
         assert!(hits[0].snippet.contains("中文"));
         assert!(match_doc("t", "Ka中文\nsecond", &["second".into()]).is_some());
+    }
+
+    /// Half-width kana and full-width digits are what an IME hands over; NFKC folds
+    /// them to the forms the user typed in the search box.
+    #[test]
+    fn halfwidth_kana_and_fullwidth_digits_fold() {
+        let mut s = InMemorySearch::new();
+        s.index_note(&NoteId::new("n1"), "ｶﾀｶﾅ３", "body");
+        assert_eq!(s.search("カタカナ3", 10).len(), 1);
+        s.index_note(&NoteId::new("n2"), "t", "ｾｸｼｮﾝ１ here");
+        assert_eq!(s.search("セクション1", 10).len(), 1);
+    }
+
+    /// A macOS filename and a note typed on it arrive decomposed; a query typed
+    /// anywhere else is composed. Both forms have to meet.
+    #[test]
+    fn decomposed_and_composed_meet() {
+        let mut s = InMemorySearch::new();
+        s.index_note(&NoteId::new("n1"), "cafe\u{301}", "cafe\u{301} au lait");
+        assert_eq!(s.search("caf\u{e9}", 10).len(), 1);
+        // and the other way round
+        let mut s2 = InMemorySearch::new();
+        s2.index_note(&NoteId::new("n2"), "caf\u{e9}", "x");
+        assert_eq!(s2.search("cafe\u{301}", 10).len(), 1);
+        // Hangul: NFD jamo against NFC syllables
+        let mut s3 = InMemorySearch::new();
+        s3.index_note(&NoteId::new("n3"), "t", "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af} note");
+        assert_eq!(s3.search("한글", 10).len(), 1);
+    }
+
+    /// The snippet is shown to the user: normalising must not lower-case it.
+    #[test]
+    fn snippet_keeps_its_case() {
+        let mut s = InMemorySearch::new();
+        s.index_note(&NoteId::new("n1"), "t", "The Quick Brown Fox");
+        assert_eq!(s.search("quick", 10)[0].snippet, "The Quick Brown Fox");
     }
 }

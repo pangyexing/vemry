@@ -96,26 +96,37 @@ export async function executeCommand(id: string) {
   await commands.get(id)?.run();
 }
 
-/** Match score for one already-lower-cased key against an already-lower-cased,
- *  non-empty query: every query char must appear in order, substring matches
- *  rank first. null = no match. The one definition of a match, shared by both entry points. */
-function fuzzyScore(key: string, q: string): number | null {
+/** One string as matching reads it: NFKC so a half-width kana, a full-width digit and a
+ *  composed accent meet their canonical form, then lower case. Both the query and the key
+ *  go through it, so the two are always compared in the same form. */
+function fold(s: string): string {
+  return s.normalize("NFKC").toLowerCase();
+}
+
+/** Match score for one already-folded key against an already-folded, non-empty
+ *  query: every query character must appear in order, substring matches rank first.
+ *  null = no match. The one definition of a match, shared by both entry points.
+ *  The query is walked by code point, not by UTF-16 unit, so an astral character
+ *  (an extension-B ideograph, an emoji) is one character to match rather than a
+ *  surrogate pair that can only ever half-match. */
+function fuzzyScore(key: string, chars: string[]): number | null {
+  const q = chars.join("");
   if (key.includes(q)) return 1000 - key.indexOf(q) - key.length * 0.01;
   let i = 0;
   for (const ch of key) {
-    if (ch === q[i]) i++;
-    if (i === q.length) break;
+    if (ch === chars[i]) i++;
+    if (i === chars.length) break;
   }
-  return i === q.length ? 100 - key.length * 0.01 : null;
+  return i === chars.length ? 100 - key.length * 0.01 : null;
 }
 
 /** Filtering reordered by match quality — for the command palette alone: "the closest match comes first" is its sorting contract. */
 export function fuzzyFilter<T>(items: T[], query: string, keyOf: (item: T) => string): T[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return items;
+  const chars = Array.from(fold(query.trim()));
+  if (!chars.length) return items;
   const scored: { item: T; score: number }[] = [];
   for (const item of items) {
-    const score = fuzzyScore(keyOf(item).toLowerCase(), q);
+    const score = fuzzyScore(fold(keyOf(item)), chars);
     if (score !== null) scored.push({ item, score });
   }
   scored.sort((a, b) => b.score - a.score);
@@ -128,7 +139,7 @@ export function fuzzyFilter<T>(items: T[], query: string, keyOf: (item: T) => st
  *  match score would wash it out: type one character and the order of the note groups
  *  would jump. */
 export function fuzzyKeep<T>(items: T[], query: string, keyOf: (item: T) => string): T[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return items;
-  return items.filter((item) => fuzzyScore(keyOf(item).toLowerCase(), q) !== null);
+  const chars = Array.from(fold(query.trim()));
+  if (!chars.length) return items;
+  return items.filter((item) => fuzzyScore(fold(keyOf(item)), chars) !== null);
 }

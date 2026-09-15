@@ -9,6 +9,7 @@ use crate::block::{Block, BlockKind, TaskState};
 use crate::index::BlockIndex;
 use crate::note::NoteId;
 use crate::parser::is_field_key;
+use crate::search::fold;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -175,7 +176,7 @@ pub(crate) fn field_matches(value: &str, op: FieldOp, wanted: Option<&str>) -> b
         (FieldOp::Has, _) => true,
         (FieldOp::Eq, Some(w)) => v == w.trim(),
         (FieldOp::Ne, Some(w)) => v != w.trim(),
-        (FieldOp::Contains, Some(w)) => v.to_lowercase().contains(&w.trim().to_lowercase()),
+        (FieldOp::Contains, Some(w)) => fold(v).contains(&fold(w.trim())),
         (FieldOp::Lt | FieldOp::Gt, Some(w)) => {
             let less = op == FieldOp::Lt;
             if let (Some(a), Some(b)) = (parse_ymd(v), parse_ymd(w)) {
@@ -223,10 +224,10 @@ pub struct BlockHit {
 impl BlockIndex {
     pub fn query(&self, q: &BlockQuery) -> Vec<BlockHit> {
         let limit = q.limit.unwrap_or(200);
-        let text_lower = q.text.as_ref().map(|t| t.to_lowercase());
+        let text_lower = q.text.as_ref().map(|t| fold(t));
         let note_filter = q.note.as_ref().map(|n| NoteId::new(n));
         // Each filter's key lowercased once, not once per block of the vault.
-        let fields: Vec<(String, &FieldFilter)> = q.field.iter().map(|f| (f.key.to_lowercase(), f)).collect();
+        let fields: Vec<(String, &FieldFilter)> = q.field.iter().map(|f| (fold(&f.key), f)).collect();
         let mut hits = Vec::new();
 
         // A note-scoped query reaches its one note directly instead of walking the
@@ -250,7 +251,7 @@ impl BlockIndex {
                     }
                 }
                 if let Some(tl) = &text_lower {
-                    if !block.content.to_lowercase().contains(tl.as_str()) {
+                    if !fold(&block.content).contains(tl.as_str()) {
                         continue;
                     }
                 }
@@ -267,14 +268,14 @@ impl BlockIndex {
                     }
                 }
                 if !fields.iter().all(|(key, f)| {
-                    let mut own = block.fields.iter().filter(|x| x.key.to_lowercase() == *key).map(|x| x.value.as_str()).peekable();
+                    let mut own = block.fields.iter().filter(|x| fold(&x.key) == *key).map(|x| x.value.as_str()).peekable();
                     if own.peek().is_some() {
                         own.any(|v| field_matches(v, f.op, f.value.as_deref()))
                     } else {
                         entry
                             .fm_fields
                             .iter()
-                            .filter(|(k, _)| k.to_lowercase() == *key)
+                            .filter(|(k, _)| fold(k) == *key)
                             .any(|(_, v)| field_matches(v, f.op, f.value.as_deref()))
                     }
                 }) {

@@ -46,7 +46,7 @@ export const acceptWithTab: Command = (view) => {
 
 /** `@` at the start of a line or after whitespace / an opening bracket / `:` (the
  *  `supports:@` of an evidence block); mirrors the agent composer's AT_RE. */
-export const AT_RE = /(^|[\s(（【[:])@([^\s@]*)$/;
+export const AT_RE = /(^|[\s(（【[:「『《〈«„‹“‘])@([^\s@]*)$/u;
 
 function nextMonday(): string {
   const d = new Date();
@@ -324,9 +324,11 @@ export function tagCompletions(tags: () => string[]): CompletionSource {
   return (context: CompletionContext): CompletionResult | null => {
     const before = context.matchBefore(/#[\p{L}\p{N}_/-]*$/u);
     if (!before) return null;
-    // TAG_RE's rule: a # must be preceded by the start of a line or whitespace (which rules out a URL anchor, a run of ##, and so on)
+    // TAG_RE's rule (parser.rs): the char before the # may not be a letter, a digit, `#`
+    // or `&` — which rules out a URL anchor, a run of ##, an entity, while leaving an
+    // opening bracket of any script through
     const prev = context.state.sliceDoc(before.from - 1, before.from);
-    if (prev && !/\s/.test(prev)) return null;
+    if (prev && /[\p{L}\p{N}#&]/u.test(prev)) return null;
     // inside an unclosed `[[`, the `#` starts a heading/block stage, not a tag
     const lineStart = context.state.doc.lineAt(before.from).from;
     if (/\[\[[^\]\n]*$/.test(context.state.sliceDoc(lineStart, before.from))) return null;

@@ -1,9 +1,11 @@
 // The presentation half of a query block: how its hits are sorted and grouped. The
 // query itself (kind, note, tag, field conditions…) goes to Rust; `group` and `sort`
 // are display keys and stay in the frontend, so the agent's query_blocks tool never
-// sees them and BlockQuery is unchanged. Pure: no CodeMirror, no i18n (labels are
-// passed in), so the batch's harness can replay it.
+// sees them and BlockQuery is unchanged. No CodeMirror, and no message catalog — the
+// labels are passed in; the one thing read from i18n is the collator, because an
+// ordering shown to the user has to follow the language it is shown in.
 import type { BlockHit } from "$lib/api";
+import { compareNames } from "$lib/i18n/i18n.svelte";
 import { stateIndex } from "$lib/fields";
 
 export type GroupKey = { by: "note" } | { by: "kind" } | { by: "field"; key: string };
@@ -49,13 +51,13 @@ export function cmpValue(a: string, b: string): number {
   const na = Number(a);
   const nb = Number(b);
   if (a !== "" && b !== "" && !Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
-  return a.localeCompare(b);
+  return compareNames(a, b);
 }
 
 /** The source order: the note's path, then the block's byte position in it. The tie-break
  *  of every block ordering, so a requery never shuffles two rows that compare equal
  *  (tasks.ts's bySource is this one read off a TaskRow's hit). */
-export const byNote = (a: BlockHit, b: BlockHit) => a.note.localeCompare(b.note) || a.block.span.start - b.block.span.start;
+export const byNote = (a: BlockHit, b: BlockHit) => compareNames(a.note, b.note) || a.block.span.start - b.block.span.start;
 
 /** The one `sort` convention, read by a query block's hits and by the board's cards: a row
  *  without the key's value goes last whichever the direction, and equal values keep `tie`'s
@@ -94,8 +96,8 @@ export function sortHits(hits: BlockHit[], spec: SortSpec, declared?: string[] |
   const cmp = (a: BlockHit, b: BlockHit): number => {
     let c: number;
     if (k.by === "note") c = byNote(a, b);
-    else if (k.by === "kind") c = a.block.kind.type.localeCompare(b.block.kind.type);
-    else if (k.by === "text") c = a.block.content.localeCompare(b.block.content);
+    else if (k.by === "kind") c = compareNames(a.block.kind.type, b.block.kind.type);
+    else if (k.by === "text") c = compareNames(a.block.content, b.block.content);
     else return cmpMissingLast(a, b, fieldOfLower(a, lower), fieldOfLower(b, lower), dir, byNote, declared);
     return c * dir || byNote(a, b);
   };

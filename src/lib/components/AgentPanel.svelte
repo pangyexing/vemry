@@ -4,7 +4,7 @@
   // the agent store). The browser's chrome and clip entry points live in the browser panel
   // column beside it since the same-window panel; a page joins the conversation as context
   // through the panel's AI button or the @ picker.
-  import { t } from "$lib/i18n/i18n.svelte";
+  import { i18n, t } from "$lib/i18n/i18n.svelte";
   import { api } from "$lib/api";
   import { agent } from "$lib/stores/agent.svelte";
   import { vault, baseOf } from "$lib/stores/vault.svelte";
@@ -35,6 +35,10 @@
     return firstUser?.kind === "user" ? firstUser.text.split("\n")[0].slice(0, 40) : t("agentPanel.newSession");
   });
 
+  // A day-and-month stamp in the interface language ("Sep 10", "9月10日"), built once
+  // per language rather than per session row.
+  const monthDay = $derived(new Intl.DateTimeFormat(i18n.locale, { month: "short", day: "numeric" }));
+
   function relTime(ts: string): string {
     const d = new Date(ts);
     if (isNaN(d.getTime())) return "";
@@ -42,8 +46,7 @@
     if (diff < 60_000) return t("agentPanel.justNow");
     if (diff < 3_600_000) return t("agentPanel.minutesAgo", { n: Math.floor(diff / 60_000) });
     if (diff < 86_400_000) return t("agentPanel.hoursAgo", { n: Math.floor(diff / 3_600_000) });
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return monthDay.format(d);
   }
 
   function closeSessions() {

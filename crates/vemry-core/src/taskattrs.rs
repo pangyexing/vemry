@@ -193,7 +193,13 @@ pub fn strip_vs16(s: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// `YYYY-MM-DD` exactly, and a real calendar date.
+///
+/// The input is NFKC-normalised first, so the full-width digits and dashes an IME
+/// emits (`２０２６－０９－１０`) parse. Only the reading is tolerant: nothing here
+/// writes, and the file keeps whatever the user typed.
 pub fn parse_date(s: &str) -> Option<NaiveDate> {
+    let s = crate::search::normalize(s);
+    let s: &str = &s;
     let b = s.as_bytes();
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' || !b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) {
         return None;
@@ -248,6 +254,8 @@ pub fn priority_name(p: Priority) -> &'static str {
 
 /// `30m`, `2h`, `1.5h`, `2h30m`, `1d`, `1d2h`: minutes. None when the token is not a duration.
 pub fn parse_estimate(s: &str) -> Option<u32> {
+    // Full-width digits and letters from an IME read as the ASCII ones (parse_date's rule).
+    let s = crate::search::normalize(s);
     let s = s.trim();
     if s.is_empty() {
         return None;
@@ -607,6 +615,15 @@ mod tests {
     }
 
     #[test]
+    fn fullwidth_dates_parse() {
+        use chrono::Datelike;
+        let d = parse_date("２０２６－０９－１０").expect("full-width ISO date");
+        assert_eq!((d.year(), d.month(), d.day()), (2026, 9, 10));
+        assert_eq!(parse_date("2026-09-10"), Some(d));
+        assert_eq!(parse_date("2026-9-10"), None);
+    }
+
+    #[test]
     fn estimates() {
         assert_eq!(parse_estimate("30m"), Some(30));
         assert_eq!(parse_estimate("2h"), Some(120));
@@ -615,6 +632,9 @@ mod tests {
         assert_eq!(parse_estimate("1d"), Some(480));
         assert_eq!(parse_estimate("1d2h"), Some(600));
         assert_eq!(parse_estimate("soon"), None);
+        // full-width, as an IME emits it
+        assert_eq!(parse_estimate("３０ｍ"), Some(30));
+        assert_eq!(parse_estimate("２ｈ"), Some(120));
         assert_eq!(parse_estimate("2"), None);
         assert_eq!(format_estimate(150), "2h30m");
         assert_eq!(format_estimate(480), "1d");

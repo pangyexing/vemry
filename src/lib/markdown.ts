@@ -50,6 +50,16 @@ const linkRe = (image: boolean, target: string) =>
 const HTTP_TARGET = String.raw`https?:\/\/(?:[^\s()]|\([^\s()]*\))+`;
 // The reading projection's target: a page body commonly holds relative paths, so any target is taken, resolved against the page URL first and then filtered by the allowlist
 const ANY_TARGET = String.raw`(?:[^)\s(]|\([^)\s]*\))+?`;
+/** `*…*` whose opening `*` does not sit inside a word. The word characters are letters
+ *  and digits of any script, not only ASCII's, so a Cyrillic or Greek word is read the
+ *  way an English one is — with Han and kana deliberately left out: the parser refuses
+ *  emphasis flanked by them and the editor rescues it on purpose (livepreview's
+ *  CJK_EMPH_RE), so `这是*重点*了` has to keep rendering as emphasis here too.
+ *  The three lookbehinds are the start of the string, a non-word character, and a
+ *  per-character script; all are zero-width, so the span is still group 1. */
+const EM_RE =
+  /(?:(?<![\s\S])|(?<=[^*\p{L}\p{N}_])|(?<=[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}]))\*([^*\n]+)\*(?!\*)/gu;
+
 const MD_LINK = linkRe(false, HTTP_TARGET);
 // An image reference in chat: rendered as a placeholder chip rather than an <img>, and it does not enter the source cards (an image is not a citation source)
 const MD_IMAGE = linkRe(true, HTTP_TARGET);
@@ -282,7 +292,7 @@ function renderInline(
   s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target: string, alias?: string) => stash(wikiAnchor(target.trim(), alias)));
   s = escapeHtml(s);
   s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/(?<![*\w])\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
+  s = s.replace(EM_RE, "<em>$1</em>");
   s = s.replace(/(\d+)/g, (_, i: string) => slots[Number(i)] ?? "");
   return s;
 }
@@ -766,7 +776,7 @@ function renderReadingInline(raw: string, base: string): string {
   s = unescapeMd(s);
   s = escapeHtml(s);
   s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/(?<![*\w])\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
+  s = s.replace(EM_RE, "<em>$1</em>");
   s = s.replace(/(\d+)/g, (_, i: string) => slots[Number(i)] ?? "");
   return s;
 }

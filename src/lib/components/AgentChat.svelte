@@ -29,7 +29,7 @@
   import { prefs } from "$lib/stores/prefs.svelte";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import { executeCommand } from "$lib/commands/registry";
-  import { t } from "$lib/i18n/i18n.svelte";
+  import { t, i18n } from "$lib/i18n/i18n.svelte";
   import { PLAN_GLYPH, toolLabel } from "$lib/views/session";
   import {
     domainOf,
@@ -619,7 +619,7 @@
     if (!u) return "";
     const cache = u.prompt > 0 ? `${Math.round((u.cacheHit / u.prompt) * 100)}%` : "0%";
     const searches = u.searches ? t("chat.usageSearches", { n: u.searches }) : "";
-    return `${t("chat.usageLastTurn", { calls: u.iteration, prompt: u.prompt.toLocaleString(), cache, completion: u.completion.toLocaleString() })}${searches}`;
+    return `${t("chat.usageLastTurn", { calls: u.iteration, prompt: u.prompt.toLocaleString(i18n.locale), cache, completion: u.completion.toLocaleString(i18n.locale) })}${searches}`;
   });
 
   /** On a session change, clear the expansion state keyed by timeline index, so it is not attached to the new timeline at the wrong place. */

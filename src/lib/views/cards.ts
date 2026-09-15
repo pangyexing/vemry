@@ -98,7 +98,8 @@ export function parseCard(hit: BlockHit): Card {
     hit,
     front,
     back,
-    due: due && /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : null,
+    // NFKC so an IME's full-width digits read as a date; the ISO form is what is kept
+    due: due && /^\d{4}-\d{2}-\d{2}$/.test(due.normalize("NFKC")) ? due.normalize("NFKC") : null,
     interval: Number.isFinite(interval) && interval >= 0 ? Math.min(interval, MAX_INTERVAL) : 0,
     ease: Number.isFinite(ease) ? Math.min(MAX_EASE, Math.max(MIN_EASE, ease)) : DEFAULT_EASE,
     reviews: Number.isFinite(reviews) && reviews >= 0 ? reviews : 0,

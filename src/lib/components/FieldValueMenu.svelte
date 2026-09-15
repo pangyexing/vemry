@@ -10,6 +10,7 @@
   The input takes focus on mount, so a typed value is one keystroke away from the chip. -->
 <script lang="ts">
   import { t } from "$lib/i18n/i18n.svelte";
+  import { isImeKeydown } from "$lib/ime";
   import { clampToViewport, dismissOn } from "$lib/popmenu";
   import { stateGlyphSvg, stateTone } from "$lib/chips";
   import { stateIndex } from "$lib/fields";
@@ -74,7 +75,7 @@
     placeholder={t("field.enterValue")}
     value={current}
     onkeydown={(e) => {
-      if (e.key !== "Enter" || e.isComposing) return;
+      if (e.key !== "Enter" || isImeKeydown(e)) return;
       e.preventDefault();
       commit();
     }}

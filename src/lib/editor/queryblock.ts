@@ -111,8 +111,10 @@ export function parseQuerySource(src: string): ParsedQuery {
           q.due_before = localDate(); // the same "local today" as Agenda and Timeline
           break;
         }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { error: t("queryBlock.dueBeforeFormat") };
-        q.due_before = value;
+        // NFKC so an IME's full-width digits read as a date (taskattrs.rs parse_date does
+        // the same); the query carries the ASCII form, which is what the index holds
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value.normalize("NFKC"))) return { error: t("queryBlock.dueBeforeFormat") };
+        q.due_before = value.normalize("NFKC");
         break;
       case "field": {
         if (!FIELD_FLAT_RE.test(value)) return { error: t("queryBlock.fieldFormat") };

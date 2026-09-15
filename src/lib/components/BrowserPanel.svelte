@@ -15,7 +15,7 @@
   // **The focus-return contract**: after any interaction the keyboard goes back to the
   // page, so space paging and keyboard scrolling are unbroken; "open the clipped note"
   // is the one exception, where the user explicitly wants the main window.
-  import { t } from "$lib/i18n/i18n.svelte";
+  import { t, i18n } from "$lib/i18n/i18n.svelte";
   import { onMount, tick } from "svelte";
   import { Menu, type MenuOptions } from "@tauri-apps/api/menu";
   import { api, onBrowserbarCommand, onBrowserbarResult, type BrowserbarAction, type HistoryEntryView } from "$lib/api";
@@ -225,7 +225,7 @@
     const ad = browser.adblock;
     const adText =
       ad?.state === "ready"
-        ? t("agentPanel.adblockOn", { n: ad.rules.toLocaleString() })
+        ? t("agentPanel.adblockOn", { n: ad.rules.toLocaleString(i18n.locale) })
         : ad?.state === "failed"
           ? t("agentPanel.adblockFailed", { error: ad.error })
           : null;

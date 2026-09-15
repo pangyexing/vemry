@@ -233,8 +233,11 @@ function leadingWsAll(s: string): number {
 export type FieldValueKind = "date" | "number" | "text";
 
 export function fieldValueKind(value: string): FieldValueKind {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return "date";
-  if (/^-?\d+(?:\.\d+)?$/.test(value)) return "number";
+  // NFKC first, so a value typed with an IME's full-width digits still reads as a date
+  // or a number (taskattrs.rs parse_date does the same). Display and writing are untouched.
+  const v = value.normalize("NFKC");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return "date";
+  if (/^-?\d+(?:\.\d+)?$/.test(v)) return "number";
   return "text";
 }
 

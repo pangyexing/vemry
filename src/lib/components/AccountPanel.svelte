@@ -30,9 +30,12 @@
     return Math.floor((Date.now() - at) / 86_400_000);
   });
 
-  /** Fen → "12.34" (the interface shows yuan and papers, never tokens). */
+  /** Fen → an amount in the interface's locale with the currency spelled by its code
+   *  ("CN¥12.34" in English, "¥12.34" in Chinese, "元12.34" in Japanese): a bare ¥ reads as
+   *  yen to a Japanese user. The interface shows money and papers, never tokens. */
+  const money = $derived(new Intl.NumberFormat(i18n.locale, { style: "currency", currency: "CNY" }));
   function yuan(fen: number): string {
-    return (Math.abs(fen) / 100).toFixed(2);
+    return money.format(Math.abs(fen) / 100);
   }
   /** A date the server sent (YYYY-MM-DD or RFC 3339) in the interface's locale; unparseable stays as it came. */
   function day(s: string | null | undefined): string {

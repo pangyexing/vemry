@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { t, tn } from "$lib/i18n/i18n.svelte";
+  import { t, tn, compareNames } from "$lib/i18n/i18n.svelte";
   import { tick } from "svelte";
   import { api } from "$lib/api";
   import { executeCommand } from "$lib/commands/registry";
@@ -80,7 +80,7 @@
         if (!child) {
           child = { name: parts[i], path, folders: [], notes: [], others: [] };
           node.folders.push(child);
-          node.folders.sort((a, b) => a.name.localeCompare(b.name, "zh"));
+          node.folders.sort((a, b) => compareNames(a.name, b.name));
         }
         node = child;
       }
@@ -92,13 +92,13 @@
       const idx = note.id.lastIndexOf("/");
       const node = nodeOf(idx === -1 ? "" : note.id.slice(0, idx));
       node.notes.push(note);
-      node.notes.sort((a, b) => a.id.localeCompare(b.id, "zh"));
+      node.notes.sort((a, b) => compareNames(a.id, b.id));
     }
     for (const file of vault.otherFiles) {
       const idx = file.lastIndexOf("/");
       const node = nodeOf(idx === -1 ? "" : file.slice(0, idx));
       node.others.push(file);
-      node.others.sort((a, b) => a.localeCompare(b, "zh"));
+      node.others.sort((a, b) => compareNames(a, b));
     }
     return root;
   });

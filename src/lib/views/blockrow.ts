@@ -54,7 +54,7 @@ const MAX_FIELD_CHIPS = 3;
 const MAX_TAG_CHIPS = 2;
 
 /** `#tag` tokens, as the parser and the editor read them (livepreview's TAG_RE). */
-const TAG_TOKEN_RE = /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
+const TAG_TOKEN_RE = /(^|[^\p{L}\p{N}#&])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
 
 /** The words of a block, by kind: a task through the task views' rule, a callout
  *  through the claims view's, the rest with the block marker, the fields, a capture
@@ -122,7 +122,7 @@ export function blockRowOf(hit: BlockHit, types: BlockType[], opts: RowOptions):
   const k = hit.block.kind;
   let text = blockText(hit);
   let titleAsText = false;
-  if (!text.replace(TAG_TOKEN_RE, "").trim()) {
+  if (!text.replace(TAG_TOKEN_RE, "$1").trim()) {
     text = hit.note_title;
     titleAsText = true;
   }

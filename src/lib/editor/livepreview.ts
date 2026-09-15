@@ -79,7 +79,10 @@ export type ImageCopier = (target: string) => Promise<boolean>;
 
 // inCode lives in fenced.ts (editor/math.ts needs it without a cycle); the importers here keep their path
 export { inCode };
-const TAG_RE = /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
+// The parser's rule (parser.rs): a `#` opens a tag unless the char before it is a
+// letter, a digit, `#` or `&` — so `（#tag` and `「#tag` are tags here too, and `##h`
+// and `&#39;` are not.
+const TAG_RE = /(^|[^\p{L}\p{N}#&])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
 /** An emphasis span the parser may have refused: `**…**` or `*…*` on one line, no `*` inside */
 const CJK_EMPH_RE = /(\*\*|\*)([^*\n]+?)\1/g;
 const CJK_PUNCT = /[。，、；：！？）」』】》〉…—～（「『【《〈]/;

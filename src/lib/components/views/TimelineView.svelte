@@ -55,8 +55,11 @@
     return `${key} ${weekday.format(d)}`;
   }
 
-  const hhmm = (d: Date) =>
-    `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  // The clock in the interface language: 24-hour where the locale uses one, 12-hour with
+  // its own am/pm marker where it does not. Built once per language like `weekday` above,
+  // not once per row — a busy day renders a few hundred.
+  const clock = $derived(new Intl.DateTimeFormat(i18n.locale, { hour: "2-digit", minute: "2-digit" }));
+  const hhmm = (d: Date) => clock.format(d);
   /** The minute bucket used for the same-minute check. Every real time-zone offset is a whole
    *  number of minutes, so dividing is enough — comparing hhmm strings would build two
    *  strings per row, and this compares once per row. */

@@ -3,7 +3,7 @@
 // and a reschedule (the mirror of taskedit.rs and repeat.rs), and the rows, orders and
 // menus Agenda and the board share. The Rust side is the agent's copy of the same rules;
 // change the two together.
-import { t, tn } from "$lib/i18n/i18n.svelte";
+import { i18n, t, tn } from "$lib/i18n/i18n.svelte";
 import { ANCHOR_TAIL_RE, anchorTailStart, appendBeforeAnchor, cutSpan, scanFields, setFieldValue, stripAnchor, stripFields } from "$lib/fields";
 import { api, type BlockHit, type Priority, type TaskState } from "$lib/api";
 import { byNote } from "$lib/views/queryrows";
@@ -275,7 +275,10 @@ export function parseEstimate(s: string): number | null {
   let total = 0;
   let num = "";
   let any = false;
-  for (const c of s.trim()) {
+  // NFKC first: an IME emits full-width digits and letters (`３０ｍ`), and Rust's
+  // parse_estimate reads them the same way. Only the reading is tolerant — nothing
+  // here writes, so the line keeps whatever the user typed.
+  for (const c of s.normalize("NFKC").trim()) {
     if ((c >= "0" && c <= "9") || c === ".") {
       num += c;
       continue;
@@ -575,10 +578,13 @@ export const STAMP_RE = /\*\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)\*/g;
  *  takes — taskattrs.rs parse_date; the two must agree, or the editor's warning would
  *  fall out of step with the parser). Returns the token when valid, otherwise null. */
 export function parseYmd(token: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(token)) return null;
-  const [y, mo, d] = token.split("-").map(Number);
+  // NFKC first, so the full-width digits and dashes an IME emits parse (Rust's
+  // parse_date does the same); the ASCII form is what comes back and what is written.
+  const s = token.normalize("NFKC");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, mo, d] = s.split("-").map(Number);
   const dt = new Date(y, mo - 1, d);
-  return dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d ? token : null;
+  return dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d ? s : null;
 }
 
 /* ---------------------------------------------------------------- the rewrites */
@@ -1076,13 +1082,34 @@ export function dueLabel(due: string, overdue: boolean, density: "full" | "short
   return density === "short" ? phrase : `${due} · ${phrase}`;
 }
 
-/** A date at a kanban chip's density: the year is dropped while it is the current one
- *  ("09-10"), so the chip fits beside the note chip on the ~130px meta row of a 176px
- *  card instead of pushing the note chip onto a second line. The full date stays in the
- *  chip's title. A date in another year keeps the year: that is the one case where it
+// The chip's date formatters, one pair per language: Intl.DateTimeFormat re-parses its
+// options on every construction, and a board redraws a few hundred chips at a time.
+const CHIP_FORMATS = new Map<string, [Intl.DateTimeFormat, Intl.DateTimeFormat]>();
+function chipFormats(): [Intl.DateTimeFormat, Intl.DateTimeFormat] {
+  const tag = i18n.locale;
+  let f = CHIP_FORMATS.get(tag);
+  if (!f) {
+    f = [
+      new Intl.DateTimeFormat(tag, { month: "short", day: "numeric" }),
+      new Intl.DateTimeFormat(tag, { year: "numeric", month: "short", day: "numeric" }),
+    ];
+    CHIP_FORMATS.set(tag, f);
+  }
+  return f;
+}
+
+/** A date at a kanban chip's density, in the interface language ("Sep 10", "9月10日"):
+ *  the year is dropped while it is the current one, so the chip fits beside the note
+ *  chip on the ~130px meta row of a 176px card instead of pushing the note chip onto a
+ *  second line. The ISO date stays in the chip's title, and is what the file holds — this
+ *  is display only. A date in another year keeps the year: that is the one case where it
  *  carries information. */
 export function chipDate(ymd: string): string {
-  return ymd.startsWith(localDate().slice(0, 4) + "-") ? ymd.slice(5) : ymd;
+  const [y, mo, d] = ymd.split("-").map(Number);
+  if (!y || !mo || !d) return ymd;
+  const [short, long] = chipFormats();
+  const dt = new Date(y, mo - 1, d);
+  return (ymd.startsWith(localDate().slice(0, 4) + "-") ? short : long).format(dt);
 }
 
 /** What a task's context menu does, as the view that raised it does them. An Agenda row

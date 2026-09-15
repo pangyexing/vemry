@@ -9,6 +9,7 @@ use std::time::UNIX_EPOCH;
 use crate::block::BlockKind;
 use crate::block::Block;
 use crate::note::{Note, NoteId};
+use crate::search::{fold, fold_name};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct NoteSummary {
@@ -174,11 +175,11 @@ impl BlockIndex {
             agent_session: note.frontmatter.vemry.as_ref().and_then(|m| m.agent_session.clone()),
         };
 
-        self.by_name.entry(note.id.stem().to_lowercase()).or_default().insert(note.id.clone());
+        self.by_name.entry(fold_name(note.id.stem())).or_default().insert(note.id.clone());
         for alias in &note.frontmatter.aliases {
-            self.by_name.entry(alias.to_lowercase()).or_default().insert(note.id.clone());
+            self.by_name.entry(fold_name(alias)).or_default().insert(note.id.clone());
         }
-        let path_key = note.id.as_str().strip_suffix(".md").unwrap_or(note.id.as_str()).to_lowercase();
+        let path_key = fold_name(note.id.as_str().strip_suffix(".md").unwrap_or(note.id.as_str()));
         self.by_path.insert(path_key, note.id.clone());
         for t in &tags {
             self.tags.entry(t.clone()).or_default().insert(note.id.clone());
@@ -242,7 +243,7 @@ impl BlockIndex {
         if target.is_empty() {
             return Some(from.clone());
         }
-        let lower = target.to_lowercase();
+        let lower = fold_name(target);
         let lower = lower.strip_suffix(".md").unwrap_or(&lower);
         if target.contains('/') {
             return self.by_path.get(lower).cloned();
@@ -276,7 +277,7 @@ impl BlockIndex {
         if self.notes.contains_key(id) {
             return Some(id.clone());
         }
-        let key = id.as_str().strip_suffix(".md")?.to_lowercase();
+        let key = fold_name(id.as_str().strip_suffix(".md")?);
         self.by_path.get(&key).cloned()
     }
 
@@ -402,7 +403,7 @@ impl BlockIndex {
             }
             let mut seen_here: HashSet<String> = HashSet::new();
             let mut bump = |key: &str, value: &str| {
-                let lower = key.to_lowercase();
+                let lower = fold(key);
                 let fresh = seen_here.insert(lower.clone());
                 let a = acc.entry(lower).or_insert_with(|| Acc { key: key.to_string(), notes: 0, values: HashMap::new() });
                 if fresh {
@@ -468,12 +469,12 @@ impl BlockIndex {
     /// compared case-insensitively.
     #[cfg(test)]
     pub fn frontmatter_field<'a>(&'a self, id: &NoteId, key: &str) -> impl Iterator<Item = &'a str> + 'a {
-        let key = key.to_lowercase();
+        let key = fold(key);
         self.notes
             .get(id)
             .into_iter()
             .flat_map(|e| e.fm_fields.iter())
-            .filter(move |(k, _)| k.to_lowercase() == key)
+            .filter(move |(k, _)| fold(k) == key)
             .map(|(_, v)| v.as_str())
     }
 
