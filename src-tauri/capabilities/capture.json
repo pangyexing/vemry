@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture-window",
+  "description": "IPC for the quick capture window (label `capture`). It runs our own frontend bundle, matched exactly on that label like the chat window; browser-* windows (remote content) still match no capability at all. What it actually calls: capture_window_ready / capture_window_hide / capture_window_resize / capture_to_main / vault_current / notes_list / folders_list / files_list / privacy_list / query_blocks / note_create / attachment_save / files_import / clipboard_files / clipboard_image / settings_get.",
+  "webviews": ["capture"],
+  "permissions": ["core:default"]
+}

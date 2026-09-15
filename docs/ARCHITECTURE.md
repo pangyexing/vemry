@@ -130,8 +130,10 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   `menu://command` to `executeCommand` — the menu never grows a second set of
   semantics, and its labels come from the same catalog as the command titles
   (`cmd.<id>.title`). Accelerators are split three ways: menu-only (⌘, ⌘N ⌘O ⌘⇧F
-  ⌘⇧C ⌘⇧S, with the matching frontend branch gated on `!isMac` so nothing fires
-  twice), frontend-only (⌘P ⌘L ⌘B ⌘. ⌘⌥←→ — the menu item carries no accelerator
+  ⌘⇧S, with the matching frontend branch gated on `!isMac` so nothing fires
+  twice; quick capture's item shows the global shortcut from the settings as a
+  hint, since a registered hot key is consumed by the system before the menu sees
+  it), frontend-only (⌘P ⌘L ⌘B ⌘. ⌘⌥←→ — the menu item carries no accelerator
   but is still clickable), and Predefined-only (the Edit menu's
   undo/redo/cut/copy/paste go through native selectors straight to the first
   responder; turning them into emits would steal CodeMirror's ⌘Z and ⌘C). The
@@ -140,6 +142,22 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
 - `pasteboard.rs`: system clipboard reads the web layer cannot reach (macOS
   NSPasteboard: the file-path list and raw image bytes). Other platforms return
   nothing and the frontend falls back to the `File` objects on the DOM paste event.
+- `capture_window.rs`: the quick capture window (label `capture`) — one global
+  shortcut (`tauri-plugin-global-shortcut`, `capture_hotkey` in the settings,
+  `Alt+Shift+Space` by default; a registration failure is recorded for the settings
+  page, never fatal) shows a small always-on-top composer on the screen the mouse
+  is on. The window is built hidden shortly after startup and only ever hidden
+  again (Esc, a lost focus, Enter — the landing runs behind it and only a failure
+  brings the window back), so every press is instant and the draft survives; on
+  macOS it is switched to a non-activating panel after it is
+  built, so it takes the keyboard without activating vemry — the application the
+  user was in stays active and the main window never comes forward. **Landing is
+  relayed to the main window**
+  (`capture_to_main` → `capture://action` → `vault.capture` → `capture_reply` →
+  `capture://result`): the capture webview cannot see the editor buffer, and a
+  disk write of a note the main window has open would be overwritten by its
+  autosave. Rust writes no capture itself; the branch for a main window that is
+  not there (a later tray-resident state) is not wired.
 - `settings.rs`: model / endpoint / key, plus v0.4's browser and search switches
   (adblock, how links open, web search), v0.5's reader image proxy and clip image
   localisation, v0.6's check-for-updates-at-startup, v0.9's interface language, and
@@ -381,7 +399,8 @@ a file paste, the clipboard's plain text is inserted manually instead.
   This is a deliberate widening and does not conflict with the browser tabs'
   "remote pages get zero IPC" (`browser-*` still matches no capability). The
   third of our own webviews, the detached browser window's chrome bar
-  (`browserbar`, `capabilities/browserbar.json`), is matched exactly too.
+  (`browserbar`, `capabilities/browserbar.json`), is matched exactly too, and so
+  is the fourth, the quick capture window (`capture`, `capabilities/capture.json`).
   Capabilities always match a label exactly, never a wildcard, and they are
   scoped to **webviews**, not windows — the main window has had child webviews
   (the browser tabs) since v0.9, and a window-scoped capability would have let
@@ -1006,6 +1025,27 @@ palette.
   whole package is dropped. Geometry (in logical pixels) is kept in memory on
   Moved/Resized and written to settings on Destroyed, so the next window opens in
   place.
+- **The quick capture window** (a global shortcut, the palette's `quick-capture`,
+  the File menu, the activity bar; `src-tauri/src/capture_window.rs` +
+  `src/CaptureWindow.svelte` + `src/lib/components/CaptureComposer.svelte`): a
+  520px composer on a transparent always-on-top window, shown on the screen under
+  the mouse from any application and hidden — never destroyed — by Esc, a lost
+  focus or Enter itself: the landing spot is already written in the foot, so
+  Enter hides the window at once and the landing runs behind it, and only a
+  failure brings the window back with the text and the reason. ⇧Enter is a
+  newline, ⌘Enter picks a
+  note (and with Tab a section) for that one capture through the same two-stage
+  contract as the palette's pick-note (`pickNote.ts`), without pinning anything;
+  the standing target is the `capture_target` setting (inbox.md, today's journal
+  note, or a pinned note and section, in Settings › Quick capture, which also
+  records the shortcut). Pasted or dropped images and files are held in the
+  window and saved into the target note's attachment bucket at landing time (the
+  bucket depends on the note chosen then), and the block is the existing capture
+  line with the embeds as continuation lines. The text itself is relayed to the
+  main window's `vault.capture` and the answer comes back under the request's id
+  (the relay is a hard rule, see the glue layer's `capture_window.rs`). The palette's former capture
+  mode and the ⌘⇧C binding are gone: a registered hot key fires while vemry is
+  frontmost too, so one shortcut serves everywhere.
 - **Context menus** (`stores/contextMenu.svelte.ts` plus the **one** `<ContextMenu />`
   mounted in App): menu items **are data, not layout** — `entries` is computed for
   the context at the moment of opening (a dynamic undo label, paste's two states, a
@@ -1725,7 +1765,9 @@ download entirely: nothing there would consume the rules.
   open it must go through the editor buffer (`insertAtSection`/`insertAtCursor`;
   `src/lib/insert.ts` and insert.rs share one table of rule cases) — a disk write
   would be overwritten by the stale buffer's autosave. Quick capture shares this
-  entire landing mechanism with clipping. A selection is taken not as plain text but
+  entire landing mechanism with clipping — which is why the quick capture window,
+  a separate webview that cannot see the buffer, relays its text to the main
+  window instead of writing (see "The quick capture window" below). A selection is taken not as plain text but
   as a Range-cloned **DOM fragment** (sharing the normalisation JS with full-page
   clipping: lazy-loaded images are repaired by pairing the src attribute against the
   live DOM, formulas are wrapped in sentinels, and relative addresses are completed
@@ -2655,6 +2697,21 @@ projections — which is why closing either one loses no context. Creation, hand
 the close handshake and the relay live in `src-tauri/src/agent_window.rs` +
 `src/AgentWindow.svelte` + `src/lib/host.ts`. A session has exactly one visible
 composer, and switching sessions happens only on that side.
+
+### The quick capture window
+
+The fourth of our own webviews, shown by one global shortcut from any application
+(`src-tauri/src/capture_window.rs` + `src/CaptureWindow.svelte` +
+`src/lib/components/CaptureComposer.svelte`; the shell section above describes what
+it does). Two rules hold it together. **It is hidden, never destroyed**: built once
+after startup, every press shows it instantly and the draft survives a dismissal.
+**It writes no note**: the text is relayed to the main window, whose `vault.capture`
+alone can tell a note open in the editor (the buffer) from one on disk
+(`note_insert`) — the same reason the chat window relays its inserts. The only
+write it makes is an attachment into the target note's bucket, and only at landing
+time, when the target is known. The shortcut is the one binding quick capture has:
+a registered hot key fires while vemry itself is frontmost, so the main window
+binds nothing and the menu item's accelerator is a hint.
 
 ### Attachments bucketed by a note's full path
 

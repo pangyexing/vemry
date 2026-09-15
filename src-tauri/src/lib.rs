@@ -2,6 +2,7 @@ mod account;
 mod agent_bridge;
 mod agent_window;
 mod browser;
+mod capture_window;
 mod commands;
 mod config_store;
 mod i18n;
@@ -37,6 +38,9 @@ pub struct AppState {
     /// Handoff, close handshake and geometry relay for the detached AI chat window
     /// (see agent_window.rs).
     pub agent_window: agent_window::AgentWindowState,
+    /// The quick capture window: build, show/hide, the shortcut's registration and
+    /// the receipt relay (see capture_window.rs).
+    pub capture_window: capture_window::CaptureWindowState,
     /// The one side-by-side translation job at a time (see translate.rs).
     pub translate: translate::TranslateState,
     /// The browser tabs being translated in place (see browser/pagetr.rs).
@@ -61,6 +65,9 @@ pub fn run() {
         // docs/ARCHITECTURE.md.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // The quick capture window's global shortcut (one combination, registered
+        // from the settings in setup; capture_window.rs)
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // The projection image proxy: the main webview never talks to a remote host
         // directly, and images are fetched by Rust through this protocol (SSRF
         // validation, no cookies, a disk cache)
@@ -75,6 +82,7 @@ pub fn run() {
             reader: browser::reader::ReaderState::default(),
             adblock: browser::adblock::AdblockState::default(),
             agent_window: agent_window::AgentWindowState::default(),
+            capture_window: capture_window::CaptureWindowState::default(),
             translate: translate::TranslateState::default(),
             browser_translate: browser::pagetr::PageTranslations::default(),
             quit_asked: std::sync::atomic::AtomicBool::new(false),
@@ -115,6 +123,12 @@ pub fn run() {
             // hundred milliseconds of building a window and cold-starting a WebKit
             // subprocess (the memory cost is roughly one blank-page WebContent process)
             browser::window::ensure_pool_soon(app.handle(), 3000);
+            // The quick capture window: its global shortcut is registered now (a
+            // failure is recorded for the settings page, never fatal), and the hidden
+            // window itself is built once the startup rush has passed, so the first
+            // press shows it as instantly as every later one
+            capture_window::install_hotkey(app.handle());
+            capture_window::ensure_soon(app.handle(), 2500);
             // The docked browser tabs are native child views of the main window: on a
             // resize they are re-placed from the panel anchors (no round trip to the
             // frontend). `get_webview_window("main")` is None once the main window has a
@@ -137,6 +151,7 @@ pub fn run() {
                     tauri::WindowEvent::Destroyed => {
                         agent_window::force_close(&handle);
                         browser::window::close_all(&handle);
+                        capture_window::force_close(&handle);
                     }
                     _ => {}
                 });
@@ -230,6 +245,14 @@ pub fn run() {
             agent_window::agent_window_set_selection,
             agent_window::agent_window_to_main,
             agent_window::agent_window_to_agent,
+            capture_window::capture_window_show,
+            capture_window::capture_window_hide,
+            capture_window::capture_window_ready,
+            capture_window::capture_window_resize,
+            capture_window::capture_to_main,
+            capture_window::capture_reply,
+            commands::clipboard_files,
+            commands::clipboard_image,
             commands::agent_session_delete,
             commands::agent_session_rename,
             commands::agent_session_fork,

@@ -297,6 +297,9 @@ mod tests {
         "err.blockNotFound",
         "err.blockChanged",
         "err.blockNotIdable",
+        "window.captureTitle",
+        "ipc.captureNoMainWindow",
+        "ipc.captureHotkeyInvalid",
     ];
 
     #[test]

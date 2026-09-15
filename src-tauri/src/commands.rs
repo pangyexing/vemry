@@ -717,6 +717,26 @@ pub fn clipboard_read_text() -> Option<String> {
     crate::pasteboard::string_text()
 }
 
+/// The files on the system clipboard (a file manager's copy) as absolute paths —
+/// the capture window's paste. The window keeps the paths until Enter decides
+/// which note's attachment bucket they go to (`clipboard_paste` writes at paste
+/// time, which needs a destination that is not known yet); they are then imported
+/// through `files_import`. Empty off macOS, where the DOM paste data is the fallback.
+#[tauri::command]
+pub fn clipboard_files() -> Vec<String> {
+    crate::pasteboard::file_paths().into_iter().map(|p| p.to_string_lossy().into_owned()).collect()
+}
+
+/// Raw image bytes on the system clipboard (a screenshot), over the binary
+/// channel; empty when there is none. The same deferred-destination reason as
+/// `clipboard_files`: the bytes are held by the capture window and saved with
+/// `attachment_save` once the target is known. The format is sniffed by the caller
+/// from the bytes (PNG is preferred by the reader, TIFF is the other possibility).
+#[tauri::command]
+pub fn clipboard_image() -> tauri::ipc::Response {
+    tauri::ipc::Response::new(crate::pasteboard::image_data().map(|(b, _)| b).unwrap_or_default())
+}
+
 /// One-click copy of an editor image: an image file in the vault is written to the
 /// system clipboard as a bitmap (the reverse of clipboard_paste). Decoding is left
 /// to NSImage, and a failure to decode or a non-macOS platform is an error — the
@@ -1013,6 +1033,14 @@ pub struct SettingsView {
     /// panel's header) — the hosted choice or the catalog's default in hosted mode,
     /// `model` otherwise.
     pub active_model: String,
+    /// Quick capture: the global shortcut (the plugin's grammar), the registration's
+    /// failure if any (derived and read-only — None means the shortcut works), and
+    /// the landing target with its pin.
+    pub capture_hotkey: String,
+    pub capture_hotkey_error: Option<String>,
+    pub capture_target: settings::CaptureTarget,
+    pub capture_pinned_path: String,
+    pub capture_pinned_heading: String,
 }
 
 /// A partial update: `None` = keep the existing value. The frontend fetches
@@ -1048,6 +1076,10 @@ pub struct SettingsUpdate {
     pub translate_target: Option<String>,
     pub translate_model: Option<String>,
     pub translate_addendum: Option<String>,
+    pub capture_hotkey: Option<String>,
+    pub capture_target: Option<settings::CaptureTarget>,
+    pub capture_pinned_path: Option<String>,
+    pub capture_pinned_heading: Option<String>,
 }
 
 /// VEMRY.md's starter content in the current language: the shared header plus
@@ -1102,6 +1134,11 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         provider: s.provider,
         hosted_model: s.hosted_model,
         active_model,
+        capture_hotkey: s.capture_hotkey,
+        capture_hotkey_error: crate::capture_window::hotkey_error(&app),
+        capture_target: s.capture_target,
+        capture_pinned_path: s.capture_pinned_path,
+        capture_pinned_heading: s.capture_pinned_heading,
     }
 }
 
@@ -1196,7 +1233,38 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     if let Some(v) = update.translate_addendum {
         s.translate_addendum = v.trim().to_string();
     }
+    if let Some(v) = update.capture_target {
+        s.capture_target = v;
+    }
+    if let Some(v) = update.capture_pinned_path {
+        s.capture_pinned_path = v.trim().to_string();
+    }
+    if let Some(v) = update.capture_pinned_heading {
+        s.capture_pinned_heading = v.trim().to_string();
+    }
+    // The shortcut is the one field whose write can fail (another application holds
+    // the keys): it is re-registered first and stored only once that worked, after
+    // the rest of the update has landed — a refused combination costs the user
+    // nothing else they changed. The validation is the plugin's own parser, so a
+    // hand-edited settings.json cannot store a combination that never registers.
+    let new_hotkey = update.capture_hotkey.map(|v| v.trim().to_string()).filter(|v| *v != s.capture_hotkey);
+    if let Some(v) = &new_hotkey {
+        if !crate::capture_window::is_valid_hotkey(v) {
+            return Err(crate::i18n::t(crate::i18n::current(), "ipc.captureHotkeyInvalid"));
+        }
+    }
     settings::save(&app, &s)?;
+    if let Some(v) = new_hotkey {
+        crate::capture_window::rebind(&app, &s.capture_hotkey, &v)?;
+        let _ = settings::update(&app, |s| {
+            s.capture_hotkey = v.clone();
+            true
+        });
+        // The menu item's hint carries the combination (macOS; a no-op elsewhere)
+        if let Err(e) = crate::menu::install(&app) {
+            eprintln!("menu rebuild after shortcut change failed: {e}");
+        }
+    }
     if adblock_toggled || adblock_urls_changed {
         // An edited source list has to be recompiled: dropping a subscription stops
         // its cached file from being read (rule_files goes by the current list), but

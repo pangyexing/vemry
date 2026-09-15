@@ -162,6 +162,33 @@ pub struct Settings {
     /// switching between the two providers loses neither choice.
     #[serde(default)]
     pub hosted_model: String,
+    /// The quick capture window's global shortcut, in the shortcut plugin's grammar
+    /// (`Alt+Shift+Space`; the frontend renders it as ⌥⇧Space or Alt+Shift+Space).
+    /// One combination for every application, vemry itself included — a registered
+    /// hot key fires in the foreground too. The default is a combination no
+    /// common application binds; settings_set refuses one that does not parse.
+    #[serde(default = "default_capture_hotkey")]
+    pub capture_hotkey: String,
+    /// Where Enter in the capture window lands a thought (⌘Enter still picks a note
+    /// for one capture): inbox.md, today's journal note, or a pinned note and
+    /// section. The pin is its own pair of fields and not the clip target — a clip
+    /// pin is a browsing session's destination, a capture pin a long-lived inbox.
+    #[serde(default)]
+    pub capture_target: CaptureTarget,
+    #[serde(default)]
+    pub capture_pinned_path: String,
+    #[serde(default)]
+    pub capture_pinned_heading: String,
+}
+
+/// The capture target's wire values, mirrored as `CaptureTarget` in api.ts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureTarget {
+    #[default]
+    Inbox,
+    Journal,
+    Pinned,
 }
 
 /// The provider setting's wire values, mirrored as `ProviderSetting` in api.ts.
@@ -261,6 +288,10 @@ fn default_reasoning_effort() -> String {
     "high".into()
 }
 
+pub fn default_capture_hotkey() -> String {
+    "Alt+Shift+Space".into()
+}
+
 fn default_rule_urls() -> Vec<String> {
     vec![
         "https://easylist.to/easylist/easylist.txt".into(),
@@ -303,6 +334,10 @@ impl Default for Settings {
             translate_addendum: String::new(),
             provider: ProviderSetting::default(),
             hosted_model: String::new(),
+            capture_hotkey: default_capture_hotkey(),
+            capture_target: CaptureTarget::default(),
+            capture_pinned_path: String::new(),
+            capture_pinned_heading: String::new(),
         }
     }
 }
@@ -600,6 +635,25 @@ mod tests {
         // The custom fields are untouched and come back when the switch goes back
         let back = Settings { provider: ProviderSetting::Custom, ..s };
         assert_eq!(back.provider_config().api_key, "own");
+    }
+
+    /// The capture fields are added later: an old config missing them takes the
+    /// default shortcut and inbox.md, and stored values must be kept.
+    #[test]
+    fn capture_fields_default_and_keep_stored() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.capture_hotkey, "Alt+Shift+Space");
+        assert_eq!(s.capture_target, CaptureTarget::Inbox);
+        assert!(s.capture_pinned_path.is_empty() && s.capture_pinned_heading.is_empty());
+        let s: Settings = serde_json::from_str(
+            r#"{"capture_hotkey":"Ctrl+Shift+Space","capture_target":"pinned","capture_pinned_path":"notes/ideas.md","capture_pinned_heading":"Later"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.capture_hotkey, "Ctrl+Shift+Space");
+        assert_eq!(s.capture_target, CaptureTarget::Pinned);
+        assert_eq!((s.capture_pinned_path.as_str(), s.capture_pinned_heading.as_str()), ("notes/ideas.md", "Later"));
+        let s: Settings = serde_json::from_str(r#"{"capture_target":"journal"}"#).unwrap();
+        assert_eq!(s.capture_target, CaptureTarget::Journal);
     }
 
     /// Click-opens-links is a switch added later: an old config missing it takes the

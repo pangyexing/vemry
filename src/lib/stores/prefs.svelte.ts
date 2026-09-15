@@ -3,7 +3,7 @@
 // synchronously (a click gesture cannot await an IPC round trip). App refreshes it once
 // at startup, and SettingsModal writes the mirrored fields directly after a successful
 // save — outside those two there is no writer.
-import { api, type ProviderSetting, type SettingsView } from "$lib/api";
+import { api, type CaptureTarget, type ProviderSetting, type SettingsView } from "$lib/api";
 
 class PrefsStore {
   /** An ordinary click on a rendered link in the editor opens it; with it off, only
@@ -40,6 +40,15 @@ class PrefsStore {
   imagesUnsupported = $state(false);
   /** Side-by-side translation's target language ("" = the interface language): the status bar's chip asks whether the open note is already in it. */
   translateTarget = $state("");
+  /** Quick capture: the global shortcut in the plugin's grammar (the activity bar's
+   *  hint and the palette row render it through capture.ts's hotkeyLabel), the
+   *  registration's failure if any (toasted once at startup), and where Enter lands
+   *  a capture — read by the capture window at the moment of landing. */
+  captureHotkey = $state("Alt+Shift+Space");
+  captureHotkeyError = $state<string | null>(null);
+  captureTarget = $state<CaptureTarget>("inbox");
+  capturePinnedPath = $state("");
+  capturePinnedHeading = $state("");
 
   /** Returns the full settings it fetched, which the startup path consumes along the way (saving a second IPC). */
   async refresh(): Promise<SettingsView | undefined> {
@@ -59,6 +68,11 @@ class PrefsStore {
       this.reasoningEffortActive = s.reasoning_effort_active;
       this.imagesUnsupported = s.images_unsupported;
       this.translateTarget = s.translate_target;
+      this.captureHotkey = s.capture_hotkey;
+      this.captureHotkeyError = s.capture_hotkey_error;
+      this.captureTarget = s.capture_target;
+      this.capturePinnedPath = s.capture_pinned_path;
+      this.capturePinnedHeading = s.capture_pinned_heading;
       return s;
     } catch {
       // Failing to fetch keeps the current values

@@ -10,8 +10,12 @@
 //! Accelerators fall into three classes (paired with the isMac gate on
 //! App.svelte's keydown chain):
 //! 1. Menu-only (the accelerator is set here, and the matching frontend branch
-//!    gets a !isMac gate so it cannot fire twice): ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧C ⌘⇧S ⌘⇧T — the
+//!    gets a !isMac gate so it cannot fire twice): ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧S ⌘⇧T — the
 //!    application-level combinations WKWebView and CodeMirror do not claim;
+//!    quick capture's item shows the global shortcut from the settings as a hint
+//!    only — a registered hot key is consumed by the system before the menu sees
+//!    it, so there is nothing to fire twice (the item still opens the window when
+//!    clicked, and when the registration failed the accelerator is a real one);
 //!    ⌘W belongs here too (a special case in Rust that never reaches the
 //!    frontend, which has no binding for it; the chat window's frontend ⌘W
 //!    serves non-mac alone — on mac the menu takes it first, and the special case
@@ -79,8 +83,13 @@ mod imp {
     /// Builds (or rebuilds) the whole menu. Called again when the language
     /// changes — `set_menu` replaces the previous one wholesale.
     pub fn install(app: &AppHandle) -> tauri::Result<()> {
-        let lang = i18n::resolve(crate::settings::load(app).language);
+        let settings = crate::settings::load(app);
+        let lang = i18n::resolve(settings.language);
         let cmd = |id: &str| format!("cmd.{id}.title");
+        // The capture item's hint follows the setting (rebuilt with the menu on a
+        // change); a combination the menu cannot parse leaves the item without one
+        let quick_capture = item_key(app, lang, "quick-capture", "menu.quickCapture", &settings.capture_hotkey)
+            .or_else(|_| item(app, lang, "quick-capture", "menu.quickCapture"))?;
         let app_menu = SubmenuBuilder::new(app, "vemry")
             .about(Some(AboutMetadata::default()))
             .separator()
@@ -98,7 +107,7 @@ mod imp {
             .item(&item_key(app, lang, "new-note", &cmd("new-note"), "Cmd+N")?)
             .item(&item_key(app, lang, "open-note", &cmd("open-note"), "Cmd+O")?)
             .separator()
-            .item(&item_key(app, lang, "quick-capture", "menu.quickCapture", "Cmd+Shift+C")?)
+            .item(&quick_capture)
             .separator()
             .item(&item(app, lang, "create-vault", &cmd("create-vault"))?)
             .item(&item(app, lang, "open-vault", &cmd("open-vault"))?)
@@ -199,10 +208,11 @@ mod imp {
     /// ⌘W: dispatched by where the keyboard focus is — inside a browser tab (the
     /// detached window, or a docked page holding the first responder) it closes that
     /// tab; the chat window goes through close(), which triggers the existing
-    /// CloseRequested handshake; the main window otherwise closes the current editor
-    /// tab — bridged through menu://command back to the frontend registry's
-    /// close-tab command, a no-op in the frontend when there is no tab, and the main
-    /// window itself is never closed by ⌘W.
+    /// CloseRequested handshake; the capture window only hides (its draft stays);
+    /// the main window otherwise closes the current editor tab — bridged through
+    /// menu://command back to the frontend registry's close-tab command, a no-op in
+    /// the frontend when there is no tab, and the main window itself is never closed
+    /// by ⌘W.
     fn close_focused_window(app: &AppHandle) {
         use tauri::Manager;
         let Some(label) = focused_window(app) else { return };
@@ -212,6 +222,8 @@ mod imp {
             if let Some(w) = app.get_webview_window("agent") {
                 let _ = w.close();
             }
+        } else if label == crate::capture_window::CAPTURE_LABEL {
+            crate::capture_window::dismiss(app);
         } else if label == "main" {
             if crate::browser::window::focused_tab(app).is_some() {
                 crate::browser::window::close_active_tab(app);

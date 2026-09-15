@@ -386,7 +386,17 @@ export interface SettingsView {
   hosted_model: string;
   /** Derived and read-only: the model requests actually name (the hosted choice or the catalog's default in hosted mode, `model` otherwise). */
   active_model: string;
+  /** Quick capture: the global shortcut in the shortcut plugin's grammar ("Alt+Shift+Space"; capture.ts renders it),
+   *  the registration's failure (derived and read-only; null = the shortcut works), and where Enter lands a capture. */
+  capture_hotkey: string;
+  capture_hotkey_error: string | null;
+  capture_target: CaptureTarget;
+  capture_pinned_path: string;
+  capture_pinned_heading: string;
 }
+
+/** The capture target's wire values (settings.rs CaptureTarget): inbox.md, today's journal note, or the pinned note and section. */
+export type CaptureTarget = "inbox" | "journal" | "pinned";
 
 /** A partial update: a field left out keeps its value. */
 export interface SettingsUpdate {
@@ -418,6 +428,11 @@ export interface SettingsUpdate {
   translate_target?: string;
   translate_model?: string;
   translate_addendum?: string;
+  /** Refused (nothing else in the update is lost) when the combination does not parse or another app holds it. */
+  capture_hotkey?: string;
+  capture_target?: CaptureTarget;
+  capture_pinned_path?: string;
+  capture_pinned_heading?: string;
 }
 
 /** Who wrote over a kept state of a note (history.rs). */
@@ -817,6 +832,28 @@ export type AgentWindowCommand =
    *  extraction failed — the error goes into the chat window too, since that is where
    *  the user is looking. */
   | { kind: "attach-page"; page: PageContext | null; error?: string };
+
+/** What the quick capture window asks the main window to land (capture://action; the
+ *  relay of capture_window.rs). id pairs the receipt with the request — the window
+ *  hides on Enter and a second capture may be in flight before the first is answered.
+ *  text is as typed — the lines after the first become continuation lines of the list
+ *  item; attachments are vault-relative paths already saved into the target note's
+ *  bucket, embedded as continuation lines. */
+export interface CaptureAction {
+  id: number;
+  text: string;
+  target: string;
+  heading: string | null;
+  attachments: string[];
+}
+/** The main window's receipt (capture://result), echoing the request's id: landed says whether a requested section was found. */
+export interface CaptureResult {
+  id: number;
+  ok: boolean;
+  path?: string;
+  landed?: "section" | "tail";
+  error?: string;
+}
 
 /** An @ context reference: only the path identifier travels, and resolution (with the
  *  privacy gate) happens inside Rust's vault lock (the serde mirror of vemry-agent's
@@ -1311,6 +1348,19 @@ export const api = {
   agentWindowToMain: (action: HostAction, focus: boolean) =>
     invoke<void>("agent_window_to_main", { action, focus }),
   agentWindowToAgent: (action: AgentWindowCommand) => invoke<void>("agent_window_to_agent", { action }),
+  // ---- the quick capture window (capture_window.rs): shown by a global shortcut or these entry points; landing is relayed to the main window, whose receipt comes back ----
+  captureWindowShow: () => invoke<void>("capture_window_show"),
+  captureWindowHide: () => invoke<void>("capture_window_hide"),
+  /** The capture webview has mounted and listens: a show that arrived earlier is replayed. */
+  captureWindowReady: () => invoke<void>("capture_window_ready"),
+  /** The window follows the composer's content height (logical px). */
+  captureWindowResize: (height: number) => invoke<void>("capture_window_resize", { height }),
+  captureToMain: (action: CaptureAction) => invoke<void>("capture_to_main", { action }),
+  captureReply: (result: CaptureResult) => invoke<void>("capture_reply", { result }),
+  /** Files on the system clipboard as absolute paths (a file manager's copy), for the capture window's paste; empty off macOS. */
+  clipboardFiles: () => invoke<string[]>("clipboard_files"),
+  /** Raw image bytes on the system clipboard (a screenshot; empty when there is none) — the format is sniffed from the bytes (capture.ts). */
+  clipboardImage: async () => new Uint8Array(await invoke<ArrayBuffer>("clipboard_image")),
   agentSessionDelete: (id: string) => invoke<void>("agent_session_delete", { id }),
   /** Rename by hand: a title override line is appended to the audit jsonl (the last one wins), and it is allowed while the agent is running. */
   agentSessionRename: (id: string, title: string) =>
@@ -1442,6 +1492,20 @@ export function onAgentWindowAction(handler: (a: HostAction) => void): Promise<U
 /** Chat window: a command from the main window. */
 export function onAgentWindowCommand(handler: (c: AgentWindowCommand) => void): Promise<UnlistenFn> {
   return listen<AgentWindowCommand>("agent-window://command", (event) => handler(event.payload));
+}
+
+// ---- the cross-window events of the quick capture window (emitted by capture_window.rs, directed with emit_to) ----
+/** Capture window: it was just shown — focus the text, refresh the settings and the notes. */
+export function onCaptureShown(handler: () => void): Promise<UnlistenFn> {
+  return listen<null>("capture://shown", () => handler());
+}
+/** Main window: a capture to land (answered with captureReply). */
+export function onCaptureAction(handler: (a: CaptureAction) => void): Promise<UnlistenFn> {
+  return listen<CaptureAction>("capture://action", (event) => handler(event.payload));
+}
+/** Capture window: the main window's receipt. */
+export function onCaptureResult(handler: (r: CaptureResult) => void): Promise<UnlistenFn> {
+  return listen<CaptureResult>("capture://result", (event) => handler(event.payload));
 }
 
 // ---- the cross-window events of the detached browser window's chrome bar (`browserbar`) ----

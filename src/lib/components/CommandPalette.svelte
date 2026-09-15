@@ -12,7 +12,7 @@
   import { isImeKeydown } from "$lib/ime";
   import { k } from "$lib/shortcut";
 
-  export type PaletteMode = "commands" | "notes" | "pick-note" | "search" | "capture" | "vaults" | "url" | "types";
+  export type PaletteMode = "commands" | "notes" | "pick-note" | "search" | "vaults" | "url" | "types";
 
   import { prettyUrl, webCandidates } from "$lib/urls";
 
@@ -48,15 +48,12 @@
   let {
     mode = $bindable<PaletteMode | null>(null),
     onPickNote,
-    onCaptureToNote,
   }: {
     mode: PaletteMode | null;
     /** pick-note mode: the chosen (or newly created) note's path comes back through the
      *  callback rather than being opened; heading is the destination section chosen in the
      *  second stage (absent or null = the end of the note). */
     onPickNote?: (path: string, heading?: string | null) => void;
-    /** capture mode's ⌘Enter: the text is handed to the caller to take into pick-note and choose a destination. */
-    onCaptureToNote?: (text: string) => void;
   } = $props();
 
   let query = $state("");
@@ -75,7 +72,6 @@
     notes: t("palette.notes"),
     "pick-note": t("palette.pickNote"),
     search: t("palette.search"),
-    capture: t("palette.capture", { key: k("Mod+Enter") }),
     vaults: t("palette.vaults"),
     url: t("palette.url", { key: k("Mod+Enter") }),
     types: t("palette.types"),
@@ -447,24 +443,6 @@
   }
 
   async function submit(modifier = false) {
-    if (mode === "capture") {
-      const text = query.trim();
-      if (!text) return close();
-      // ⌘Enter: take the text first and then raise pick-note to choose a destination (the same "take, then choose" as clipping)
-      if (modifier && onCaptureToNote) {
-        close();
-        onCaptureToNote(text);
-        return;
-      }
-      // It lands before the palette closes: on failure the palette and the text stay for a retry, so a memo is never lost silently
-      try {
-        await vault.capture(text);
-        close();
-      } catch (e) {
-        toast.push(String(e), "error");
-      }
-      return;
-    }
     if (mode === "url") {
       const it = items[selected];
       close();
@@ -565,7 +543,6 @@
         {onkeydown}
         spellcheck="false"
       />
-      {#if mode !== "capture"}
         <ul bind:this={listEl}>
           {#each items as item, i (item.id)}
             {#if item.groupLabel}
@@ -613,7 +590,6 @@
             </li>
           {/each}
         </ul>
-      {/if}
       {#if mode === "url" && urlHistory.length > 0}
         <div class="foot">
           <button class="foot-act" title={t("palette.clearHistoryHint")} onclick={clearHistory}>

@@ -2,7 +2,8 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { extractOutline } from "$lib/outline";
-  import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onMenuEvent, onQuitRequested, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
+  import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onCaptureAction, onMenuEvent, onQuitRequested, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
+  import { hotkeyLabel } from "$lib/capture";
   import { runHostAction } from "$lib/host";
   import { executeCommand, registerCommand, syncScriptCommands } from "$lib/commands/registry";
   import { MEMORY_DRAFT_PROMPT, MEMORY_REVIEW_PROMPT } from "$lib/commands/memoryPrompts";
@@ -60,40 +61,17 @@
    *  cancelled: pick-note can only be entered from the entry points that assign it, so a stale
    *  value cannot be delivered. */
   let pendingQuote: { text: string; url?: string } | null = null;
-  /** The text waiting to land for "a quick memo into a chosen note" (entered with ⌘Enter in the
-   *  capture panel). It is mutually exclusive with pendingQuote — both entry points clear the
-   *  other before assigning, or a stale value left after one flow's panel was cancelled would be
-   *  delivered by the other. */
-  let pendingCapture: string | null = null;
-
   function pickNoteForQuote(text: string, url?: string) {
-    pendingCapture = null;
     pendingQuote = { text, url };
     paletteMode = "pick-note";
   }
-  function pickNoteForCapture(text: string) {
-    pendingQuote = null;
-    pendingCapture = text;
-    paletteMode = "pick-note";
-  }
 
-  /** The pick-note callback: it branches by the entry point the panel was opened from, and
-   *  heading is the destination section chosen in the panel's second stage (null or absent = the
-   *  end of the note). A quick memo only delivers and pins nothing; a clip lands and pins the
-   *  target (the section included) — after which "selection → note" goes straight there with one
-   *  click, until ✕ releases it.
-   *  The landing rules live in clipTarget.deliver / vault.capture. */
+  /** The pick-note callback (a clip into a chosen note; a quick capture picks its note inside
+   *  the capture window itself): heading is the destination section chosen in the panel's
+   *  second stage (null or absent = the end of the note). The clip lands and pins the target
+   *  (the section included) — after which "selection → note" goes straight there with one
+   *  click, until ✕ releases it. The landing rules live in clipTarget.deliver. */
   function deliverPicked(path: string, heading: string | null = null) {
-    if (pendingCapture !== null) {
-      const text = pendingCapture;
-      pendingCapture = null;
-      vault.capture(text, path, heading).then(
-        // When a missing section falls back to the end of the file, insertBlock has already said so — do not claim "› section" again (as in clipTarget.deliver)
-        (r) => { if (!(heading && r.landed === "tail")) toast.push(t("app.recordedIn", { path: `${path}${heading ? ` › ${heading}` : ""}` })); },
-        (e) => toast.push(String(e), "error"),
-      );
-      return;
-    }
     const quote = pendingQuote;
     pendingQuote = null;
     if (!quote) return;
@@ -220,6 +198,8 @@
     if (!s) return;
     updater.applySettings(s);
     if (s.updater_auto_check) void updater.check(false);
+    // The capture shortcut could not be registered (another app holds it): said once here, and the settings page shows it beside the field
+    if (s.capture_hotkey_error) toast.push(t("app.captureHotkeyFailed", { key: hotkeyLabel(s.capture_hotkey) }), "error");
   });
   // The hosted account's snapshot (from disk, no network) and its change events
   void account.init();
@@ -353,6 +333,20 @@
         if (a.kind === "memo") void api.agentWindowToAgent({ kind: "memo-result", ok: false, error: String(e) }).catch(() => {});
       }),
   );
+  // The quick capture window's landing: that webview cannot see the editor buffer, so it relays
+  // the text here — vault.capture chooses between the buffer and note_insert exactly as the
+  // palette's capture always did — and the receipt goes back under the request's id; a failure
+  // (no vault open, a note that cannot be written) goes back too, and brings the window back
+  // with the text in it
+  void onCaptureAction(async (a) => {
+    try {
+      if (!vault.root) throw new Error(t("app.openVaultFirst"));
+      const r = await vault.capture(a.text, a.target, a.heading, a.attachments);
+      await api.captureReply({ id: a.id, ok: true, path: a.target, landed: r.landed });
+    } catch (e) {
+      void api.captureReply({ id: a.id, ok: false, error: e instanceof Error ? e.message : String(e) }).catch(() => {});
+    }
+  });
   // After a hot reload or an unusual startup the window may already be open: mirror the real state once
   void api.agentWindowIsOpen().then((open) => (agent.windowOpen = open)).catch(() => {});
   // The main window switched notes → push it to the chat window (only while that window is open; the value at the moment it opens travels with the handoff package)
@@ -435,9 +429,12 @@
     id: "command-palette", hotkey: k("Mod+P"), group: "nav",
     run: () => { paletteMode = "commands"; },
   });
+  // The one shortcut is the global one from the settings (a registered hot key fires while vemry
+  // is frontmost too, so the main window binds nothing); the row's hint reads the live setting
   registerCommand({
-    id: "quick-capture", descriptionParams: { key: k("Mod+Enter") }, hotkey: k("Mod+Shift+C"), group: "note",
-    run: () => { paletteMode = "capture"; },
+    id: "quick-capture", descriptionParams: { key: k("Mod+Enter") }, group: "note",
+    get hotkey() { return hotkeyLabel(prefs.captureHotkey); },
+    run: () => api.captureWindowShow().catch((e) => toast.push(String(e), "error")),
   });
   /** Layered back: inside the reading projection the projection's page stack is consumed first,
    *  and once it is empty the document history takes over (the projection occupies one stop in
@@ -1212,11 +1209,12 @@
       return;
     }
     const key = e.key.toLowerCase();
-    // The isMac gate: on macOS ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧C ⌘⇧S ⌘L ⌘T ⌘⇧T ⌘R belong to the native menu's
+    // The isMac gate: on macOS ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧S ⌘L ⌘T ⌘⇧T ⌘R belong to the native menu's
     // accelerators (class 1 of menu.rs's three), so this gives way to avoid firing twice (a
     // double ⌘⇧S would clip twice); the browser keys are there because a native browser tab
     // holding the focus swallows every key before this chain sees it. ⌘P ⌘B ⌘. ⌘⌥arrows stay
-    // frontend-only (the menu sets no accelerator)
+    // frontend-only (the menu sets no accelerator). Quick capture has no binding here at all:
+    // its global shortcut (capture_window.rs) fires on every platform, in the foreground too
     if (key === "p" && !e.shiftKey) { e.preventDefault(); paletteMode = "commands"; }
     else if (!isMac && key === "l" && !e.shiftKey) { e.preventDefault(); paletteMode = "url"; }
     else if (!isMac && key === "t" && !e.shiftKey) { e.preventDefault(); void executeCommand("browser-new-tab"); }
@@ -1224,7 +1222,6 @@
     else if (!isMac && key === "r" && !e.shiftKey) { e.preventDefault(); void executeCommand("browser-reload"); }
     else if (!isMac && key === "o") { e.preventDefault(); paletteMode = "notes"; }
     else if (!isMac && key === "f" && e.shiftKey) { e.preventDefault(); paletteMode = "search"; }
-    else if (!isMac && key === "c" && e.shiftKey) { e.preventDefault(); paletteMode = "capture"; }
     else if (!isMac && key === "s" && e.shiftKey) { e.preventDefault(); void executeCommand("clip-page"); }
     else if (!isMac && key === "n") { e.preventDefault(); paletteMode = "notes"; }
     else if (key === "b") { e.preventDefault(); vault.leftOpen = !vault.leftOpen; }
@@ -1270,6 +1267,7 @@
         <button class="open-btn" onclick={pickVault}>{t("app.openVaultFolder")}</button>
         <button class="open-btn ghost" onclick={createVaultFlow}>{t("cmd.create-vault.title")}</button>
       </div>
+      <p class="welcome-hint">{t("app.captureAnywhere", { key: hotkeyLabel(prefs.captureHotkey) })}</p>
       {#if vault.recent.length}
         <div class="recent">
           <span class="recent-label">{t("app.recent")}</span>
@@ -1459,7 +1457,7 @@
 <!-- With the main layout's bottom status bar the toast is raised; the welcome page has none and keeps
   the default. The docked browser tab covers the panel column, so the stack keeps out of it -->
 <ToastStack lift={vault.root ? "var(--statusbar-h)" : "0px"} inset={browser.panelInset} />
-<CommandPalette bind:mode={paletteMode} onPickNote={deliverPicked} onCaptureToNote={pickNoteForCapture} />
+<CommandPalette bind:mode={paletteMode} onPickNote={deliverPicked} />
 <ContextMenu />
 <PermissionDialog />
 <HistoryDialog />
@@ -1501,6 +1499,10 @@
     margin-top: 12px;
     display: flex;
     gap: 10px;
+  }
+  .welcome-hint {
+    color: var(--fg-faint);
+    font-size: var(--fs-xs);
   }
   .open-btn {
     background: var(--accent);

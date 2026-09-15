@@ -1800,17 +1800,29 @@ class VaultStore {
 
   /** Capture one quick memo: a list item with a timestamp, inserted into target (inbox.md
    *  by default); the destination dispatch and the section-fallback message live in
-   *  insertBlock. */
-  async capture(text: string, target = "inbox.md", heading: string | null = null) {
+   *  insertBlock. A multi-line thought is still one item — the lines after the first
+   *  are continuation lines and the stamp closes the last of them; an attachment (an
+   *  image the capture window saved into the note's bucket) embeds on a continuation
+   *  line of its own, an image inline and any other file as a link. A multi-line item
+   *  takes the loose-list separator on its own (insert.ts), nothing here decides that. */
+  async capture(text: string, target = "inbox.md", heading: string | null = null, attachments: string[] = []) {
     // Local time (toISOString is UTC, which is hours out east of Greenwich); the format has
     // to stay `YYYY-MM-DD HH:MM` — views/tasks.ts's STAMP_RE strips the signature by it
     const t = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
-    const line = `- ${text} *(${ymd(t)} ${pad(t.getHours())}:${pad(t.getMinutes())})*`;
+    const stamp = `*(${ymd(t)} ${pad(t.getHours())}:${pad(t.getMinutes())})*`;
+    const lines = text.split("\n").map((l) => l.trimEnd());
+    const last = lines.length - 1;
+    const item = lines.map((l, i) => `${i === 0 ? "- " : "  "}${l}${i === last ? `${l ? " " : ""}${stamp}` : ""}`);
+    for (const p of attachments) item.push(`  ${fileKind(p) === "image" ? "!" : ""}[[${p}]]`);
+    const line = item.join("\n");
     const r = await this.insertBlock(target, line, heading);
     // The stamp alone would already name the origin; the ledger line adds the exact time and survives a stamp the user trims
     void api.provenanceRecord(target, line, "capture").catch(() => undefined);
-    if (!r.intoEditor) await this.refreshNotes();
+    // Not awaited: the caller's receipt (the capture window's "recorded in", then its hiding)
+    // must not wait for the list to be re-read — the note is on disk already, and the vault
+    // event the write broadcasts refreshes the list a moment later anyway
+    if (!r.intoEditor) void this.refreshNotes();
     // landed is passed through to the caller: on a section fallback the success receipt must not still claim it landed in the section
     return r;
   }

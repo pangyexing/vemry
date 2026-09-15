@@ -12,6 +12,18 @@
   // [2.5,17.5]); ≤6 paths per icon where possible; only 0/45/90° angles; a node is a closed
   // circle of r=1.8 (as graph draws it), and one path may hold several M subpaths to merge
   // strokes on the same side. An icon is an array of path d strings.
+  // What makes a new icon belong to this family (ink coverage alone cannot tell — it measures
+  // how much, not what kind; scripts/icon-ink.py measures it):
+  // 1. three elements only: straight lines (0/45/90°, the odd steeper one), r=1.8 dots, r=1
+  //    rounded squares — no Bézier curves, no free forms such as a drop or a flame;
+  // 2. the elements stand apart as a diagram rather than fusing into one silhouette (graph's
+  //    three dots and two lines never meet as one shape) — a single closed outline is the
+  //    outsider here;
+  // 3. open, airy, filling the frame: at most one or two small closed shapes (agenda's two
+  //    squares), everything else open, the bounding box close to 15×15;
+  // 4. ink coverage inside the rail's range — search at 26% is the lightest, review at 43%
+  //    the heaviest, as scripts/icon-ink.py measures them — aiming for the middle (kanban,
+  //    graph and timeline sit near 32%).
   export const VIEW_ICONS: Record<ProjectionView, string[]> = {
     agenda: [
       "M4 3.5 h3 a1 1 0 0 1 1 1 v3 a1 1 0 0 1 -1 1 h-3 a1 1 0 0 1 -1 -1 v-3 a1 1 0 0 1 1 -1 Z",
@@ -66,6 +78,8 @@
   import { executeCommand } from "$lib/commands/registry";
   import { t } from "$lib/i18n/i18n.svelte";
   import { k } from "$lib/shortcut";
+  import { prefs } from "$lib/stores/prefs.svelte";
+  import { hotkeyLabel } from "$lib/capture";
 
   // ---- The vertical activity bar: the visible entry point to the projection views and the
   // settings (reachable without knowing ⌘P).
@@ -99,6 +113,11 @@
     ],
   ];
   const searchIcon = ["M8.75 4 a4.75 4.75 0 1 0 0 9.5 a4.75 4.75 0 1 0 0 -9.5", "M12.11 12.11 L16.5 16.5"];
+  // Quick capture: a three-stroke zigzag (quick) landing on a baseline (the paper) — "jotted
+  // down fast". Two open elements, 15×15, 22% of the frame inked (the lightest on the rail, a
+  // hair under search); the zigzag alone would stand as narrow as claims's flag at 17%, and
+  // the baseline is what fills the frame
+  const captureIcon = ["M13.5 2.5 L6 10 h6.5 L8 15.5", "M3.5 17.5 h13"];
   // The teeth are merged into two paths, "the orthogonal set" and "the diagonal set" (the
   // conventions allow one path to hold several M subpaths), 9 → 3, back to the "≤6 paths per
   // icon where possible" this file sets itself; the ink is unchanged
@@ -162,6 +181,11 @@
   <button class="ab-btn" aria-label={t("activityBar.find")} onclick={() => void executeCommand("search")}>
     {@render icon(searchIcon)}
     {@render tip(t("activityBar.find"), k("Mod+Shift+F"))}
+  </button>
+  <!-- Quick capture: the window a global shortcut shows from any app; the capsule carries that shortcut, the one place a hand sweeping the rail learns it -->
+  <button class="ab-btn" aria-label={t("cmd.quick-capture.title")} onclick={() => void executeCommand("quick-capture")}>
+    {@render icon(captureIcon)}
+    {@render tip(t("cmd.quick-capture.title"), hotkeyLabel(prefs.captureHotkey))}
   </button>
   {#each viewGroups as group, gi (gi)}
     <span class="ab-sep"></span>

@@ -1,11 +1,12 @@
 <script lang="ts" module>
   /** The category page ids; App's settings commands pick the page to open on through this */
-  export type SettingsTab = "general" | "ai" | "account" | "browser" | "vault" | "updates";
+  export type SettingsTab = "general" | "ai" | "account" | "browser" | "capture" | "vault" | "updates";
 </script>
 
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, EFFORT_OPTIONS, type LangSetting, type LinkOpenMode, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
+  import { api, EFFORT_OPTIONS, type CaptureTarget, type LangSetting, type LinkOpenMode, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
+  import { CAPTURE_HOTKEY_DEFAULT, comboFromEvent, hotkeyLabel } from "$lib/capture";
   import { account } from "$lib/stores/account.svelte";
   import AccountPanel from "./AccountPanel.svelte";
   import { scaffold } from "$lib/scaffold";
@@ -32,6 +33,7 @@
     { id: "ai" },
     { id: "account" },
     { id: "browser" },
+    { id: "capture" },
     { id: "vault", needsVault: true },
     { id: "updates" },
   ];
@@ -67,6 +69,15 @@
   let translateModel = $state("");
   let translateAddendum = $state("");
   let ruleUrls = $state("");
+  /** Quick capture: the shortcut in the plugin's grammar (recorded from a keydown), the
+   *  registration's failure as Rust reports it, and the landing target with its pin. */
+  let captureHotkey = $state(CAPTURE_HOTKEY_DEFAULT);
+  let captureHotkeyError = $state<string | null>(null);
+  let recording = $state(false);
+  let recordingError = $state<string | null>(null);
+  let captureTarget = $state<CaptureTarget>("inbox");
+  let capturePinnedPath = $state("");
+  let capturePinnedHeading = $state("");
   let updatingRules = $state(false);
   let saved = $state(false);
   /** The raw rule lines of .vemry/privacy; the operations take effect at once and do not follow the dialog's save semantics */
@@ -159,6 +170,11 @@
       fill("translateModel", () => (translateModel = s.translate_model));
       fill("translateAddendum", () => (translateAddendum = s.translate_addendum));
       fill("ruleUrls", () => (ruleUrls = s.adblock_rule_urls.join("\n")));
+      fill("captureHotkey", () => (captureHotkey = s.capture_hotkey));
+      captureHotkeyError = s.capture_hotkey_error;
+      fill("captureTarget", () => (captureTarget = s.capture_target));
+      fill("capturePinnedPath", () => (capturePinnedPath = s.capture_pinned_path));
+      fill("capturePinnedHeading", () => (capturePinnedHeading = s.capture_pinned_heading));
     });
     // Opening it allows pasting straight away, and only then does Escape have a focus to land on
     queueMicrotask(() => firstInput?.focus());
@@ -309,9 +325,33 @@
     open = false;
   }
 
+  /** The shortcut recorder: the field takes the next combination pressed (a modifier plus a
+   *  key; Esc keeps the current one). The grammar and the "usable shortcut" rule live in
+   *  capture.ts; Rust registers it at save time and refuses one another app holds. */
+  function recordHotkey(e: KeyboardEvent) {
+    if (!recording) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") {
+      recording = false;
+      return;
+    }
+    const combo = comboFromEvent(e);
+    if (combo === null) {
+      if (!["Shift", "Control", "Alt", "Meta"].includes(e.key)) recordingError = t("settings.capture.hotkeyNeedsModifier");
+      return;
+    }
+    captureHotkey = combo;
+    recording = false;
+    recordingError = null;
+    captureHotkeyError = null;
+    touch("captureHotkey");
+  }
+
   async function save() {
     await loading?.catch(() => undefined);
-    await api.settingsSet({
+    try {
+      await api.settingsSet({
       language,
       provider,
       hosted_model: hostedModel,
@@ -338,7 +378,17 @@
       translate_model: translateModel.trim(),
       translate_addendum: translateAddendum.trim(),
       adblock_rule_urls: ruleUrls.split("\n").map((u) => u.trim()).filter(Boolean),
+      capture_hotkey: captureHotkey,
+      capture_target: captureTarget,
+      capture_pinned_path: capturePinnedPath.trim(),
+      capture_pinned_heading: capturePinnedHeading.trim(),
     });
+    } catch (e) {
+      // The one refusal: a capture shortcut that does not parse or that another app holds — everything else in the update has landed, and the dialog stays for another try
+      captureHotkeyError = String(e);
+      toast.push(String(e), "error");
+      return;
+    }
     // The language takes effect at once (each window's frontend has its own $state; the Rust side already rebuilt the menu inside settings_set)
     setLanguage(language);
     updater.autoCheck = updaterAutoCheck; // the update dialog's checkbox mirrors the same setting
@@ -757,6 +807,78 @@
                 </small>
               </label>
             </section>
+          {:else if tab === "capture"}
+            <section class="privacy">
+              <h3>{t("settings.tab.capture")}</h3>
+              <div class="field">
+                <span class="field-title">{t("settings.capture.hotkey")}</span>
+                <div class="hotkey-row">
+                  <!-- A button, not an input: the keys pressed are the value, and nothing may be typed into it -->
+                  <button
+                    class="hotkey-field"
+                    class:recording
+                    class:bad={!!captureHotkeyError}
+                    aria-label={t("settings.capture.hotkey")}
+                    onclick={() => { recording = true; recordingError = null; }}
+                    onkeydown={recordHotkey}
+                    onblur={() => (recording = false)}
+                  >
+                    {recording ? t("settings.capture.hotkeyRecording") : hotkeyLabel(captureHotkey)}
+                  </button>
+                  {#if captureHotkey !== CAPTURE_HOTKEY_DEFAULT}
+                    <button class="link" onclick={() => { captureHotkey = CAPTURE_HOTKEY_DEFAULT; captureHotkeyError = null; touch("captureHotkey"); }}>
+                      {t("settings.capture.hotkeyReset")}
+                    </button>
+                  {/if}
+                </div>
+                {#if recordingError}
+                  <small class="err-text">{recordingError}</small>
+                {:else if captureHotkeyError}
+                  <small class="err-text">{t("settings.capture.hotkeyFailed", { error: captureHotkeyError })}</small>
+                {:else}
+                  <small>{t("settings.capture.hotkeyHint")}</small>
+                {/if}
+              </div>
+              <div class="field">
+                <span class="field-title">{t("settings.capture.target")}</span>
+                <label class="inline-toggle">
+                  <input type="radio" name="capture-target" value="inbox" bind:group={captureTarget} onchange={() => touch("captureTarget")} />
+                  <span>{t("settings.capture.targetInbox")}</span>
+                </label>
+                <label class="inline-toggle">
+                  <input type="radio" name="capture-target" value="journal" bind:group={captureTarget} onchange={() => touch("captureTarget")} />
+                  <span>{t("settings.capture.targetJournal")}</span>
+                </label>
+                <label class="inline-toggle">
+                  <input type="radio" name="capture-target" value="pinned" bind:group={captureTarget} onchange={() => touch("captureTarget")} />
+                  <span>{t("settings.capture.targetPinned")}</span>
+                </label>
+                <small>{t("settings.capture.targetHint", { key: k("Mod+Enter") })}</small>
+              </div>
+              {#if captureTarget === "pinned"}
+                <label>
+                  <span>{t("settings.capture.pinnedNote")}</span>
+                  <input
+                    bind:value={capturePinnedPath}
+                    oninput={() => touch("capturePinnedPath")}
+                    placeholder="notes/ideas.md"
+                    spellcheck="false"
+                    list="capture-pinned-notes"
+                  />
+                  <datalist id="capture-pinned-notes">
+                    {#each vault.notes as n (n.id)}
+                      <option value={n.id}>{n.title}</option>
+                    {/each}
+                  </datalist>
+                  <small>{t("settings.capture.pinnedNoteHint")}</small>
+                </label>
+                <label>
+                  <span>{t("settings.capture.pinnedHeading")}</span>
+                  <input bind:value={capturePinnedHeading} oninput={() => touch("capturePinnedHeading")} spellcheck="false" />
+                  <small>{t("settings.capture.pinnedHeadingHint")}</small>
+                </label>
+              {/if}
+            </section>
           {:else if tab === "vault"}
             <section class="privacy">
               <h3>{t("settings.privacyZones")}</h3>
@@ -1016,6 +1138,31 @@
   }
   .err-text {
     color: var(--danger);
+  }
+  /* The shortcut recorder: a field that reads like an input and takes a key combination instead of text */
+  .hotkey-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .hotkey-field {
+    min-width: 180px;
+    padding: 7px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    text-align: left;
+  }
+  .hotkey-field.recording {
+    border-color: var(--accent);
+    color: var(--fg-muted);
+    font-family: inherit;
+  }
+  .hotkey-field.bad {
+    border-color: var(--danger);
   }
   .link {
     color: var(--accent);

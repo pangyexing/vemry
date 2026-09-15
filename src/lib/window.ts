@@ -1,9 +1,10 @@
-// Which webview this bundle is mounted in. One frontend bundle is mounted in three
+// Which webview this bundle is mounted in. One frontend bundle is mounted in four
 // kinds of webview: `main` (the application's main window), `agent` (the detached AI
-// chat window) and `browserbar` (the chrome bar at the top of the detached browser
-// window, a child webview beside the browser tabs). main.ts picks the root component
-// from it, and the rest of the code only branches on actions that "have to happen
-// back in the main window" (see host.ts).
+// chat window), `browserbar` (the chrome bar at the top of the detached browser
+// window, a child webview beside the browser tabs) and `capture` (the quick capture
+// window a global shortcut shows). main.ts picks the root component from it, and the
+// rest of the code only branches on actions that "have to happen back in the main
+// window" (see host.ts).
 // The label is the **webview's**, not the window's: the bar's window is `browserwin`,
 // and a window-label check would mount the whole application inside a 72px bar. It
 // comes synchronously from the runtime metadata Tauri injects, so no URL parameter is
@@ -21,3 +22,4 @@ export const windowLabel: string = (() => {
 export const isMainWindow = windowLabel === "main";
 export const isAgentWindow = windowLabel === "agent";
 export const isBrowserbarWindow = windowLabel === "browserbar";
+export const isCaptureWindow = windowLabel === "capture";

@@ -89,8 +89,8 @@ CMD = {
     "command-palette": (("Command palette", "命令面板"), None),
     "quick-capture": (
         ("Quick capture", "速记"),
-        ("One thought — Enter files it in inbox.md, {key} picks a target note",
-         "一条想法,Enter 落进 inbox.md,{key} 选目标笔记"),
+        ("One thought, from any app — Enter files it where Settings says (inbox.md unless changed), {key} picks a note",
+         "一条想法,在任何软件里都能记——Enter 记到设置的落点(默认 inbox.md),{key} 选笔记"),
     ),
     "nav-back": (
         ("Back", "后退"),
@@ -532,8 +532,6 @@ add("palette.", {
     "pickNote": ("Pick a target note… (type a new name to create it; Tab or # for a section)",
                  "选择目标笔记…（输入新名字可创建;Tab 或 # 选小节）"),
     "search": ("Search all notes…", "全文搜索…"),
-    "capture": ("Capture a thought — Enter files it in inbox.md, {key} picks a target note",
-                "速记一条，Enter 存入 inbox.md，{key} 选目标笔记"),
     "vaults": ("Switch vault…", "切换知识库…"),
     "url": ("Type a URL, or search bookmarks and history… ({key} for a new window)",
             "输入网址，或搜索收藏与历史…（{key} 新窗口）"),
@@ -568,7 +566,7 @@ add("menu.", {
     "help": ("Help", "帮助"),
     "settings": ("Settings…", "设置…"),
     "checkUpdates": ("Check for Updates…", "检查更新…"),
-    "quickCapture": ("Quick Capture…", "速记…"),
+    "quickCapture": ("Quick Capture…", "速记…"),  # the accelerator shown beside it is the global shortcut from the settings
     "closeWindow": ("Close Tab / Window", "关闭标签页/窗口"),
     "helpGithub": ("vemry Help (GitHub)", "vemry 帮助(GitHub)"),
 })
@@ -600,6 +598,31 @@ add("key.", {
     "shift": ("Shift", "Shift"),
     "alt": ("Alt", "Alt"),
     "backspace": ("Backspace", "Backspace"),
+    # The literal ⌘/Win key of a recorded global shortcut (capture.ts), never "Mod"
+    "super": ("Win", "Win"),
+})
+
+# ---------------------------------------------------------------- quick capture window
+add("capture.", {
+    "placeholder": ("What's on your mind…", "想到什么…"),
+    "keyEnter": ("files it", "记入"),
+    "keyNewline": ("newline", "换行"),
+    "keyPick": ("pick a note", "选笔记"),
+    "keyEsc": ("hides", "收起"),
+    # Under the foot for the first three presses: what Enter does, the one-off picker, where the default is changed
+    "firstHint": ("Enter files it in {target} · {key} picks a note · change the target in Settings › Quick capture · summon with {hotkey}",
+                  "Enter 记入 {target} · {key} 选笔记 · 落点在「设置 › 速记」里改 · {hotkey} 随时唤出"),
+    "targetChange": ("Pick another note for this capture", "这一条临时换个落点"),
+    "attachmentRemove": ("Remove", "移除"),
+    "attachFailed": ("Could not save the attachment {name}", "附件 {name} 保存失败"),
+    "dropHere": ("Drop to attach", "松开即附上"),
+    "noReply": ("The main window did not answer — is vemry still running?", "主窗口没有回应——vemry 还在运行吗?"),
+    "failed": ("Could not record it", "记入失败"),
+    "pickPlaceholder": ("Record to: type a note name…", "记到:输入笔记名…"),
+    "pickHeadingPlaceholder": ("A section of “{title}”…", "「{title}」的小节…"),
+    "pickHint": ("Enter: the end of the note · Tab or #: a section · Esc: back to the text",
+                 "Enter 记到整篇末尾 · Tab 或输 # 选小节 · Esc 回到文字"),
+    "pickHeadingHint": ("Enter: this section · Esc: back to the notes", "Enter 记到该小节 · Esc 返回笔记列表"),
 })
 
 add("common.", {
@@ -1647,6 +1670,7 @@ add("settings.", {
     "tab.ai": ("AI & search", "AI 与搜索"),
     "tab.account": ("Account", "账户"),
     "tab.browser": ("Browser", "浏览器"),
+    "tab.capture": ("Quick capture", "速记"),
     "tab.vault": ("Vault", "知识库"),
     "tab.updates": ("Updates", "更新"),
     "save": ("Save", "保存"),
@@ -1878,6 +1902,28 @@ add("settings.", {
 })
 
 # ---------------------------------------------------------------- settings dialog: translation
+add("settings.capture.", {
+    "hotkey": ("Shortcut", "快捷键"),
+    "hotkeyHint": ("Works in any app while vemry is running. Click the field and press the keys; Esc keeps the current one.",
+                   "vemry 运行时在任何软件里都能按。点击后直接按下组合键;Esc 保留原来的。"),
+    "hotkeyRecording": ("Press the keys…", "请按下组合键…"),
+    "hotkeyNeedsModifier": ("Use at least one modifier key plus a key", "至少要一个修饰键加一个按键"),
+    "hotkeyFailed": ("This shortcut could not be registered — another app may hold it ({error})",
+                     "这个快捷键无法注册——可能被其他软件占用({error})"),
+    "hotkeyReset": ("Reset", "恢复默认"),
+    "target": ("Where Enter files it", "Enter 记到哪里"),
+    "targetHint": ("{key} in the capture window still picks another note for one capture.", "速记窗里 {key} 仍可为某一条临时选别的笔记。"),
+    "targetInbox": ("inbox.md, at the end", "inbox.md 文末"),
+    "targetJournal": ("Today's journal note (journal/YYYY-MM-DD.md)", "当日日志(journal/YYYY-MM-DD.md)"),
+    "targetPinned": ("A pinned note › section", "钉住的笔记 › 小节"),
+    "pinnedNote": ("Pinned note", "钉住的笔记"),
+    "pinnedNoteHint": ("A vault-relative path; a note that does not exist yet is created on the first capture.",
+                       "相对知识库的路径;还不存在的笔记会在第一次记入时新建。"),
+    "pinnedHeading": ("Section (optional)", "小节(可选)"),
+    "pinnedHeadingHint": ("A heading's text. When it is not found, the capture lands at the end of the note and says so.",
+                          "标题文字。找不到时记到整篇末尾,并会提示。"),
+})
+
 add("settings.translate.", {
     "section": ("Side-by-side translation", "对照翻译"),
     "disclosure": ("Translating sends the text of the note or page you are reading to the model below. A note in a privacy zone is never sent; private blocks are left out.",
@@ -1900,6 +1946,9 @@ add("app.", {
     # Joins the items of an inline list; the separator differs per language
     "listSep": (", ", "、"),
     "recordedIn": ("Recorded in {path}", "已记入 {path}"),
+    "captureHotkeyFailed": ("{key} is held by another app — pick another quick capture shortcut in Settings",
+                            "{key} 被其他软件占用——到设置里换一个速记快捷键"),
+    "captureAnywhere": ("Capture a thought from any app: {key}", "随时记一条:{key},在任何软件里都行"),
     "scriptError": ("Script {script}: {message}", "脚本 {script}: {message}"),
     "openVaultFirst": ("Open a vault first", "先打开一个知识库"),
     "pickVaultFolder": ("Pick a vault folder", "选择知识库文件夹"),
@@ -2407,6 +2456,7 @@ add("err.", {
 # clip note): the catalog is still the only place the wording lives.
 add("window.", {
     "agentTitle": ("AI chat — vemry", "AI 对话 — vemry"),
+    "captureTitle": ("Quick capture — vemry", "速记 — vemry"),
     "browserTitle": ("vemry browser", "vemry 浏览"),
     "readerTitle": ("vemry reading fetch", "vemry 阅读取数"),
 })
@@ -2421,6 +2471,8 @@ add("clip.", {
 })
 
 add("ipc.", {
+    "captureNoMainWindow": ("The vemry main window is not open", "vemry 主窗口未打开"),
+    "captureHotkeyInvalid": ("That is not a shortcut the system can register", "这不是系统能注册的快捷键"),
     "fileExists": ("A file with that name already exists: {path}", "已存在同名文件: {path}"),
     "followPrivate": ("A private note cannot be followed by the AI", "私密笔记不能让 AI 跟随"),
     "dirNotEmpty": ("That folder exists and is not empty — pick another place for a new vault, or open "

@@ -54,6 +54,9 @@ url = "2"
 # be ISO-8859-1, and a non-ASCII file name placed there raw blows up WebView2 on
 # Windows). url/reqwest are already in the tree, so this adds no compilation unit
 percent-encoding = "2"
+# The quick capture window's one global shortcut (registered from the settings;
+# capture_window.rs). Rust-side registration only, no JS package
+tauri-plugin-global-shortcut = "2"
 
 # clipboard file/image paste reads NSPasteboard directly; these crates are
 # already in the tree via wry, so this adds no new compilation units.
@@ -82,6 +85,13 @@ objc2-app-kit = { version = "0.3", features = [
     # Smoothing a discrete scroll wheel: the handler of an NSEvent local monitor
     # (addLocalMonitorForEvents…) is a block
     "block2",
+    # The quick capture window is switched to a non-activating NSPanel after it is
+    # built, so it takes the keyboard without activating the application; while the
+    # application is inactive the panel activates the webview's text input context
+    # itself (NSApplication for the active check)
+    "NSPanel",
+    "NSTextInputContext",
+    "NSApplication",
 ] }
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSEnumerator", "NSError", "NSString", "NSURL"] }
 objc2-web-kit = { version = "0.3", features = [
