@@ -28,7 +28,8 @@ export interface Command {
   description?: string;
   /** Interpolation for `cmd.<id>.desc` — hotkeys, mostly. */
   descriptionParams?: Record<string, string | number>;
-  hotkey?: string;
+  /** The hint shown beside the row; a function for one that follows a setting (read at render time). */
+  hotkey?: string | (() => string);
   /** Defaults to "system". */
   group?: CommandGroup;
   run: () => void | Promise<void>;
@@ -38,6 +39,10 @@ export interface Command {
  *  themselves when the language changes — no re-registration. */
 export function commandTitle(c: Command): string {
   return c.title ?? t(`cmd.${c.id}.title` as MessageKey);
+}
+
+export function commandHotkey(c: Command): string | undefined {
+  return typeof c.hotkey === "function" ? c.hotkey() : c.hotkey;
 }
 
 export function commandDescription(c: Command): string | undefined {

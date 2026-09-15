@@ -1615,10 +1615,7 @@ class VaultStore {
       const saved = await api.clipboardPaste(folder, pasteStamp(), reuseVaultFiles);
       if (!saved.length) {
         for (const file of files) {
-          // generic names ("image.png", empty) come from raw-bytes pastes —
-          // stamp those; real filenames are kept and deduped by the backend
-          const generic = !file.name || /^image\.\w+$/i.test(file.name);
-          const name = generic ? `${pasteStamp()}.${extOf(file.type)}` : file.name.replace(/[/\\]/g, " ").trim();
+          const name = pastedName(file.name, file.type, "pasted");
           const rel = folder ? `${folder}/${name}` : name;
           if (rel.endsWith(".md")) {
             const taken = new Set([...this.notes.map((n) => n.id), ...this.otherFiles]);
@@ -1866,11 +1863,25 @@ export function noteBucketOf(notePath: string | null): string {
   return rel ? `attachments/${rel}` : "attachments";
 }
 
-/** `pasted-YYYYMMDD-HHMMSS` name for clipboard content with no filename. */
-function pasteStamp(): string {
+/** `<prefix>-YYYYMMDD-HHMMSS`: the name of clipboard content that arrived with no file
+ *  name — the editor's `pasted-`, the capture window's `capture-`; the backend deduplicates
+ *  a second one in the same second. */
+export function stampName(prefix: string): string {
   const t = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `pasted-${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}-${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
+  return `${prefix}-${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}-${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
+}
+function pasteStamp(): string {
+  return stampName("pasted");
+}
+
+/** The file name a DOM-pasted file lands under: a generic name (empty, or a browser's
+ *  "image.png" — what a raw-bytes paste carries) takes the stamp with its type's
+ *  extension; a real one is kept, minus any path separators, and deduplicated by the
+ *  backend. The editor's paste and the capture window's share this one rule. */
+export function pastedName(name: string, mime: string, prefix: string): string {
+  const generic = !name || /^image\.\w+$/i.test(name);
+  return generic ? `${stampName(prefix)}.${extOf(mime)}` : name.replace(/[/\\]/g, " ").trim();
 }
 
 /** File extension for a clipboard MIME type. */

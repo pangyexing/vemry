@@ -853,12 +853,12 @@ export interface CaptureAction {
   heading: string | null;
   attachments: string[];
 }
-/** The main window's receipt (capture://result), echoing the request's id: landed says whether a requested section was found. */
+/** The main window's receipt (capture://result), echoing the request's id. A success carries
+ *  nothing more: the landing spot was written in the window's foot before Enter, and a section
+ *  that was not found is reported by the main window on its side (insertBlock). */
 export interface CaptureResult {
   id: number;
   ok: boolean;
-  path?: string;
-  landed?: "section" | "tail";
   error?: string;
 }
 
@@ -1364,9 +1364,11 @@ export const api = {
   captureWindowResize: (height: number) => invoke<void>("capture_window_resize", { height }),
   captureToMain: (action: CaptureAction) => invoke<void>("capture_to_main", { action }),
   captureReply: (result: CaptureResult) => invoke<void>("capture_reply", { result }),
-  /** Files on the system clipboard as absolute paths (a file manager's copy), for the capture window's paste; empty off macOS. */
-  clipboardFiles: () => invoke<string[]>("clipboard_files"),
-  /** Raw image bytes on the system clipboard (a screenshot; empty when there is none) — the format is sniffed from the bytes (capture.ts). */
+  /** What the system clipboard holds, for the capture window's paste: files as absolute paths (a file manager's
+   *  copy), or an image's format as the extension it is saved under (the pasteboard type, as the editor's own
+   *  paste names its file). Empty off macOS, where the DOM paste data is the fallback. */
+  clipboardProbe: () => invoke<{ files: string[]; image: string | null }>("clipboard_probe"),
+  /** Raw image bytes on the system clipboard (a screenshot), once clipboardProbe said there is one. */
   clipboardImage: async () => new Uint8Array(await invoke<ArrayBuffer>("clipboard_image")),
   agentSessionDelete: (id: string) => invoke<void>("agent_session_delete", { id }),
   /** Rename by hand: a title override line is appended to the audit jsonl (the last one wins), and it is allowed while the agent is running. */

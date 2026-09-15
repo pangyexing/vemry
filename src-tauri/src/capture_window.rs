@@ -86,8 +86,6 @@ struct Inner {
     ready: bool,
     /// A show requested before the webview mounted (the first press beat the warm-up).
     pending_show: bool,
-    /// A close initiated by us (the main window going away): the CloseRequested hook lets it through instead of hiding.
-    closing: bool,
     /// The last content height the webview reported (logical px), reapplied when the window is shown again.
     height: f64,
     /// The registration failure of the shortcut, if any (the settings page shows it, and the main window toasts it once at startup).
@@ -96,7 +94,7 @@ struct Inner {
 
 impl CaptureWindowState {
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.0)
     }
 }
 
@@ -181,12 +179,7 @@ pub fn ensure_soon(app: &AppHandle, delay_ms: u64) {
 /// Main thread. The window starts hidden and unfocused; `capture_window_ready`
 /// (the webview's mount) is what makes it showable.
 fn build(app: &AppHandle) -> Result<(), String> {
-    {
-        let st = app.state::<AppState>();
-        let mut cw = st.capture_window.lock();
-        cw.ready = false;
-        cw.closing = false;
-    }
+    app.state::<AppState>().capture_window.lock().ready = false;
     let builder = WebviewWindowBuilder::new(app, CAPTURE_LABEL, WebviewUrl::App("index.html".into()))
         .title(crate::i18n::t(crate::i18n::current(), "window.captureTitle"))
         .inner_size(WIDTH, MIN_HEIGHT)
@@ -214,11 +207,9 @@ fn build(app: &AppHandle) -> Result<(), String> {
         // The keyboard went elsewhere (a click in another application, or in the main
         // window): the composer goes away and the draft stays in it
         WindowEvent::Focused(false) => hide(&handle),
-        // The native close (⌘W through the menu, a window-manager close) hides instead of destroying, unless we are the one closing
+        // The native close (⌘W through the menu, a window-manager close) hides instead
+        // of destroying; our own close (`force_close`) is a destroy, which never asks
         WindowEvent::CloseRequested { api, .. } => {
-            if handle.state::<AppState>().capture_window.lock().closing {
-                return;
-            }
             api.prevent_close();
             hide(&handle);
         }
@@ -227,7 +218,6 @@ fn build(app: &AppHandle) -> Result<(), String> {
             let mut cw = st.capture_window.lock();
             cw.ready = false;
             cw.pending_show = false;
-            cw.closing = false;
         }
         _ => {}
     });
@@ -403,10 +393,10 @@ fn place(app: &AppHandle, w: &WebviewWindow) {
     let _ = w.set_size(tauri::LogicalSize::new(WIDTH, height));
 }
 
-/// Main thread: hide the window (Esc, a landed capture, a lost focus, ⌘W). The
-/// keyboard goes back to where it was on its own: the application the user was
-/// in never stopped being the active one.
-fn hide(app: &AppHandle) {
+/// Main thread: hide the window (Esc, a landed capture, a lost focus, ⌘W through
+/// the menu). The keyboard goes back to where it was on its own: the application
+/// the user was in never stopped being the active one.
+pub(crate) fn hide(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(CAPTURE_LABEL) {
         let _ = w.hide();
     }
@@ -420,16 +410,12 @@ pub(crate) fn toggle(app: &AppHandle) {
     }
 }
 
-/// The menu's ⌘W with the capture window focused (menu.rs): a hide, like Esc.
-pub fn dismiss(app: &AppHandle) {
-    hide(app);
-}
-
-/// Closed along with the main window being destroyed (a hidden window would otherwise keep the process alive).
+/// Closed along with the main window being destroyed (a hidden window would
+/// otherwise keep the process alive): a destroy, so the hide-on-close hook above
+/// is not asked.
 pub fn force_close(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(CAPTURE_LABEL) {
-        app.state::<AppState>().capture_window.lock().closing = true;
-        let _ = w.close();
+        let _ = w.destroy();
     }
 }
 

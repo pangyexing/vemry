@@ -717,21 +717,30 @@ pub fn clipboard_read_text() -> Option<String> {
     crate::pasteboard::string_text()
 }
 
-/// The files on the system clipboard (a file manager's copy) as absolute paths —
-/// the capture window's paste. The window keeps the paths until Enter decides
-/// which note's attachment bucket they go to (`clipboard_paste` writes at paste
-/// time, which needs a destination that is not known yet); they are then imported
-/// through `files_import`. Empty off macOS, where the DOM paste data is the fallback.
+/// What the system clipboard holds, for the capture window's paste: the files of
+/// a file manager's copy as absolute paths, or the format of an image (the
+/// extension it is saved under, by the pasteboard type — the same source
+/// `clipboard_paste` names its file by). Nothing is written here: the window keeps
+/// what it pasted until Enter decides which note's attachment bucket it goes to
+/// (`clipboard_paste` writes at paste time, which needs a destination that is not
+/// known yet) — the paths then go through `files_import`, the image's bytes
+/// (`clipboard_image`) through `attachment_save`. Empty off macOS, where the DOM
+/// paste data is the fallback.
+#[derive(Serialize)]
+pub struct ClipboardProbe {
+    pub files: Vec<String>,
+    pub image: Option<&'static str>,
+}
+
 #[tauri::command]
-pub fn clipboard_files() -> Vec<String> {
-    crate::pasteboard::file_paths().into_iter().map(|p| p.to_string_lossy().into_owned()).collect()
+pub fn clipboard_probe() -> ClipboardProbe {
+    let files: Vec<String> = crate::pasteboard::file_paths().into_iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let image = if files.is_empty() { crate::pasteboard::image_kind() } else { None };
+    ClipboardProbe { files, image }
 }
 
 /// Raw image bytes on the system clipboard (a screenshot), over the binary
-/// channel; empty when there is none. The same deferred-destination reason as
-/// `clipboard_files`: the bytes are held by the capture window and saved with
-/// `attachment_save` once the target is known. The format is sniffed by the caller
-/// from the bytes (PNG is preferred by the reader, TIFF is the other possibility).
+/// channel; empty when there is none. Asked after `clipboard_probe` said there is one.
 #[tauri::command]
 pub fn clipboard_image() -> tauri::ipc::Response {
     tauri::ipc::Response::new(crate::pasteboard::image_data().map(|(b, _)| b).unwrap_or_default())
@@ -1253,29 +1262,32 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     if let Some(v) = update.tray_resident {
         s.tray_resident = v;
     }
-    // The shortcut is the one field whose write can fail (another application holds
-    // the keys): it is re-registered first and stored only once that worked, after
-    // the rest of the update has landed — a refused combination costs the user
-    // nothing else they changed. The validation is the plugin's own parser, so a
-    // hand-edited settings.json cannot store a combination that never registers.
-    let new_hotkey = update.capture_hotkey.map(|v| v.trim().to_string()).filter(|v| *v != s.capture_hotkey);
-    if let Some(v) = &new_hotkey {
-        if !crate::capture_window::is_valid_hotkey(v) {
-            return Err(crate::i18n::t(crate::i18n::current(), "ipc.captureHotkeyInvalid"));
+    // The shortcut is the one field whose write can fail (a combination the
+    // registrar cannot parse, or one another application holds): it is re-registered
+    // before the save and stored only once that worked, so a refused combination
+    // costs the user nothing else they changed and the old one stays registered;
+    // the refusal is returned last, after the rest of the update has landed. The
+    // parse is the plugin's own, so a combination that never registers is never stored.
+    // (Registering before the save means a save that fails on disk leaves the new
+    // combination registered until the next launch re-registers from the file —
+    // accepted: the update is reported as failed, and one write beats two.)
+    let mut hotkey_changed = false;
+    let mut hotkey_refused = None;
+    if let Some(v) = update.capture_hotkey.map(|v| v.trim().to_string()).filter(|v| *v != s.capture_hotkey) {
+        let outcome = if crate::capture_window::is_valid_hotkey(&v) {
+            crate::capture_window::rebind(&app, &s.capture_hotkey, &v)
+        } else {
+            Err(crate::i18n::t(crate::i18n::current(), "ipc.captureHotkeyInvalid"))
+        };
+        match outcome {
+            Ok(()) => {
+                s.capture_hotkey = v;
+                hotkey_changed = true;
+            }
+            Err(e) => hotkey_refused = Some(e),
         }
     }
     settings::save(&app, &s)?;
-    if let Some(v) = new_hotkey {
-        crate::capture_window::rebind(&app, &s.capture_hotkey, &v)?;
-        let _ = settings::update(&app, |s| {
-            s.capture_hotkey = v.clone();
-            true
-        });
-        // The menu item's hint carries the combination (macOS; a no-op elsewhere)
-        if let Err(e) = crate::menu::install(&app) {
-            eprintln!("menu rebuild after shortcut change failed: {e}");
-        }
-    }
     if adblock_toggled || adblock_urls_changed {
         // An edited source list has to be recompiled: dropping a subscription stops
         // its cached file from being read (rule_files goes by the current list), but
@@ -1293,16 +1305,19 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     }
     if language_changed {
         crate::i18n::set_current(crate::i18n::resolve(s.language));
-        // The native menu is built once from the catalog; rebuilding is the only
-        // way to relabel it (set_menu replaces the previous menu wholesale).
+    }
+    // The native menu is built once from the catalog, with the capture shortcut as
+    // the hint on its item; rebuilding is the only way to relabel it (set_menu
+    // replaces the previous menu wholesale; a no-op off macOS)
+    if language_changed || hotkey_changed {
         if let Err(e) = crate::menu::install(&app) {
-            eprintln!("menu rebuild after language change failed: {e}");
+            eprintln!("menu rebuild after a settings change failed: {e}");
         }
     }
     // The tray icon follows the switch, and its menu the language and the shortcut
     // hint — after every write, so the three cannot drift apart
     crate::tray::reconcile(&app);
-    Ok(())
+    hotkey_refused.map_or(Ok(()), Err)
 }
 
 /// Read the whole object of .vemry/config.json (missing or broken JSON = None).

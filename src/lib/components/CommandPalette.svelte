@@ -1,9 +1,9 @@
 <script lang="ts">
   import { api, type HistoryEntryView, type SearchHit } from "$lib/api";
-  import { allCommands, commandDescription, commandTitle, executeCommand, fuzzyFilter, groupLabel, groupOf, type Command } from "$lib/commands/registry";
+  import { allCommands, commandDescription, commandHotkey, commandTitle, executeCommand, fuzzyFilter, groupLabel, groupOf, type Command } from "$lib/commands/registry";
   import { t } from "$lib/i18n/i18n.svelte";
   import { browser } from "$lib/stores/browser.svelte";
-  import { fetchHeadings, noteKey, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
+  import { fetchHeadings, noteKey, noteMatches, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
   import { typePath, vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { types } from "$lib/stores/types.svelte";
@@ -210,7 +210,7 @@
           id: c.id,
           title: commandTitle(c),
           hint: commandDescription(c),
-          key: c.hotkey,
+          key: commandHotkey(c),
           groupLabel: group,
           run: () => c.run(),
         };
@@ -232,7 +232,7 @@
     if (mode === "notes" || mode === "pick-note") {
       // pick-note and notes share the filtering and the create row; only "what happens after choosing" differs
       const pick = mode === "pick-note" ? onPickNote : undefined;
-      const notes = fuzzyFilter(vault.notes, query, noteKey);
+      const { notes, create: title } = noteMatches(query);
       const list: Item[] = notes.slice(0, 50).map((n) => ({
         id: n.id,
         title: n.title,
@@ -240,8 +240,7 @@
         pick: pick ? { path: n.id, title: n.title } : undefined,
         run: () => (pick ? pick(n.id) : vault.openNote(n.id)),
       }));
-      if (query.trim() && !notes.some((n) => n.title.toLowerCase() === query.trim().toLowerCase())) {
-        const title = query.trim();
+      if (title) {
         list.push({
           id: "__create__",
           title: t("palette.createNamed", { title }),
@@ -543,53 +542,53 @@
         {onkeydown}
         spellcheck="false"
       />
-        <ul bind:this={listEl}>
-          {#each items as item, i (item.id)}
-            {#if item.groupLabel}
-              <li class="group-head" aria-hidden="true">{item.groupLabel}</li>
-            {/if}
-            <li class:selected={i === selected}>
+      <ul bind:this={listEl}>
+        {#each items as item, i (item.id)}
+          {#if item.groupLabel}
+            <li class="group-head" aria-hidden="true">{item.groupLabel}</li>
+          {/if}
+          <li class:selected={i === selected}>
+            <button
+              class="main"
+              tabindex="-1"
+              title={item.hint}
+              onclick={() => void submit()}
+              onmouseenter={() => (selected = i)}
+            >
+              <span class="line">
+                <span class="title">{item.title}</span>
+                {#if item.hint}<span class="hint">{item.hint}</span>{/if}
+                {#if item.key}<kbd class="key">{item.key}</kbd>{/if}
+              </span>
+              {#if item.detail}<span class="detail">{item.detail}</span>{/if}
+            </button>
+            {#if item.pick}
+              {@const p = item.pick}
+              <!-- The mouse equivalent of the keyboard's Tab: clicking the row clips the whole note, and clicking here enters the second stage to pick a section -->
               <button
-                class="main"
+                class="drill"
                 tabindex="-1"
-                title={item.hint}
-                onclick={() => void submit()}
+                onclick={() => enterPickStage(p)}
                 onmouseenter={() => (selected = i)}
+                aria-label={t("palette.pickHeadingLabel", { title: p.title })}
               >
-                <span class="line">
-                  <span class="title">{item.title}</span>
-                  {#if item.hint}<span class="hint">{item.hint}</span>{/if}
-                  {#if item.key}<kbd class="key">{item.key}</kbd>{/if}
-                </span>
-                {#if item.detail}<span class="detail">{item.detail}</span>{/if}
+                {t("palette.pickSection")}
               </button>
-              {#if item.pick}
-                {@const p = item.pick}
-                <!-- The mouse equivalent of the keyboard's Tab: clicking the row clips the whole note, and clicking here enters the second stage to pick a section -->
-                <button
-                  class="drill"
-                  tabindex="-1"
-                  onclick={() => enterPickStage(p)}
-                  onmouseenter={() => (selected = i)}
-                  aria-label={t("palette.pickHeadingLabel", { title: p.title })}
-                >
-                  {t("palette.pickSection")}
-                </button>
-              {/if}
-              {#if item.action}
-                {@const a = item.action}
-                <!-- The row's secondary action (url mode's "unbookmark"): it does not close the palette, and the list refreshes with the mirror -->
-                <button class="drill" tabindex="-1" onclick={a.run} onmouseenter={() => (selected = i)}>
-                  {a.label}
-                </button>
-              {/if}
-            </li>
-          {:else}
-            <li class="empty">
-              {query ? t("palette.noMatch") : mode === "url" ? t("palette.noBookmarksOrHistory") : t("palette.typeToFilter")}
-            </li>
-          {/each}
-        </ul>
+            {/if}
+            {#if item.action}
+              {@const a = item.action}
+              <!-- The row's secondary action (url mode's "unbookmark"): it does not close the palette, and the list refreshes with the mirror -->
+              <button class="drill" tabindex="-1" onclick={a.run} onmouseenter={() => (selected = i)}>
+                {a.label}
+              </button>
+            {/if}
+          </li>
+        {:else}
+          <li class="empty">
+            {query ? t("palette.noMatch") : mode === "url" ? t("palette.noBookmarksOrHistory") : t("palette.typeToFilter")}
+          </li>
+        {/each}
+      </ul>
       {#if mode === "url" && urlHistory.length > 0}
         <div class="foot">
           <button class="foot-act" title={t("palette.clearHistoryHint")} onclick={clearHistory}>

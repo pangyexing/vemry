@@ -6,7 +6,7 @@
   // the same `at-*` rules in app.css; the focus stays in the textarea — AgentChat forwards
   // the keys through handleKey and a mouse press keeps the focus with preventDefault.
   import { t } from "$lib/i18n/i18n.svelte";
-  import { api, type SkillEntry } from "$lib/api";
+  import type { SkillEntry } from "$lib/api";
   import { fuzzyFilter } from "$lib/commands/registry";
   import { isImeKeydown } from "$lib/ime";
   import RefIcon from "./RefIcon.svelte";
@@ -14,11 +14,14 @@
   import { skillDesc, skillSourceLabel, skillTitle } from "$lib/skills";
 
   let {
+    skills,
     query,
     anchor,
     onPick,
     onClose,
   }: {
+    /** The enabled skills — AgentChat's one list, refreshed as this layer opens. */
+    skills: SkillEntry[];
     query: string;
     anchor: HTMLElement | null;
     onPick: (name: string) => void;
@@ -34,14 +37,6 @@
     measure();
   });
 
-  /** The enabled skills, fetched when the layer opens (a directory scan; the list is short). */
-  let skills = $state<SkillEntry[]>([]);
-  $effect(() => {
-    api
-      .skillsList()
-      .then((s) => (skills = s.filter((x) => !x.disabled)))
-      .catch(() => (skills = []));
-  });
   const MAX_SHOW = 12;
   /** Matched on the name, the title and description the UI shows, the file's own description
    *  and the triggers (the words a user would type, in any language). */

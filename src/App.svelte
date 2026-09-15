@@ -10,7 +10,7 @@
   import { vault } from "$lib/stores/vault.svelte";
   import { scaffold } from "$lib/scaffold";
   import { agent } from "$lib/stores/agent.svelte";
-  import { localDate } from "$lib/views/tasks";
+  import { journalToday, localDate } from "$lib/views/tasks";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { types } from "$lib/stores/types.svelte";
   import { browser, MAIN_MIN_BESIDE_PANEL, PANEL_DEFAULT as BROWSER_PANEL_DEFAULT, PANEL_MIN as BROWSER_PANEL_MIN } from "$lib/stores/browser.svelte";
@@ -341,8 +341,8 @@
   void onCaptureAction(async (a) => {
     try {
       if (!vault.root) throw new Error(t("app.openVaultFirst"));
-      const r = await vault.capture(a.text, a.target, a.heading, a.attachments);
-      await api.captureReply({ id: a.id, ok: true, path: a.target, landed: r.landed });
+      await vault.capture(a.text, a.target, a.heading, a.attachments);
+      await api.captureReply({ id: a.id, ok: true });
     } catch (e) {
       void api.captureReply({ id: a.id, ok: false, error: e instanceof Error ? e.message : String(e) }).catch(() => {});
     }
@@ -433,7 +433,7 @@
   // is frontmost too, so the main window binds nothing); the row's hint reads the live setting
   registerCommand({
     id: "quick-capture", descriptionParams: { key: k("Mod+Enter") }, group: "note",
-    get hotkey() { return hotkeyLabel(prefs.captureHotkey); },
+    hotkey: () => hotkeyLabel(prefs.captureHotkey),
     run: () => api.captureWindowShow().catch((e) => toast.push(String(e), "error")),
   });
   /** Layered back: inside the reading projection the projection's page stack is consumed first,
@@ -531,7 +531,7 @@
     id: "open-journal-today", group: "note",
     run: async () => {
       if (!vault.root) return;
-      const path = `journal/${localDate()}.md`;
+      const path = journalToday();
       try {
         if (!vault.notes.some((n) => n.id === path)) {
           await api.noteWrite(path, `# ${localDate()}\n\n`);

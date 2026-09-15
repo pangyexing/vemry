@@ -1541,7 +1541,6 @@ add("chat.", {
     "undone": ("Undone {n} writes{skipped}", "已撤销 {n} 项{skipped}"),
     "undoneSkipped": (", {n} skipped (edited since)", ",{n} 项已被编辑过跳过"),
     "viewTag": ("view", "视图"),
-    "skillTag": ("method", "方法"),
     "skillModeHint": ("Runs “{name}”", "按「{name}」"),
     "statusSkill": ("by {name}", "按 {name}"),
     "skillPlaceholder": ("What should “{name}” work on? Enter alone runs it as is", "要按「{name}」处理什么?直接回车也可以"),
@@ -1965,7 +1964,6 @@ add("app.", {
     "openBrowserHint": ("Open the browser ({key} to type an address)", "打开浏览器({key} 输入网址)"),
     # Joins the items of an inline list; the separator differs per language
     "listSep": (", ", "、"),
-    "recordedIn": ("Recorded in {path}", "已记入 {path}"),
     "captureHotkeyFailed": ("{key} is held by another app — pick another quick capture shortcut in Settings",
                             "{key} 被其他软件占用——到设置里换一个速记快捷键"),
     "captureAnywhere": ("Capture a thought from any app: {key}", "随时记一条:{key},在任何软件里都行"),

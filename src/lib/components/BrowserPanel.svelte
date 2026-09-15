@@ -23,7 +23,7 @@
   import { executeCommand, fuzzyFilter } from "$lib/commands/registry";
   import { domainOf } from "$lib/markdown";
   import { isMac, k } from "$lib/shortcut";
-  import { fetchHeadings, noteKey, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
+  import { fetchHeadings, noteMatches, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
   import { vault } from "$lib/stores/vault.svelte";
   import { agent } from "$lib/stores/agent.svelte";
   import { browser, MAIN_MIN_BESIDE_PANEL, PANEL_MIN } from "$lib/stores/browser.svelte";
@@ -296,7 +296,7 @@
         })),
       ];
     }
-    const notes = fuzzyFilter(vault.notes, pickQuery, noteKey);
+    const { notes, create: q } = noteMatches(pickQuery);
     const list: Row[] = notes.slice(0, 50).map((n) => ({
       id: n.id,
       title: n.title,
@@ -304,8 +304,7 @@
       pick: { path: n.id, title: n.title },
       run: () => choose(n.id, null),
     }));
-    const q = pickQuery.trim();
-    if (q && !notes.some((n) => n.title.toLowerCase() === q.toLowerCase())) {
+    if (q) {
       list.push({
         id: "__create__",
         title: t("palette.createNamed", { title: q }),

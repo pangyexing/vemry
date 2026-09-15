@@ -525,9 +525,11 @@ class AgentStore {
     if (idx < 0) return null;
     const item = this.timeline[idx];
     if (item.kind !== "user") return null;
-    // A selection's body and a view's query are not in the timeline and cannot be restored (the selection is probably still in the editor, the view still open)
+    // A selection's body and a view's query are not in the timeline and cannot be restored (the
+    // selection is probably still in the editor, the view still open); the method travels in the
+    // text itself (`/name` at its head), and the send derives the skill ref from it again
     const refs = item.refs?.flatMap((r): ContextRef[] =>
-      r.kind === "selection" || r.kind === "view"
+      r.kind === "selection" || r.kind === "view" || r.kind === "skill"
         ? []
         : r.kind === "block"
           ? [{ kind: "block", path: r.path, local_id: (r.block ?? "").replace(/^\^/, "") }]

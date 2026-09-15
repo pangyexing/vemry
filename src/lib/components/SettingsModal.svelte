@@ -6,7 +6,7 @@
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { api, EFFORT_OPTIONS, type CaptureTarget, type LangSetting, type LinkOpenMode, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
-  import { CAPTURE_HOTKEY_DEFAULT, comboFromEvent, hotkeyLabel } from "$lib/capture";
+  import { comboFromEvent, hotkeyLabel, isModifierKey } from "$lib/capture";
   import { account } from "$lib/stores/account.svelte";
   import AccountPanel from "./AccountPanel.svelte";
   import { scaffold } from "$lib/scaffold";
@@ -17,7 +17,7 @@
   import { scripts } from "$lib/stores/scripts.svelte";
   import { browser } from "$lib/stores/browser.svelte";
   import { toast } from "$lib/stores/toast.svelte";
-  import { prefs } from "$lib/stores/prefs.svelte";
+  import { CAPTURE_HOTKEY_DEFAULT, prefs } from "$lib/stores/prefs.svelte";
   import { updater } from "$lib/stores/updater.svelte";
   import { isImeKeydown } from "$lib/ime";
   import { isMac, k } from "$lib/shortcut";
@@ -357,9 +357,10 @@
       recording = false;
       return;
     }
+    if (isModifierKey(e)) return; // the key is still coming
     const combo = comboFromEvent(e);
     if (combo === null) {
-      if (!["Shift", "Control", "Alt", "Meta"].includes(e.key)) recordingError = t("settings.capture.hotkeyNeedsModifier");
+      recordingError = t("settings.capture.hotkeyNeedsModifier");
       return;
     }
     captureHotkey = combo;
@@ -406,9 +407,20 @@
       tray_resident: trayResident,
     });
     } catch (e) {
-      // The one refusal: a capture shortcut that does not parse or that another app holds — everything else in the update has landed, and the dialog stays for another try
-      captureHotkeyError = String(e);
+      // The expected refusal is a capture shortcut that does not parse or that another app
+      // holds: everything else in the update has landed on the Rust side, so what landed is
+      // read back and applied here as a success would (the language switch, the updater's
+      // checkbox, the prefs mirror) — and the dialog stays for another try. A write that
+      // failed outright reads back unchanged, and the toast carries its reason
       toast.push(String(e), "error");
+      const s = await prefs.refresh();
+      if (s) {
+        setLanguage(s.language);
+        updater.autoCheck = s.updater_auto_check;
+        captureHotkeyError = s.capture_hotkey_error ?? String(e);
+      } else {
+        captureHotkeyError = String(e);
+      }
       return;
     }
     // The language takes effect at once (each window's frontend has its own $state; the Rust side already rebuilt the menu inside settings_set)

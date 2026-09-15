@@ -101,7 +101,7 @@ struct Inner {
 
 impl AgentWindowState {
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.0)
     }
 }
 

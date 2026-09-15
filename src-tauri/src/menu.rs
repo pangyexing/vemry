@@ -30,8 +30,14 @@
 //!
 //! No window menu is installed on Windows/Linux: the frontend keydown chain
 //! remains the single source of truth for keys off mac, which avoids two
-//! behaviour matrices for two platforms (the whole module is cfg macos and
-//! compiles to nothing elsewhere).
+//! behaviour matrices for two platforms (the menu itself is cfg macos and
+//! compiles to nothing elsewhere; the one menu event listener and the quick
+//! capture item, which the tray menu shares, are cfg-free).
+
+use tauri::menu::{MenuItem, MenuItemBuilder};
+use tauri::AppHandle;
+
+use crate::i18n::{self, Lang};
 
 #[cfg(target_os = "macos")]
 pub use imp::install;
@@ -39,16 +45,52 @@ pub use imp::install;
 /// No-op off macOS, where there is no window menu at all: callers (startup and
 /// the language switch in `settings_set`) stay cfg-free.
 #[cfg(not(target_os = "macos"))]
-pub fn install(_app: &tauri::AppHandle) -> tauri::Result<()> {
+pub fn install(_app: &AppHandle) -> tauri::Result<()> {
     Ok(())
+}
+
+/// The one menu event listener of the process, registered once at startup. The
+/// runtime keeps every listener ever registered and calls all of them on every
+/// menu event (the application menu's and the tray menu's share the channel), so
+/// a listener registered per `install` would fire a click once per rebuild — a
+/// language change or a shortcut change later, "new note" would open two notes.
+/// The tray's own ids are taken first; the rest is the application menu's (macOS
+/// only; off macOS there is no menu to dispatch for).
+pub fn listen(app: &AppHandle) {
+    app.on_menu_event(|app, e| {
+        let id = e.id().as_ref();
+        if crate::tray::on_menu_event(app, id) {
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        imp::on_menu_event(app, id);
+    });
+}
+
+/// `key` is a `locales/*.json` key; menu items that mirror a palette command
+/// pass that command's own `cmd.<id>.title` so the two can never disagree.
+fn item(app: &AppHandle, lang: Lang, id: &str, key: &str) -> tauri::Result<MenuItem<tauri::Wry>> {
+    MenuItemBuilder::with_id(id, i18n::t(lang, key)).build(app)
+}
+fn item_key(app: &AppHandle, lang: Lang, id: &str, key: &str, accel: &str) -> tauri::Result<MenuItem<tauri::Wry>> {
+    MenuItemBuilder::with_id(id, i18n::t(lang, key)).accelerator(accel).build(app)
+}
+
+/// The quick capture item, for the File menu and the tray menu alike: its
+/// accelerator is the global shortcut from the settings as a hint (a registered
+/// hot key is consumed by the system before any menu sees it), and a combination
+/// the menu cannot parse leaves the item without one rather than failing the menu.
+pub fn quick_capture_item(app: &AppHandle, lang: Lang, id: &str, hotkey: &str) -> tauri::Result<MenuItem<tauri::Wry>> {
+    item_key(app, lang, id, "menu.quickCapture", hotkey).or_else(|_| item(app, lang, id, "menu.quickCapture"))
 }
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, MenuItemBuilder, SubmenuBuilder};
+    use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
     use tauri::{AppHandle, Emitter};
 
-    use crate::i18n::{self, Lang};
+    use super::{item, item_key, quick_capture_item};
+    use crate::i18n;
 
     /// The help menu's special-case id: not a registry command, it opens the system browser directly.
     const HELP_GITHUB: &str = "menu:help-github";
@@ -65,31 +107,13 @@ mod imp {
     /// window's registry like every other menu item.
     const BROWSER_BAR_COMMANDS: [&str; 2] = ["open-url", "browser-new-tab"];
 
-    /// `key` is a `locales/*.json` key; menu items that mirror a palette command
-    /// pass that command's own `cmd.<id>.title` so the two can never disagree.
-    fn item(app: &AppHandle, lang: Lang, id: &str, key: &str) -> tauri::Result<MenuItem<tauri::Wry>> {
-        MenuItemBuilder::with_id(id, i18n::t(lang, key)).build(app)
-    }
-    fn item_key(
-        app: &AppHandle,
-        lang: Lang,
-        id: &str,
-        key: &str,
-        accel: &str,
-    ) -> tauri::Result<MenuItem<tauri::Wry>> {
-        MenuItemBuilder::with_id(id, i18n::t(lang, key)).accelerator(accel).build(app)
-    }
-
-    /// Builds (or rebuilds) the whole menu. Called again when the language
-    /// changes — `set_menu` replaces the previous one wholesale.
+    /// Builds (or rebuilds) the whole menu. Called again when the language or the
+    /// capture shortcut changes — `set_menu` replaces the previous one wholesale.
+    /// The event listener is not here: it is registered once (`listen`).
     pub fn install(app: &AppHandle) -> tauri::Result<()> {
         let settings = crate::settings::load(app);
         let lang = i18n::resolve(settings.language);
         let cmd = |id: &str| format!("cmd.{id}.title");
-        // The capture item's hint follows the setting (rebuilt with the menu on a
-        // change); a combination the menu cannot parse leaves the item without one
-        let quick_capture = item_key(app, lang, "quick-capture", "menu.quickCapture", &settings.capture_hotkey)
-            .or_else(|_| item(app, lang, "quick-capture", "menu.quickCapture"))?;
         let app_menu = SubmenuBuilder::new(app, "vemry")
             .about(Some(AboutMetadata::default()))
             .separator()
@@ -107,7 +131,7 @@ mod imp {
             .item(&item_key(app, lang, "new-note", &cmd("new-note"), "Cmd+N")?)
             .item(&item_key(app, lang, "open-note", &cmd("open-note"), "Cmd+O")?)
             .separator()
-            .item(&quick_capture)
+            .item(&quick_capture_item(app, lang, "quick-capture", &settings.capture_hotkey)?)
             .separator()
             .item(&item(app, lang, "create-vault", &cmd("create-vault"))?)
             .item(&item(app, lang, "open-vault", &cmd("open-vault"))?)
@@ -176,24 +200,23 @@ mod imp {
             .items(&[&app_menu, &file, &edit, &view, &research, &window, &help])
             .build()?;
         app.set_menu(menu)?;
-        app.on_menu_event(|app, e| {
-            let id = e.id().0.clone();
-            if id.starts_with(crate::tray::MENU_ID_PREFIX) {
-                // The tray menu shares this channel and handles its own items (tray.rs)
-            } else if id == HELP_GITHUB {
-                // An explicit click by the user, opened in the system browser (the same exit as url_open_system)
-                let _ = opener::open(HELP_URL);
-            } else if id == CLOSE_WINDOW {
-                close_focused_window(app);
-            } else if BROWSER_BAR_COMMANDS.contains(&id.as_str()) && browser_window_focused(app) {
-                let _ = app.emit_to(crate::browser::window::BAR_LABEL, "browserbar://command", id);
-            } else {
-                // The payload convention: a string is a registry command id (a
-                // Predefined item goes through the native selector and never reaches here)
-                let _ = app.emit("menu://command", id);
-            }
-        });
         Ok(())
+    }
+
+    /// An application menu item was clicked (from `listen`; the tray's ids never reach here).
+    pub fn on_menu_event(app: &AppHandle, id: &str) {
+        if id == HELP_GITHUB {
+            // An explicit click by the user, opened in the system browser (the same exit as url_open_system)
+            let _ = opener::open(HELP_URL);
+        } else if id == CLOSE_WINDOW {
+            close_focused_window(app);
+        } else if BROWSER_BAR_COMMANDS.contains(&id) && browser_window_focused(app) {
+            let _ = app.emit_to(crate::browser::window::BAR_LABEL, "browserbar://command", id);
+        } else {
+            // The payload convention: a string is a registry command id (a
+            // Predefined item goes through the native selector and never reaches here)
+            let _ = app.emit("menu://command", id);
+        }
     }
 
     /// The window holding the keyboard focus (`windows()`, not `webview_windows()`:
@@ -225,7 +248,7 @@ mod imp {
                 let _ = w.close();
             }
         } else if label == crate::capture_window::CAPTURE_LABEL {
-            crate::capture_window::dismiss(app);
+            crate::capture_window::hide(app);
         } else if label == "main" {
             if crate::browser::window::focused_tab(app).is_some() {
                 crate::browser::window::close_active_tab(app);

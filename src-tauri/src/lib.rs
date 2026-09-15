@@ -14,7 +14,13 @@ mod translate;
 mod tray;
 mod type_templates;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+/// A mutex of this crate's window and tray state, taken even when poisoned: what
+/// it guards is a few flags a panicked holder cannot leave half-written.
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 use vemry_core::Vault;
 
 /// Shared app state behind Tauri's managed state. The vault is Arc'd because
@@ -103,9 +109,12 @@ pub fn run() {
             if !settings.browser_docked {
                 tauri::Manager::state::<AppState>(app).browser.0.lock().unwrap().shape = browser::Shape::Detached;
             }
-            // The native menu bar (macOS only): a menu item's id is a frontend command
-            // id, routed back through the event bridge to executeCommand; a failure
-            // does not block startup (every entry point exists in-app as well)
+            // The one menu event listener (the application menu's and the tray
+            // menu's items alike; menu.rs), then the native menu bar itself (macOS
+            // only): a menu item's id is a frontend command id, routed back through
+            // the event bridge to executeCommand; a failure does not block startup
+            // (every entry point exists in-app as well)
+            menu::listen(app.handle());
             #[cfg(target_os = "macos")]
             if let Err(e) = menu::install(app.handle()) {
                 eprintln!("menu install failed: {e}");
@@ -262,7 +271,7 @@ pub fn run() {
             capture_window::capture_window_resize,
             capture_window::capture_to_main,
             capture_window::capture_reply,
-            commands::clipboard_files,
+            commands::clipboard_probe,
             commands::clipboard_image,
             commands::agent_session_delete,
             commands::agent_session_rename,

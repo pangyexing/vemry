@@ -298,7 +298,7 @@ fn default_reasoning_effort() -> String {
     "high".into()
 }
 
-pub fn default_capture_hotkey() -> String {
+fn default_capture_hotkey() -> String {
     "Alt+Shift+Space".into()
 }
 

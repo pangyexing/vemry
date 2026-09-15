@@ -1039,6 +1039,12 @@ export function localDate(offsetDays = 0): string {
   return ymd(d);
 }
 
+/** Today's journal note, `journal/YYYY-MM-DD.md`: where the daily skills, the "open
+ *  today's journal" command and a capture aimed at the journal all land. */
+export function journalToday(): string {
+  return `journal/${localDate()}.md`;
+}
+
 /** Whole days from `YYYY-MM-DD` to today (in the local time zone, by calendar day):
  *  negative = in the past.
  *  Both ends are zeroed to local midnight before subtracting, and `Math.round` absorbs

@@ -805,7 +805,11 @@ impl AgentRunner {
                 if plan_rejected != PlanRejected::No {
                     history.push(ChatMessage::tool_result(
                         call.id.clone(),
-                        "(skipped: the plan was rejected; this tool call was not executed — revise the plan first)",
+                        if plan_rejected == PlanRejected::Revise {
+                            "(skipped: the plan was rejected; this tool call was not executed — revise the plan first)"
+                        } else {
+                            "(skipped: the plan was rejected; this tool call was not executed)"
+                        },
                     ));
                     continue;
                 }
@@ -1294,7 +1298,7 @@ impl AgentRunner {
                     return Ok("The user kept none of the items; write nothing — what was proposed stays where it is.".into());
                 }
                 Ok(format!(
-                    "The user kept {} item(s), as edited below. Write each into its target now — append_note as a task line (`- [ ] text [owner:: x] 📅 due`) under the right heading, or update_task for an existing task — and write nothing that is not on this list:\n{}",
+                    "The user kept {} item(s), as edited below. Write each into its target now — append_note as a task line (`- [ ] text [owner:: x] 📅 due`) under the right heading, update_task for an existing task, or move_blocks for an item that is a block already in the vault (a tidy-up's capture: moved whole, never retyped) — and write nothing that is not on this list:\n{}",
                     items.len(),
                     format_action_items(&items)
                 ))

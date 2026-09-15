@@ -36,12 +36,11 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager};
 
 use crate::settings::Settings;
-use crate::AppState;
+use crate::{lock, AppState};
 
 const TRAY_ID: &str = "vemry";
-/// The tray menu's item ids. They share the application menu's event channel, so
-/// menu.rs skips this prefix rather than relaying it as a frontend command.
-pub const MENU_ID_PREFIX: &str = "tray:";
+/// The tray menu's item ids, distinct from the application menu's (a frontend
+/// command id): the one menu event listener (menu.rs `listen`) hands these here.
 const M_CAPTURE: &str = "tray:capture";
 const M_OPEN: &str = "tray:open";
 const M_QUIT: &str = "tray:quit";
@@ -53,15 +52,23 @@ pub struct TrayState {
     error: Mutex<Option<String>>,
 }
 
-impl TrayState {
-    fn set_error(&self, e: Option<String>) {
-        *self.error.lock().unwrap_or_else(|e| e.into_inner()) = e;
-    }
-}
-
 /// The creation failure, for the settings view.
 pub fn error(app: &AppHandle) -> Option<String> {
-    app.state::<AppState>().tray.error.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    lock(&app.state::<AppState>().tray.error).clone()
+}
+
+/// A menu event for one of this menu's items; false when the id is not ours.
+pub fn on_menu_event(app: &AppHandle, id: &str) -> bool {
+    match id {
+        M_CAPTURE => {
+            let a = app.clone();
+            let _ = app.run_on_main_thread(move || crate::capture_window::show(&a));
+        }
+        M_OPEN => show_main(app),
+        M_QUIT => quit(app),
+        _ => return false,
+    }
+    true
 }
 
 /// Whether closing the main window hides it: the switch is on *and* the icon is
@@ -79,7 +86,7 @@ pub fn reconcile(app: &AppHandle) {
     let st = app.state::<AppState>();
     if !settings.tray_resident {
         let _ = app.remove_tray_by_id(TRAY_ID);
-        st.tray.set_error(None);
+        *lock(&st.tray.error) = None;
         return;
     }
     let outcome = match app.tray_by_id(TRAY_ID) {
@@ -89,7 +96,7 @@ pub fn reconcile(app: &AppHandle) {
     if let Err(e) = &outcome {
         eprintln!("tray icon: {e}");
     }
-    st.tray.set_error(outcome.err().map(|e| e.to_string()));
+    *lock(&st.tray.error) = outcome.err().map(|e| e.to_string());
 }
 
 fn build(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
@@ -100,17 +107,11 @@ fn build(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
         .icon_as_template(false)
         .tooltip("vemry")
         .menu(&menu(app, settings)?)
-        // A click acts (below); the menu is on the secondary button
+        // A click acts (below); the menu is on the secondary button. Its events reach
+        // `on_menu_event` through the process's one listener (menu.rs): a listener
+        // registered here would be kept by the runtime past this icon's removal and
+        // added to again on every rebuild
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, e| match e.id().as_ref() {
-            M_CAPTURE => {
-                let a = app.clone();
-                let _ = app.run_on_main_thread(move || crate::capture_window::show(&a));
-            }
-            M_OPEN => show_main(app),
-            M_QUIT => quit(app),
-            _ => {}
-        })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
                 let app = tray.app_handle().clone();
@@ -142,17 +143,13 @@ fn icon() -> tauri::Result<tauri::image::Image<'static>> {
     }
 }
 
-/// Quick capture (with the shortcut as a hint, like the File menu's item), open the
-/// window, quit — from the catalog in the current language.
+/// Quick capture (the File menu's item, shortcut hint included), open the window,
+/// quit — from the catalog in the current language.
 fn menu(app: &AppHandle, settings: &Settings) -> tauri::Result<Menu<tauri::Wry>> {
     use crate::i18n;
     let lang = i18n::resolve(settings.language);
-    let capture = MenuItemBuilder::with_id(M_CAPTURE, i18n::t(lang, "menu.quickCapture"))
-        .accelerator(&settings.capture_hotkey)
-        .build(app)
-        .or_else(|_| MenuItemBuilder::with_id(M_CAPTURE, i18n::t(lang, "menu.quickCapture")).build(app))?;
     MenuBuilder::new(app)
-        .item(&capture)
+        .item(&crate::menu::quick_capture_item(app, lang, M_CAPTURE, &settings.capture_hotkey)?)
         .item(&MenuItemBuilder::with_id(M_OPEN, i18n::t(lang, "menu.trayOpen")).build(app)?)
         .separator()
         .item(&MenuItemBuilder::with_id(M_QUIT, i18n::t(lang, "menu.trayQuit")).build(app)?)

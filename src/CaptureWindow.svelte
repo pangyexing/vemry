@@ -30,17 +30,22 @@
     return () => void sub.then((un) => un());
   });
 
+  /** The settings (the landing target, the shortcut label) and the vault's notes (the picker), both read by the composer. */
+  function refresh() {
+    return Promise.all([prefs.refresh(), vault.attachCurrent(false, true).catch(() => undefined)]);
+  }
+
   async function boot() {
-    await Promise.all([prefs.refresh(), vault.attachCurrent(false, true).catch(() => undefined)]);
+    await refresh();
     await tick();
     // Only now can a show be honoured: the listeners are registered and the notes are in — a show that arrived earlier is replayed by Rust
     void api.captureWindowReady().catch(() => undefined);
   }
 
-  async function shown() {
+  function shown() {
     composer?.shown();
     // The notes list and the target may have changed since the last press (a note created, the settings edited); refreshed behind the focus, not before it
-    await Promise.all([prefs.refresh(), vault.attachCurrent(false, true).catch(() => undefined)]);
+    void refresh();
   }
 
   function onkeydown(e: KeyboardEvent) {

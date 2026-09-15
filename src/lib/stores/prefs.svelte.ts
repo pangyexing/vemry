@@ -5,6 +5,9 @@
 // save — outside those two there is no writer.
 import { api, type CaptureTarget, type ProviderSetting, type SettingsView } from "$lib/api";
 
+/** settings.rs default_capture_hotkey, in the shortcut plugin's grammar; the settings page's "reset" puts it back. */
+export const CAPTURE_HOTKEY_DEFAULT = "Alt+Shift+Space";
+
 class PrefsStore {
   /** An ordinary click on a rendered link in the editor opens it; with it off, only
    *  ⌘/Ctrl+click does. The default matches Rust's default_true, so the behaviour is
@@ -41,11 +44,9 @@ class PrefsStore {
   /** Side-by-side translation's target language ("" = the interface language): the status bar's chip asks whether the open note is already in it. */
   translateTarget = $state("");
   /** Quick capture: the global shortcut in the plugin's grammar (the activity bar's
-   *  hint and the palette row render it through capture.ts's hotkeyLabel), the
-   *  registration's failure if any (toasted once at startup), and where Enter lands
-   *  a capture — read by the capture window at the moment of landing. */
-  captureHotkey = $state("Alt+Shift+Space");
-  captureHotkeyError = $state<string | null>(null);
+   *  hint and the palette row render it through capture.ts's hotkeyLabel), and where
+   *  Enter lands a capture — read by the capture window at the moment of landing. */
+  captureHotkey = $state(CAPTURE_HOTKEY_DEFAULT);
   captureTarget = $state<CaptureTarget>("inbox");
   capturePinnedPath = $state("");
   capturePinnedHeading = $state("");
@@ -69,7 +70,6 @@ class PrefsStore {
       this.imagesUnsupported = s.images_unsupported;
       this.translateTarget = s.translate_target;
       this.captureHotkey = s.capture_hotkey;
-      this.captureHotkeyError = s.capture_hotkey_error;
       this.captureTarget = s.capture_target;
       this.capturePinnedPath = s.capture_pinned_path;
       this.capturePinnedHeading = s.capture_pinned_heading;

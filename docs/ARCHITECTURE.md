@@ -137,8 +137,10 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   but is still clickable), and Predefined-only (the Edit menu's
   undo/redo/cut/copy/paste go through native selectors straight to the first
   responder; turning them into emits would steal CodeMirror's ⌘Z and ⌘C). The
-  whole module is `cfg(macos)` and compiles to a no-op stub elsewhere, leaving the
-  frontend keydown chain as the single source of key bindings on those platforms.
+  menu itself is `cfg(macos)` and compiles to a no-op stub elsewhere, leaving the
+  frontend keydown chain as the single source of key bindings on those platforms;
+  cfg-free are the process's one menu event listener (`listen`, which also serves
+  the tray menu — see `tray.rs`) and the quick capture item shared with it.
 - `pasteboard.rs`: system clipboard reads the web layer cannot reach (macOS
   NSPasteboard: the file-path list and raw image bytes). Other platforms return
   nothing and the frontend falls back to the `File` objects on the DOM paste event.
@@ -183,8 +185,10 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   The icon is the app's own, in its colours, everywhere: an 18-point rendering
   of the app icon on macOS (`icons/tray-mac.png`, by `scripts/gen-tray-icon.py`;
   not a template image, which the system would flatten to black or white) and
-  the 32 px app icon elsewhere. The tray menu shares the
-  application menu's event channel, so `menu.rs` skips its `tray:` ids.
+  the 32 px app icon elsewhere. The tray menu's events arrive through the
+  process's one menu listener (`menu::listen`, registered once at startup: the
+  runtime keeps every listener ever registered, so one per rebuild would fire a
+  click once per language or shortcut change), which hands the `tray:` ids here.
 - `settings.rs`: model / endpoint / key, plus v0.4's browser and search switches
   (adblock, how links open, web search), v0.5's reader image proxy and clip image
   localisation, v0.6's check-for-updates-at-startup, v0.9's interface language, and
@@ -2357,9 +2361,12 @@ nothing. An item with no home rides the card as a staying row (`stay: true`, no
 target): unticked, its target box empty and inviting a home, its tick following
 that box — typed in, it is a move; cleared, it stays — so "write N" only ever
 counts moves the user asked for, and with nothing ticked the button reads "leave
-them" rather than "keep none" (the older shape, a target that is the source's own
-note, is read as staying too). The proposal itself touches no note: the dry run
-is free, and the only things that land are the rows the user kept.
+them" rather than "keep none". Only the flag makes a row a staying one: a target
+that is the source's own note is a write like any other (meeting-actions lands a
+new task line in the meeting note it was read from), and the quick task query
+skips the row's own source block, so a task-shaped capture proposed as a move is
+not marked a duplicate of itself. The proposal itself touches no note: the dry
+run is free, and the only things that land are the rows the user kept.
 
 ### Reading input: files, PDFs, and the read gate
 

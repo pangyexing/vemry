@@ -26,11 +26,11 @@
   import { k } from "$lib/shortcut";
   import { isImeKeydown } from "$lib/ime";
   import { prefs } from "$lib/stores/prefs.svelte";
-  import { fileKind, noteBucketOf, vault } from "$lib/stores/vault.svelte";
+  import { fileKind, noteBucketOf, pastedName, stampName } from "$lib/stores/vault.svelte";
   import { fuzzyFilter } from "$lib/commands/registry";
-  import { fetchHeadings, noteKey, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
+  import { fetchHeadings, noteMatches, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
   import { isFileLikePaste } from "$lib/editor/setup";
-  import { captureImageName, defaultCaptureSpot, hotkeyLabel, sniffImageExt, spotLabel, type CaptureSpot } from "$lib/capture";
+  import { defaultCaptureSpot, hotkeyLabel, spotLabel, type CaptureSpot } from "$lib/capture";
 
   interface Shot {
     id: number;
@@ -70,7 +70,14 @@
   let pickInput = $state<HTMLInputElement | null>(null);
   let box = $state<HTMLDivElement | null>(null);
 
-  const spot = $derived(picked ?? defaultCaptureSpot());
+  /** Bumped on every show: `defaultCaptureSpot` reads the clock for the journal target (not
+   *  reactive) and the settings (an equal value re-read does not re-signal), so the spot is
+   *  taken afresh per press rather than once for the session the hidden window lives. */
+  let shows = $state(0);
+  const spot = $derived.by(() => {
+    void shows;
+    return picked ?? defaultCaptureSpot();
+  });
   const hotkey = $derived(hotkeyLabel(prefs.captureHotkey));
 
   const rows = $derived.by((): Row[] => {
@@ -79,10 +86,9 @@
       const all: Row[] = [{ kind: "heading", text: null, level: 0 }, ...headings.map((h) => ({ kind: "heading" as const, text: h.text, level: h.level }))];
       return q ? fuzzyFilter(all, q, (r) => (r.kind === "heading" && r.text) || "") : all;
     }
-    const hits = fuzzyFilter(vault.notes, q, noteKey).slice(0, MAX_ROWS);
-    const out: Row[] = hits.map((n) => ({ kind: "note", path: n.id, title: n.title }));
-    const lower = q.toLowerCase();
-    if (q && !hits.some((n) => n.title.toLowerCase() === lower || n.id.toLowerCase() === `${lower}.md`)) out.push({ kind: "create", title: q });
+    const { notes, create } = noteMatches(q);
+    const out: Row[] = notes.slice(0, MAX_ROWS).map((n) => ({ kind: "note", path: n.id, title: n.title }));
+    if (create) out.push({ kind: "create", title: create });
     return out;
   });
 
@@ -103,8 +109,9 @@
    *  An error is left standing (it belongs to the text still in the composer) and clears
    *  with the next keystroke or landing. */
   export function shown() {
-    if (hintShows < HINT_SHOWS) writeHintShows(hintShows + 1);
-    hintShows = readHintShows();
+    // Counted up to one past the limit, where the hint retires (the template shows it while the count is within the limit)
+    if (hintShows <= HINT_SHOWS) writeHintShows(++hintShows);
+    shows++;
     void tick().then(() => (stage === "compose" ? textarea : pickInput)?.focus());
   }
 
@@ -112,7 +119,7 @@
     try {
       return Number(localStorage.getItem(HINT_KEY) ?? 0) || 0;
     } catch {
-      return HINT_SHOWS; // no storage: no hint rather than a hint forever
+      return HINT_SHOWS + 1; // no storage: no hint rather than a hint forever
     }
   }
   function writeHintShows(n: number) {
@@ -269,19 +276,29 @@
     if (!isFileLikePaste(dt)) return; // plain text pastes into the text area as usual
     e.preventDefault();
     const domFiles = Array.from(dt?.files ?? []);
+    // Only readable during dispatch: the plain text is the fallback when nothing file-like is
+    // actually there (a URL copied from a browser arrives as text/uri-list, which reads as
+    // file-like, with no file and no image behind it) — as the editor's paste falls back
+    const plain = dt?.getData("text/plain") ?? "";
     try {
-      // The native reader first (a file manager's copy as paths, a screenshot as bytes); the DOM files are the fallback for platforms without one
-      const paths = await api.clipboardFiles();
-      if (paths.length) return addPaths(paths);
-      const bytes = await api.clipboardImage();
-      if (bytes.length) return addBytes(bytes, sniffImageExt(bytes));
-      for (const f of domFiles) {
-        const buf = new Uint8Array(await f.arrayBuffer());
-        addBytes(buf, f.type.startsWith("image/") ? sniffImageExt(buf) : (f.name.split(".").pop() ?? "bin"), f.name);
-      }
+      // The native reader first (a file manager's copy as paths, a screenshot as bytes named by
+      // the pasteboard's type); the DOM files are the fallback for platforms without one
+      const probe = await api.clipboardProbe();
+      if (probe.files.length) return addPaths(probe.files);
+      if (probe.image) return addBytes(await api.clipboardImage(), `${stampName("capture")}.${probe.image}`);
+      for (const f of domFiles) addBytes(new Uint8Array(await f.arrayBuffer()), pastedName(f.name, f.type, "capture"));
+      if (!domFiles.length && plain) insertText(plain);
     } catch (err) {
       error = String(err);
     }
+  }
+  /** Text into the textarea at its selection (setRangeText fires no input event: the bound text and the height follow by hand). */
+  function insertText(s: string) {
+    const ta = textarea;
+    if (!ta) return;
+    ta.setRangeText(s, ta.selectionStart, ta.selectionEnd, "end");
+    text = ta.value;
+    grow();
   }
   function onDrag(p: { type: string; paths?: string[] }) {
     if (p.type === "enter" || p.type === "over") dragging = true;
@@ -291,10 +308,7 @@
       if (p.paths?.length) addPaths(p.paths);
     }
   }
-  function addBytes(bytes: Uint8Array, ext: string, name?: string) {
-    // A generic name (empty, or a browser's "image.png") takes the capture stamp; a real one is kept
-    const generic = !name || /^image\.\w+$/i.test(name);
-    const file = generic ? captureImageName(ext) : name.replace(/[/\\]/g, " ").trim();
+  function addBytes(bytes: Uint8Array, file: string) {
     const url = fileKind(file) === "image" ? URL.createObjectURL(new Blob([bytes])) : null;
     shots = [...shots, { id: nextShot++, name: file, bytes, url }];
     error = null;

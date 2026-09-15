@@ -1,15 +1,28 @@
 // The two-stage "pick a note, then optionally pick a destination section" selector
-// now has two hosts: ⌘P's pick-note mode (CommandPalette) and the clip toolbar's ▾
-// (ClipBar). Their appearance differs entirely (a full-screen overlay versus a 320px
-// embedded panel), so the components cannot be shared; but the three things below are
-// one contract, and writing them a second time would let the two drift — so they are
-// collected here.
+// has three hosts: ⌘P's pick-note mode (CommandPalette), the browser panel's clip
+// target (BrowserPanel) and the quick capture window's ⌘Enter (CaptureComposer).
+// Their appearance differs entirely (a full-screen overlay, a 320px embedded panel,
+// a strip under a text box), so the components cannot be shared; but the things below
+// are one contract, and writing them a second time would let the hosts drift — so
+// they are collected here.
 import { api, type NoteSummary } from "$lib/api";
+import { fuzzyFilter } from "$lib/commands/registry";
 import { vault } from "$lib/stores/vault.svelte";
 
 /** A note's fuzzy match key: title + path + aliases. The aliases have to be in the
  *  key, or a row found by alias would lead to a different note than the list shows. */
 export const noteKey = (n: NoteSummary) => `${n.title} ${n.id} ${n.aliases.join(" ")}`;
+
+/** The first stage: the notes matching the query, and the title of the "create" row
+ *  that follows them — offered unless a note with exactly that title is among the
+ *  matches (all of them, not the slice a host shows: a note ranked past the cut-off
+ *  is still a note the user has). */
+export function noteMatches(query: string): { notes: NoteSummary[]; create: string | null } {
+  const notes = fuzzyFilter(vault.notes, query, noteKey);
+  const q = query.trim();
+  const create = q && !notes.some((n) => n.title.toLowerCase() === q.toLowerCase()) ? q : null;
+  return { notes, create };
+}
 
 export interface PickHeading {
   text: string;

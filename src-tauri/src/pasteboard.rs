@@ -5,7 +5,7 @@
 //! and the frontend falls back (paste: DOM `File`s; copy: the button reports a failure).
 
 #[cfg(target_os = "macos")]
-pub use imp::{file_paths, image_data, string_text, write_image};
+pub use imp::{file_paths, image_data, image_kind, string_text, write_image};
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -27,6 +27,16 @@ mod imp {
             .filter(|url| url.isFileURL())
             .filter_map(|url| url.path().map(|p| PathBuf::from(p.to_string())))
             .collect()
+    }
+
+    /// Which image `image_data` would read — the extension alone, without copying
+    /// the bytes (a probe before a paste whose bytes are only wanted later).
+    pub fn image_kind() -> Option<&'static str> {
+        let pb = NSPasteboard::generalPasteboard();
+        let png = unsafe { NSPasteboardTypePNG };
+        let types = NSArray::from_slice(&[png, unsafe { NSPasteboardTypeTIFF }]);
+        let found = pb.availableTypeFromArray(&types)?;
+        Some(if found.isEqualToString(png) { "png" } else { "tiff" })
     }
 
     /// Raw image bytes on the clipboard (screenshots, copied images) with the
@@ -77,6 +87,11 @@ mod imp {
 #[cfg(not(target_os = "macos"))]
 pub fn file_paths() -> Vec<std::path::PathBuf> {
     vec![]
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn image_kind() -> Option<&'static str> {
+    None
 }
 
 #[cfg(not(target_os = "macos"))]

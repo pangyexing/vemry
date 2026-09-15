@@ -22,7 +22,7 @@
   import { tick, untrack } from "svelte";
   import { hostDispatch } from "$lib/host";
   import { isAgentWindow } from "$lib/window";
-  import { vault, baseOf, fileKind, noteBucketOf } from "$lib/stores/vault.svelte";
+  import { vault, baseOf, fileKind, noteBucketOf, stemOf } from "$lib/stores/vault.svelte";
   import { clips } from "$lib/stores/clips.svelte";
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -107,9 +107,9 @@
     return (lastSel = s);
   });
   /** The chips that count against the reference cap: the vault material — not the attached web
-   *  page (its own slot) and not the skill (the method, one short text outside the cap in Rust too). */
+   *  page (its own slot). The method (`/name` at the head of the draft) is no chip at all. */
   function materialRefs(): DraftRef[] {
-    return agent.contextDraft.filter((d) => d.kind !== "page" && d.kind !== "skill");
+    return agent.contextDraft.filter((d) => d.kind !== "page");
   }
   /** The reference draft at send time: the explicit chips plus the automatic selection (last;
    *  the envelope is ordered exactly as the chips row is). The caller clears contextDraft after
@@ -166,12 +166,11 @@
    *  share it, so the two paths do not grow apart. */
   async function dispatch(text: string) {
     const draft = draftForSend();
-    // The method rides as a reference: a head `/name` that names an enabled skill becomes the
-    // ContextRef::Skill the chip used to feed (its text joins the envelope first), while the
-    // message keeps the token as typed — `/tidy-inbox 只处理今天的` reads the same in the
-    // transcript as in the input
-    const m = SKILL_HEAD_RE.exec(text.trimStart());
-    const refs = m && knownSkills.has(m[1]) ? [{ kind: "skill" as const, path: m[1] }, ...draft.filter((d) => d.kind !== "skill")] : draft;
+    // The method rides as a reference: a head `/name` that names an enabled skill becomes a
+    // ContextRef::Skill (its text joins the envelope first), while the message keeps the token
+    // as typed — `/tidy-inbox 只处理今天的` reads the same in the transcript as in the input
+    const method = skillHead(text);
+    const refs = method ? [{ kind: "skill" as const, path: method }, ...draft] : draft;
     agent.contextDraft = [];
     await agent.send(text, noteForSend, refs);
     await vault.refreshNotes();
@@ -179,6 +178,11 @@
   /** The head token of a message: `/name` as its first word (the memo's `#` and a URL are
    *  head-tested the same way). Whether it is a method is decided against the enabled skills. */
   const SKILL_HEAD_RE = /^\/([^\s/]+)(?=\s|$)/;
+  /** The method a text leads with, when its head token names an enabled skill. */
+  function skillHead(text: string): string | null {
+    const m = SKILL_HEAD_RE.exec(text.trimStart());
+    return m && knownSkills.has(m[1]) ? m[1] : null;
+  }
 
   /** The one-shot highlight ⌘J lands with (class:summon, the same bool + setTimeout as
    *  SettingsModal's nudge) plus the "press ⌘J again for a detached window" hint (2s, dismissed
@@ -496,17 +500,22 @@
    *  task query per row (a task with the same key words already in the vault). */
   type ActionsCard = Extract<TimelineItem, { kind: "actions" }>;
   type ActionRow = { keep: boolean; text: string; owner: string; due: string; target: string; source: string; dup: string | null; stay: boolean; fields: { key: string; value: string }[] };
-  /** The note a source handle or a target path names, for telling "stays put" from a move:
-   *  `[[inbox#^b1]]`, `inbox.md` and `inbox` all read as `inbox`. */
+  /** The note a source handle or a target path names: `[[inbox#^b1]]`, `inbox.md` and `inbox`
+   *  all read as `inbox`. */
   function noteOf(s: string): string {
-    return baseOf(s.replace(/^\[\[/, "").split(/[#|\]]/)[0].trim())
-      .replace(/\.md$/i, "")
-      .toLowerCase();
+    return stemOf(s.replace(/^\[\[/, "").split(/[#|\]]/)[0].trim()).toLowerCase();
   }
-  /** A row the model meant to leave put: flagged `stay`, or — the older shape — a target that is the source's own note. */
+  /** The block a source handle names (`[[inbox#^b1]]` → `^b1`, `[[inbox#b3]]` → `b3`), or null
+   *  for a quoted sentence. */
+  function sourceBlock(s: string): string | null {
+    const m = /^\[\[[^#|\]]+#([^|\]]+)\]\]$/.exec(s.trim());
+    return m ? blockHandle(m[1].trim()) : null;
+  }
+  /** A row the model meant to leave put: the explicit `stay` flag alone. A target that is the
+   *  source's own note is not a stay — meeting-actions lands a new task line in the meeting note
+   *  it was read from, and that is a write to keep ticked. */
   function staysPut(it: ActionItem): boolean {
-    if (it.stay) return true;
-    return !!it.target && !!it.source && noteOf(it.target) === noteOf(it.source);
+    return !!it.stay;
   }
   let actionRows = $state<ActionRow[]>([]);
   $effect(() => {
@@ -543,10 +552,14 @@
       const key = rows[i].text.replace(/\s+/g, " ").trim().slice(0, 16);
       if (key.length < 4) continue;
       try {
-        const hits = await api.queryBlocks({ kind: "task", text: key, limit: 1 });
+        const hits = await api.queryBlocks({ kind: "task", text: key, limit: 2 });
         if (agent.pendingActions?.id !== reqId || actionRows !== rows) return;
-        if (hits.length) {
-          rows[i].dup = hits[0].note;
+        // The row's own source block is no duplicate of itself: a task-shaped capture proposed
+        // as a move out of the inbox would otherwise come back unticked as "already in inbox.md"
+        const own = sourceBlock(rows[i].source);
+        const hit = hits.find((h) => !(own && noteOf(h.note) === noteOf(rows[i].source) && blockHandle(h.block.local_id) === own));
+        if (hit) {
+          rows[i].dup = hit.note;
           rows[i].keep = false;
         }
       } catch {
@@ -1068,29 +1081,34 @@
     run(api.browserOpen(url));
   }
 
-  /** The welcome's method chips: every enabled skill (built-in and the vault's own), fetched
-   *  while the panel is empty and shown by scene under the title the catalog gives it; a
-   *  click attaches the skill and puts the caret in the box. */
-  let welcomeSkills = $state<SkillEntry[]>([]);
-  const welcomeGroups = $derived(groupSkills(welcomeSkills));
+  /** The enabled skills (built-in and the vault's own): the welcome's method chips by scene,
+   *  the `/` picker's candidates, and the names that make a head `/name` the message's method.
+   *  One list, fetched on mount, when the panel empties, and whenever the picker opens (a
+   *  directory scan; the list is short) — the picker and the head test cannot disagree. */
+  let skills = $state<SkillEntry[]>([]);
+  const knownSkills = $derived(new Set(skills.map((x) => x.name)));
+  function refreshSkills() {
+    api
+      .skillsList()
+      .then((s) => (skills = s.filter((x) => !x.disabled)))
+      .catch(() => {});
+  }
+  const welcome = $derived(agent.timeline.length === 0);
+  $effect(() => {
+    void welcome;
+    refreshSkills();
+  });
+  const welcomeGroups = $derived(groupSkills(skills));
   /** The secondary scenes (daily, product) unfolded on the welcome; folded to start, and kept as the user left it while the panel lives. */
   let welcomeMoreOpen = $state(false);
   const welcomeShown = $derived(welcomeMoreOpen ? welcomeGroups : welcomeGroups.filter((g) => !g.secondary));
   const welcomeHidden = $derived(welcomeGroups.filter((g) => g.secondary).reduce((n, g) => n + g.skills.length, 0));
-  $effect(() => {
-    if (agent.timeline.length !== 0) return;
-    api
-      .skillsList()
-      .then((s) => (welcomeSkills = s.filter((x) => !x.disabled)))
-      .catch(() => (welcomeSkills = []));
-  });
   /** A welcome chip toggles the head token: the chosen method reads as pressed, and clicking it
    *  again takes `/name ` back out of the draft — so a slip of the mouse costs one more click.
    *  Another method replaces the token; whatever was typed after it stays. */
   function useSkill(name: string) {
     const rest = draftSkill ? agent.draft.trimStart().replace(SKILL_HEAD_RE, "").trimStart() : agent.draft;
     agent.draft = draftSkill === name ? rest : `/${name} ${rest}`;
-    knownSkills = new Set([...knownSkills, name]);
     const el = composerEl;
     el?.focus();
     queueMicrotask(() => el?.setSelectionRange(el.value.length, el.value.length));
@@ -1110,26 +1128,10 @@
     t("chat.placeholder4"),
   ]);
   const PH_INTERVAL = 4000;
-  /** The enabled skills' names — what makes a head `/name` the message's method. Fetched on
-   *  mount and again whenever the picker opens (a directory scan; the list is short); a name
-   *  just picked or pressed joins on the spot, so the mode never lags the fetch. */
-  let knownSkills = $state(new Set<string>());
-  function refreshSkills() {
-    api
-      .skillsList()
-      .then((s) => (knownSkills = new Set(s.filter((x) => !x.disabled).map((x) => x.name))))
-      .catch(() => {});
-  }
-  $effect(() => {
-    refreshSkills();
-  });
   /** The message's method: the draft's head token when it names an enabled skill. It stays
    *  where it was typed, as the coding agents' slash commands do — the picker only completes
    *  it — rather than turning into a chip in the row meant for the material. */
-  const draftSkill = $derived.by(() => {
-    const m = SKILL_HEAD_RE.exec(agent.draft.trimStart());
-    return m && knownSkills.has(m[1]) ? m[1] : null;
-  });
+  const draftSkill = $derived(skillHead(agent.draft));
   /** The hint strip while a method leads the draft: the method by its title, then what it asks
    *  for (a topic, a note to @, or nothing but Enter); a vault's own skill has no ask line. */
   const skillHint = $derived.by(() => {
@@ -1195,7 +1197,7 @@
    *  button's title and aria are — four places read this one table rather than each copying the
    *  same `urlLike ? … : memoLike ? …` chain (the title and the aria-label used to be kept
    *  consistent by eye). */
-  const mode = $derived(urlLike ? "url" : memoLike ? "memo" : draftSkill ? "skill" : agent.running ? "queue" : "send");
+  const mode = $derived(urlLike ? "url" : memoLike ? "memo" : agent.running ? "queue" : "send");
   const MODES = $derived<Record<string, { hint: string; title: string; aria: string; run: () => void }>>({
     url: {
       hint: t(isMac ? "chat.urlHintMac" : "chat.urlHintPc"),
@@ -1209,15 +1211,9 @@
       aria: t("chat.memoAria"),
       run: () => void appendMemo(),
     },
-    queue: { hint: "", title: t("chat.queueTitle"), aria: t("chat.queueAria"), run: () => void send() },
-    send: { hint: "", title: t("chat.sendTitle"), aria: t("chat.sendAria"), run: () => void send() },
-    // A method at the head: ⏎ sends (or queues) as usual, and the strip says what the method asks for
-    skill: {
-      hint: skillHint,
-      title: t(agent.running ? "chat.queueTitle" : "chat.sendTitle"),
-      aria: t(agent.running ? "chat.queueAria" : "chat.sendAria"),
-      run: () => void send(),
-    },
+    // A method at the head (`/name`) changes nothing about ⏎; the strip then says what the method asks for (empty otherwise)
+    queue: { hint: skillHint, title: t("chat.queueTitle"), aria: t("chat.queueAria"), run: () => void send() },
+    send: { hint: skillHint, title: t("chat.sendTitle"), aria: t("chat.sendAria"), run: () => void send() },
   });
   const modeInfo = $derived(MODES[mode]);
 
@@ -1286,7 +1282,6 @@
    *  to replace the token jumped to the material row under a translated title, and read as odd). */
   function onSlashPick(name: string) {
     const el = composerEl;
-    knownSkills = new Set([...knownSkills, name]);
     if (slashStart >= 0) {
       const end = slashStart + 1 + (slashQuery?.length ?? 0);
       const token = `/${name} `;
@@ -1438,7 +1433,7 @@
         title: refTitle(d),
         label: refLabel(d),
         lines: d.kind === "selection" ? linesLabel(d) : d.kind === "block" ? `¶${blockHandle(d.local_id)}` : null,
-        tag: d.kind === "page" && d.page.truncated ? t("chat.tagTruncated") : d.kind === "view" ? t("chat.viewTag") : d.kind === "skill" ? t("chat.skillTag") : null,
+        tag: d.kind === "page" && d.page.truncated ? t("chat.tagTruncated") : d.kind === "view" ? t("chat.viewTag") : null,
         removeLabel: t("chat.removeContext"),
         remove: () => agent.contextDraft.splice(di, 1),
       });
@@ -2269,7 +2264,7 @@
       <AtPicker bind:this={picker} query={atQuery} anchor={composerEl} {curSel} onPick={onAtPick} onPickFiles={onAtPickFiles} onStage={onAtStage} onClose={closeAt} />
     {/if}
     {#if slashQuery != null}
-      <SkillPicker bind:this={skillPicker} query={slashQuery} anchor={composerEl} onPick={onSlashPick} onClose={closeSlash} />
+      <SkillPicker bind:this={skillPicker} {skills} query={slashQuery} anchor={composerEl} onPick={onSlashPick} onClose={closeSlash} />
     {/if}
     <div class="input-wrap">
       {#if agent.draft === ""}
