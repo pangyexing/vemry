@@ -57,5 +57,7 @@ jobs:
           node-version: 22
       - uses: pnpm/action-setup@v4
       - run: pnpm install
+      # locales/*.json are generated; a hand edit to a committed catalog fails here
+      - run: python3 scripts/gen-locales.py && git diff --exit-code -- locales/
       - run: pnpm check
       - run: pnpm build

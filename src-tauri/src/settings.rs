@@ -211,10 +211,18 @@ pub enum LangSetting {
     #[default]
     #[serde(rename = "auto")]
     Auto,
-    #[serde(rename = "zh-CN")]
-    ZhCn,
     #[serde(rename = "en")]
     En,
+    #[serde(rename = "zh-CN")]
+    ZhCn,
+    #[serde(rename = "ja")]
+    Ja,
+    #[serde(rename = "ko")]
+    Ko,
+    #[serde(rename = "fr")]
+    Fr,
+    #[serde(rename = "de")]
+    De,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]

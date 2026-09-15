@@ -1,11 +1,12 @@
 //! User-facing copy for the surfaces Rust owns: the native menu bar, IPC error
-//! strings, window titles. Reads the **same** `locales/*.json` pair the frontend
+//! strings, window titles. Reads the **same** `locales/*.json` files the frontend
 //! reads — one catalog, two consumers, the api.ts ↔ commands.rs mirror discipline
-//! applied to wording.
+//! applied to wording. English and Chinese are complete; the other languages are
+//! overlays that fall back to English key by key (see locales/src/README.md).
 //!
 //! Only keys Rust actually uses need to resolve here; `tests` asserts every one
-//! of them exists in both catalogs, so a key renamed on the TS side breaks the
-//! build rather than silently rendering its own name in a menu.
+//! of them exists in the two complete catalogs, so a key renamed on the TS side
+//! breaks the build rather than silently rendering its own name in a menu.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -15,22 +16,68 @@ use vemry_core::VemryError;
 
 use crate::settings::LangSetting;
 
-const EN_JSON: &str = include_str!("../../locales/en.json");
-const ZH_JSON: &str = include_str!("../../locales/zh-CN.json");
-
+/// The interface languages, in the order the settings picker lists them. Mirrored
+/// by LANGS in scripts/gen-locales.py and src/lib/i18n/i18n.svelte.ts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
     En,
     ZhCn,
+    Ja,
+    Ko,
+    Fr,
+    De,
 }
 
-fn catalog(lang: Lang) -> &'static HashMap<String, String> {
-    static EN: OnceLock<HashMap<String, String>> = OnceLock::new();
-    static ZH: OnceLock<HashMap<String, String>> = OnceLock::new();
-    match lang {
-        Lang::En => EN.get_or_init(|| serde_json::from_str(EN_JSON).expect("locales/en.json")),
-        Lang::ZhCn => ZH.get_or_init(|| serde_json::from_str(ZH_JSON).expect("locales/zh-CN.json")),
+pub const LANGS: [Lang; 6] = [Lang::En, Lang::ZhCn, Lang::Ja, Lang::Ko, Lang::Fr, Lang::De];
+
+impl Lang {
+    /// The BCP 47 tag, as the settings wire value and the frontend spell it.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Lang::En => "en",
+            Lang::ZhCn => "zh-CN",
+            Lang::Ja => "ja",
+            Lang::Ko => "ko",
+            Lang::Fr => "fr",
+            Lang::De => "de",
+        }
     }
+
+    fn index(self) -> usize {
+        LANGS.iter().position(|l| *l == self).unwrap_or(0)
+    }
+
+    /// The language a BCP 47 tag resolves to: `zh-*` is Simplified Chinese for now,
+    /// the others match on the primary subtag, anything else is English. The
+    /// frontend's `langForTag` applies the same rule to navigator.language.
+    pub fn for_tag(tag: &str) -> Lang {
+        let lower = tag.to_ascii_lowercase();
+        let primary = lower.split(['-', '_']).next().unwrap_or("");
+        match primary {
+            "zh" => Lang::ZhCn,
+            "ja" => Lang::Ja,
+            "ko" => Lang::Ko,
+            "fr" => Lang::Fr,
+            "de" => Lang::De,
+            _ => Lang::En,
+        }
+    }
+}
+
+const JSON: [&str; 6] = [
+    include_str!("../../locales/en.json"),
+    include_str!("../../locales/zh-CN.json"),
+    include_str!("../../locales/ja.json"),
+    include_str!("../../locales/ko.json"),
+    include_str!("../../locales/fr.json"),
+    include_str!("../../locales/de.json"),
+];
+
+fn catalog(lang: Lang) -> &'static HashMap<String, String> {
+    static CATALOGS: [OnceLock<HashMap<String, String>>; 6] =
+        [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let i = lang.index();
+    CATALOGS[i].get_or_init(|| serde_json::from_str(JSON[i]).unwrap_or_else(|e| panic!("locales/{}.json: {e}", lang.tag())))
 }
 
 /// Look up a message, falling back to English and then to the key itself — a
@@ -57,6 +104,10 @@ pub fn resolve(setting: LangSetting) -> Lang {
     match setting {
         LangSetting::En => Lang::En,
         LangSetting::ZhCn => Lang::ZhCn,
+        LangSetting::Ja => Lang::Ja,
+        LangSetting::Ko => Lang::Ko,
+        LangSetting::Fr => Lang::Fr,
+        LangSetting::De => Lang::De,
         LangSetting::Auto => system_lang(),
     }
 }
@@ -68,15 +119,11 @@ pub fn resolve(setting: LangSetting) -> Lang {
 static CURRENT: AtomicU8 = AtomicU8::new(0);
 
 pub fn set_current(lang: Lang) {
-    CURRENT.store(if lang == Lang::ZhCn { 1 } else { 0 }, Ordering::Relaxed);
+    CURRENT.store(lang.index() as u8, Ordering::Relaxed);
 }
 
 pub fn current() -> Lang {
-    if CURRENT.load(Ordering::Relaxed) == 1 {
-        Lang::ZhCn
-    } else {
-        Lang::En
-    }
+    LANGS.get(CURRENT.load(Ordering::Relaxed) as usize).copied().unwrap_or(Lang::En)
 }
 
 /// Interpolate `{name}` placeholders. Small and allocation-light: messages have
@@ -105,10 +152,7 @@ pub fn err(e: VemryError) -> String {
 }
 
 fn system_lang() -> Lang {
-    match sys_locale::get_locale() {
-        Some(l) if l.to_ascii_lowercase().starts_with("zh") => Lang::ZhCn,
-        _ => Lang::En,
-    }
+    sys_locale::get_locale().map(|l| Lang::for_tag(&l)).unwrap_or(Lang::En)
 }
 
 #[cfg(test)]
@@ -260,6 +304,29 @@ mod tests {
         }
     }
 
+    /// Every overlay parses, and carries no key English does not — a stale key
+    /// in an overlay would be dead weight the generator already refuses.
+    #[test]
+    fn overlays_are_subsets_of_english() {
+        let en = catalog(Lang::En);
+        for lang in LANGS {
+            for key in catalog(lang).keys() {
+                assert!(en.contains_key(key), "{key} in {lang:?} is not an English key");
+            }
+        }
+    }
+
+    #[test]
+    fn tags_round_trip() {
+        for lang in LANGS {
+            assert_eq!(Lang::for_tag(lang.tag()), lang);
+        }
+        assert_eq!(Lang::for_tag("zh-TW"), Lang::ZhCn);
+        assert_eq!(Lang::for_tag("de_AT"), Lang::De);
+        assert_eq!(Lang::for_tag("en-GB"), Lang::En);
+        assert_eq!(Lang::for_tag("pt-BR"), Lang::En);
+    }
+
     /// Same key, same placeholders. A caller passes one set of names, so if the
     /// two translations disagree the other language renders a literal `{foo}` —
     /// invisible to the key-set test above and to `pnpm check`, and it only
@@ -280,10 +347,13 @@ mod tests {
             }
             out
         }
-        let (en, zh) = (catalog(Lang::En), catalog(Lang::ZhCn));
-        for (key, en_text) in en {
-            let Some(zh_text) = zh.get(key) else { continue };
-            assert_eq!(names(en_text), names(zh_text), "placeholder mismatch in {key}");
+        let en = catalog(Lang::En);
+        for lang in LANGS {
+            let other = catalog(lang);
+            for (key, en_text) in en {
+                let Some(text) = other.get(key) else { continue };
+                assert_eq!(names(en_text), names(text), "placeholder mismatch in {key} ({lang:?})");
+            }
         }
     }
 

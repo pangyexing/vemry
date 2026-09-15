@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { t } from "$lib/i18n/i18n.svelte";
+  import { t, compareNames } from "$lib/i18n/i18n.svelte";
   import { onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { EditorView } from "@codemirror/view";
   import { type EditorState, Text, Transaction } from "@codemirror/state";
   import { createEditor, resetDoc, languageFor } from "$lib/editor/setup";
+  import { noteLang } from "$lib/notelang";
   import { foldMarkedIn, foldOnLoad } from "$lib/editor/fold";
   import { type EditorBlock, blockAt, blockContentStart, extentTo } from "$lib/editor/blocks";
   import { blockMenuEntries, type BlockMenuHost } from "$lib/editor/blockmenu";
@@ -651,7 +652,7 @@
     // Tags are sorted by how often they are used, and alphabetically within the same count
     const counts = new Map<string, number>();
     for (const n of visible) for (const t of n.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
-    tagList = [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)! || a.localeCompare(b));
+    tagList = [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)! || compareNames(a, b));
   });
 
   /** Copy `[[Stem#^id]]` (or `![[…]]`) for a block: Rust decides the id and where it
@@ -809,7 +810,7 @@
     if (!hit && !rel.includes("/")) {
       hit = files
         .filter((f) => (f.split("/").pop() ?? "").toLowerCase() === lower)
-        .sort((a, b) => a.length - b.length || a.localeCompare(b))[0] ?? null;
+        .sort((a, b) => a.length - b.length || compareNames(a, b))[0] ?? null;
     }
     if (hit) return fileKind(hit) === "image" ? hit : null;
     // The file list is a projection that can lag behind the disk: the clip localiser
@@ -1034,6 +1035,14 @@
    *  editorLoc and editorSelStats in this batch would once have meant keeping four sites in
    *  step, and missing one is stale data. With head=0, lineAt(0) gives exactly 1:1, which
    *  matches the old hardcoded value. */
+  /** Stamp the note's own language (frontmatter `lang:`) on the editor body, or clear it so the
+   *  interface language applies. Read at load: frontmatter edits are rare and the next load sees them. */
+  function applyNoteLang(v: NonNullable<typeof view>) {
+    const tag = noteLang(v.state.doc.sliceString(0, Math.min(v.state.doc.length, 2000)));
+    if (tag) v.contentDOM.setAttribute("lang", tag);
+    else v.contentDOM.removeAttribute("lang");
+  }
+
   function finishLoad(path: string, eol: "\n" | "\r\n", head: number) {
     const v = view!; // both call paths run after view has been assigned
     docPath = path;
@@ -1046,6 +1055,7 @@
     // note's stale outline)
     cancelOutline();
     computeOutline();
+    applyNoteLang(v);
     vault.editorCursor = head;
     const ln = v.state.doc.lineAt(head);
     vault.editorLoc = { line: ln.number, col: head - ln.from + 1 };

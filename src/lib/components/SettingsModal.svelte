@@ -10,7 +10,7 @@
   import AccountPanel from "./AccountPanel.svelte";
   import { scaffold } from "$lib/scaffold";
   import { skillDesc, skillSourceLabel } from "$lib/skills";
-  import { setLanguage, t } from "$lib/i18n/i18n.svelte";
+  import { setLanguage, t, LANGS, langName, compareNames, i18n } from "$lib/i18n/i18n.svelte";
   import { targetLabel, TARGET_TAGS } from "$lib/stores/translate.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
@@ -83,7 +83,7 @@
   let ruleError = $state<string | null>(null);
   /** Notes marked one by one: the frontmatter flag is what NoteSummary.private carries, and the
    *  list follows refreshNotes on its own — an unmark here needs no local bookkeeping */
-  const markedNotes = $derived(vault.notes.filter((n) => n.private).sort((a, b) => a.id.localeCompare(b.id, "zh")));
+  const markedNotes = $derived(vault.notes.filter((n) => n.private).sort((a, b) => compareNames(a.id, b.id)));
   /** There are unsaved changes: a stray click on the overlay should not evaporate a half-pasted key */
   let dirty = $state(false);
   /** Which fields the user changed since the dialog opened. The load on open fills every
@@ -431,8 +431,9 @@
               <span>{t("settings.language.label")}</span>
               <select bind:value={language} onchange={() => touch("language")}>
                 <option value="auto">{t("settings.language.auto")}</option>
-                <option value="zh-CN">{t("settings.language.zh")}</option>
-                <option value="en">{t("settings.language.en")}</option>
+                {#each LANGS as tag (tag)}
+                  <option value={tag}>{langName(tag)}</option>
+                {/each}
               </select>
               <small>{t("settings.language.hint")}</small>
             </label>
@@ -670,7 +671,7 @@
                 <span>{t("settings.adblock")}</span>
               </label>
               {#if browser.adblock?.state === "ready"}
-                <small class="ok">{t("settings.adblockActive", { n: browser.adblock.rules.toLocaleString() })}</small>
+                <small class="ok">{t("settings.adblockActive", { n: browser.adblock.rules.toLocaleString(i18n.locale) })}</small>
               {:else if browser.adblock?.state === "downloading"}
                 <small>{t("settings.adblockDownloading")}</small>
               {:else if browser.adblock?.state === "compiling"}

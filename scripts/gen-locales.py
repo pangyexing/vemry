@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
-"""Build locales/en.json and locales/zh-CN.json from one table so keys cannot drift.
+"""Build locales/*.json from one table so keys cannot drift.
 
 Run: python3 scripts/gen-locales.py
 
-Each entry is `key -> (english, chinese)`, so a new message physically cannot land
-in one catalog and miss the other. Wording follows docs/GLOSSARY.md — the two
-READMEs, the two catalogs and the UI must call the same thing the same name.
+English and Chinese are written here, as `key -> (english, chinese)`, so a new
+message physically cannot land in one catalog and miss the other. Wording follows
+docs/GLOSSARY.md — the two READMEs, the catalogs and the UI must call the same
+thing the same name.
+
+Every other language is an *overlay*: `locales/src/<tag>.json` holds only the keys
+that have been translated, and the runtime falls back to English for the rest. The
+generator checks an overlay against the table (unknown keys, placeholder names,
+plural forms) and prints its coverage; a language is fit to ship when the
+high-exposure groups (chat, settings, menu, cmd, permission, app, skill) are
+complete. See locales/src/README.md for the per-language tone.
 
 The generated JSON is committed: `src/lib/i18n/i18n.svelte.ts` and
 `src-tauri/src/i18n.rs` both read it at build time, and `pnpm check` /
-`cargo test -p vemry-app i18n` fail on a missing key.
+`cargo test -p vemry-app i18n` fail on a missing key. CI regenerates and diffs, so
+a hand edit to a committed JSON is caught.
 """
 import json
 import os
@@ -467,11 +476,11 @@ add("account.", {
     "hostedOff": ("Hosted models: not included in this account — see the pricing page",
                   "托管模型:此账户未开通——见定价页"),
     "studyLeft": ("About {n} papers left this month", "本月还能精读约 {n} 篇"),
-    "quota": ("Monthly quota: ¥{left} of ¥{total} left", "本月配额:剩 ¥{left} / ¥{total}"),
+    "quota": ("Monthly quota: {left} of {total} left", "本月配额:剩 {left} / {total}"),
     "quotaResets": ("resets {date}", "{date} 重置"),
-    "pack": ("Credit pack: ¥{amount}", "算力包余额:¥{amount}"),
-    "packNegative": ("Credit pack: ¥{amount} pending offset (deducted from the next credit)",
-                     "算力包:待抵扣 ¥{amount}(下次入账时扣回)"),
+    "pack": ("Credit pack: {amount}", "算力包余额:{amount}"),
+    "packNegative": ("Credit pack: {amount} pending offset (deducted from the next credit)",
+                     "算力包:待抵扣 {amount}(下次入账时扣回)"),
     "subscriptionOn": ("Auto-renew on · next charge {date}{price}", "自动续订:开 · 下次扣费 {date}{price}"),
     "subscriptionCancelled": ("Auto-renew cancelled · Pro until {date}", "已取消自动续订 · Pro 有效至 {date}"),
     "subscriptionPastDue": ("Payment failed — update the card in the account page", "扣款失败——请到账户页更换卡片"),
@@ -568,9 +577,28 @@ add("menu.", {
 add("settings.language.", {
     "label": ("Language", "语言"),
     "auto": ("Match system", "跟随系统"),
-    "zh": ("简体中文", "简体中文"),
-    "en": ("English", "English"),
     "hint": ("Applies immediately, including the menu bar.", "立即生效,菜单栏同步。"),
+})
+
+# A language's own name, identical in every catalog (a picker lists languages by
+# their autonyms; an overlay must not translate these). The list mirrors LANGS below.
+add("langName.", {
+    "en": ("English", "English"),
+    "zh-CN": ("简体中文", "简体中文"),
+    "ja": ("日本語", "日本語"),
+    "ko": ("한국어", "한국어"),
+    "fr": ("Français", "Français"),
+    "de": ("Deutsch", "Deutsch"),
+})
+
+# Modifier-key names in shortcut hints on Windows and Linux (the Mac shows glyphs).
+# English in both columns: a Chinese Windows labels the keys Ctrl/Shift/Alt too; a
+# German overlay says Strg/Umschalt.
+add("key.", {
+    "ctrl": ("Ctrl", "Ctrl"),
+    "shift": ("Shift", "Shift"),
+    "alt": ("Alt", "Alt"),
+    "backspace": ("Backspace", "Backspace"),
 })
 
 add("common.", {
@@ -1195,6 +1223,8 @@ add("translate.", {
     "lang.en": ("English", "英语"),
     "lang.ja": ("Japanese", "日语"),
     "lang.ko": ("Korean", "韩语"),
+    "lang.fr": ("French", "法语"),
+    "lang.de": ("German", "德语"),
     "lang.other": ("Other…", "其他…"),
     "langPrompt": ("Target language (a name or a tag such as fr, de-DE):", "目标语言(名称或代码,如 fr、de-DE):"),
     "modelHint": ("The model translating; change it under Settings › AI", "翻译所用模型;在「设置 › AI」里更换"),
@@ -1656,7 +1686,7 @@ add("settings.", {
     "writePolicyRevoked": ("Unreviewed writes revoked — AI writes go back to per-write approval",
                            "已撤销免审写入,AI 写入恢复逐条审批"),
     "apiKey": ("API key", "API Key"),
-    "apiKeyPlaceholder": ("Get one at open.bigmodel.cn", "从 open.bigmodel.cn 获取"),
+    "apiKeyPlaceholder": ("The key for the endpoint above, or sign in to vemry hosted", "从 open.bigmodel.cn 获取,或登录 vemry 托管"),
     "apiKeyEnv": ("ZHIPU_API_KEY found in the environment — it takes precedence",
                   "检测到 ZHIPU_API_KEY 环境变量，将优先使用"),
     "apiKeyNote": ("Stored only in this machine's app config directory, never in your vault",
@@ -2469,12 +2499,98 @@ add("ipc.", {
     "hosted.code_invalid": ("The code is unknown, already used or expired", "兑换码无效、已使用或已过期"),
 })
 
+# The interface languages, in the order the settings picker lists them. Mirrored by
+# LANGS in src/lib/i18n/i18n.svelte.ts and the Lang enum in src-tauri/src/i18n.rs;
+# `langName.<tag>` above must carry every entry. The first two come from the table,
+# the rest from overlays in locales/src/.
+LANGS = ["en", "zh-CN", "ja", "ko", "fr", "de"]
+
+# CLDR plural categories a language needs: an overlay's `<base>_<form>` keys must
+# cover exactly these (the runtime asks Intl.PluralRules and falls back to _other).
+PLURAL_FORMS = {
+    "en": ("one", "other"),
+    "zh-CN": ("other",),
+    "ja": ("other",),
+    "ko": ("other",),
+    "fr": ("one", "many", "other"),
+    "de": ("one", "other"),
+}
+PLURAL_SUFFIXES = ("_zero", "_one", "_two", "_few", "_many", "_other")
+
+# The groups a language must translate completely before it is offered in the
+# settings picker; the rest may fall back to English for a while.
+SHIP_GROUPS = ("app.", "chat.", "settings.", "menu.", "cmd.", "permission.", "skill.", "langName.", "key.")
+
+
+def placeholders(text):
+    return set(re.findall(r"\{(\w+)\}", text))
+
+
+def plural_base(key):
+    for suf in PLURAL_SUFFIXES:
+        if key.endswith(suf):
+            return key[: -len(suf)]
+    return None
+
+
 out = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(os.path.join(out, "locales"), exist_ok=True)
-for lang, idx in (("en", 0), ("zh-CN", 1)):
-    data = {k: v[idx] for k, v in M.items()}
+en_data = {k: v[0] for k, v in M.items()}
+plural_bases = {plural_base(k) for k in en_data if plural_base(k)}
+
+
+def write(lang, data):
     p = os.path.join(out, "locales", f"{lang}.json")
     with open(p, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
         f.write("\n")
-    print(f"wrote {p}  ({len(data)} keys)")
+    return p
+
+
+for lang, idx in (("en", 0), ("zh-CN", 1)):
+    data = {k: v[idx] for k, v in M.items()}
+    print(f"wrote {write(lang, data)}  ({len(data)} keys)")
+
+errors = []
+for lang in LANGS[2:]:
+    src = os.path.join(out, "locales", "src", f"{lang}.json")
+    overlay = {}
+    if os.path.exists(src):
+        with open(src, encoding="utf-8") as f:
+            overlay = json.load(f)
+    data = {}
+    forms = PLURAL_FORMS[lang]
+    for key, text in overlay.items():
+        base = plural_base(key)
+        if base is not None and base in plural_bases:
+            form = key[len(base) + 1:]
+            if form not in forms:
+                errors.append(f"{lang}: {key} — {lang} has no '{form}' plural form (needs {', '.join(forms)})")
+                continue
+            ref = en_data.get(f"{base}_one", en_data.get(f"{base}_other"))
+        elif key in en_data:
+            ref = en_data[key]
+        else:
+            errors.append(f"{lang}: unknown key {key}")
+            continue
+        if not isinstance(text, str):
+            errors.append(f"{lang}: {key} is not a string")
+            continue
+        if ref is not None and placeholders(ref) != placeholders(text):
+            errors.append(f"{lang}: {key} — placeholders {sorted(placeholders(text))} != {sorted(placeholders(ref))}")
+            continue
+        data[key] = text
+    # every plural base an overlay touches must carry every form the language needs
+    for base in {plural_base(k) for k in data if plural_base(k)}:
+        for form in forms:
+            if f"{base}_{form}" not in data:
+                errors.append(f"{lang}: {base} needs a _{form} form")
+    p = write(lang, data)
+    ship = [k for k in en_data if k.startswith(SHIP_GROUPS) and plural_base(k) is None]
+    done = sum(1 for k in ship if k in data)
+    print(f"wrote {p}  ({len(data)}/{len(en_data)} keys, ship groups {done}/{len(ship)})")
+
+if errors:
+    for e in errors:
+        print("error:", e)
+    raise SystemExit(1)

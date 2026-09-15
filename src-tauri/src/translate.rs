@@ -150,10 +150,7 @@ pub fn target_of(s: &settings::Settings) -> String {
     if !t.is_empty() {
         return t.to_string();
     }
-    match crate::i18n::current() {
-        crate::i18n::Lang::ZhCn => "zh-CN".into(),
-        crate::i18n::Lang::En => "en".into(),
-    }
+    crate::i18n::current().tag().to_string()
 }
 
 /// The provider for a translation: the chat endpoint and key, with the
