@@ -568,6 +568,9 @@ add("menu.", {
     "checkUpdates": ("Check for Updates…", "检查更新…"),
     "quickCapture": ("Quick Capture…", "速记…"),  # the accelerator shown beside it is the global shortcut from the settings
     "closeWindow": ("Close Tab / Window", "关闭标签页/窗口"),
+    # The tray icon's menu (the resident state, tray.rs); "Quick Capture…" above is its first item
+    "trayOpen": ("Open vemry", "打开 vemry"),
+    "trayQuit": ("Quit vemry", "退出 vemry"),
     "helpGithub": ("vemry Help (GitHub)", "vemry 帮助(GitHub)"),
 })
 
@@ -576,6 +579,19 @@ add("settings.language.", {
     "label": ("Language", "语言"),
     "auto": ("Match system", "跟随系统"),
     "hint": ("Applies immediately, including the menu bar.", "立即生效,菜单栏同步。"),
+})
+
+# The resident state (settings › general; tray.rs): the label and the hint name the
+# menu bar on macOS and the system tray elsewhere
+add("settings.", {
+    "resident": ("Keep running in the menu bar after the window is closed", "关闭窗口后驻留菜单栏"),
+    "residentTray": ("Keep running in the system tray after the window is closed", "关闭窗口后驻留系统托盘"),
+    "residentHint": ("Closing the main window only hides it; {quit} quits. A click on the menu bar icon opens quick capture; its menu opens the window or quits.",
+                     "关闭主窗口只是把它藏起来,{quit} 才退出。点一下菜单栏图标即速记;右键菜单可以打开窗口或退出。"),
+    "residentHintTray": ("Closing the main window only hides it; a click on the tray icon brings it back, and quick capture and quit are in the icon's menu.",
+                         "关闭主窗口只是把它藏起来,点一下托盘图标就回来;速记和退出在图标的菜单里。"),
+    "residentFailed": ("The icon could not be created ({error}) — closing the window still quits",
+                       "图标无法创建({error})——关闭窗口仍会退出"),
 })
 
 # A language's own name, identical in every catalog (a picker lists languages by
@@ -1172,6 +1188,9 @@ add("skill.", {
     "tidy-note.title": ("Restructure a note", "重整一篇笔记"),
     "tidy-note.desc": ("Outline first, blocks moved not retyped, ids kept", "先出大纲,块只移动不重打,id 保留"),
     "tidy-note.ask": ('Which note? @ it — Enter takes the open one', '重整哪篇?@ 它;直接回车重整当前打开的这篇'),
+    "tidy-inbox.title": ("File the inbox", "整理速记"),
+    "tidy-inbox.desc": ("The captures in inbox.md grouped by theme, a home proposed for each, moved as blocks", "inbox.md 里的速记按主题归拢,每条提议去处,按块移动"),
+    "tidy-inbox.ask": ('Enter files inbox.md — @ a journal note or another inbox instead', '直接回车整理 inbox.md;要整理某篇日志或别的收件箱就 @ 它'),
 })
 add("skillGroup.", {
     "research": ("Research", "研究"),

@@ -46,6 +46,7 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     ("weekly-report.md", include_str!("../skills/weekly-report.md")),
     ("tidy.md", include_str!("../skills/tidy.md")),
     ("tidy-note.md", include_str!("../skills/tidy-note.md")),
+    ("tidy-inbox.md", include_str!("../skills/tidy-inbox.md")),
     ("prd.md", include_str!("../skills/prd.md")),
     ("decision-log.md", include_str!("../skills/decision-log.md")),
     ("feedback-triage.md", include_str!("../skills/feedback-triage.md")),

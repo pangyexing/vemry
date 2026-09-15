@@ -156,8 +156,35 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   (`capture_to_main` → `capture://action` → `vault.capture` → `capture_reply` →
   `capture://result`): the capture webview cannot see the editor buffer, and a
   disk write of a note the main window has open would be overwritten by its
-  autosave. Rust writes no capture itself; the branch for a main window that is
-  not there (a later tray-resident state) is not wired.
+  autosave. Rust writes no capture itself; the resident state keeps it that way
+  by keeping the main window alive (below).
+- `tray.rs`: the resident state — an application behaviour, not a capture one
+  (`tray_resident` in the settings, on by default, Settings › General). With it
+  on, the main window's close button
+  **hides** the window instead of quitting, a menu bar / system tray icon stands
+  for the app meanwhile (its menu has quick capture, "Open vemry" and "Quit
+  vemry"; one click on it is the capture shortcut's twin on macOS, where a menu
+  bar icon opens an application's light surface and the Dock brings the window
+  back, and brings the window back on Windows and Linux, where the tray is the
+  hidden window's only way back), and the Dock (macOS, `RunEvent::Reopen`) or the
+  tray brings the window back. On by default
+  because an application outliving its window is the desktop norm and quick
+  capture's promise — one key from any application — would otherwise end silently
+  at the first close; closing is silent, as in every menu bar application, and
+  the settings hint is where what it means is written. Hidden rather than
+  destroyed on purpose: the capture relay, the editor buffer and the vault all
+  live in the main webview, so a hidden main window keeps every capture landing
+  through the one path there is, and the rule that no other window outlives the
+  main one is untouched. Every quit — ⌘Q, the application menu, the tray menu —
+  still goes through the handshake, so the buffer is written out first. The icon
+  is created on the main thread by the runtime; when that fails (a desktop
+  without a tray) the failure is shown on the settings page and the close button
+  keeps quitting, since a hidden window nobody can bring back must never happen.
+  The icon is the app's own, in its colours, everywhere: an 18-point rendering
+  of the app icon on macOS (`icons/tray-mac.png`, by `scripts/gen-tray-icon.py`;
+  not a template image, which the system would flatten to black or white) and
+  the 32 px app icon elsewhere. The tray menu shares the
+  application menu's event channel, so `menu.rs` skips its `tray:` ids.
 - `settings.rs`: model / endpoint / key, plus v0.4's browser and search switches
   (adblock, how links open, web search), v0.5's reader image proxy and clip image
   localisation, v0.6's check-for-updates-at-startup, v0.9's interface language, and
@@ -1045,7 +1072,12 @@ palette.
   main window's `vault.capture` and the answer comes back under the request's id
   (the relay is a hard rule, see the glue layer's `capture_window.rs`). The palette's former capture
   mode and the ⌘⇧C binding are gone: a registered hot key fires while vemry is
-  frontmost too, so one shortcut serves everywhere.
+  frontmost too, so one shortcut serves everywhere. The **resident state** is an
+  application setting (Settings › General, on by default): the close button hides
+  the main window instead of quitting, a menu bar / tray icon stands for the app
+  (on macOS a click on it is the shortcut; on Windows and Linux it brings the
+  window back), and quitting is ⌘Q or the icon's menu (the glue layer's
+  `tray.rs`).
 - **Context menus** (`stores/contextMenu.svelte.ts` plus the **one** `<ContextMenu />`
   mounted in App): menu items **are data, not layout** — `entries` is computed for
   the context at the moment of opening (a dynamic undo label, paste's two states, a
@@ -1142,7 +1174,9 @@ immediately. The points that matter:
   cannot hold the app hostage; a relaunch after an update flushes on its own,
   since a restart's exit cannot be held. Without this, the timer deferring every
   save while the agent runs meant a quit right after a long turn took those
-  minutes of typing with it.
+  minutes of typing with it. In the resident state (`tray_resident`) the close
+  button is not a quit at all: it hides the main window, and only an explicit
+  quit — ⌘Q, the application menu, the tray icon's menu — reaches the handshake.
 
 ### Back and forward
 
@@ -2600,7 +2634,10 @@ it: "moved 12 · changed 3 · added 2 · removed 0", the removed group open, the
 group folded, the raw line diff one click away. `audit_links` gained a dangling
 anchors section (`[[note#heading]]` / `[[note#^id]]` whose note exists but whose
 anchor does not). The tidy-note skill: read whole, propose the outline in prose,
-restructure once, wording fixes afterwards as separate edits.
+restructure once, wording fixes afterwards as separate edits. The tidy-inbox
+skill works the captures inside one note the same way: read whole, group, one
+`propose_actions` card with a home per capture, then `move_blocks` per
+destination for what the user kept — never a retype, never a whole-note rewrite.
 
 ### The Markdown formatter (format.rs)
 
@@ -2712,6 +2749,16 @@ write it makes is an attachment into the target note's bucket, and only at landi
 time, when the target is known. The shortcut is the one binding quick capture has:
 a registered hot key fires while vemry itself is frontmost, so the main window
 binds nothing and the menu item's accelerator is a hint.
+
+The resident state (`tray.rs`, the `tray_resident` setting) follows from the
+second rule: since only the main webview can land a capture, closing the main
+window there hides it rather than destroying it, and a menu bar / tray icon keeps
+the shortcut reachable — a hidden main window still has its editor buffer, its
+vault and the relay, so nothing about landing changes and no second write path
+had to be built in Rust. The `tidy-inbox` skill is the other end of the same
+loop: the captures that piled up in inbox.md, grouped by theme, a home proposed
+for each on the action card, and moved as blocks (`move_blocks`, through the
+gate, stamps and embeds travelling whole) once the user has kept them.
 
 ### Attachments bucketed by a note's full path
 

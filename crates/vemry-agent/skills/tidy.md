@@ -1,7 +1,7 @@
 ---
 name: tidy
 description: Tidy a folder or the vault — audit, review every move, links rewritten
-triggers: [tidy, organise, organize, clean up, inbox zero, archive, 整理, 归档, 清理收件箱, 整理する, アーカイブ, 片付け, 정리, 보관, 인박스 비우기, ranger, archiver, trier, aufräumen, archivieren, sortieren, ordenar, archivar, limpiar]
+triggers: [tidy, organise, organize, clean up, archive, 整理, 归档, 整理する, アーカイブ, 片付け, 정리, 보관, ranger, archiver, trier, aufräumen, archivieren, sortieren, ordenar, archivar, limpiar]
 version: 2
 ---
 
@@ -9,8 +9,9 @@ version: 2
 
 ## When
 
-"Tidy / organise / clean up" a folder, the inbox, or the whole vault. One note's
-insides are tidy-note, not this.
+"Tidy / organise / clean up" a folder (an inbox folder included) or the whole
+vault. One note's insides are tidy-note, and the captures inside inbox.md are
+tidy-inbox, not this.
 
 ## Plan
 

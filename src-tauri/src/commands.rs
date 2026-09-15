@@ -1041,6 +1041,11 @@ pub struct SettingsView {
     pub capture_target: settings::CaptureTarget,
     pub capture_pinned_path: String,
     pub capture_pinned_heading: String,
+    /// The resident state (closing the main window hides it behind a tray icon),
+    /// and the icon's creation failure if any (derived and read-only — None means
+    /// the icon is there, or the switch is off).
+    pub tray_resident: bool,
+    pub tray_error: Option<String>,
 }
 
 /// A partial update: `None` = keep the existing value. The frontend fetches
@@ -1080,6 +1085,7 @@ pub struct SettingsUpdate {
     pub capture_target: Option<settings::CaptureTarget>,
     pub capture_pinned_path: Option<String>,
     pub capture_pinned_heading: Option<String>,
+    pub tray_resident: Option<bool>,
 }
 
 /// VEMRY.md's starter content in the current language: the shared header plus
@@ -1139,6 +1145,8 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         capture_target: s.capture_target,
         capture_pinned_path: s.capture_pinned_path,
         capture_pinned_heading: s.capture_pinned_heading,
+        tray_resident: s.tray_resident,
+        tray_error: crate::tray::error(&app),
     }
 }
 
@@ -1242,6 +1250,9 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     if let Some(v) = update.capture_pinned_heading {
         s.capture_pinned_heading = v.trim().to_string();
     }
+    if let Some(v) = update.tray_resident {
+        s.tray_resident = v;
+    }
     // The shortcut is the one field whose write can fail (another application holds
     // the keys): it is re-registered first and stored only once that worked, after
     // the rest of the update has landed — a refused combination costs the user
@@ -1288,6 +1299,9 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
             eprintln!("menu rebuild after language change failed: {e}");
         }
     }
+    // The tray icon follows the switch, and its menu the language and the shortcut
+    // hint — after every write, so the three cannot drift apart
+    crate::tray::reconcile(&app);
     Ok(())
 }
 

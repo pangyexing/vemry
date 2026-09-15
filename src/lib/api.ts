@@ -393,6 +393,10 @@ export interface SettingsView {
   capture_target: CaptureTarget;
   capture_pinned_path: string;
   capture_pinned_heading: string;
+  /** The resident state (closing the main window hides it behind a menu bar / tray icon; tray.rs), and the icon's
+   *  creation failure (derived and read-only; null = the icon is there, or the switch is off). */
+  tray_resident: boolean;
+  tray_error: string | null;
 }
 
 /** The capture target's wire values (settings.rs CaptureTarget): inbox.md, today's journal note, or the pinned note and section. */
@@ -433,6 +437,7 @@ export interface SettingsUpdate {
   capture_target?: CaptureTarget;
   capture_pinned_path?: string;
   capture_pinned_heading?: string;
+  tray_resident?: boolean;
 }
 
 /** Who wrote over a kept state of a note (history.rs). */

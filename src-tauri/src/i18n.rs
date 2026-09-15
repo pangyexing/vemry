@@ -179,6 +179,8 @@ mod tests {
         "menu.checkUpdates",
         "menu.quickCapture",
         "menu.closeWindow",
+        "menu.trayOpen",
+        "menu.trayQuit",
         "menu.helpGithub",
         "cmd.new-note.title",
         "cmd.open-note.title",

@@ -13,7 +13,7 @@ import type { SkillEntry } from "$lib/api";
  *  since a study workbench's first screen should not lead with sprint planning. */
 const SKILL_GROUPS: { id: "research" | "daily" | "product" | "tidy"; names: string[]; secondary?: boolean }[] = [
   { id: "research", names: ["study", "research", "tutor"] },
-  { id: "tidy", names: ["tidy-note", "tidy"] },
+  { id: "tidy", names: ["tidy-note", "tidy", "tidy-inbox"] },
   { id: "daily", names: ["daily-start", "daily-close", "weekly-report", "meeting-actions"], secondary: true },
   { id: "product", names: ["prd", "feedback-triage", "decision-log", "iteration-plan", "retro", "brief"], secondary: true },
 ];

@@ -100,9 +100,9 @@ note as a block. Press `@` to hand the AI a note, a folder or the current select
 
 ### Hand over the chores, on your terms
 
-Fifteen built-in skills cover the work around reading: tidy a folder, restructure a
-note, turn meeting notes into actions, draft the weekly report from the week's notes
-for you to finish, close the day. The chores go to the AI; the reading, the
+Sixteen built-in skills cover the work around reading: tidy a folder, file the
+inbox, restructure a note, turn meeting notes into actions, draft the weekly report
+from the week's notes for you to finish, close the day. The chores go to the AI; the reading, the
 retelling and the decisions stay with you. Add your own as a Markdown file in
 `.vemry/skills/`. Every write is a diff, a whole
 turn's writes can be undone, and every session is an audit log you can replay in

@@ -178,7 +178,9 @@ mod imp {
         app.set_menu(menu)?;
         app.on_menu_event(|app, e| {
             let id = e.id().0.clone();
-            if id == HELP_GITHUB {
+            if id.starts_with(crate::tray::MENU_ID_PREFIX) {
+                // The tray menu shares this channel and handles its own items (tray.rs)
+            } else if id == HELP_GITHUB {
                 // An explicit click by the user, opened in the system browser (the same exit as url_open_system)
                 let _ = opener::open(HELP_URL);
             } else if id == CLOSE_WINDOW {

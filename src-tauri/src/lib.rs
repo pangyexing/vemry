@@ -11,6 +11,7 @@ mod pasteboard;
 mod script_bridge;
 mod settings;
 mod translate;
+mod tray;
 mod type_templates;
 
 use std::sync::{Arc, Mutex};
@@ -41,6 +42,8 @@ pub struct AppState {
     /// The quick capture window: build, show/hide, the shortcut's registration and
     /// the receipt relay (see capture_window.rs).
     pub capture_window: capture_window::CaptureWindowState,
+    /// The resident state's menu bar / system tray icon (see tray.rs).
+    pub tray: tray::TrayState,
     /// The one side-by-side translation job at a time (see translate.rs).
     pub translate: translate::TranslateState,
     /// The browser tabs being translated in place (see browser/pagetr.rs).
@@ -83,6 +86,7 @@ pub fn run() {
             adblock: browser::adblock::AdblockState::default(),
             agent_window: agent_window::AgentWindowState::default(),
             capture_window: capture_window::CaptureWindowState::default(),
+            tray: tray::TrayState::default(),
             translate: translate::TranslateState::default(),
             browser_translate: browser::pagetr::PageTranslations::default(),
             quit_asked: std::sync::atomic::AtomicBool::new(false),
@@ -129,6 +133,8 @@ pub fn run() {
             // press shows it as instantly as every later one
             capture_window::install_hotkey(app.handle());
             capture_window::ensure_soon(app.handle(), 2500);
+            // The menu bar / tray icon of the resident state, when the setting asks for it
+            tray::reconcile(app.handle());
             // The docked browser tabs are native child views of the main window: on a
             // resize they are re-placed from the panel anchors (no round trip to the
             // frontend). `get_webview_window("main")` is None once the main window has a
@@ -137,10 +143,15 @@ pub fn run() {
                 let handle = app.handle().clone();
                 main.on_window_event(move |event| match event {
                     tauri::WindowEvent::Resized(_) => browser::window::relayout(&handle),
-                    // The close button is a quit (the other windows cannot outlive the main
-                    // one): the same handshake as ⌘Q, so the editor buffer is written out first
+                    // The close button: in the resident state it only hides the window (the
+                    // tray icon and the Dock bring it back; tray.rs); otherwise it is a quit —
+                    // the other windows cannot outlive the main one — through the same
+                    // handshake as ⌘Q, so the editor buffer is written out first
                     tauri::WindowEvent::CloseRequested { api, .. } => {
-                        if commands::ask_before_quit(&handle) {
+                        if tray::resident(&handle) {
+                            api.prevent_close();
+                            tray::hide_main(&handle);
+                        } else if commands::ask_before_quit(&handle) {
                             api.prevent_close();
                         }
                     }
@@ -335,6 +346,12 @@ pub fn run() {
                 if commands::ask_before_quit(app) {
                     api.prevent_exit();
                 }
+            }
+            // The Dock icon clicked while the main window is hidden (the resident
+            // state's close): the window comes back
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                tray::reopen(app);
             }
         });
 }

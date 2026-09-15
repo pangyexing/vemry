@@ -179,6 +179,16 @@ pub struct Settings {
     pub capture_pinned_path: String,
     #[serde(default)]
     pub capture_pinned_heading: String,
+    /// An application behaviour (Settings › General): keep running in the menu
+    /// bar (system tray) when the main window is closed — the close button hides
+    /// the window instead of quitting, a tray icon stands for the app (a click on
+    /// it is the capture shortcut's twin), and only an explicit quit ends the
+    /// process. On by default: an application outliving its window is the desktop
+    /// norm, and quick capture's promise — one key from any application — would
+    /// otherwise end silently the first time the window is closed. Nothing is
+    /// prompted about it; the settings hint says what closing means.
+    #[serde(default = "default_true")]
+    pub tray_resident: bool,
 }
 
 /// The capture target's wire values, mirrored as `CaptureTarget` in api.ts.
@@ -338,6 +348,7 @@ impl Default for Settings {
             capture_target: CaptureTarget::default(),
             capture_pinned_path: String::new(),
             capture_pinned_heading: String::new(),
+            tray_resident: true,
         }
     }
 }
@@ -654,6 +665,16 @@ mod tests {
         assert_eq!((s.capture_pinned_path.as_str(), s.capture_pinned_heading.as_str()), ("notes/ideas.md", "Later"));
         let s: Settings = serde_json::from_str(r#"{"capture_target":"journal"}"#).unwrap();
         assert_eq!(s.capture_target, CaptureTarget::Journal);
+    }
+
+    /// The resident switch is on for an old config (the capture promise holds
+    /// from the first close) and a stored false is kept.
+    #[test]
+    fn tray_resident_defaults_on_and_keeps_stored() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(s.tray_resident);
+        let s: Settings = serde_json::from_str(r#"{"tray_resident":false}"#).unwrap();
+        assert!(!s.tray_resident);
     }
 
     /// Click-opens-links is a switch added later: an old config missing it takes the

@@ -20,7 +20,7 @@
   import { prefs } from "$lib/stores/prefs.svelte";
   import { updater } from "$lib/stores/updater.svelte";
   import { isImeKeydown } from "$lib/ime";
-  import { k } from "$lib/shortcut";
+  import { isMac, k } from "$lib/shortcut";
   import { untrack } from "svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
 
@@ -78,6 +78,9 @@
   let captureTarget = $state<CaptureTarget>("inbox");
   let capturePinnedPath = $state("");
   let capturePinnedHeading = $state("");
+  /** The resident state (the close button hides the window behind a tray icon) and the icon's creation failure. */
+  let trayResident = $state(true);
+  let trayError = $state<string | null>(null);
   let updatingRules = $state(false);
   let saved = $state(false);
   /** The raw rule lines of .vemry/privacy; the operations take effect at once and do not follow the dialog's save semantics */
@@ -180,6 +183,8 @@
       fill("captureTarget", () => (captureTarget = s.capture_target));
       fill("capturePinnedPath", () => (capturePinnedPath = s.capture_pinned_path));
       fill("capturePinnedHeading", () => (capturePinnedHeading = s.capture_pinned_heading));
+      fill("trayResident", () => (trayResident = s.tray_resident));
+      trayError = s.tray_error;
     });
     // Opening it allows pasting straight away, and only then does Escape have a focus to land on
     queueMicrotask(() => firstInput?.focus());
@@ -398,6 +403,7 @@
       capture_target: captureTarget,
       capture_pinned_path: capturePinnedPath.trim(),
       capture_pinned_heading: capturePinnedHeading.trim(),
+      tray_resident: trayResident,
     });
     } catch (e) {
       // The one refusal: a capture shortcut that does not parse or that another app holds — everything else in the update has landed, and the dialog stays for another try
@@ -503,6 +509,18 @@
               </select>
               <small>{t("settings.language.hint")}</small>
             </label>
+            <!-- The resident state is an application behaviour (what closing the window means), so it sits here and not under quick capture; the wording names the menu bar on macOS and the system tray elsewhere, and the icon's failure (a desktop without a tray) is shown in place, as the shortcut's is -->
+            <div class="field">
+              <label class="inline-toggle">
+                <input type="checkbox" bind:checked={trayResident} onchange={() => touch("trayResident")} />
+                <span>{t(isMac ? "settings.resident" : "settings.residentTray")}</span>
+              </label>
+              {#if trayResident && trayError}
+                <small class="err-text">{t("settings.residentFailed", { error: trayError })}</small>
+              {:else}
+                <small>{isMac ? t("settings.residentHint", { quit: k("Mod+Q") }) : t("settings.residentHintTray")}</small>
+              {/if}
+            </div>
             <div class="field">
               <span class="field-title">{t("settings.provider")}</span>
               <!-- a two-state toggle: hosted (the account's models) or the user's own endpoint and key -->

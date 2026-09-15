@@ -20,8 +20,9 @@
 //!   the text is relayed (`capture_to_main` → `capture://action`), the main
 //!   window's `vault.capture` decides between the editor buffer and `note_insert`,
 //!   and its receipt comes back through `capture_reply` → `capture://result`.
-//!   Rust itself never writes a capture; the direct branch for a main window that
-//!   is not there (the tray-resident state of a later batch) is not wired.
+//!   Rust itself never writes a capture. The resident state (tray.rs) keeps to
+//!   this: closing the main window there only hides it, so the relay has a main
+//!   window to land in for as long as the app runs.
 //!
 //! The application never activates for it (macOS): the window is turned into a
 //! **non-activating panel** after it is built (`make_panel`), so it takes the
@@ -353,7 +354,7 @@ fn invalidate_shadow(win: &tauri::Window) {
 /// Main thread: show the window on the screen the mouse is on. With the webview
 /// not mounted yet (or no window at all) the show is deferred to
 /// `capture_window_ready`; a visible window is only re-focused.
-fn show(app: &AppHandle) {
+pub(crate) fn show(app: &AppHandle) {
     let st = app.state::<AppState>();
     let Some(w) = app.get_webview_window(CAPTURE_LABEL) else {
         st.capture_window.lock().pending_show = true;
@@ -411,8 +412,8 @@ fn hide(app: &AppHandle) {
     }
 }
 
-/// The shortcut's action: a visible, focused window goes away; anything else shows it.
-fn toggle(app: &AppHandle) {
+/// The shortcut's action (and the tray icon's click): a visible, focused window goes away; anything else shows it.
+pub(crate) fn toggle(app: &AppHandle) {
     match app.get_webview_window(CAPTURE_LABEL) {
         Some(w) if w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false) => hide(app),
         _ => show(app),
