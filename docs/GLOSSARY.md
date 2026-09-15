@@ -8,6 +8,11 @@ in the documentation and 「投影视图」 in Chinese, nobody can say which is 
 three months later, and each translation drifts on its own. A new user-visible term
 **enters this table before it enters a catalog**.
 
+The interface languages beyond English and Chinese (Japanese, Korean, French,
+German) are overlays in `locales/src/`; each gets a column here as its translation
+starts, and `locales/src/README.md` fixes the register per language (です・ます,
+하세요체, du, vous). A concept word is decided here, never by the translator.
+
 ## Core concepts
 
 | Chinese | English | Do not use |
@@ -125,3 +130,5 @@ These recur throughout both READMEs and are phrased identically every time:
 | 网络出口 | network exit |
 | 无遥测、无账号 | no telemetry, no account |
 | 改完再应用 (the permission gate's third option) | edit, then apply |
+| 操心更少，懂得更透，记得更久（三拍收益句：README「What vemry is」、官网信任段；对外只有这一种写法） | Fuss less. Understand more. Remember longer. |
+| 帮你提升，不替你思考（原则第 4 条的内部行；不进对外文案） | helps you get better, never thinks for you |

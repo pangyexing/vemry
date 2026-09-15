@@ -95,15 +95,30 @@ VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt 
    agent dependencies so it can be reused on its own; `vemry-script` depends only
    on core.
 7. **Copy has a single source**: user-visible strings live in `locales/*.json`
-   (edit `scripts/gen-locales.py` and regenerate), never hardcoded in a component
-   or a command; new terms go through [docs/GLOSSARY.md](docs/GLOSSARY.md) before
-   they reach a catalog; the two READMEs mirror each other section for section.
+   (English and Chinese in `scripts/gen-locales.py`, the other languages as
+   overlays in `locales/src/`; regenerate after either), never hardcoded in a
+   component or a command; new terms go through [docs/GLOSSARY.md](docs/GLOSSARY.md)
+   before they reach a catalog; the two READMEs mirror each other section for
+   section, and are the only two — other languages get the website, not a README.
    Copy that goes to the model (prompt envelopes, tool errors) and errors from the
    script API are two different audiences — both are English, and neither belongs
    in the catalog.
 8. **Arbitrary code never runs by itself**: every script and code-block execution
    path starts from an explicit user action (a command, a run button, a trigger
    the user installed). The agent gets no tool that can execute arbitrary code.
+9. **The user stays the author**: an AI feature is reviewed by what the user
+   understands, keeps or decides after it runs, not by what it produces. The
+   chores (clipping, translating, filing, tracing sources, making cards) may be
+   done for the user; the reading, the retelling and the decisions are never done
+   instead of them. Outward copy says what the reader gets, never what they must
+   do (the fixed phrasings in the glossary).
+10. **The interface language is data**: dates and numbers are shown through
+   `Intl` with `i18n.locale`, names sort through `compareNames`, fonts and line
+   breaking follow the `lang` attribute. What is written to disk never follows the
+   interface language — ISO dates, `every 2 weeks`, `3d2h`, callout type names,
+   the `/` commands — so a note is the same file on a Japanese and a German
+   machine. No `Ctrl+Alt+<letter>` shortcut: on French and German layouts AltGr
+   is Ctrl+Alt, so such a binding steals a character key.
 
 ## Writing
 

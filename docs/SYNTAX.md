@@ -21,6 +21,12 @@ CommonMark + GFM (tables, strikethrough, task lists) + YAML frontmatter at the t
 of the file. Anything not listed below, vemry treats as ordinary Markdown and does
 not interpret further.
 
+Every keyword of the dialect is English whatever the interface language, and every
+date is ISO: `every 2 weeks`, `when done`, `3d2h15m`, the callout type names, the `/`
+commands. They are typed from memory and read by other machines, so a note is the
+same file on a Japanese and a German machine and a command has one spelling.
+Pickers and completions are translated; what they insert is not.
+
 ## Frontmatter
 
 ```yaml

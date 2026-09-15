@@ -12,6 +12,10 @@ vault 的唯一真源是磁盘上的纯 Markdown 文件。本文定义 vemry 在
 
 CommonMark + GFM（表格、删除线、任务列表）+ 文首 YAML frontmatter。凡本文未列出的记号，vemry 一律按标准 Markdown 处理，不做额外解释。
 
+方言里的每个关键词都是英文，不随界面语言变，日期一律 ISO：`every 2 weeks`、`when done`、
+`3d2h15m`、callout 类型名、`/` 命令。它们靠记忆盲打，也要被别的机器读，所以一篇笔记在日文
+和德文的机器上是同一个文件，一条命令只有一种拼法。选择器和补全会翻译，插入的内容不会。
+
 ## Frontmatter
 
 ```yaml

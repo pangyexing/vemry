@@ -44,6 +44,12 @@ It is not a cloud service, and it is not a chat window with a notes folder
 attached. The AI is one participant in your vault, with a permission gate in front
 of every write and a privacy boundary it cannot see across.
 
+**Fuss less. Understand more. Remember longer.** Finish a paper and explain it in
+your own words. Where you drift, you see it on the spot. When it starts to fade, a
+card brings it back. The tedious part, clipping to Markdown, translating side by
+side, filing, tracing sources, making the cards, you never do by hand, and every
+write still waits at a diff for your yes.
+
 ## What you can do
 
 ### Read a paper chapter by chapter
@@ -95,8 +101,10 @@ note as a block. Press `@` to hand the AI a note, a folder or the current select
 ### Hand over the chores, on your terms
 
 Fifteen built-in skills cover the work around reading: tidy a folder, restructure a
-note, turn meeting notes into actions, write the weekly report, close the day. Add
-your own as a Markdown file in `.vemry/skills/`. Every write is a diff, a whole
+note, turn meeting notes into actions, draft the weekly report from the week's notes
+for you to finish, close the day. The chores go to the AI; the reading, the
+retelling and the decisions stay with you. Add your own as a Markdown file in
+`.vemry/skills/`. Every write is a diff, a whole
 turn's writes can be undone, and every session is an audit log you can replay in
 the Session Replay view.
 
@@ -118,9 +126,9 @@ included, is in one searchable palette (⌘P).
 2. **Open the example vault.** Clone this repo, then ⌘P → *Open another vault…* →
    `examples/demo-vault`. It is a small real vault with one paper worked through
    end to end.
-3. **Add an AI key** (optional). Settings → API key. The default endpoint is Zhipu,
-   whose `glm-4.7-flash` is free and supports tool calls; any OpenAI-compatible
-   endpoint works, including a local Ollama. Or switch the provider to *vemry
+3. **Add an AI key** (optional). Settings → API key. Any OpenAI-compatible
+   endpoint works, including a local Ollama; the mainland default is Zhipu, whose
+   `glm-4.7-flash` is free and supports tool calls. Or switch the provider to *vemry
    hosted* and sign in with your e-mail address: the models come with the
    account, and a request goes through vemry's relay to the model vendor
    unchanged.
@@ -195,7 +203,7 @@ As of September 2026, working on `main`: the editor and its live preview, the
 Agenda, Board, Timeline, Graph, Claims, Evidence and Review views, the block index
 and query API, the agent with its tools behind the write gate, privacy zones, the scripting sandbox, the built-in browser with clipping,
 side-by-side translation of a note, a web page or a PDF, and an interface in English
-and Chinese.
+and Chinese (Japanese, Korean, French and German follow as their translations land).
 
 Next, in the order the study loop needs them: PDF annotation that lands in the
 source note, reference management on source notes (DOI, BibTeX export), and reading
