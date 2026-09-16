@@ -102,7 +102,6 @@ vault 事件、按 cron 定时运行，跑在一个无文件系统、无网络�
 
 1. **安装。** 到 [Releases](https://github.com/pangyexing/vemry/releases) 下载
    `.dmg`、`.exe`、`.AppImage`、`.deb` 或 `.rpm`，或者[从源码构建](#从源码构建)。
-   macOS 尚未公证，首次打开需右键 →「打开」。
 2. **打开示例知识库。** 先 clone 本仓库，再 ⌘P →「打开其他仓库…」→ 选
    `examples/demo-vault`。这是一个不大的真实库，里面有一篇从头读到尾的论文。
 3. **配一个 AI key**（可选）。设置 → API Key。任何 OpenAI 兼容端点都能用，包括本机的

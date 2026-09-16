@@ -121,8 +121,7 @@ included, is in one searchable palette (⌘P).
 
 1. **Install.** Download the `.dmg`, `.exe`, `.AppImage`, `.deb` or `.rpm` from
    [Releases](https://github.com/pangyexing/vemry/releases), or
-   [build from source](#build-from-source). On macOS the first launch needs a
-   right-click → Open, because the app is not yet notarised.
+   [build from source](#build-from-source).
 2. **Open the example vault.** Clone this repo, then ⌘P → *Open another vault…* →
    `examples/demo-vault`. It is a small real vault with one paper worked through
    end to end.
