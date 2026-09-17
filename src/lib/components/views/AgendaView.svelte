@@ -50,12 +50,6 @@
    *  found by either, so a "both" state would only ever be a stricter version of one of
    *  them. */
   let dateKind = $state<DateField>();
-  /** The list's width, for the narrow layout (.narrow): under 560px the date and source
-   *  columns no longer fit beside the text — a measured screenshot at ~370px had the
-   *  text down to four characters — so the row folds to two lines. A measured width
-   *  rather than a container query: .body is the scroll container, and size containment
-   *  on it is a change with more reach than a class. */
-  let bodyW = $state(0);
 
   // What this view shows is attachable to the AI (the @ picker's "current view", the
   // header's "Ask AI"): the live query and the row count are registered while mounted.
@@ -342,7 +336,7 @@
       </span>
     {/snippet}
   </ViewHeader>
-  <div class="body" class:narrow={bodyW > 0 && bodyW < 560} style:--ag-date={dateTrack} bind:clientWidth={bodyW}>
+  <div class="body" style:--ag-date={dateTrack}>
     {#if hits.length === 0}
       <ViewEmpty>
         {t("task.empty1")}<code>- [ ] a task 📅 2026-01-01</code>{t("task.empty2")}<code>- [/]</code
@@ -414,13 +408,21 @@
     width: 0.95em;
     height: 0.95em;
   }
+  /* The list scrolls sideways when the pane is narrower than the table's floor (the sum
+     of the tracks' minimums below), the way the board does when its columns no longer
+     fit: the table keeps its columns and the words their room, and the pane shows a part
+     of it. Folding the rows to two lines was tried first and read as a different view */
   .body {
     flex: 1;
-    overflow-y: auto;
+    overflow: auto;
+    overscroll-behavior-x: contain;
     padding: 10px 20px 30px;
   }
+  /* Each group is at least as wide as its rows' minimum, so it is the groups that overflow
+     the pane and scroll, not the tracks that collapse inside a row */
   details {
     margin-bottom: 6px;
+    min-width: min-content;
   }
   /* A group's heading stays at the top of the pane while its rows scroll under it (the
      timeline's day headings do the same): with 24 undated and 77 done tasks the eye
@@ -479,14 +481,18 @@
      The date track uses minmax: the few rows carrying both 📅 and ⏳ let it grow rather than
      squeezing the source column. Its floor, --ag-date, is set on .body from the rows shown
      (dateTrack): 13em when a "date plus N days late" chip is on the table, less otherwise.
-     The source track's 10em floor is the overflow guard: as the pane narrows the fixed
-     tracks fill up first, and without a floor the source chip would be pushed out of the
-     container and the whole view would grow a horizontal scrollbar. */
+     The floors — the text's --ag-text-min, the date's --ag-date, the source's --ag-note —
+     add up to where the table stops giving way and starts to scroll (.body): as the pane
+     narrows the text track shrinks from its cap to its floor, and below that the whole
+     table is wider than the pane. Without the text floor the words were the first thing
+     squeezed (a measured screenshot at ~370px had them down to four characters); without
+     the source floor the source chip was pushed out of its track. */
   .row {
     --ag-text: 26em;
+    --ag-text-min: 14em;
     --ag-note: 10em;
     display: grid;
-    grid-template-columns: auto minmax(0, var(--ag-text)) minmax(var(--ag-date, 13em), auto) minmax(var(--ag-note), 1fr);
+    grid-template-columns: auto minmax(var(--ag-text-min), var(--ag-text)) minmax(var(--ag-date, 13em), auto) minmax(var(--ag-note), 1fr);
     align-items: center;
     width: 100%;
     text-align: left;
@@ -499,30 +505,6 @@
   .row:hover,
   .row.held {
     background: var(--bg-hover);
-  }
-  /* The narrow pane (bodyW < 560): the text takes the first line whole, the dates and the
-     source share a second line under it. The columns' one x across the table is given
-     up here — in a pane this narrow there is no table, only rows — and what it buys is
-     the task's words, which the fixed tracks had squeezed to a sliver */
-  .narrow .row {
-    grid-template-columns: auto auto minmax(0, 1fr);
-    row-gap: 2px;
-  }
-  .narrow .check {
-    grid-row: 1;
-    grid-column: 1;
-  }
-  .narrow .text {
-    grid-row: 1;
-    grid-column: 2 / 4;
-  }
-  .narrow .dates {
-    grid-row: 2;
-    grid-column: 2;
-  }
-  .narrow .meta {
-    grid-row: 2;
-    grid-column: 3;
   }
   .check {
     padding: 2px;
