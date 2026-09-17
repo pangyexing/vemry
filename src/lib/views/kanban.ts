@@ -21,7 +21,7 @@ import type { BlockHit } from "$lib/api";
 import { cmpMissingLast, cmpValue } from "$lib/views/queryrows";
 import type { BlockType } from "$lib/api";
 import { stateField, stateIndex } from "$lib/fields";
-import { stateGlyphSvg, type StateTone, stateTone } from "$lib/chips";
+import { stateGlyphSvg } from "$lib/chips";
 import { isClosed, TASK_ATTR_KEYS, bySource, DATE_FIELDS, type DateField, rowOf, type TaskEdit, type TaskRow, whenOf } from "$lib/views/tasks";
 
 type ColumnId = "overdue" | "today" | "scheduled" | "unscheduled" | "done";
@@ -62,9 +62,8 @@ interface ColumnDef {
   drop: boolean;
   add: boolean;
   tone: ColumnTone;
-  /** A state field's column: the step's glyph (chips.ts) stands in for the tone dot, in the step's tone. */
+  /** A state field's column: the step's glyph (chips.ts, which colours itself) stands in for the tone dot. */
   glyph?: string;
-  glyphTone?: StateTone;
 }
 
 /** The state columns in render order. "Overdue" is not a valid drop target
@@ -99,7 +98,7 @@ export function columnDefsFor(mode: GroupMode, cards: Card[], types: BlockType[]
   let defs: ColumnDef[];
   if (declared) {
     const extra = seen.filter((v) => stateIndex(declared, v) < 0).sort(cmpValue);
-    defs = declared.map((v, i) => ({ id: v, title: v, drop: true, add: true, tone: "muted", glyph: stateGlyphSvg(i, declared.length), glyphTone: stateTone(i, declared.length) }));
+    defs = declared.map((v, i) => ({ id: v, title: v, drop: true, add: true, tone: "muted", glyph: stateGlyphSvg(i, declared.length) }));
     defs.push(...extra.map((v) => ({ id: v, title: v, drop: true, add: true, tone: "muted" as ColumnTone })));
   } else {
     defs = seen.sort(cmpValue).map((v) => ({ id: v, title: v, drop: true, add: true, tone: "muted" }));

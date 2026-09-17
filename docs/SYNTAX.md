@@ -178,9 +178,10 @@ CommonMark on that.
 - Spellings other tools write are read as well, and rewritten in place when the line
   is edited: `🛫` as start, `⌛` as scheduled, `🔺 ⏫ 🔼 🔽 ⏬` as priorities, `🏁` as
   removed once done, `priority:: medium` as high. vemry writes the first spelling only
-- In the editor the checkbox is drawn as one (`[/]` as the indeterminate dash, `[-]`
-  crossed out): a click flips done, ⌥-click flips in progress — the two gestures a
-  query row's checkbox takes too. The attributes draw as chips, each in its tone: a
+- In the editor the checkbox is drawn as one (`[/]` as a box half filled from the
+  bottom, `[x]` solid with a tick, `[-]` crossed out) — the same drawing a card, an
+  Agenda row, a query row and a rendered projection show: a click flips done, ⌥-click
+  flips in progress — the two gestures a query row's checkbox takes too. The attributes draw as chips, each in its tone: a
   start date and a done stamp in the go colour, the scheduled day in the accent, what
   presses — an urgent priority, a lock still shut, an overdue due date — in the danger
   colour, the rest muted. An attribute the cursor touches shows its source for

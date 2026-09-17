@@ -45,11 +45,6 @@
   --co-quote: var(--fg-muted);
   --co-claim: #be123c;
   --co-evidence: #0e7490;
-  /* The three tones of a state (chips.ts): the first step, a step in between, the last —
-     a task's todo / doing / done and a state field's values read the same three */
-  --state-idle: var(--fg-faint);
-  --state-active: var(--accent);
-  --state-done: var(--co-success);
   /* The lab's chart colours (editor/lab.ts, lab/charts.ts). Eight categorical slots
      in a fixed order that clears the colour-vision checks on this surface; one hue
      light→dark for magnitude; two poles around a neutral midpoint for signed values.
@@ -1312,11 +1307,14 @@ button:focus-visible,
   display: block;
   height: 100%;
 }
+/* The bar reads as the glyphs do: done is the solid accent, in progress the same ink at
+   the strength of a half-filled box */
 .cm-queryblock-bar-done {
-  background: var(--state-done);
+  background: var(--accent);
 }
 .cm-queryblock-bar-active {
-  background: var(--state-active);
+  background: var(--accent);
+  opacity: 0.45;
 }
 /* A row: the state glyph, the words, the chips, the note (views/blockrow.ts decides
    which of a block's metadata is words and which a chip) */
@@ -1466,10 +1464,28 @@ button:focus-visible,
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 9%, transparent);
 }
+/* The state glyph (chips.ts stateGlyphSvg): the one drawing of a task's checkbox and of
+   a state field's value, on every surface — the editor's checkbox, the reading
+   projection, Agenda, a board card, a query row, a field chip. It colours itself, here
+   and nowhere else: the faint ink for an empty or cancelled box, the accent for one in
+   progress or done (the tick inside a done box is white in the drawing). A host gives
+   it a size — 15px wherever it stands for a checkbox — and may turn the box accent on
+   hover as a preview of the click; it does not colour it otherwise */
+.vstate {
+  display: block;
+}
+.vstate-idle,
+.vstate-cancel {
+  color: var(--fg-faint);
+}
+.vstate-active,
+.vstate-done {
+  color: var(--accent);
+}
 .vchip-glyph {
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
   flex-shrink: 0;
 }
 .vchip-glyph svg {
@@ -1478,22 +1494,6 @@ button:focus-visible,
 }
 .vchip-state {
   padding-left: 4px;
-}
-.vchip-tone-idle {
-  color: var(--state-idle);
-}
-.vchip-tone-active {
-  color: var(--state-active);
-}
-.vchip-tone-done {
-  color: var(--state-done);
-}
-.vchip-state.vchip-tone-idle .vchip-val,
-.vchip-state.vchip-tone-done .vchip-val {
-  color: var(--fg-muted);
-}
-.vchip-state.vchip-tone-active .vchip-val {
-  color: var(--fg);
 }
 .cm-lp-strike {
   text-decoration: line-through;
@@ -1509,37 +1509,19 @@ button:focus-visible,
   vertical-align: middle;
   border-top: 1px solid var(--border);
 }
+/* The task checkbox: the state glyph (chips.ts) at 15px, which is the size every other
+   surface draws it at; pulled 2px below the baseline to sit on the line's x-height */
 .cm-lp-checkbox {
-  appearance: none;
-  -webkit-appearance: none;
+  display: inline-block;
   width: 15px;
   height: 15px;
-  border: 1.5px solid var(--fg-faint);
-  border-radius: 4px;
-  margin: 0 7px -2px 1px;
+  margin: 0 7px 0 1px;
+  vertical-align: -2px;
   cursor: pointer;
-  position: relative;
 }
-.cm-lp-checkbox:checked {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-/* `[/]` in progress: the box half-filled from the bottom — the middle step of the state
-   glyph (chips.ts), so the editor's checkbox and a row's glyph read the same */
-.cm-lp-checkbox:indeterminate {
-  border-color: var(--accent);
-  background: linear-gradient(to top, var(--accent) 50%, transparent 50%);
-}
-.cm-lp-checkbox:checked::after {
-  content: "";
-  position: absolute;
-  left: 4px;
-  top: 1px;
-  width: 4px;
-  height: 8px;
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
+.cm-lp-checkbox svg {
+  width: 100%;
+  height: 100%;
 }
 .cm-lp-frontmatter {
   display: flex;
@@ -1662,24 +1644,6 @@ button:focus-visible,
 .cm-lp-attr-created {
   color: var(--fg-faint);
 }
-/* `[-]` cancelled: the box crossed out, faint — closed, but not by being done */
-.cm-lp-checkbox-cancelled {
-  border-color: var(--fg-faint);
-}
-.cm-lp-checkbox-cancelled::before,
-.cm-lp-checkbox-cancelled::after {
-  content: "";
-  position: absolute;
-  left: 2px;
-  right: 2px;
-  top: 50%;
-  height: 1.5px;
-  background: var(--fg-faint);
-  transform: rotate(45deg);
-}
-.cm-lp-checkbox-cancelled::after {
-  transform: rotate(-45deg);
-}
 /* An inline `key:: value` field as a chip (the key muted, the value plain); the source
    `key::` is faint while the cursor is on it */
 .cm-lp-field,
@@ -1701,13 +1665,14 @@ button:focus-visible,
 .md-body .md-field-key::after {
   content: ":";
 }
-/* A state field's chip (fields.ts's stateField): the glyph before the key, in the step's tone */
+/* A state field's chip (fields.ts's stateField): the glyph before the key, at the
+   checkbox's 15px whatever the note's font size, as the editor's checkbox is */
 .cm-lp-field-glyph,
 .md-body .md-field-glyph {
   display: inline-block;
-  width: 0.95em;
-  height: 0.95em;
-  vertical-align: -0.12em;
+  width: 15px;
+  height: 15px;
+  vertical-align: -3px;
   margin-right: 4px;
 }
 .cm-lp-field-glyph svg,
@@ -1719,28 +1684,6 @@ button:focus-visible,
 .cm-lp-field-state,
 .md-body .md-field-state {
   padding-left: 5px;
-}
-.cm-lp-field-state.chip-tone-idle,
-.cm-lp-field-state.chip-tone-done,
-.md-body .md-field-state.chip-tone-idle,
-.md-body .md-field-state.chip-tone-done {
-  color: var(--fg-muted);
-}
-.cm-lp-field-state.chip-tone-active,
-.md-body .md-field-state.chip-tone-active {
-  color: var(--fg);
-}
-.cm-lp-field-state.chip-tone-idle .cm-lp-field-glyph,
-.md-body .md-field-state.chip-tone-idle .md-field-glyph {
-  color: var(--state-idle);
-}
-.cm-lp-field-state.chip-tone-active .cm-lp-field-glyph,
-.md-body .md-field-state.chip-tone-active .md-field-glyph {
-  color: var(--state-active);
-}
-.cm-lp-field-state.chip-tone-done .cm-lp-field-glyph,
-.md-body .md-field-state.chip-tone-done .md-field-glyph {
-  color: var(--state-done);
 }
 .cm-lp-field-src {
   color: var(--fg-muted);
@@ -2798,12 +2741,17 @@ button:focus-visible,
   color: var(--fg);
   background: var(--bg-hover);
 }
+/* The task checkbox of a projection: the state glyph at the editor checkbox's 15px */
 .md-check {
-  color: var(--fg-faint);
-  margin-right: 2px;
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  vertical-align: -2px;
+  margin-right: 3px;
 }
-.md-check.done {
-  color: var(--accent);
+.md-check svg {
+  width: 100%;
+  height: 100%;
 }
 .md-taskdone {
   color: var(--fg-muted);

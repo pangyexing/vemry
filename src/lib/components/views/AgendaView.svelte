@@ -7,7 +7,7 @@
   import { vault } from "$lib/stores/vault.svelte";
   import { attrIconSvg, byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, estimateSum, formatEstimate, isBlocked, isClosed, isUrgent, localDate, openIds, priorityLabel, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
   import { fieldChipsOf, type FieldChip } from "$lib/views/blockrow";
-  import { stateGlyphSvg, stateTone } from "$lib/chips";
+  import { stateGlyphSvg } from "$lib/chips";
   import { types } from "$lib/stores/types.svelte";
   import { commitTaskWrite, copyTaskId } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
@@ -232,7 +232,7 @@
       onkeydown={(e) =>
         e.target === e.currentTarget && (e.key === "Enter" || e.key === " ") && void openTask(r.hit)}
     >
-      <button class="check" class:done={closed} aria-label={t("task.toggleDone")} onclick={(e) => onToggle(e, r.hit)}>
+      <button class="check" aria-label={t("task.toggleDone")} onclick={(e) => onToggle(e, r.hit)}>
         {@html taskStateIconSvg(r.state)}
       </button>
       <!-- The text is clipped to its track: a long task is read whole from cliptip's box, a quarter second into the hover (the kanban card does the same) -->
@@ -277,7 +277,7 @@
           field with its step's glyph, the rest as key: value — the board shows the same -->
         {#each chipsOf.get(taskKey(r)) ?? [] as f (f.key)}
           {#if f.kind === "state"}
-            <span class="chip state-chip {`tone-${stateTone(f.step, f.of)}`}" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
+            <span class="chip state-chip" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
           {:else}
             <span class="chip field-chip" title={`${f.key}:: ${f.value}`}><span class="fk">{f.key}</span>{f.value}</span>
           {/if}
@@ -494,23 +494,21 @@
     background: var(--bg-hover);
   }
   .check {
-    font-size: var(--fs-md);
-    color: var(--fg-muted);
     padding: 2px;
     border-radius: 4px;
     display: inline-flex;
   }
-  /* taskStateIconSvg is injected with {@html}, and its size follows .check's font-size */
+  /* The state glyph (chips.ts) at the editor checkbox's 15px; it brings its own colour,
+     and the hover turns the box accent as a preview of the click */
   .check :global(svg) {
-    width: 1em;
-    height: 1em;
+    width: 15px;
+    height: 15px;
     display: block;
   }
   .check:hover {
-    color: var(--accent);
     background: var(--bg-hover);
   }
-  .check.done {
+  .check:hover :global(.vstate) {
     color: var(--accent);
   }
   .text {
@@ -608,8 +606,8 @@
     flex-shrink: 0;
     color: var(--accent);
   }
-  /* A field chip: the key faint before the value; a state field's with its glyph in the
-     step's tone (chips.ts) — the same shapes as the board's */
+  /* A field chip: the key faint before the value; a state field's with its glyph
+     (chips.ts, which colours itself) — the same shapes as the board's */
   .field-chip .fk {
     color: var(--fg-faint);
     margin-right: 3px;
@@ -625,24 +623,12 @@
   }
   .state-chip .glyph {
     display: inline-flex;
-    width: 13px;
-    height: 13px;
+    width: 15px;
+    height: 15px;
     flex-shrink: 0;
   }
   .state-chip .glyph :global(svg) {
     width: 100%;
     height: 100%;
-  }
-  .tone-idle {
-    color: var(--state-idle);
-  }
-  .tone-active {
-    color: var(--fg);
-  }
-  .tone-active .glyph {
-    color: var(--state-active);
-  }
-  .tone-done {
-    color: var(--state-done);
   }
 </style>

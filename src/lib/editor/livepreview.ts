@@ -57,8 +57,9 @@ import {
   TASK_LINE_RE,
   type TaskAttrMark,
   type TaskState,
+  taskStateIconSvg,
 } from "$lib/views/tasks";
-import { type StateStep, stateGlyphSvg, stateTone } from "$lib/chips";
+import { type StateStep, stateGlyphSvg } from "$lib/chips";
 import { scanFields } from "$lib/fields";
 import { privateRangeAt } from "./privateblock";
 import { blockRoot } from "./blockwidget";
@@ -136,10 +137,15 @@ interface Entry {
   deco: Decoration;
 }
 
-/** The `- [ ]` checkbox; a click rewrites the state in the text underneath: a plain
- *  click flips done, ⌥ flips "in progress" (`[/]`, drawn as the native indeterminate
- *  dash — the same two gestures as a query row's glyph, and the one way from the editor
- *  to the state the task views' menus set). */
+/** The `- [ ]` checkbox: the state glyph (chips.ts) — the same drawing a card, an
+ *  Agenda row, a query row and the reading projection show, so a task looks the same
+ *  wherever it is met. A click rewrites the state in the text underneath: a plain click
+ *  flips done, ⌥ flips "in progress" (`[/]`, the half-filled box — the same two
+ *  gestures as a query row's glyph, and the one way from the editor to the state the
+ *  task views' menus set). A span rather than a native input: the input was never
+ *  focused (mousedown is taken over below) and only lent its :checked/:indeterminate
+ *  selectors to a second, hand-styled copy of the drawing, which had drifted from the
+ *  views' one. */
 class CheckboxWidget extends WidgetType {
   constructor(readonly state: TaskState) {
     super();
@@ -148,13 +154,11 @@ class CheckboxWidget extends WidgetType {
     return other.state === this.state;
   }
   toDOM(view: EditorView) {
-    const box = document.createElement("input");
-    box.type = "checkbox";
+    const box = document.createElement("span");
     box.className = "cm-lp-checkbox";
-    box.checked = this.state === "done";
-    box.indeterminate = this.state === "doing";
-    // `[-]`: the box crossed out (app.css), a click reopens it
-    if (this.state === "cancelled") box.classList.add("cm-lp-checkbox-cancelled");
+    box.setAttribute("role", "checkbox");
+    box.setAttribute("aria-checked", this.state === "done" ? "true" : this.state === "doing" ? "mixed" : "false");
+    box.innerHTML = taskStateIconSvg(this.state);
     box.title = taskToggleTitle(this.state);
     box.onmousedown = (e) => {
       // Handled on mousedown: preventDefault keeps the editor's selection, or the
@@ -430,7 +434,7 @@ class FieldChipWidget extends WidgetType {
     const empty = this.value === "";
     el.className = `cm-lp-field${this.onChip ? " cm-lp-chip-click" : ""}${empty ? " cm-lp-field-empty" : ""}`;
     if (this.state) {
-      el.classList.add("cm-lp-field-state", `chip-tone-${stateTone(this.state.step, this.state.of)}`);
+      el.classList.add("cm-lp-field-state");
       const g = document.createElement("span");
       g.className = "cm-lp-field-glyph";
       g.innerHTML = stateGlyphSvg(this.state.step, this.state.of);

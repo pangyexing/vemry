@@ -267,7 +267,7 @@ class QueryWidget extends WidgetType {
     summary.values.forEach((v, i) => {
       if (!summary.counts[i]) return;
       const item = document.createElement("span");
-      item.className = `cm-queryblock-dist-item vchip-tone-${stateTone(i, summary.values.length)}`;
+      item.className = "cm-queryblock-dist-item";
       item.innerHTML = stateGlyphSvg(i, summary.values.length);
       item.append(`${v} ${summary.counts[i]}`);
       dist.appendChild(item);

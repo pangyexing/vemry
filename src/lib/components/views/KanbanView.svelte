@@ -43,7 +43,7 @@
   } from "$lib/views/kanban";
   import { t } from "$lib/i18n/i18n.svelte";
   import { types } from "$lib/stores/types.svelte";
-  import { stateGlyphSvg, stateTone } from "$lib/chips";
+  import { stateGlyphSvg } from "$lib/chips";
   import { commitTaskWrite, copyTaskId } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
@@ -595,7 +595,7 @@
             title={collapsed[colDef.id] ? t("kanban.expand") : t("kanban.collapse")}
             onclick={() => toggleCollapse(colDef.id)}
           >
-            {#if colDef.glyph}<i class="col-glyph {`tone-${colDef.glyphTone}`}">{@html colDef.glyph}</i>{:else}<i class="dot" data-tone={colDef.tone}></i>{/if}<span class="col-title">{colDef.title}</span><span class="count"
+            {#if colDef.glyph}<i class="col-glyph">{@html colDef.glyph}</i>{:else}<i class="dot" data-tone={colDef.tone}></i>{/if}<span class="col-title">{colDef.title}</span><span class="count"
               >{cards.length}</span
             >
             <!-- The affordance of "this header collapses": the same chevron as Agenda's
@@ -667,7 +667,7 @@
                     {#each card.fieldChips as f (f.key)}
                       {#if f.step !== undefined && f.of !== undefined}
                         <!-- A state field's value (fields.ts's stateField): the step's glyph and tone, the key left to the title -->
-                        <span class="chip field-chip state-chip {`tone-${stateTone(f.step, f.of)}`}" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
+                        <span class="chip field-chip state-chip" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
                       {:else}
                         <span class="chip field-chip" title={`${f.key}:: ${f.value}`}><span class="fk">{f.key}</span>{f.value}</span>
                       {/if}
@@ -676,7 +676,7 @@
                     {#if !card.due && !card.scheduled && !isClosed(card.state) && !pend}
                       <!-- A card with no date shows a calendar ghost chip on hover: a new field
                         goes through activeField = due. It is absolutely positioned over the
-                        checkbox's indent gap in the meta row (26px, structurally always empty)
+                        checkbox's indent gap in the meta row (25px, structurally always empty)
                         and stays out of the flex flow — hidden with opacity in the flow it would
                         still take space and, with a wide note chip at a large font size, be
                         pushed onto a new line (an extra blank line on the card); floating it in
@@ -997,21 +997,23 @@
      layout, so the text's position is unchanged */
   .check {
     flex-shrink: 0;
-    font-size: var(--fs-md);
-    color: var(--fg-muted);
     padding: 3px;
     margin: -1px;
     border-radius: 4px;
     display: inline-flex;
   }
   .check:hover {
-    color: var(--accent);
     background: var(--bg-active);
   }
+  /* The state glyph (chips.ts) at the editor checkbox's 15px; it brings its own colour,
+     and the hover turns the box accent as a preview of the click */
   .check :global(svg) {
-    width: 1em;
-    height: 1em;
+    width: 15px;
+    height: 15px;
     display: block;
+  }
+  .check:hover :global(.vstate) {
+    color: var(--accent);
   }
   .text {
     min-width: 0;
@@ -1028,7 +1030,7 @@
     flex-wrap: wrap;
     gap: 4px;
     margin-top: 6px;
-    padding-left: 26px;
+    padding-left: 25px;
   }
   .chip {
     display: inline-flex;
@@ -1069,7 +1071,7 @@
   /* A card with no date shows the calendar icon only on hover; always showing it would fill a
     column with plus signs (the same reason as Agenda's).
     It is absolutely positioned over the checkbox's indent gap at the start of the meta row
-    (card-meta's padding-left of 26px, structurally always blank), stays entirely out of the
+    (card-meta's padding-left of 25px, structurally always blank), stays entirely out of the
     layout flow and overlaps no chip — hidden with opacity in the flow it would still take
     space and force a wrap, and floating it in the bottom-right corner would land it on a wide
     note chip; both were tried and failed.
@@ -1308,12 +1310,12 @@
   .field-chip .fk::after {
     content: ":";
   }
-  /* A state field's chip and a state column's header glyph (chips.ts), in the step's tone */
+  /* A state field's chip and a state column's header glyph (chips.ts), at the checkbox's 15px; the glyph colours itself */
   .state-chip .glyph,
   .col-glyph {
     display: inline-flex;
-    width: 13px;
-    height: 13px;
+    width: 15px;
+    height: 15px;
     flex-shrink: 0;
   }
   .state-chip .glyph :global(svg),
@@ -1323,21 +1325,6 @@
   }
   .state-chip {
     padding-left: 4px;
-  }
-  .tone-idle {
-    color: var(--state-idle);
-  }
-  .tone-active {
-    color: var(--state-active);
-  }
-  .tone-done {
-    color: var(--state-done);
-  }
-  .state-chip.tone-active {
-    color: var(--fg);
-  }
-  .state-chip.tone-active .glyph {
-    color: var(--state-active);
   }
   /* The priority chip: the icon alone, in danger when it presses */
   .pri-chip {

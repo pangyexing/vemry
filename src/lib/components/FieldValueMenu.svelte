@@ -12,7 +12,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { isImeKeydown } from "$lib/ime";
   import { clampToViewport, dismissOn } from "$lib/popmenu";
-  import { stateGlyphSvg, stateTone } from "$lib/chips";
+  import { stateGlyphSvg } from "$lib/chips";
   import { stateIndex } from "$lib/fields";
 
   interface Props {
@@ -83,13 +83,13 @@
   {#if steps}
     {#if next}
       <button role="menuitem" class="advance" onclick={() => onpick(next)}>
-        <span class="glyph {`tone-${stateTone(at + 1, steps.length)}`}">{@html stateGlyphSvg(at + 1, steps.length)}</span>{t("field.advance", { value: next })}
+        <span class="glyph">{@html stateGlyphSvg(at + 1, steps.length)}</span>{t("field.advance", { value: next })}
       </button>
       <div class="menu-sep"></div>
     {/if}
     {#each steps as v, i (v)}
       <button role="menuitem" class:current={i === at} onclick={() => onpick(v)}>
-        <span class="glyph {`tone-${stateTone(i, steps.length)}`}">{@html stateGlyphSvg(i, steps.length)}</span>{v}
+        <span class="glyph">{@html stateGlyphSvg(i, steps.length)}</span>{v}
       </button>
     {/each}
     {#each values.filter((v) => stateIndex(steps!, v) < 0) as v (v)}
@@ -156,27 +156,18 @@
   .menu button.advance {
     font-weight: 600;
   }
-  /* A step's glyph before its value (chips.ts), in the step's tone */
+  /* A step's glyph before its value (chips.ts, which colours itself) at the checkbox's 15px */
   .glyph {
     display: inline-block;
-    width: 14px;
-    height: 14px;
-    vertical-align: -2px;
+    width: 15px;
+    height: 15px;
+    vertical-align: -3px;
     margin-right: 6px;
   }
   .glyph :global(svg) {
     width: 100%;
     height: 100%;
     display: block;
-  }
-  .tone-idle {
-    color: var(--state-idle);
-  }
-  .tone-active {
-    color: var(--state-active);
-  }
-  .tone-done {
-    color: var(--state-done);
   }
   .menu input {
     margin: 2px 6px 4px;

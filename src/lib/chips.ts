@@ -1,12 +1,17 @@
 // The one drawing of a state, shared by every surface that shows one: a task's
-// checkbox state in Agenda, on a board card and in a query row, and the value of a
-// state field (a `type: state` key of a block type — fields.ts's stateField) as a chip
-// in the editor, an embed, a card or a row. One vocabulary of steps, so the reader
-// learns the shape once: step 0 is an empty box, the last step a ticked box, and a step
-// in between fills the box from the bottom by step / (of − 1). With three steps it is
-// exactly the todo / doing / done icon the task views drew before, which is the point:
-// a task is a state field whose vocabulary is fixed at three and whose syntax is a
-// checkbox.
+// checkbox in the editor, in the reading projection, in Agenda, on a board card and in
+// a query row, and the value of a state field (a `type: state` key of a block type —
+// fields.ts's stateField) as a chip in the editor, an embed, a card or a row. One
+// vocabulary of steps, so the reader learns the shape once: step 0 is an empty box, the
+// last step a solid box with a tick, and a step in between fills the box from the bottom
+// by step / (of − 1). With three steps it is exactly the todo / doing / done checkbox,
+// which is the point: a task is a state field whose vocabulary is fixed at three and
+// whose syntax is a checkbox.
+// The glyph carries its own colour (the vstate-* classes it wears, coloured once in
+// app.css): the faint ink for an empty or cancelled box, the accent for one in progress
+// or done. A host sizes it — 15px, the editor's checkbox, wherever it stands for one —
+// and adds a hover if it is clickable there; it never colours it, or the five surfaces
+// drift apart again (they had, before this drawing became the only one).
 // The drawings are strings on the 24 viewBox convention of tasks.ts's dateIconSvg (the
 // Svelte views inject them with {@html}; the editor widgets set innerHTML), and the DOM
 // builders below are for the imperative surfaces (a CodeMirror widget has only DOM).
@@ -16,27 +21,36 @@
 export type StateTone = "idle" | "active" | "done";
 
 /** The tone of a step: the first is idle, the last is done, the rest are active. A
- *  single-step vocabulary (of ≤ 1) is done at once. */
+ *  single-step vocabulary (of ≤ 1) is done at once. The glyph colours itself by it;
+ *  the one other reader is a query row, whose words step back at the last step. */
 export function stateTone(step: number, of: number): StateTone {
   if (of <= 1 || step >= of - 1) return "done";
   return step <= 0 ? "idle" : "active";
 }
 
-/** The glyph of step `step` of `of`: a rounded box, filled from the bottom by the share
- *  of the way through, a tick on the last step. The fill is an inset rect rather than a
- *  clipped one so that no clipPath id is minted per glyph (ids are document-global). */
+/** The glyph of step `step` of `of`: a rounded box filling the 24 viewBox (drawn at
+ *  15px its stroke is 1.5px and its radius 4px), empty at the first step, filled from
+ *  the bottom by the share of the way through in between, solid with a white tick at
+ *  the last; a cancelled task is the empty box crossed out — closed, but not by being
+ *  done. The partial fill is a path with square top corners and rounded bottom ones (a
+ *  liquid level, not a pill) rather than a clipped rect, so that no clipPath id is
+ *  minted per glyph (ids are document-global). */
 export function stateGlyphSvg(step: number, of: number, cancelled = false): string {
   const last = of <= 1 || step >= of - 1;
-  const box = '<rect x="4" y="4" width="16" height="16" rx="3"/>';
-  let inner = box;
-  // A cancelled task: the box with a cross — closed, but not by being done
-  if (cancelled) inner += '<path d="m9 9 6 6M15 9l-6 6"/>';
-  else if (last) inner += '<path d="m8.2 12.4 2.6 2.6 5-5.8"/>';
-  else if (step > 0) {
-    const h = Math.round((13 * step) / (of - 1) * 100) / 100;
-    inner += `<rect x="5.5" y="${18.5 - h}" width="13" height="${h}" rx="1.5" fill="currentColor" stroke="none"/>`;
+  const kind: StateTone | "cancel" = cancelled ? "cancel" : last ? "done" : step > 0 ? "active" : "idle";
+  let inner = `<rect x="1.5" y="1.5" width="21" height="21" rx="6"${kind === "done" ? ' fill="currentColor"' : ""}/>`;
+  if (kind === "cancel") inner += '<path d="m7.5 7.5 9 9M16.5 7.5l-9 9"/>';
+  else if (kind === "done") inner += '<path d="m6.6 12.4 3.7 3.7 7.3-8.2" stroke="#fff" stroke-width="2.6"/>';
+  else if (kind === "active") {
+    // The box's inner edge sits at 2.7 (the stroke's centre plus half its width) on every
+    // side; the fill is that share of the inner height, its bottom corners following the
+    // box's inner radius, shrunk when the level is lower than the radius
+    const h = Math.round(((18.6 * step) / (of - 1)) * 100) / 100;
+    const r = Math.min(4.5, h);
+    const top = Math.round((21.3 - h) * 100) / 100;
+    inner += `<path d="M2.7 ${top}H21.3V${21.3 - r}A${r} ${r} 0 0 1 ${21.3 - r} 21.3H${2.7 + r}A${r} ${r} 0 0 1 2.7 ${21.3 - r}Z" fill="currentColor" stroke="none"/>`;
   }
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  return `<svg class="vstate vstate-${kind}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 }
 
 /** The step of a task's state in the three-step vocabulary; cancelled is closed, the
@@ -65,17 +79,17 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 
 /** A state glyph as an element; `title` is the tooltip. */
 export function stateGlyph(step: number, of: number, title?: string, cancelled = false): HTMLSpanElement {
-  const g = el("span", `vchip-glyph vchip-tone-${stateTone(step, of)}`);
+  const g = el("span", "vchip-glyph");
   g.innerHTML = stateGlyphSvg(step, of, cancelled);
   if (title) g.title = title;
   return g;
 }
 
-/** A `key: value` chip; with `state` it carries the glyph and the step's tone, and reads
- *  as a state rather than a plain field. `keyShown` false drops the key (a row whose
- *  head already says which field this is). */
+/** A `key: value` chip; with `state` it carries the glyph and reads as a state rather
+ *  than a plain field. `keyShown` false drops the key (a row whose head already says
+ *  which field this is). */
 export function fieldChip(key: string, value: string, state?: StateStep | null, keyShown = true): HTMLSpanElement {
-  const chip = el("span", state ? `vchip vchip-field vchip-state vchip-tone-${stateTone(state.step, state.of)}` : "vchip vchip-field");
+  const chip = el("span", state ? "vchip vchip-field vchip-state" : "vchip vchip-field");
   if (state) chip.appendChild(stateGlyph(state.step, state.of));
   if (keyShown) chip.appendChild(el("span", "vchip-key", key));
   chip.appendChild(el("span", "vchip-val", value));

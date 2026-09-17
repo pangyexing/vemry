@@ -24,7 +24,7 @@ import { closesMathBlock, foldMath, mathBlockTex, opensMathBlock, renderMathHtml
 import { toast } from "$lib/stores/toast.svelte";
 import { CALLOUT_GROUP, CALLOUT_HEAD_RE, calloutDefaultTitle, calloutIconSvg } from "$lib/callout";
 import { scanFields, stateStepOf } from "$lib/fields";
-import { stateGlyphSvg, stateTone } from "$lib/chips";
+import { stateGlyphSvg, TASK_STEPS, taskStep } from "$lib/chips";
 import { types } from "$lib/stores/types.svelte";
 import { POSITIONAL_RE } from "$lib/citation";
 
@@ -150,7 +150,7 @@ function stashFields(s: string, stash: (html: string) => string): string {
   for (const m of marks) {
     const state = stateStepOf(types.enabled, m.key, m.value);
     const glyph = state ? `<span class="md-field-glyph">${stateGlyphSvg(state.step, state.of)}</span>` : "";
-    const cls = state ? ` md-field-state chip-tone-${stateTone(state.step, state.of)}` : "";
+    const cls = state ? " md-field-state" : "";
     const chip = `<span class="md-field${cls}">${glyph}<span class="md-field-key">${escapeHtml(m.key)}</span>${escapeHtml(m.value)}</span>`;
     out += s.slice(at, m.from) + stash(chip);
     at = m.to;
@@ -403,7 +403,7 @@ const FENCE_RE = /^(`{3,})/;
 /** The one grammar of a task list's check prefix (`[ ]`/`[x]`): the block-level
  *  rendering's taskify and the panel's plan-card parsePlan share it, so extending the
  *  check markers changes this one place. */
-export const TASK_PREFIX_RE = /^\[( |x|X)\]\s+/;
+export const TASK_PREFIX_RE = /^\[( |x|X|\/|-)\]\s+/;
 
 /** The safe split point of streaming rendering: it returns a prefix length that ends
  *  at a blank line and does not sit inside an unclosed code fence (0 = there is none).
@@ -538,14 +538,21 @@ function renderBlockList(
     }
     listStack[listStack.length - 1].items.push(item);
   };
-  /** A task list item: the `[ ]`/`[x]` prefix renders as a non-interactive check mark
-   *  (both the 4.3 plan card and the AI's todo lists depend on it; it used to render a
-   *  literal [ ]). */
+  /** A task list item: the checkbox prefix renders as the non-interactive state glyph
+   *  (chips.ts — the editor's checkbox, so a task reads the same in a projection and in
+   *  the note; both the 4.3 plan card and the AI's todo lists depend on it). All four
+   *  states, as the editor parses them (markdown-ext.ts): `[/]` in progress and `[-]`
+   *  cancelled used to come out as literal brackets here. The state is read from the
+   *  character in place rather than through tasks.ts's stateOfChar: tasks.ts imports
+   *  this module, and the mapping is four characters. `done` covers cancelled too — a
+   *  closed task's words are struck, whichever way it was closed, as in the editor. */
   const taskify = (raw: string): { rest: string; prefix: string; done: boolean } | null => {
     const m = TASK_PREFIX_RE.exec(raw);
     if (!m) return null;
-    const done = m[1].toLowerCase() === "x";
-    return { rest: raw.slice(m[0].length), prefix: `<span class="md-check${done ? " done" : ""}">${done ? "☑" : "☐"}</span> `, done };
+    const c = m[1];
+    const state = c === "x" || c === "X" ? "done" : c === "/" ? "doing" : c === "-" ? "cancelled" : "todo";
+    const glyph = stateGlyphSvg(taskStep(state), TASK_STEPS, state === "cancelled");
+    return { rest: raw.slice(m[0].length), prefix: `<span class="md-check">${glyph}</span> `, done: state === "done" || state === "cancelled" };
   };
   /** The raw lines of a pipe table; on flush it becomes a table when the second line is a separator row, and falls back to a paragraph otherwise. */
   let tableRows: string[] | null = null;
