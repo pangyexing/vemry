@@ -50,6 +50,12 @@
    *  found by either, so a "both" state would only ever be a stricter version of one of
    *  them. */
   let dateKind = $state<DateField>();
+  /** The list's width, for the narrow layout (.narrow): under 560px the date and source
+   *  columns no longer fit beside the text — a measured screenshot at ~370px had the
+   *  text down to four characters — so the row folds to two lines. A measured width
+   *  rather than a container query: .body is the scroll container, and size containment
+   *  on it is a change with more reach than a class. */
+  let bodyW = $state(0);
 
   // What this view shows is attachable to the AI (the @ picker's "current view", the
   // header's "Ask AI"): the live query and the row count are registered while mounted.
@@ -336,7 +342,7 @@
       </span>
     {/snippet}
   </ViewHeader>
-  <div class="body" style:--ag-date={dateTrack}>
+  <div class="body" class:narrow={bodyW > 0 && bodyW < 560} style:--ag-date={dateTrack} bind:clientWidth={bodyW}>
     {#if hits.length === 0}
       <ViewEmpty>
         {t("task.empty1")}<code>- [ ] a task 📅 2026-01-01</code>{t("task.empty2")}<code>- [/]</code
@@ -388,6 +394,7 @@
     display: inline-flex;
     align-items: center;
     gap: 3px;
+    white-space: nowrap;
     font-size: var(--fs-xs);
     color: var(--fg-faint);
     background: var(--bg-hover);
@@ -492,6 +499,30 @@
   .row:hover,
   .row.held {
     background: var(--bg-hover);
+  }
+  /* The narrow pane (bodyW < 560): the text takes the first line whole, the dates and the
+     source share a second line under it. The columns' one x across the table is given
+     up here — in a pane this narrow there is no table, only rows — and what it buys is
+     the task's words, which the fixed tracks had squeezed to a sliver */
+  .narrow .row {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    row-gap: 2px;
+  }
+  .narrow .check {
+    grid-row: 1;
+    grid-column: 1;
+  }
+  .narrow .text {
+    grid-row: 1;
+    grid-column: 2 / 4;
+  }
+  .narrow .dates {
+    grid-row: 2;
+    grid-column: 2;
+  }
+  .narrow .meta {
+    grid-row: 2;
+    grid-column: 3;
   }
   .check {
     padding: 2px;

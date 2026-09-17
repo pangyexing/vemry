@@ -66,18 +66,23 @@
   <span class="total">{total}</span>
   {@render left?.()}
   <span class="spring"></span>
-  {@render right?.()}
-  {#if askAi}
-    <button class="ask" title={t("viewChrome.askAiHint")} onclick={askAi}>{t("viewChrome.askAi")}</button>
-  {/if}
-  {#if hint}<span class="hint">{hint}</span>{/if}
-  {#if filterPlaceholder !== undefined}
-    <input class="filter" bind:value={filter} placeholder={filterPlaceholder} spellcheck="false" />
-  {/if}
-  <!-- ✕ is Esc's visible entry point: it closes that view's tab, and closeTab activates the neighbour -->
-  <button class="close" title={t("viewChrome.closeView")} aria-label={t("viewChrome.closeViewLabel")} onclick={() => void vault.closeActiveView()}
-    >✕</button
-  >
+  <!-- The right side is one flex item: in a pane too narrow for the whole row it drops
+    under the title as a whole and keeps its right alignment (margin-left auto), rather
+    than its members being squeezed to a character's width one by one -->
+  <span class="tools">
+    {@render right?.()}
+    {#if askAi}
+      <button class="ask" title={t("viewChrome.askAiHint")} onclick={askAi}>{t("viewChrome.askAi")}</button>
+    {/if}
+    {#if hint}<span class="hint">{hint}</span>{/if}
+    {#if filterPlaceholder !== undefined}
+      <input class="filter" bind:value={filter} placeholder={filterPlaceholder} spellcheck="false" />
+    {/if}
+    <!-- ✕ is Esc's visible entry point: it closes that view's tab, and closeTab activates the neighbour -->
+    <button class="close" title={t("viewChrome.closeView")} aria-label={t("viewChrome.closeViewLabel")} onclick={() => void vault.closeActiveView()}
+      >✕</button
+    >
+  </span>
 </header>
 
 <style>
@@ -87,21 +92,35 @@
        whether there is a filter box differs per view, so baseline alignment cannot give
        "one shape" */
     align-items: center;
-    gap: 10px;
+    /* A pane narrower than the row: the tool group wraps under the title (a measured
+       screenshot at ~370px had the title on two lines, the count and the legend's
+       buttons broken into one character per line). Nothing here shrinks below its
+       words, so the only thing that gives is the line */
+    flex-wrap: wrap;
+    gap: 6px 10px;
     padding: 14px 20px 10px;
     border-bottom: 1px solid var(--border);
   }
   h2 {
     font-size: var(--fs-lg);
     font-weight: 600;
+    white-space: nowrap;
   }
   .total {
     font-size: var(--fs-xs);
     color: var(--fg-faint);
+    white-space: nowrap;
   }
   .spring {
     flex: 1;
     /* the gap already provides the spacing, so the spring itself takes no width */
+    min-width: 0;
+  }
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
     min-width: 0;
   }
   .hint {
@@ -114,14 +133,18 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* The filter box gives way before the group wraps, down to a width that still shows a
+     few characters of what was typed */
   .filter {
     width: 210px;
-    flex-shrink: 0;
+    min-width: 110px;
+    flex-shrink: 1;
     padding: 5px 10px;
     font-size: var(--fs-sm);
   }
   .ask {
     flex-shrink: 0;
+    white-space: nowrap;
     font-size: var(--fs-xs);
     color: var(--accent);
     border: 1px solid var(--accent);
