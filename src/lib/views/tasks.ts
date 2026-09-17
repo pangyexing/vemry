@@ -1059,9 +1059,10 @@ function daysUntil(date: string): number {
 
 /** The date string shown for an overdue task: the amount of lateness is appended. What
  *  matters most at a glance for an overdue task is "how late", which an absolute date
- *  does not show (the reader would have to count from today). Only overdue gets the
- *  relative amount — giving a future date "in 3 days" as well would mix two units in
- *  one column and make it harder to scan.
+ *  does not show (the reader would have to count from today). Overdue is the one case
+ *  written as an amount: a future date is never "in 3 days" — a count beside a date in
+ *  the same column is two units to scan — but at the card's density it is a named day
+ *  when it has a name within the week (nearDate), which is read, not counted.
  *  The gate is the task's own lateness — an open task whose due date has passed —
  *  rather than "the date is in the past": a closed task is not late however long ago
  *  its due date was, and it belongs to "done". On the board the column's overdue is the
@@ -1073,49 +1074,69 @@ function daysUntil(date: string): number {
  *  same thing everywhere:
  *   - full: Agenda's 13em fixed-width date track, where the absolute date and the
  *     lateness both fit
- *   - short: a kanban card's meta line has only about 110px, where the full form
- *     overflows the card (a measured screenshot had it cut to "2026-08-08 · ov"), and
- *     the absolute date falls back to the title; a date that is not late is written
- *     without the current year (chipDate) */
+ *   - short: a kanban card, where the full form overflowed (a measured screenshot had it
+ *     cut to "2026-08-08 · ov"), and the absolute date falls back to the title; a date
+ *     that is not late is a named day or a date without the current year (nearDate) */
 export function dueLabel(due: string, overdue: boolean, density: "full" | "short" = "full"): string {
-  // The gate is checked before the days are computed: the non-overdue rows (all of
-  // "today / later / done") are the majority, and they should not pay for three Date
-  // constructions to produce a value that is dropped straight away
-  if (!overdue) return density === "short" ? chipDate(due) : due;
+  if (!overdue) return density === "short" ? nearDate(due) : due;
   const late = -daysUntil(due);
   if (late <= 0) return due;
   const phrase = tn("task.overdue", late);
   return density === "short" ? phrase : `${due} · ${phrase}`;
 }
 
-// The chip's date formatters, one pair per language: Intl.DateTimeFormat re-parses its
-// options on every construction, and a board redraws a few hundred chips at a time.
-const CHIP_FORMATS = new Map<string, [Intl.DateTimeFormat, Intl.DateTimeFormat]>();
-function chipFormats(): [Intl.DateTimeFormat, Intl.DateTimeFormat] {
+// The card's date formatters, one set per language: Intl re-parses its options on every
+// construction, and a board redraws a few hundred dates at a time.
+interface ChipFormats {
+  short: Intl.DateTimeFormat;
+  long: Intl.DateTimeFormat;
+  weekday: Intl.DateTimeFormat;
+  near: Intl.RelativeTimeFormat;
+}
+const CHIP_FORMATS = new Map<string, ChipFormats>();
+function chipFormats(): ChipFormats {
   const tag = i18n.locale;
   let f = CHIP_FORMATS.get(tag);
   if (!f) {
-    f = [
-      new Intl.DateTimeFormat(tag, { month: "short", day: "numeric" }),
-      new Intl.DateTimeFormat(tag, { year: "numeric", month: "short", day: "numeric" }),
-    ];
+    f = {
+      short: new Intl.DateTimeFormat(tag, { month: "short", day: "numeric" }),
+      long: new Intl.DateTimeFormat(tag, { year: "numeric", month: "short", day: "numeric" }),
+      weekday: new Intl.DateTimeFormat(tag, { weekday: "short" }),
+      // numeric "auto" is what turns 0 and 1 days into the words: today / tomorrow, 今天 / 明天
+      near: new Intl.RelativeTimeFormat(tag, { numeric: "auto" }),
+    };
     CHIP_FORMATS.set(tag, f);
   }
   return f;
 }
 
-/** A date at a kanban chip's density, in the interface language ("Sep 10", "9月10日"):
- *  the year is dropped while it is the current one, so the chip fits beside the note
- *  chip on the ~130px meta row of a 176px card instead of pushing the note chip onto a
- *  second line. The ISO date stays in the chip's title, and is what the file holds — this
- *  is display only. A date in another year keeps the year: that is the one case where it
- *  carries information. */
+/** A date at a kanban card's density, in the interface language ("Sep 10", "9月10日"):
+ *  the year is dropped while it is the current one, so the date fits beside the title
+ *  on a 176px card. The ISO date stays in the button's title, and is what the file
+ *  holds — this is display only. A date in another year keeps the year: that is the
+ *  one case where it carries information. */
 export function chipDate(ymd: string): string {
   const [y, mo, d] = ymd.split("-").map(Number);
   if (!y || !mo || !d) return ymd;
-  const [short, long] = chipFormats();
+  const { short, long } = chipFormats();
   const dt = new Date(y, mo - 1, d);
   return (ymd.startsWith(localDate().slice(0, 4) + "-") ? short : long).format(dt);
+}
+
+/** A date at a kanban card's density, as the eye takes it in: today and tomorrow by
+ *  their names (Intl's own words: 今天 / 明天), a day within the coming week by its
+ *  weekday (周四 / Thu — the one name a day has inside a week), anything further, and
+ *  anything past, as chipDate's date. A name is read without counting; a date within
+ *  the week is counted from today every time it is looked at (the list screen this
+ *  follows writes "Tomorrow" beside "08/29"). Agenda keeps the ISO date: its date track
+ *  is a column to scan and sort by eye, and a name there would break the column. */
+export function nearDate(ymd: string): string {
+  const days = daysUntil(ymd);
+  if (!Number.isFinite(days) || days < 0 || days > 6) return chipDate(ymd);
+  const { near, weekday } = chipFormats();
+  if (days <= 1) return near.format(days, "day");
+  const [y, mo, d] = ymd.split("-").map(Number);
+  return weekday.format(new Date(y, mo - 1, d));
 }
 
 /** What a task's context menu does, as the view that raised it does them. An Agenda row

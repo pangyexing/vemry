@@ -4,7 +4,6 @@
   import { askAboutView } from "$lib/askview";
   import { vault, stemOf } from "$lib/stores/vault.svelte";
   import {
-    chipDate,
     DATE_FIELDS,
     dateFieldLabel,
     type DateField,
@@ -12,6 +11,7 @@
     deleteTask,
     dueLabel,
     localDate,
+    nearDate,
     rescheduleTask,
     taskFilterKey,
     taskKey,
@@ -114,6 +114,29 @@
    *  byte → UTF-16 conversion and rechecking currentPath after the await are contracts kept in
    *  one place. */
   const openCard = (card: Card) => vault.openBlockAt(card.hit.note, card.hit.block.span.start);
+
+  // ---- The card's dates: one in the main slot right of the title, the other (if any) on the
+  // meta line. The list screen this follows keeps a column of dates at the right edge and
+  // writes them as words where a word exists ----
+  type MainField = "due" | "scheduled";
+  /** Today's date is not written in the "today" column: the column name says it. State
+   *  grouping only — a field's column says nothing about the day. */
+  const hiddenToday = (card: Card, date: string) => groupBy.by === "state" && card.col === "today" && date === localDate();
+  /** The date in the main slot: the due date, else the scheduled day; none while a
+   *  drop's provisional date stands in for that very field (pendField), none when it is
+   *  today in the "today" column. An overdue due date reads as its lateness (dueLabel,
+   *  the danger colour); everything else as a named day or a date (nearDate). */
+  function mainDate(card: Card, pendField: DateField | null): { field: MainField; text: string; overdue: boolean } | null {
+    const field: MainField | null = card.due ? "due" : card.scheduled ? "scheduled" : null;
+    if (!field || field === pendField) return null;
+    const date = card[field]!;
+    if (hiddenToday(card, date)) return null;
+    const overdue = field === "due" && card.col === "overdue";
+    return { field, text: overdue ? dueLabel(date, true, "short") : nearDate(date), overdue };
+  }
+  /** The scheduled day goes to the meta line when the due date holds the main slot. */
+  const metaScheduled = (card: Card, pendField: DateField | null) =>
+    !!card.scheduled && !!card.due && pendField !== "scheduled" && !hiddenToday(card, card.scheduled);
 
   // ---- Dragging: pointer events, the same contract as FileTree's (a 5px threshold, a ghost
   // that intercepts no events, elementFromPoint to resolve the drop target, suppressClick to
@@ -487,17 +510,18 @@
   }}
 />
 
-{#snippet dateChip(card: Card, field: DateField, title: string, text: string, cls: string = "")}
-  <!-- pointerdown is stopped: otherwise holding the chip and moving 5px would trigger
+{#snippet dateChip(card: Card, field: DateField, title: string, text: string, cls: string, icon: boolean)}
+  <!-- pointerdown is stopped: otherwise holding the button and moving 5px would trigger
     pressCard's drag plus pointer capture (the same discipline as the .check button's); click is
-    stopped so the whole card's openCard is not triggered -->
+    stopped so the whole card's openCard is not triggered. The icon is drawn where the date
+    needs telling apart (the scheduled day on the meta line, the ghost), not on the main date -->
   <button
-    class="chip {cls}"
+    class={cls}
     {title}
     onpointerdown={(e) => e.stopPropagation()}
     onclick={(e) => openChipMenu(e, card, field)}
   >
-    {@html dateIconSvg(field)}{text}
+    {#if icon}{@html dateIconSvg(field)}{/if}{text}
   </button>
 {/snippet}
 
@@ -615,6 +639,7 @@
               {@const pend = pendingKey === taskKey(card) ? pendingDrop : null}
               <!-- The field the pending drop writes: activeField, the same one dropEdit picks -->
               {@const pendField = pend ? activeField(card) : null}
+              {@const w = mainDate(card, pendField)}
               <li>
                 <!-- A done card dragged out is reopened by the drop, and the provisional card already shows it so -->
                 <div
@@ -642,47 +667,46 @@
                     </button>
                     <!-- Clamped to two lines: a long task is read whole from cliptip's box, a quarter second into the hover -->
                     <span class="text" use:cliptip={card.text}>{card.text}</span>
-                  </div>
-                  <div class="card-meta">
+                    <!-- The main date, right of the title, so a column's dates stand one under
+                      another (mainDate says which date and when it is left out). The provisional
+                      date of a drop still landing stands in for it: an ellipsis while the day is
+                      being picked, the day itself until the write lands — a label, not a button,
+                      the menu is already open -->
                     {#if pend}
-                      <!-- The provisional date chip stands in for the chip of the field the drop
-                        writes: an ellipsis while the day is being picked, the day itself until
-                        the write lands. A label, not a button — the menu is already open -->
-                      <span class="chip pending-chip">{@html dateIconSvg(pendField ?? "due")}{pend.date ? chipDate(pend.date) : "…"}</span>
+                      <span class="when pending">{pend.date ? nearDate(pend.date) : "…"}</span>
+                    {:else if w}
+                      {@render dateChip(card, w.field, t("task.editDateWith", { field: dateFieldLabel(w.field), date: card[w.field] ?? "" }), w.text, w.overdue ? "when overdue" : "when", false)}
                     {/if}
-                    {#if card.due && pendField !== "due"}
-                      {@const od = card.col === "overdue"}
-                      {@render dateChip(card, "due", t("task.editDateWith", { field: dateFieldLabel("due"), date: card.due }), dueLabel(card.due, od, "short"), od ? "overdue" : "")}
-                    {/if}
-                    {#if card.scheduled && pendField !== "scheduled"}
-                      {@render dateChip(card, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: card.scheduled }), chipDate(card.scheduled))}
+                  </div>
+                  <!-- The rest of the card as one line: the scheduled day when the due date holds
+                    the main slot (its clock icon is what tells the two dates apart, so it is the
+                    one date that keeps an icon), the priority, the fields, the tags, the note -->
+                  <div class="card-meta">
+                    {#if metaScheduled(card, pendField)}
+                      {@render dateChip(card, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: card.scheduled ?? "" }), nearDate(card.scheduled ?? ""), "mi date", true)}
                     {/if}
                     {#if card.priority !== "normal"}
                       <!-- The priority as its icon alone: the card has no room for a word, the title carries it -->
-                      <span class="chip pri-chip" class:urgent={isUrgent(card.priority)} title={priorityLabel(card.priority)}>{@html attrIconSvg("priority", card.priority)}</span>
+                      <span class="mi pri" class:urgent={isUrgent(card.priority)} title={priorityLabel(card.priority)}>{@html attrIconSvg("priority", card.priority)}</span>
                     {/if}
-                    {#each card.tags as tag (tag)}
-                      <span class="chip tag-chip">#{tag}</span>
-                    {/each}
                     {#each card.fieldChips as f (f.key)}
                       {#if f.step !== undefined && f.of !== undefined}
-                        <!-- A state field's value (fields.ts's stateField): the step's glyph and tone, the key left to the title -->
-                        <span class="chip field-chip state-chip" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
+                        <!-- A state field's value (fields.ts's stateField): the step's glyph, the key left to the title -->
+                        <span class="mi field state" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
                       {:else}
-                        <span class="chip field-chip" title={`${f.key}:: ${f.value}`}><span class="fk">{f.key}</span>{f.value}</span>
+                        <span class="mi field" title={`${f.key}:: ${f.value}`}><span class="fk">{f.key}</span>{f.value}</span>
                       {/if}
                     {/each}
-                    <span class="chip note-chip" title={card.hit.note}>{card.hit.note_title}</span>
+                    {#each card.tags as tag (tag)}
+                      <span class="mi tag">#{tag}</span>
+                    {/each}
+                    <span class="mi note" title={card.hit.note}>{card.hit.note_title}</span>
                     {#if !card.due && !card.scheduled && !isClosed(card.state) && !pend}
-                      <!-- A card with no date shows a calendar ghost chip on hover: a new field
-                        goes through activeField = due. It is absolutely positioned over the
-                        checkbox's indent gap in the meta row (25px, structurally always empty)
-                        and stays out of the flex flow — hidden with opacity in the flow it would
-                        still take space and, with a wide note chip at a large font size, be
-                        pushed onto a new line (an extra blank line on the card); floating it in
-                        the bottom-right corner would land it in the middle of a wide note chip
-                        (three rounds of screenshots proved both) -->
-                      {@render dateChip(card, activeField(card), t("task.setDate", { field: dateFieldLabel(activeField(card)) }), "", "add-date")}
+                      <!-- A card with no date shows a calendar ghost on hover: a new field goes
+                        through activeField = due. It floats over the checkbox's indent gap of the
+                        meta line (25px, structurally always empty) and stays out of the flow —
+                        .ghost-date says why the other placements failed -->
+                      {@render dateChip(card, activeField(card), t("task.setDate", { field: dateFieldLabel(activeField(card)) }), "", "ghost-date", true)}
                     {/if}
                     {#if vault.privatePaths.has(card.hit.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
                   </div>
@@ -1024,110 +1048,146 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .card-meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 6px;
-    padding-left: 25px;
-  }
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    /* A chip that cannot be held used to be drawn outside the card (measured: with a longer
-       overdue string it was clipped at the column's edge): sealed inside the card, what
-       overflows is the chip's own text rather than the layout */
-    max-width: 100%;
-    overflow: hidden;
+  /* The main date, right of the title: a small muted figure with tabular digits, so a
+     column's dates line up under one another (the list screen's column of dates); a
+     button that looks like text, since it reschedules on click */
+  .when {
     flex-shrink: 0;
-    font-size: var(--fs-xs);
-    color: var(--fg-muted);
-    background: var(--bg-hover);
+    align-self: flex-start;
+    margin: 1px -3px 0 0;
+    padding: 0 3px;
     border-radius: 4px;
-    padding: 1px 6px;
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
-  .chip.overdue {
-    color: var(--danger);
-  }
-  /* The provisional date chip: the ghost chip's dashed style, in accent */
-  .chip.pending-chip {
-    border: 1px dashed var(--accent);
-    color: var(--accent);
-    background: var(--accent-soft);
-    padding: 0 5px;
-  }
-  .chip :global(svg) {
-    width: 0.9em;
-    height: 0.9em;
-    flex-shrink: 0;
-  }
-  /* A date chip is a button (clickable to reschedule); note and tag chips are still spans */
-  button.chip:hover {
+  button.when:hover {
     color: var(--accent);
     background: var(--bg-active);
   }
-  /* A card with no date shows the calendar icon only on hover; always showing it would fill a
-    column with plus signs (the same reason as Agenda's).
-    It is absolutely positioned over the checkbox's indent gap at the start of the meta row
-    (card-meta's padding-left of 25px, structurally always blank), stays entirely out of the
-    layout flow and overlaps no chip — hidden with opacity in the flow it would still take
-    space and force a wrap, and floating it in the bottom-right corner would land it on a wide
-    note chip; both were tried and failed.
-    The selector carries .chip to raise its specificity: button.chip:hover must not outweigh
-    this state */
-  .chip.add-date {
-    position: absolute;
-    left: 10px;
-    bottom: 7px;
-    opacity: 0;
-    pointer-events: none;
-    border: 1px dashed var(--fg-faint);
-    background: var(--bg-hover);
+  .when.overdue {
+    color: var(--danger);
+  }
+  /* The provisional date of a drop still landing: the accent with the ghost's dash
+     underneath, until the write's reload draws the card plain */
+  .when.pending {
+    color: var(--accent);
+    border-bottom: 1px dashed var(--accent);
+    border-radius: 0;
+  }
+  /* The rest of the card as one line of small muted text, a dot between its parts and an
+     ellipsis where it runs out (what is cut is the note's name at the end, whole in its
+     title). A line rather than a row of chips: with a chip per part a column of twenty
+     cards was a wall of small boxes, and the row wrapped onto a second line whenever the
+     note's name was long */
+  .card-meta {
+    margin-top: 2px;
+    padding-left: 25px;
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    color: var(--fg-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* A part of the line is inline text (a button too), so the one ellipsis runs across all
+     of them; the source's line break between parts is the space before each dot */
+  .mi {
+    display: inline;
+    padding: 0;
     color: var(--fg-muted);
-    padding: 0 5px;
   }
-  .card:hover .add-date,
-  .add-date:focus-visible {
-    opacity: 1;
-    pointer-events: auto;
+  .mi + .mi::before {
+    content: "·";
+    margin-right: 3px;
+    color: var(--fg-faint);
   }
-  .chip.add-date:hover {
+  .mi > :global(svg) {
+    width: 0.9em;
+    height: 0.9em;
+    vertical-align: -1px;
+    margin-right: 3px;
+  }
+  button.mi:hover {
     color: var(--accent);
-    border-color: var(--accent);
-    background: var(--bg-hover);
   }
-  /* An inline #tag: an accent tint, set apart from the note-name chip (muted). A text chip has
-    to be able to shrink (overriding .chip's flex-shrink:0, which is there for the date chips):
-    otherwise, on a narrow card whose max-width exceeds the space left on the row, the chip
-    neither shrinks nor is clipped and runs straight through the padding into the card's border
-    (proved by a screenshot); once it may shrink, the ellipsis appears naturally where the row
-    runs out of width */
-  .tag-chip {
+  /* An inline #tag keeps the accent (it is the writer's own classification); the note's
+     name, the provenance, is the faintest thing on the card */
+  .mi.tag {
     color: var(--accent);
-    background: var(--accent-soft);
-    max-width: 90px;
-    flex-shrink: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    display: inline-block;
   }
-  .note-chip {
-    max-width: 140px;
-    flex-shrink: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .mi.note {
+    color: var(--fg-faint);
+  }
+  .mi.pri > :global(svg) {
+    width: 0.95em;
+    height: 0.95em;
+    margin-right: 0;
+  }
+  .mi.pri.urgent {
+    color: var(--danger);
+  }
+  /* A field: the key faint before the value; a state field's with its glyph (chips.ts, which colours itself) */
+  .mi.field .fk {
+    color: var(--fg-faint);
+  }
+  .mi.field .fk::after {
+    content: ": ";
+  }
+  .mi.state .glyph {
     display: inline-block;
+    width: 15px;
+    height: 15px;
+    vertical-align: -3px;
+    margin-right: 3px;
+  }
+  .mi.state .glyph :global(svg) {
+    width: 100%;
+    height: 100%;
   }
   .lock {
     display: inline-flex;
-    flex-shrink: 0;
+    vertical-align: -3px;
+    margin-left: 4px;
     color: var(--accent);
+  }
+  /* A card with no date shows the calendar icon only on hover; always showing it would
+    fill a column with plus signs (the same reason as Agenda's). It is absolutely
+    positioned over the checkbox's indent gap at the start of the meta line (card-meta's
+    padding-left of 25px, structurally always blank), out of the flow and overlapping
+    nothing — hidden with opacity in the flow it would still take space, and floating it
+    in the bottom-right corner would land it on the note's name; both were tried and
+    failed. Not `.add-date`: that class is the quick-create form's date input */
+  .ghost-date {
+    position: absolute;
+    left: 10px;
+    bottom: 7px;
+    display: inline-flex;
+    align-items: center;
+    opacity: 0;
+    pointer-events: none;
+    border: 1px dashed var(--fg-faint);
+    border-radius: 4px;
+    background: var(--bg-hover);
+    color: var(--fg-muted);
+    padding: 0 5px;
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+  }
+  .ghost-date :global(svg) {
+    width: 0.9em;
+    height: 0.9em;
+  }
+  .card:hover .ghost-date,
+  .ghost-date:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .ghost-date:hover {
+    color: var(--accent);
+    border-color: var(--accent);
   }
   /* An empty column is normally a quiet dashed placeholder (it does not say "no tasks"), and while armed for a drag it lights up with accent and a hint */
   .col-empty {
@@ -1303,40 +1363,15 @@
     width: 14px;
     height: 14px;
   }
-  .field-chip .fk {
-    color: var(--fg-faint);
-    margin-right: 3px;
-  }
-  .field-chip .fk::after {
-    content: ":";
-  }
-  /* A state field's chip and a state column's header glyph (chips.ts), at the checkbox's 15px; the glyph colours itself */
-  .state-chip .glyph,
+  /* A state column's header glyph (chips.ts, which colours itself) stands in for the tone dot */
   .col-glyph {
     display: inline-flex;
     width: 15px;
     height: 15px;
     flex-shrink: 0;
   }
-  .state-chip .glyph :global(svg),
   .col-glyph :global(svg) {
     width: 100%;
     height: 100%;
-  }
-  .state-chip {
-    padding-left: 4px;
-  }
-  /* The priority chip: the icon alone, in danger when it presses */
-  .pri-chip {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 4px;
-  }
-  .pri-chip :global(svg) {
-    width: 0.95em;
-    height: 0.95em;
-  }
-  .pri-chip.urgent {
-    color: var(--danger);
   }
 </style>
