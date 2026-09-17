@@ -640,13 +640,14 @@
               <!-- The field the pending drop writes: activeField, the same one dropEdit picks -->
               {@const pendField = pend ? activeField(card) : null}
               {@const w = mainDate(card, pendField)}
-              <li>
+              <!-- doing on the li: the row after a doing card draws no separator of its own
+                (the card's frame is the separation) -->
+              <li class:doing={card.state === "doing"}>
                 <!-- A done card dragged out is reopened by the drop, and the provisional card already shows it so -->
                 <div
                   class="card"
                   class:doing={card.state === "doing"}
                   class:done={isClosed(card.state) && !pend}
-                  class:pending={!!pend}
                   class:held={heldKey === taskKey(card)}
                   role="button"
                   tabindex="0"
@@ -680,7 +681,10 @@
                   </div>
                   <!-- The rest of the card as one line: the scheduled day when the due date holds
                     the main slot (its clock icon is what tells the two dates apart, so it is the
-                    one date that keeps an icon), the priority, the fields, the tags, the note -->
+                    one date that keeps an icon), the priority, the fields, the tags, the note.
+                    A done card has none: it is a record, one struck line, and its note is one
+                    click away (the same as the glance list's rows) -->
+                  {#if pend || !isClosed(card.state)}
                   <div class="card-meta">
                     {#if metaScheduled(card, pendField)}
                       {@render dateChip(card, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: card.scheduled ?? "" }), nearDate(card.scheduled ?? ""), "mi date", true)}
@@ -710,6 +714,7 @@
                     {/if}
                     {#if vault.privatePaths.has(card.hit.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
                   </div>
+                  {/if}
                 </div>
               </li>
             {:else}
@@ -860,12 +865,6 @@
     gap: 8px;
     align-items: center;
   }
-  /* Inside the strip the count badge returns to horizontal writing: following vertical-rl would
-    turn it into a horizontal capsule poking out of the 34px strip (screenshots caught "20"
-    overflowing and "13" being clipped) */
-  .col.collapsed .count {
-    writing-mode: horizontal-tb;
-  }
   /* The collapse chevron: Agenda's group language — down while open, right once folded.
      Hidden until the header is hovered while open; on the strip it stays, since the strip
      has nothing else that says it opens. An inline svg is not turned by vertical-rl (only
@@ -892,6 +891,8 @@
     outline-offset: -2px;
     background: var(--accent-soft);
   }
+  /* The head is set off from its list by a hairline (the reference screens' title rule);
+     the hover rounds its top corners only, so the highlight sits on the line */
   .col-head {
     display: flex;
     align-items: center;
@@ -899,10 +900,16 @@
     font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--fg-muted);
-    padding: 4px 6px 8px;
+    padding: 4px 6px 7px;
+    margin-bottom: 2px;
     white-space: nowrap;
-    border-radius: 6px;
+    border-bottom: 1px solid var(--border);
+    border-radius: 6px 6px 0 0;
     text-align: left;
+  }
+  .col.collapsed .col-head {
+    border-bottom: 0;
+    border-radius: 6px;
   }
   .col-head:hover {
     background: var(--bg-hover);
@@ -929,14 +936,13 @@
   .dot[data-tone="faint"] {
     background: var(--fg-faint);
   }
+  /* The count as a bare figure beside the title (a pill was one more box on a board that
+     now has none); in the strip it turns with the title, since it is text like it */
   .count {
     font-size: var(--fs-xs);
     font-weight: 400;
-    color: var(--fg-muted);
-    background: var(--bg-hover);
-    border-radius: 999px;
-    padding: 0 6px;
-    line-height: 1.6;
+    color: var(--fg-faint);
+    font-variant-numeric: tabular-nums;
   }
   .cards {
     list-style: none;
@@ -954,8 +960,16 @@
     overscroll-behavior: contain;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 2px;
+    padding: 0 2px 2px;
+  }
+  /* A hairline between rows rather than a frame around each: the column is a list, and the
+     one framed thing in it is the card in progress (below). The row after that card draws
+     none, its frame is the separation */
+  .cards > li + li > .card {
+    border-top: 1px solid var(--border);
+  }
+  .cards > li.doing + li > .card {
+    border-top-color: transparent;
   }
   /* A thin scrollbar inside a column (the global 8px is too loud) */
   .cards::-webkit-scrollbar {
@@ -966,12 +980,9 @@
     border-radius: 3px;
   }
   .card {
-    /* relative: the positioning anchor of the ghost "+" chip */
+    /* relative: the positioning anchor of the ghost "+" button */
     position: relative;
-    background: var(--bg-panel);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 10px;
+    padding: 7px 8px;
     font-size: var(--fs-sm);
     cursor: pointer;
     -webkit-user-select: none;
@@ -981,14 +992,21 @@
   .card:hover,
   .card.held {
     background: var(--bg-hover);
-    border-color: var(--fg-faint);
+    border-radius: 6px;
   }
-  /* doing is orthogonal to the dates: an accent bar on the left edge plus the half-filled
-     check icon, already sorted to the top of its column. The bar is an inset shadow rather
-     than a wider border: a border would push the card's content 2px to the right, and the
-     checkboxes of a column would no longer sit on one line */
+  /* doing is orthogonal to the dates: the one framed card in the list — a panel with a
+     hairline and an accent bar on the left edge, plus the half-filled checkbox — already
+     sorted to the top of its column. The bar is an inset shadow rather than a wider
+     border: a border would push the card's content 2px to the right, and the checkboxes
+     of a column would no longer sit on one line. Its frame is 1px wider than a row, so
+     its padding gives 1px back and the checkboxes still line up */
   .card.doing {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
     box-shadow: inset 3px 0 0 var(--accent);
+    padding: 6px 7px;
+    margin: 2px 0 3px;
   }
   /* A done card is quietened as a whole and becomes readable again on hover */
   .card.done {
@@ -1004,13 +1022,6 @@
     text-decoration: line-through;
     -webkit-line-clamp: 1;
     line-clamp: 1;
-  }
-  /* The card of a drop still landing (pendingDrop): a dashed accent frame says "provisional",
-     kept through the write's few milliseconds until the reload draws the card plain */
-  .card.pending,
-  .card.pending:hover {
-    border-color: var(--accent);
-    border-style: dashed;
   }
   .card-main {
     display: flex;
@@ -1070,8 +1081,9 @@
   .when.overdue {
     color: var(--danger);
   }
-  /* The provisional date of a drop still landing: the accent with the ghost's dash
-     underneath, until the write's reload draws the card plain */
+  /* The provisional date of a drop still landing (pendingDrop): the accent with the
+     ghost's dash underneath says "provisional", kept through the write's few milliseconds
+     until the reload draws the card plain */
   .when.pending {
     color: var(--accent);
     border-bottom: 1px dashed var(--accent);
@@ -1162,8 +1174,8 @@
     failed. Not `.add-date`: that class is the quick-create form's date input */
   .ghost-date {
     position: absolute;
-    left: 10px;
-    bottom: 7px;
+    left: 8px;
+    bottom: 6px;
     display: inline-flex;
     align-items: center;
     opacity: 0;
