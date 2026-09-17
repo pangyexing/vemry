@@ -7,19 +7,17 @@ tags: [paper]
 
 # Attention Is All You Need
 
-A paper under study (the `study` skill's landing shape). The source is
-[[papers/vaswani-2017/source]], one paragraph per block so the chapters can cite
-and embed it; the chapters explain one idea each and carry a lab block where the
-idea is numeric; the cards come from the gaps in the reader's own retelling.
+Vaswani et al., 2017. The source is [[papers/vaswani-2017/source]], one paragraph per block; each chapter embeds the paragraphs it rests on and explains one idea. Reading it to understand the mechanism, not to reproduce it.
 
 ## Known
 
-- What attention is for — [[research/Sleep and Memory]] does not cover it; nothing in this vault does yet
+- Nothing in this vault yet — this is the first paper here, so the chapters start from zero
 
 ## To learn
 
 - Why the scores are divided by $\sqrt{d_k}$
-- What a head is, and why several
+- What a head is, and why eight of them
+- How a model with no recurrence knows where a token stands
 
 ## Chapters
 
@@ -27,3 +25,7 @@ idea is numeric; the cards come from the gaps in the reader's own retelling.
 tag: chapter
 text: "#chapter"
 ```
+
+## Experiments to add
+
+- [[02 Multi-head attention]] — move the number of heads with the total width fixed; watch what each head's attention picks out on three tokens

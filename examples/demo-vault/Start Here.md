@@ -5,53 +5,42 @@ tags: [meta]
 
 # Start Here
 
-This is a small, real vault. Every file is plain Markdown on disk — open the
-folder in Finder and you will see exactly what you see here.
+This is one learner's vault: a paper being read in chapters, the cards it left behind, a research thread on what sleep does to memory, a nap experiment that uses the cards as its test, an inbox of quick captures, a clipped page, a journal and a private folder. Every file is plain Markdown — open the folder in any editor and it is all there.
 
-It holds one paper worked through end to end, and enough around it that all seven
-projections have something to show. Open them from the activity bar on the far
-edge of the window, or with ⌘P.
+It is a snapshot of one week in September 2026, so the dates read from there.
 
-## What is in here
+## What is where
 
-- [[Attention Is All You Need]] — the paper under study: its source in blocks
-  (`papers/vaswani-2017/source.md`), a chapter with a lab block you can run and
-  drag, and the cards its gaps left. This is what *Study a paper* produces.
-- [[Sleep and Memory]] — the research thread, with claims that evidence points at,
-  and [[cards/Sleep and Memory|its cards]], the deck the Review view draws from
-- [[Open Questions]] — what is still unsettled
-- [[Self-Experiment]] — the project, with the tasks that fill Agenda and the board
-- [[Reading Queue]] — what is queued, in progress and done
-- [[2026-08-25]] — the most recent journal entry
+- [[Attention Is All You Need]] — the paper under study, as *Study a paper* leaves it: the source in blocks, three chapters at three stages, an experiment you can run, and [[papers/vaswani-2017/cards|the cards]] made from the gaps in the retelling
+- [[Sleep and Memory]] — a research thread: claims, and the evidence notes that point at them; one claim has nothing behind it yet
+- [[Nap Experiment]] — a project: its tasks fill Agenda and the board, its decision and its hypothesis are typed blocks, and its raw log is in [[Health Log]], which the AI cannot see
+- [[Reading Queue]] — what is done, in progress, due and undated
+- [[inbox]] — quick captures waiting to be filed
+- [[2026-09-16]] — the latest journal entry
 
-## Everything below is live
+## Where to look
 
-This is a query block. It is plain Markdown — a fenced block any renderer shows
-as code — but vemry runs it and renders the result, refreshing as the index changes.
+Every view on the activity bar is a query over the same index; nothing is stored twice. What is due right now, across the whole vault:
 
 ```vemry-query
 kind: task
 task_state: todo
-limit: 5
+due_before: today
 ```
 
-Claims and evidence are ordinary callouts, so they survive anywhere:
-
-> [!claim] A vault you cannot leave is not yours ^ownership
-
-> [!evidence] Every extension in this vault degrades to readable Markdown
-> supports:[[Start Here#^ownership]]
-> The dialect and its fallbacks are written down in docs/SYNTAX.md — that document
-> is the receipt for this claim, not a promise.
+- **Agenda** — today, overdue, upcoming; the write-up stays grey until the log it waits on is done
+- **Board** — the same tasks in columns; drag a card to reschedule it
+- **Claims** and **Evidence** — every claim, and which of them nothing supports yet
+- **Review** — the cards that are due; a grade is written onto the card's own line
+- **Graph** — how the notes connect; the two private notes are on it for you, not for the model
+- **Session Replay** — a past AI session, including an edit that was refused at the gate and never reached the file
 
 ## Try this
 
-1. Open [[Attention Is All You Need]], then its chapter: every sentence links back
-   to the block of the source it came from, and the lab block runs in place
-2. Open the Review view (the stacked cards in the activity bar) and grade a card —
-   the grade is written onto the card's last line, in the note
-3. With an API key set, open the AI panel, pick *Study a paper* and paste an arXiv
-   link; or ask it to check your retelling of the chapter you just read
-4. ⌘P — every capability in the app is in that one list
-5. Mark `private/` as a privacy zone and ask the AI to list your notes — it will
-   not see the folder, and it will not know it is missing
+1. Open [[01 Scaled dot-product attention]] and press Run on the experiment: drag $d_k$ with the scale off and watch the weights collapse onto one key
+2. Open the Review view and grade a card
+3. Press ⌥⇧Space (Alt+Shift+Space on Windows and Linux) from any app, type a line, press Enter: it lands in [[inbox]]. With an API key set, ask the AI to *file the inbox* — it proposes a home for each capture and moves the blocks you approve
+4. Ask the AI to *check my retelling* of chapter 1: it reads *In my words* against the source blocks and says where the retelling drifts
+5. Ask it to *study* another paper — paste an arXiv link
+6. Ask it to list every note in this vault: `private/` is not in the answer, and it does not know that anything is missing
+7. ⌘P — every command, including the two this vault's scripts add: *Open today's journal note* and *What is due today?*

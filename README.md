@@ -123,8 +123,11 @@ included, is in one searchable palette (⌘P).
    [Releases](https://github.com/pangyexing/vemry/releases), or
    [build from source](#build-from-source).
 2. **Open the example vault.** Clone this repo, then ⌘P → *Open another vault…* →
-   `examples/demo-vault`. It is a small real vault with one paper worked through
-   end to end.
+   `examples/demo-vault`. It is one learner's vault from a week in September 2026:
+   a paper read in chapters with an experiment you can run, the cards it left, a
+   research thread with its claims and evidence, a nap experiment with its tasks, an
+   inbox of quick captures, a clipped page, a journal and a private folder. Its
+   *Start Here* note is the tour.
 3. **Add an AI key** (optional). Settings → API key. Any OpenAI-compatible
    endpoint works, including a local Ollama; the mainland default is Zhipu, whose
    `glm-4.7-flash` is free and supports tool calls. Or switch the provider to *vemry

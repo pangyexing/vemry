@@ -1514,6 +1514,37 @@ mod tests {
     }
 
     #[test]
+    fn demo_vault_lab_blocks_all_run_clean() {
+        // every js fence in the demo vault's chapters is a lab block a reader will
+        // press Run on: each must run without error and declare a lab
+        let papers = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo-vault/papers");
+        let mut fences = Vec::new();
+        for paper in std::fs::read_dir(&papers).unwrap() {
+            let Ok(chapters) = std::fs::read_dir(paper.unwrap().path().join("chapters")) else { continue };
+            for entry in chapters {
+                let path = entry.unwrap().path();
+                let note = std::fs::read_to_string(&path).unwrap();
+                let mut rest = note.as_str();
+                while let Some(start) = rest.find("```js\n") {
+                    let code = &rest[start + 6..];
+                    let end = code.find("\n```").expect("the closing fence");
+                    fences.push((path.display().to_string(), code[..end].to_string()));
+                    rest = &code[end + 4..];
+                }
+            }
+        }
+        assert!(fences.len() >= 2, "the demo vault ships at least two lab blocks, found {}", fences.len());
+        let (_d, vault) = fixture(&[]);
+        let bridge = TestBridge::new(false);
+        let host = spawn_host(&vault, &bridge, false);
+        for (path, code) in &fences {
+            let r = host.eval_block(code, None, None);
+            assert_eq!(r.error, None, "{path}: {}", r.output);
+            assert!(r.lab.is_some(), "{path}: no lab declared");
+        }
+    }
+
+    #[test]
     fn lab_api_is_absent_from_script_contexts() {
         // the lab is enabled by the params global the block path sets; a script's
         // context never has it, so the API refuses rather than accumulating a spec

@@ -14,3 +14,8 @@ examples/*/.vemry/scripts.json
 # The model-history sidecar beside a session log: it carries the whole system
 # prompt and is regenerated on demand. The .jsonl audit log is the shipped artifact.
 examples/*/.vemry/sessions/*.history.json
+# Caches and ledgers the app keeps beside them: the block-time cache, the provenance
+# ledger and the edit history are regrown from the notes themselves.
+examples/*/.vemry/block-times.json
+examples/*/.vemry/provenance.jsonl
+examples/*/.vemry/history/

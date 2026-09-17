@@ -5,11 +5,11 @@ private: true
 
 # Health Log
 
-This note is inside a privacy zone. The AI never reads it, never writes to it, and
-never sees it in a prompt — not "access denied", absent. Ask the agent to list every
-note in this vault and it will not mention this file, because as far as the model is
-concerned it does not exist.
+The raw log for [[Nap Experiment]]: one row per day, filled in the evening.
 
-You still see it normally, with a 🔒 on its row in the file tree.
+| day | kind | slept | nap | evening cards |
+|---|---|---|---|---|
+| 2026-09-15 | control | 6h50 | — | 7 of 9 |
+| 2026-09-16 | nap | 7h10 | 22 min | 8 of 9 |
 
-Nothing sensitive is actually in here — it is a demonstration.
+Woke at 06:40 both days. Coffee only before noon, on both kinds of day.
