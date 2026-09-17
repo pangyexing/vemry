@@ -168,13 +168,19 @@ class HandlePlugin {
     const view = this.view;
     const base = view.scrollDOM.getBoundingClientRect();
     const content = view.contentDOM.getBoundingClientRect();
+    // The grip is centred on whatever stands at the block's first position: a character's
+    // rect (the font's content area, centred in its line) or, on a task line, the checkbox
+    // widget's box (15px, sitting on the text's centre). Centred, not top-aligned with a
+    // clamp: both rects are shorter than the grip, and top-aligning put the grip's centre
+    // 1.5px under a paragraph's and 3.5px under a task's — the task's visibly so beside
+    // its checkbox
     const coords = view.coordsAtPos(b.from, 1);
     const lb = view.lineBlockAt(b.from);
     const top = coords ? coords.top - base.top + view.scrollDOM.scrollTop : lb.top;
     const lineH = coords ? coords.bottom - coords.top : lb.height;
     const left = content.left - base.left + view.scrollDOM.scrollLeft + CONTENT_PAD - FOLD_TOGGLE_HANG - HANDLE_W;
     this.handle.style.left = `${Math.max(0, left)}px`;
-    this.handle.style.top = `${top + Math.max(0, (lineH - HANDLE_H) / 2)}px`;
+    this.handle.style.top = `${top + (lineH - HANDLE_H) / 2}px`;
   }
 
   hide() {
