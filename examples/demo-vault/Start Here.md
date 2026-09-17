@@ -33,7 +33,7 @@ due_before: today
 - **Claims** and **Evidence** — every claim, and which of them nothing supports yet
 - **Review** — the cards that are due; a grade is written onto the card's own line
 - **Graph** — how the notes connect; the two private notes are on it for you, not for the model
-- **Session Replay** — a past AI session, including an edit that was refused at the gate and never reached the file
+- **Session Replay** — two past AI sessions: the inbox being filed (the plan, the card, four moves, each write through the gate), and an earlier edit that was refused at the gate and never reached the file
 
 ## Try this
 
