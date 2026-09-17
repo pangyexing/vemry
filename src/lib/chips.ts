@@ -28,25 +28,26 @@ export function stateTone(step: number, of: number): StateTone {
   return step <= 0 ? "idle" : "active";
 }
 
-/** The glyph of step `step` of `of`: a rounded box filling the 24 viewBox (drawn at
- *  15px its stroke is 1.5px and its radius 4px), empty at the first step, filled from
+/** The glyph of step `step` of `of`: a box filling the 24 viewBox with a small radius
+ *  (drawn at 15px its stroke is 1.5px and its corners 2.5px — a square with the corners
+ *  taken off, the shape of a checkbox, not a pill), empty at the first step, filled from
  *  the bottom by the share of the way through in between, solid with a white tick at
  *  the last; a cancelled task is the empty box crossed out — closed, but not by being
  *  done. The partial fill is a path with square top corners and rounded bottom ones (a
- *  liquid level, not a pill) rather than a clipped rect, so that no clipPath id is
- *  minted per glyph (ids are document-global). */
+ *  liquid level) rather than a clipped rect, so that no clipPath id is minted per glyph
+ *  (ids are document-global). */
 export function stateGlyphSvg(step: number, of: number, cancelled = false): string {
   const last = of <= 1 || step >= of - 1;
   const kind: StateTone | "cancel" = cancelled ? "cancel" : last ? "done" : step > 0 ? "active" : "idle";
-  let inner = `<rect x="1.5" y="1.5" width="21" height="21" rx="6"${kind === "done" ? ' fill="currentColor"' : ""}/>`;
+  let inner = `<rect x="1.5" y="1.5" width="21" height="21" rx="4"${kind === "done" ? ' fill="currentColor"' : ""}/>`;
   if (kind === "cancel") inner += '<path d="m7.5 7.5 9 9M16.5 7.5l-9 9"/>';
-  else if (kind === "done") inner += '<path d="m6.6 12.4 3.7 3.7 7.3-8.2" stroke="#fff" stroke-width="2.6"/>';
+  else if (kind === "done") inner += '<path d="m6.3 12.3 4 4 7.4-8.6" stroke="#fff" stroke-width="2.8"/>';
   else if (kind === "active") {
     // The box's inner edge sits at 2.7 (the stroke's centre plus half its width) on every
     // side; the fill is that share of the inner height, its bottom corners following the
     // box's inner radius, shrunk when the level is lower than the radius
     const h = Math.round(((18.6 * step) / (of - 1)) * 100) / 100;
-    const r = Math.min(4.5, h);
+    const r = Math.min(2.8, h);
     const top = Math.round((21.3 - h) * 100) / 100;
     inner += `<path d="M2.7 ${top}H21.3V${21.3 - r}A${r} ${r} 0 0 1 ${21.3 - r} 21.3H${2.7 + r}A${r} ${r} 0 0 1 2.7 ${21.3 - r}Z" fill="currentColor" stroke="none"/>`;
   }
