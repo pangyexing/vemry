@@ -59,11 +59,15 @@ pub fn install(_app: &AppHandle) -> tauri::Result<()> {
 pub fn listen(app: &AppHandle) {
     app.on_menu_event(|app, e| {
         let id = e.id().as_ref();
-        if crate::tray::on_menu_event(app, id) {
-            return;
-        }
+        let handled = crate::tray::on_menu_event(app, id);
         #[cfg(target_os = "macos")]
-        imp::on_menu_event(app, id);
+        if !handled {
+            imp::on_menu_event(app, id);
+        }
+        // Off macOS the tray's ids are all there is (an early `return` here would
+        // be the closure's last statement and trip clippy's needless_return)
+        #[cfg(not(target_os = "macos"))]
+        let _ = handled;
     });
 }
 
