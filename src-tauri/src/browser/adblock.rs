@@ -180,7 +180,20 @@ pub fn compile_content_rules(lists: &[&str]) -> Result<(String, String, usize), 
     // Must always be the last one: it lets first-party document requests through (an approximation of the ABP semantics)
     rules.push(adblock::content_blocking::ignore_previous_fp_documents());
     let count = rules.len();
-    let json = serde_json::to_string(&rules).map_err(|e| e.to_string())?;
+    // `trigger.resource-type` is a HashSet in the crate, so serde writes it in
+    // per-process random order. Hashed as-is, every launch produced a new
+    // identifier: WKContentRuleListStore compiled the same rules again and kept
+    // every generation in its disk cache (measured on one machine: 444 lists,
+    // 7.3 GB). The set is order-free for WebKit, so it is sorted before hashing
+    let mut value = serde_json::to_value(&rules).map_err(|e| e.to_string())?;
+    if let Some(arr) = value.as_array_mut() {
+        for rule in arr {
+            if let Some(types) = rule.pointer_mut("/trigger/resource-type").and_then(|v| v.as_array_mut()) {
+                types.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+            }
+        }
+    }
+    let json = serde_json::to_string(&value).map_err(|e| e.to_string())?;
     // The produced JSON is content-addressed: change the rules or the compilation
     // behaviour and the identifier changes, so WKContentRuleListStore's disk cache
     // rolls over on its own
@@ -820,6 +833,28 @@ example.com###ad-banner
         assert_eq!(id1, id2, "the same input must give the same identifier (the disk cache hit depends on it)");
         let (_, id3, _) = compile_content_rules(&[SAMPLE_RULES, "||more.example.org^"]).unwrap();
         assert_ne!(id1, id3, "changed rules must roll the identifier over");
+    }
+
+    #[test]
+    fn identifier_does_not_depend_on_hash_set_order() {
+        // Several resource types on one rule: the crate keeps them in a HashSet,
+        // and an unsorted serialisation rolled the identifier on every launch
+        let rules = "[Adblock Plus 2.0]\n||ads.example.com^$script,image,stylesheet,font,media\n";
+        let (json, _, _) = compile_content_rules(&[rules]).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let mut seen = false;
+        for rule in parsed.as_array().unwrap() {
+            if let Some(types) = rule.pointer("/trigger/resource-type").and_then(|v| v.as_array()) {
+                if types.len() > 1 {
+                    seen = true;
+                    let names: Vec<&str> = types.iter().map(|t| t.as_str().unwrap()).collect();
+                    let mut sorted = names.clone();
+                    sorted.sort();
+                    assert_eq!(names, sorted, "{rule}");
+                }
+            }
+        }
+        assert!(seen, "the sample must yield a rule with several resource types");
     }
 
     #[test]
