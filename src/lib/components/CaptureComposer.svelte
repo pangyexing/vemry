@@ -36,7 +36,7 @@
     id: number;
     /** The file name it lands under (a stamp for bytes, the original name for a path). */
     name: string;
-    bytes?: Uint8Array;
+    bytes?: Uint8Array<ArrayBuffer>;
     path?: string;
     /** A preview for bytes (an object URL, revoked on removal); a path outside the vault has none and shows its name. */
     url: string | null;
@@ -308,7 +308,7 @@
       if (p.paths?.length) addPaths(p.paths);
     }
   }
-  function addBytes(bytes: Uint8Array, file: string) {
+  function addBytes(bytes: Uint8Array<ArrayBuffer>, file: string) {
     const url = fileKind(file) === "image" ? URL.createObjectURL(new Blob([bytes])) : null;
     shots = [...shots, { id: nextShot++, name: file, bytes, url }];
     error = null;
