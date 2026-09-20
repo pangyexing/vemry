@@ -1530,6 +1530,7 @@ add("chat.", {
     "actionsStayTick": ("Give it a target note first", "先填目标笔记才能移动"),
     "actionsStayAll": ("Leave them", "都留在原处"),
     "actionsStayShort": ("stays", "留在原处"),
+    "actionsNoMatch": ("No note matches", "没有匹配的笔记"),
     "turnWrote": ("This turn wrote {m} notes · {n} blocks await review", "本轮写入 {m} 篇 · {n} 块待审阅"),
     "reviewStart": ("Review", "开始审阅"),
     "reviewStartHint": ("Open the first of those notes on its first AI change; {accept} marks a change reviewed and moves on, {next} steps without deciding", "打开第一篇，落到第一处 AI 修改；{accept} 标为已审阅并前进，{next} 只前进不决定"),

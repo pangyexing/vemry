@@ -251,6 +251,7 @@
   "chat.actionsCancelled": "Cancelled",
   "chat.actionsDue": "due",
   "chat.actionsDuplicate": "looks like an existing task → {path}",
+  "chat.actionsNoMatch": "No note matches",
   "chat.actionsOwner": "owner",
   "chat.actionsReject": "✕ Discard",
   "chat.actionsRejected": "Discarded",

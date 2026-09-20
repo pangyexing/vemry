@@ -16,13 +16,14 @@
   import { POSITIONAL_RE, TRANSIENT_CITE_RE, blocksOf, findBlock, materializeCitations, parseRefTarget } from "$lib/citation";
   import AtPicker, { linesLabel } from "./AtPicker.svelte";
   import SkillPicker from "./SkillPicker.svelte";
+  import NoteSuggest from "./NoteSuggest.svelte";
   import { groupSkills, skillAskByName, skillDesc, skillTitle, skillTitleByName } from "$lib/skills";
   import RefIcon, { type RefIconKind } from "./RefIcon.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
   import { tick, untrack } from "svelte";
   import { hostDispatch } from "$lib/host";
   import { isAgentWindow } from "$lib/window";
-  import { vault, baseOf, fileKind, noteBucketOf, stemOf } from "$lib/stores/vault.svelte";
+  import { vault, baseOf, fileKind, noteBucketOf, parentOf, stemOf } from "$lib/stores/vault.svelte";
   import { clips } from "$lib/stores/clips.svelte";
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -520,6 +521,7 @@
   let actionRows = $state<ActionRow[]>([]);
   $effect(() => {
     const req = agent.pendingActions;
+    targetPick = null; // the boxes are rebuilt with the rows: no box of the old card has the focus
     if (!req) {
       actionRows = [];
       return;
@@ -575,6 +577,45 @@
   function stayPlaceholder(r: ActionRow): string {
     const note = r.source ? noteOf(r.source) : "";
     return note ? t("chat.actionsStayTarget", { note }) : t("chat.actionsStayPut");
+  }
+  /** The target box with the focus: its row, the box, the row body its candidate list spans,
+   *  and whether that list is open — Esc closes the list while the focus stays, so the box
+   *  is still being edited (and shows its raw path rather than the veil). */
+  let targetPick = $state.raw<{ row: number; el: HTMLInputElement; within: HTMLElement; open: boolean } | null>(null);
+  let suggest = $state<NoteSuggest | null>(null);
+  /** The homes already chosen on the card: the candidate list leads with them when the box is empty. */
+  const cardTargets = $derived(actionRows.map((x) => x.target.trim()).filter(Boolean));
+  function focusTarget(row: number, el: HTMLInputElement) {
+    targetPick = { row, el, within: el.closest<HTMLElement>(".act-body") ?? el, open: true };
+  }
+  function openTargetList() {
+    if (targetPick && !targetPick.open) targetPick = { ...targetPick, open: true };
+  }
+  function closeTargetList() {
+    if (targetPick?.open) targetPick = { ...targetPick, open: false };
+  }
+  /** Typing in a staying row's box: the tick follows it (a home typed in makes it a move,
+   *  cleared again it stays); typing in any box brings the list back after an Esc. */
+  function typeTarget(r: ActionRow, value: string) {
+    if (r.stay) r.keep = value.trim().length > 0;
+    openTargetList();
+  }
+  function pickTarget(path: string) {
+    if (!targetPick) return;
+    const r = actionRows[targetPick.row];
+    if (r) {
+      r.target = path;
+      if (r.stay) r.keep = true;
+    }
+    closeTargetList();
+  }
+  /** The box's keys go to the open list first; ↓ on a closed list reopens it. */
+  function targetKey(e: KeyboardEvent) {
+    if (suggest?.handleKey(e)) return;
+    if (e.key === "ArrowDown" && targetPick && !targetPick.open) {
+      e.preventDefault();
+      openTargetList();
+    }
   }
   function submitActions() {
     const items = actionRows
@@ -1990,6 +2031,7 @@
           {#if pendingActs}
             {#each actionRows as r, ri (ri)}
               {@const untargeted = r.stay && !r.target.trim()}
+              {@const veiled = targetPick?.row !== ri && r.target.trim() !== ""}
               <div class="act-row" class:off={!r.keep} class:stay={r.stay}>
                 <!-- A staying row cannot be ticked without a home: the tick follows the target box -->
                 <label class="act-keep" title={untargeted ? t("chat.actionsStayTick") : undefined}>
@@ -2000,16 +2042,27 @@
                   <div class="act-meta">
                     <input class="act-owner" bind:value={r.owner} placeholder={t("chat.actionsOwner")} spellcheck="false" />
                     <input class="act-due" type="date" bind:value={r.due} title={t("chat.actionsDue")} />
-                    <input
-                      class="act-target"
-                      bind:value={r.target}
-                      oninput={(e) => {
-                        if (r.stay) r.keep = e.currentTarget.value.trim().length > 0;
-                      }}
-                      list="act-notes"
-                      placeholder={r.stay ? stayPlaceholder(r) : t("chat.actionsTarget")}
-                      spellcheck="false"
-                    />
+                    <!-- The box holds the path. Unfocused, a view over it shows the stem with the
+                         folder dimmed after it — a long path is told apart by its stem, not by the
+                         folder that repeats down the card — and the full path is the tooltip -->
+                    <div class="act-target-wrap" title={veiled ? r.target.trim() : undefined}>
+                      <input
+                        class="act-target"
+                        class:veiled
+                        bind:value={r.target}
+                        oninput={(e) => typeTarget(r, e.currentTarget.value)}
+                        onfocus={(e) => focusTarget(ri, e.currentTarget)}
+                        onblur={() => (targetPick = null)}
+                        onclick={openTargetList}
+                        onkeydown={targetKey}
+                        placeholder={r.stay ? stayPlaceholder(r) : t("chat.actionsTarget")}
+                        spellcheck="false"
+                      />
+                      {#if veiled}
+                        {@const dir = parentOf(r.target.trim())}
+                        <span class="act-target-view" aria-hidden="true"><span class="stem">{stemOf(r.target.trim())}</span>{#if dir}<span class="dir">{dir}</span>{/if}</span>
+                      {/if}
+                    </div>
                   </div>
                   {#if r.fields.length}
                     <!-- The extra fields (a scoring's numbers, say): each editable on the row, written afterwards as [key:: value] -->
@@ -2029,9 +2082,11 @@
                 </div>
               </div>
             {/each}
-            <datalist id="act-notes">
-              {#each vault.notes as n (n.id)}<option value={n.id}></option>{/each}
-            </datalist>
+            <!-- One list for the focused box, mounted outside the rows: a staying row's body is
+                 dimmed with opacity, which would dim a list rendered inside it along with it -->
+            {#if targetPick?.open && actionRows[targetPick.row]}
+              <NoteSuggest bind:this={suggest} anchor={targetPick.el} within={targetPick.within} query={actionRows[targetPick.row].target} pinned={cardTargets} onpick={pickTarget} onclose={closeTargetList} />
+            {/if}
             <div class="plan-actions">
               <button class="btn subtle" onclick={submitActionsReject}>{t("chat.actionsReject")}</button>
               <span class="plan-spacer"></span>
@@ -3358,8 +3413,48 @@
   .act-due {
     width: 9.5em;
   }
-  .act-target {
+  .act-target-wrap {
+    position: relative;
     flex: 1;
+    min-width: 0;
+    display: flex;
+  }
+  .act-target {
+    width: 100%;
+  }
+  /* Veiled: the box's own text is hidden and the view over it shows stem, then folder;
+     the box keeps the value, the focus and the tooltip */
+  .act-target.veiled {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+  .act-target-view {
+    position: absolute;
+    inset: 0;
+    padding: 0 7px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: var(--fs-xs);
+    white-space: nowrap;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  /* The stem is what tells the notes apart, so the folder gives way first: it only takes
+     what the stem leaves, and is ellipsized there */
+  .act-target-view .stem {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .act-target-view .dir {
+    flex: 1 1 0;
+    min-width: 0;
+    color: var(--fg-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .act-hint {
     font-size: 10px;

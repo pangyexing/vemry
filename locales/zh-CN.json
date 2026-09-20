@@ -251,6 +251,7 @@
   "chat.actionsCancelled": "已取消",
   "chat.actionsDue": "到期",
   "chat.actionsDuplicate": "疑似已有 → {path}",
+  "chat.actionsNoMatch": "没有匹配的笔记",
   "chat.actionsOwner": "负责人",
   "chat.actionsReject": "✕ 放弃",
   "chat.actionsRejected": "已放弃",
