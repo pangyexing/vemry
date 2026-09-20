@@ -8,7 +8,7 @@ description = "The web page → vault note clipping pipeline: Readability body e
 
 [dependencies]
 vemry-core = { path = "../vemry-core" }
-dom_smoothie = "0.17"
+dom_smoothie = "0.18"
 htmd = "0.5"
 # The math sentinel handler reads the node text of an htmd Element — kept on the
 # same version as htmd

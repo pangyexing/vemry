@@ -64,6 +64,9 @@ pub struct AppState {
 }
 
 pub fn run() {
+    // Before any HTTP client exists (account, ad-block rule downloads, the image
+    // proxy, the agent): see the note on the function
+    vemry_agent::client::install_tls_provider();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // In-app updates: the check is user-initiated by default (a setting can turn

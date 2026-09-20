@@ -12,8 +12,8 @@ thiserror.workspace = true
 chrono.workspace = true
 # Web URL normalisation (weburl.rs): shared by the clip reverse lookup and the browser
 url = "2"
-notify = "6.1"
-notify-debouncer-full = "0.3"
+notify = "8"
+notify-debouncer-full = "0.7"
 ignore = "0.4"
 rayon = "1"
 walkdir = "2"

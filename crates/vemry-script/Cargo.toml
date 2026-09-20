@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 vemry-core = { path = "../vemry-core" }
-rquickjs = { version = "0.12", features = ["bindgen"] }
+rquickjs = { version = "0.14", features = ["bindgen"] }
 cron = "0.17"
 chrono.workspace = true
 serde.workspace = true

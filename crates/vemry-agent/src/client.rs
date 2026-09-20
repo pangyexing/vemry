@@ -29,11 +29,25 @@ const CANCEL_TICK: Duration = Duration::from_secs(2);
 pub fn shared_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
+        install_tls_provider();
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .build()
             .unwrap_or_default()
     })
+}
+
+/// Installs ring as the process-wide rustls crypto provider, once. reqwest's
+/// `rustls-no-provider` feature (the one that keeps aws-lc-rs and its C build
+/// out of the tree) refuses to build a client until a provider is installed and
+/// does not pick the single compiled-in one by itself. Every client builder in
+/// the process calls this first; the app calls it at startup as well, so the
+/// order in which the clients are first used does not matter.
+pub fn install_tls_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        // A concurrent first caller may win the race; that is the same provider.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
 }
 
 /// The client's `User-Agent` towards the relay: `vemry/<version> (<os>; <arch>)`,

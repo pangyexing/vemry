@@ -13,7 +13,12 @@ chrono.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 similar.workspace = true
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+# rustls-no-provider plus rustls/ring: the crypto provider stays ring, which the
+# tree already carries through tauri-plugin-updater. reqwest's plain `rustls`
+# feature would select aws-lc-rs instead, a C build that needs CMake and NASM
+# on Windows and adds a second provider to the binary
+reqwest = { version = "0.13", features = ["json", "stream", "rustls-no-provider"], default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 eventsource-stream = "0.2"
 futures-util = "0.3"
 # Image references filled in as data URLs (only while the runner assembles a

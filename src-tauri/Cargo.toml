@@ -42,9 +42,11 @@ sys-locale = "0.3"
 adblock = { version = "0.13", default-features = false, features = ["content-blocking", "embedded-domain-resolver"] }
 # Manual update downloads for the rule subscriptions (network only when the user
 # asks for it) plus the projection image proxy (the vemry-asset protocol, a
-# controlled egress behind SSRF validation). Reuses 0.12, the same version as
-# vemry-agent
-reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+# controlled egress behind SSRF validation). Reuses 0.13, the same version as
+# tauri and vemry-agent; the crypto provider (ring) is chosen in vemry-agent's
+# manifest and installed by `vemry_agent::client::install_tls_provider` at
+# startup, before any client here is built
+reqwest = { version = "0.13", features = ["rustls-no-provider"], default-features = false }
 # The content-addressed key of the image proxy's disk cache (URL → sha256; fnv is
 # not collision-resistant and must not be used for a cache key)
 sha2 = "0.10"
