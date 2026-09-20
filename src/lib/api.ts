@@ -862,6 +862,36 @@ export interface CaptureResult {
   error?: string;
 }
 
+/** One capture pulled from the phone inbox (inbox.rs InboxItem, the service's PullItem).
+ *  created_at is the phone's local time with its offset — the stamp the note gets; received_at
+ *  is the service's clock, the fallback when the phone's is a day or more out. */
+export interface InboxItem {
+  seq: number;
+  id: string;
+  created_at: string;
+  received_at: string;
+  text: string;
+  source: string;
+  url: string | null;
+  title: string | null;
+  door_kind: string;
+  door_name: string;
+}
+/** A paired phone (inbox.rs InboxDoor): kind is pwa | shortcut | other, name what the phone called itself. */
+export interface InboxDoor {
+  id: number;
+  kind: string;
+  name: string;
+  created_at: string;
+  last_seen_at: string | null;
+}
+/** A pairing code to show: the QR code as an SVG in currentColor, and when the code stops working. */
+export interface PairStart {
+  url: string;
+  expires_at: string;
+  svg: string;
+}
+
 /** An @ context reference: only the path identifier travels, and resolution (with the
  *  privacy gate) happens inside Rust's vault lock (the serde mirror of vemry-agent's
  *  context.rs; the two change together). */
@@ -1293,6 +1323,16 @@ export const api = {
   /** Fetch the entitlement snapshot again (a 304 when nothing changed). */
   accountRefresh: () => invoke<AccountStatus>("account_refresh"),
   accountRedeem: (code: string) => invoke<AccountStatus>("account_redeem", { code }),
+  // ---- the phone inbox (inbox.rs): items arrive on onInboxItems; the main window lands them and acks ----
+  /** The main window wrote these items into the vault (the ledger first, then the service). */
+  inboxAck: (ids: string[]) => invoke<void>("inbox_ack", { ids }),
+  /** These could not land (no vault open, a note that cannot be written); they are offered again in a few minutes. */
+  inboxFailed: (ids: string[]) => invoke<void>("inbox_failed", { ids }),
+  /** A fresh single-use pairing code, as the QR code the phone scans. */
+  inboxPairStart: () => invoke<PairStart>("inbox_pair_start"),
+  inboxDoors: () => invoke<InboxDoor[]>("inbox_doors"),
+  /** The phone's token stops working; what it already sent stays. */
+  inboxDoorRevoke: (id: number) => invoke<void>("inbox_door_revoke", { id }),
   agentStart: (
     message: string,
     currentNote: string | null,
@@ -1443,6 +1483,11 @@ export function onLanguageChange(handler: (lang: LangSetting) => void): Promise<
 /** Every change of account state (sign-in, sign-out, a refresh, a revoked token noticed by any request). */
 export function onAccountChanged(handler: (s: AccountStatus) => void): Promise<UnlistenFn> {
   return listen<AccountStatus>("account://changed", (event) => handler(event.payload));
+}
+
+/** Items pulled from the phone inbox (inbox://items): the main window lands them and acks or fails each. */
+export function onInboxItems(handler: (items: InboxItem[]) => void): Promise<UnlistenFn> {
+  return listen<{ items: InboxItem[] }>("inbox://items", (event) => handler(event.payload.items));
 }
 
 export function onVaultEvent(handler: (e: VaultEvent) => void): Promise<UnlistenFn> {

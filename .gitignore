@@ -17,5 +17,6 @@ examples/*/.vemry/sessions/*.history.json
 # Caches and ledgers the app keeps beside them: the block-time cache, the provenance
 # ledger and the edit history are regrown from the notes themselves.
 examples/*/.vemry/block-times.json
+examples/*/.vemry/inbox-seen.json
 examples/*/.vemry/provenance.jsonl
 examples/*/.vemry/history/

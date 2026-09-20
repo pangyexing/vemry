@@ -1942,6 +1942,22 @@ add("settings.capture.", {
     "pinnedHeading": ("Section (optional)", "小节(可选)"),
     "pinnedHeadingHint": ("A heading's text. When it is not found, the capture lands at the end of the note and says so.",
                           "标题文字。找不到时记到整篇末尾,并会提示。"),
+    # The phone inbox (inbox.rs): pairing by QR code, the paired phones
+    "phone": ("Phone", "手机"),
+    "phoneHint": ("A capture made on your phone lands here too, at the same spot as above. Pair the phone once by scanning a code; everything travels through your vemry account.",
+                  "手机上记的也会落到这里,落点同上。扫一次码就配好;一切经由你的 vemry 账户中转。"),
+    "phoneSignIn": ("Sign in on the Account page first.", "先在「账户」页登录。"),
+    "phoneShowCode": ("Show pairing code", "显示配对二维码"),
+    "phoneNewCode": ("New code", "换一个"),
+    "phoneCodeHint": ("Scan it with the phone's camera, or from inside the capture page. The code works once and expires in ten minutes; the page then explains how to add itself to the home screen.",
+                      "用手机相机扫,或在速记页里扫。二维码只能用一次,十分钟后失效;扫完后页面会说明怎样加到主屏幕。"),
+    "phonePaired": ("Phone paired", "手机已配对"),
+    "phoneDoors": ("Paired phones", "已配对的手机"),
+    "phoneNoDoors": ("No phone paired yet.", "还没有配对的手机。"),
+    "phoneRevoke": ("Revoke — this phone can no longer send", "吊销——这台手机不能再投递"),
+    "kindPwa": ("home-screen page", "主屏网页"),
+    "kindShortcut": ("iOS shortcut", "iOS 快捷指令"),
+    "kindOther": ("other", "其他"),
 })
 
 add("settings.translate.", {
@@ -1968,6 +1984,8 @@ add("app.", {
     "captureHotkeyFailed": ("{key} is held by another app — pick another quick capture shortcut in Settings",
                             "{key} 被其他软件占用——到设置里换一个速记快捷键"),
     "captureAnywhere": ("Capture a thought from any app: {key}", "随时记一条:{key},在任何软件里都行"),
+    "inboxLanded_one": ("1 capture from your phone filed in {target}", "手机上记的 1 条已记到 {target}"),
+    "inboxLanded_other": ("{n} captures from your phone filed in {target}", "手机上记的 {n} 条已记到 {target}"),
     "scriptError": ("Script {script}: {message}", "脚本 {script}: {message}"),
     "openVaultFirst": ("Open a vault first", "先打开一个知识库"),
     "pickVaultFolder": ("Pick a vault folder", "选择知识库文件夹"),

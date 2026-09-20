@@ -306,7 +306,7 @@ fn account_error(app: &AppHandle, status: u16, body: &str) -> String {
     }
 }
 
-fn on_unauthorized(app: &AppHandle) {
+pub(crate) fn on_unauthorized(app: &AppHandle) {
     if cached(app).token.is_empty() {
         return;
     }
@@ -316,15 +316,15 @@ fn on_unauthorized(app: &AppHandle) {
 
 // ---- the calls ----
 
-fn base() -> String {
+pub(crate) fn base() -> String {
     hosted_base_url()
 }
 
-fn client() -> &'static reqwest::Client {
+pub(crate) fn client() -> &'static reqwest::Client {
     vemry_agent::client::shared_client()
 }
 
-async fn send(app: &AppHandle, req: reqwest::RequestBuilder) -> Result<(reqwest::StatusCode, reqwest::header::HeaderMap, String), String> {
+pub(crate) async fn send(app: &AppHandle, req: reqwest::RequestBuilder) -> Result<(reqwest::StatusCode, reqwest::header::HeaderMap, String), String> {
     let resp = req
         .header(reqwest::header::USER_AGENT, vemry_agent::client::user_agent())
         .timeout(REQUEST_TIMEOUT)

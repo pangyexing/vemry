@@ -5,7 +5,7 @@
 
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, EFFORT_OPTIONS, type CaptureTarget, type LangSetting, type LinkOpenMode, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
+  import { api, EFFORT_OPTIONS, type CaptureTarget, type InboxDoor, type LangSetting, type LinkOpenMode, type PairStart, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
   import { comboFromEvent, hotkeyLabel, isModifierKey } from "$lib/capture";
   import { account } from "$lib/stores/account.svelte";
   import AccountPanel from "./AccountPanel.svelte";
@@ -78,6 +78,75 @@
   let captureTarget = $state<CaptureTarget>("inbox");
   let capturePinnedPath = $state("");
   let capturePinnedHeading = $state("");
+  /** The phone inbox: the pairing QR code on show (null = none), the paired phones, the last failure. */
+  let phonePair = $state<PairStart | null>(null);
+  let phonePairing = $state(false);
+  let phoneDoors = $state<InboxDoor[]>([]);
+  let phoneError = $state<string | null>(null);
+  let phoneWatch: ReturnType<typeof setInterval> | null = null;
+  async function showPairCode() {
+    phonePairing = true;
+    phoneError = null;
+    try {
+      phonePair = await api.inboxPairStart();
+      // Until the code is claimed (a new phone appears) or expires, the list is polled so the
+      // page can say "paired" and drop the code by itself
+      const before = phoneDoors.length;
+      const until = new Date(phonePair.expires_at).getTime();
+      stopPhoneWatch();
+      phoneWatch = setInterval(async () => {
+        await loadDoors();
+        if (phoneDoors.length > before) {
+          stopPhoneWatch();
+          phonePair = null;
+          toast.push(t("settings.capture.phonePaired"));
+        } else if (Number.isNaN(until) || Date.now() > until) {
+          stopPhoneWatch();
+          phonePair = null;
+        }
+      }, 4000);
+    } catch (e) {
+      phoneError = e instanceof Error ? e.message : String(e);
+    } finally {
+      phonePairing = false;
+    }
+  }
+  function stopPhoneWatch() {
+    if (phoneWatch) clearInterval(phoneWatch);
+    phoneWatch = null;
+  }
+  async function loadDoors() {
+    if (!account.loggedIn) {
+      phoneDoors = [];
+      return;
+    }
+    try {
+      phoneDoors = await api.inboxDoors();
+    } catch (e) {
+      phoneError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  async function revokeDoor(id: number) {
+    try {
+      await api.inboxDoorRevoke(id);
+      phoneDoors = phoneDoors.filter((d) => d.id !== id);
+    } catch (e) {
+      phoneError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  function doorLabel(d: InboxDoor): string {
+    const kind = d.kind === "pwa" ? t("settings.capture.kindPwa") : d.kind === "shortcut" ? t("settings.capture.kindShortcut") : t("settings.capture.kindOther");
+    return d.name ? `${d.name} · ${kind}` : kind;
+  }
+  // The capture page opened: the paired phones are read once; leaving it drops a code on show
+  $effect(() => {
+    if (open && tab === "capture") {
+      void loadDoors();
+    } else {
+      stopPhoneWatch();
+      phonePair = null;
+    }
+  });
   /** The resident state (the close button hides the window behind a tray icon) and the icon's creation failure. */
   let trayResident = $state(true);
   let trayError = $state<string | null>(null);
@@ -931,6 +1000,42 @@
                   <small>{t("settings.capture.pinnedHeadingHint")}</small>
                 </label>
               {/if}
+              <h4>{t("settings.capture.phone")}</h4>
+              <small>{t("settings.capture.phoneHint")}</small>
+              {#if !account.loggedIn}
+                <small class="empty">{t("settings.capture.phoneSignIn")}</small>
+              {:else}
+                <div class="field">
+                  {#if phonePair}
+                    <!-- The QR code is our own SVG (inbox.rs renders it in currentColor); nothing user-written is in it -->
+                    <div class="qr" title={phonePair.url}>{@html phonePair.svg}</div>
+                    <small>{t("settings.capture.phoneCodeHint")}</small>
+                  {/if}
+                  <div class="hotkey-row">
+                    <button class="btn small" disabled={phonePairing} onclick={showPairCode}>
+                      {phonePair ? t("settings.capture.phoneNewCode") : t("settings.capture.phoneShowCode")}
+                    </button>
+                  </div>
+                  {#if phoneError}
+                    <small class="err-text">{phoneError}</small>
+                  {/if}
+                </div>
+                <div class="field">
+                  <span class="field-title">{t("settings.capture.phoneDoors")}</span>
+                  {#if phoneDoors.length}
+                    <ul class="rules">
+                      {#each phoneDoors as d (d.id)}
+                        <li>
+                          <span class="rule-text">{doorLabel(d)}</span>
+                          <button class="rule-del" title={t("settings.capture.phoneRevoke")} onclick={() => revokeDoor(d.id)}>✕</button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {:else}
+                    <small class="empty">{t("settings.capture.phoneNoDoors")}</small>
+                  {/if}
+                </div>
+              {/if}
             </section>
           {:else if tab === "vault"}
             <section class="privacy">
@@ -1193,6 +1298,17 @@
     color: var(--danger);
   }
   /* The shortcut recorder: a field that reads like an input and takes a key combination instead of text */
+  .qr {
+    width: 220px;
+    height: 220px;
+    margin: 6px 0 8px;
+    color: var(--fg);
+  }
+  .qr :global(svg) {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
   .hotkey-row {
     display: flex;
     align-items: center;

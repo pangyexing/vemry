@@ -1801,11 +1801,13 @@ class VaultStore {
    *  are continuation lines and the stamp closes the last of them; an attachment (an
    *  image the capture window saved into the note's bucket) embeds on a continuation
    *  line of its own, an image inline and any other file as a link. A multi-line item
-   *  takes the loose-list separator on its own (insert.ts), nothing here decides that. */
-  async capture(text: string, target = "inbox.md", heading: string | null = null, attachments: string[] = []) {
+   *  takes the loose-list separator on its own (insert.ts), nothing here decides that.
+   *  `at` is the moment the stamp names — the phone's time for an item from the phone inbox —
+   *  and defaults to now. */
+  async capture(text: string, target = "inbox.md", heading: string | null = null, attachments: string[] = [], at?: Date) {
     // Local time (toISOString is UTC, which is hours out east of Greenwich); the format has
     // to stay `YYYY-MM-DD HH:MM` — views/tasks.ts's STAMP_RE strips the signature by it
-    const t = new Date();
+    const t = at ?? new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
     const stamp = `*(${ymd(t)} ${pad(t.getHours())}:${pad(t.getMinutes())})*`;
     const lines = text.split("\n").map((l) => l.trimEnd());

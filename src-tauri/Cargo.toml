@@ -61,6 +61,9 @@ percent-encoding = "2"
 # The quick capture window's one global shortcut (registered from the settings;
 # capture_window.rs). Rust-side registration only, no JS package
 tauri-plugin-global-shortcut = "2"
+# The pairing QR code of the phone inbox, rendered as an SVG (inbox.rs). No image
+# feature: the SVG goes straight into the settings page
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 # clipboard file/image paste reads NSPasteboard directly; these crates are
 # already in the tree via wry, so this adds no new compilation units.

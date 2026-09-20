@@ -6,6 +6,7 @@ mod capture_window;
 mod commands;
 mod config_store;
 mod i18n;
+mod inbox;
 mod menu;
 mod pasteboard;
 mod script_bridge;
@@ -50,6 +51,9 @@ pub struct AppState {
     pub capture_window: capture_window::CaptureWindowState,
     /// The resident state's menu bar / system tray icon (see tray.rs).
     pub tray: tray::TrayState,
+    /// The phone inbox's pull loop: what is in flight to the main window and
+    /// what is waiting for a retry (see inbox.rs).
+    pub inbox: inbox::InboxState,
     /// The one side-by-side translation job at a time (see translate.rs).
     pub translate: translate::TranslateState,
     /// The browser tabs being translated in place (see browser/pagetr.rs).
@@ -96,6 +100,7 @@ pub fn run() {
             agent_window: agent_window::AgentWindowState::default(),
             capture_window: capture_window::CaptureWindowState::default(),
             tray: tray::TrayState::default(),
+            inbox: inbox::InboxState::default(),
             translate: translate::TranslateState::default(),
             browser_translate: browser::pagetr::PageTranslations::default(),
             quit_asked: std::sync::atomic::AtomicBool::new(false),
@@ -147,6 +152,9 @@ pub fn run() {
             capture_window::ensure_soon(app.handle(), 2500);
             // The menu bar / tray icon of the resident state, when the setting asks for it
             tray::reconcile(app.handle());
+            // The phone inbox: one long-poll loop for the life of the app, idle while
+            // signed out; what it pulls lands through the main window (inbox.rs)
+            inbox::start(app.handle());
             // The docked browser tabs are native child views of the main window: on a
             // resize they are re-placed from the panel anchors (no round trip to the
             // frontend). `get_webview_window("main")` is None once the main window has a
@@ -239,6 +247,11 @@ pub fn run() {
             account::account_logout,
             account::account_refresh,
             account::account_redeem,
+            inbox::inbox_ack,
+            inbox::inbox_failed,
+            inbox::inbox_pair_start,
+            inbox::inbox_doors,
+            inbox::inbox_door_revoke,
             commands::agent_start,
             commands::agent_retry,
             commands::agent_history_truncate,

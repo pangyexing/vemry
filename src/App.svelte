@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { t } from "$lib/i18n/i18n.svelte";
+  import { t, tn } from "$lib/i18n/i18n.svelte";
   import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { extractOutline } from "$lib/outline";
-  import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onCaptureAction, onMenuEvent, onQuitRequested, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
-  import { hotkeyLabel } from "$lib/capture";
+  import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onCaptureAction, onInboxItems, onMenuEvent, onQuitRequested, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
+  import { defaultCaptureSpot, hotkeyLabel, spotLabel } from "$lib/capture";
   import { runHostAction } from "$lib/host";
   import { executeCommand, registerCommand, syncScriptCommands } from "$lib/commands/registry";
   import { MEMORY_DRAFT_PROMPT, MEMORY_REVIEW_PROMPT } from "$lib/commands/memoryPrompts";
@@ -346,6 +346,31 @@
     } catch (e) {
       void api.captureReply({ id: a.id, ok: false, error: e instanceof Error ? e.message : String(e) }).catch(() => {});
     }
+  });
+  // Captures from the phone (inbox.rs pulls them): each lands through the same funnel as the
+  // capture window, at the default capture spot, stamped with the phone's local time — the
+  // moment the thought was had, not the moment it reached this machine — and is acked only
+  // once written (the ledger first, so a lost ack cannot land it twice). What cannot land now
+  // (no vault open) is reported back and offered again later.
+  void onInboxItems(async (items) => {
+    const landed: string[] = [];
+    const failed: string[] = [];
+    const spot = defaultCaptureSpot();
+    for (const it of items) {
+      try {
+        if (!vault.root) throw new Error(t("app.openVaultFirst"));
+        await vault.capture(inboxText(it), spot.path, spot.heading, [], inboxTime(it));
+        landed.push(it.id);
+      } catch (e) {
+        console.warn("phone inbox: could not land", it.id, e);
+        failed.push(it.id);
+      }
+    }
+    if (landed.length) {
+      void api.inboxAck(landed).catch((e) => console.warn("phone inbox: ack", e));
+      toast.push(tn("app.inboxLanded", landed.length, { target: spotLabel(spot) }));
+    }
+    if (failed.length) void api.inboxFailed(failed).catch(() => {});
   });
   // After a hot reload or an unusual startup the window may already be open: mirror the real state once
   void api.agentWindowIsOpen().then((open) => (agent.windowOpen = open)).catch(() => {});
@@ -1252,6 +1277,21 @@
         && e.target.closest("input, textarea, [contenteditable='true']");
       if (!settingsOpen && !paletteMode && !field) { e.preventDefault(); void executeCommand("close-tab"); }
     }
+  }
+
+  /** The item's text, with a shared link on a line of its own after it (the title as the link text when the page had one). */
+  function inboxText(it: import("$lib/api").InboxItem): string {
+    if (!it.url) return it.text;
+    const link = it.title ? `[${it.title}](${it.url})` : it.url;
+    return it.text.trim() ? `${it.text}\n${link}` : link;
+  }
+  /** The stamp's moment: the phone's clock, unless it is a day or more away from the service's (a phone with the wrong date), then the service's; undefined = now. */
+  function inboxTime(it: import("$lib/api").InboxItem): Date | undefined {
+    const phone = new Date(it.created_at);
+    const service = new Date(it.received_at);
+    if (Number.isNaN(phone.getTime())) return Number.isNaN(service.getTime()) ? undefined : service;
+    if (!Number.isNaN(service.getTime()) && Math.abs(phone.getTime() - service.getTime()) > 86_400_000) return service;
+    return phone;
   }
 </script>
 
