@@ -13,7 +13,7 @@ Read these before making non-trivial changes — this file only adds what they d
 ## Commands
 
 ```bash
-pnpm install            # npm fails here: vite's devDependencies use the link: protocol, which npm does not support
+pnpm install            # pnpm only: the lockfile and the supply-chain settings in pnpm-workspace.yaml are pnpm's; npm would ignore both
 pnpm tauri dev           # needs `source ~/.cargo/env` first
 
 cargo test --workspace   # Rust tests

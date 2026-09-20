@@ -239,7 +239,7 @@ closed for now.
 ```bash
 git clone https://github.com/pangyexing/vemry.git
 cd vemry
-pnpm install          # npm cannot install this: vite's devDependencies use link:
+pnpm install          # pnpm only: the lockfile and pnpm-workspace.yaml's supply-chain settings are pnpm's
 pnpm tauri dev        # needs `source ~/.cargo/env` first
 ```
 

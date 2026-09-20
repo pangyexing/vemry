@@ -200,7 +200,7 @@ vemry 由一个人开发，精力有限，外部 PR 暂时关闭。
 ```bash
 git clone https://github.com/pangyexing/vemry.git
 cd vemry
-pnpm install          # npm 装不了：vite 的 devDependencies 用了 link: 协议
+pnpm install          # 只用 pnpm：锁文件和 pnpm-workspace.yaml 里的供应链设置都是 pnpm 的
 pnpm tauri dev        # 需要先 source ~/.cargo/env
 ```
 

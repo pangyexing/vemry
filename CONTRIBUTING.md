@@ -48,7 +48,7 @@ section and ARCHITECTURE's "Programmability").
 
 ```bash
 rustup toolchain install stable
-pnpm install            # npm cannot install this: vite's devDependencies use the link: protocol
+pnpm install            # pnpm only: the lockfile and the supply-chain settings in pnpm-workspace.yaml are pnpm's
 pnpm tauri dev          # needs `source ~/.cargo/env` first
 ```
 
