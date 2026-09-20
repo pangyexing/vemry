@@ -65,6 +65,16 @@ pub fn bucket_for(note_id: &str) -> String {
     format!("attachments/{}", note_id.strip_suffix(".md").unwrap_or(note_id))
 }
 
+/// Whether a vault path lies in an attachments folder: any segment named `attachments`,
+/// so the current buckets (`attachments/<note path>/`), the pre-v0.9 ones and a folder's
+/// own `attachments/` all count. Such a folder holds a note's files — images, PDFs, an
+/// exported bundle — and is never a home for a note's content, even when a `.md` sits
+/// there: propose_actions refuses a target in one, and the action card's candidate list
+/// leaves the notes found there out. The frontend's inAttachments mirrors this.
+pub fn in_attachments(path: &str) -> bool {
+    path.split(['/', '\\']).any(|seg| seg == "attachments")
+}
+
 /// The URL-encoded form of a link target. **Mirrors encodeTarget in the
 /// frontend's Editor.svelte**: only `%`, space, `(` and `)` are escaped (the
 /// minimum Markdown link syntax needs); `/` and non-ASCII characters are left
@@ -118,6 +128,19 @@ mod tests {
         assert_eq!(owner_of("ghost", &notes), Owner::None); // orphan
         // case-insensitive (APFS semantics)
         assert_eq!(owner_of("top", &notes), Owner::Unique("Top.md"));
+    }
+
+    /// A path in an attachments folder, at the root or below a folder, is in one; a note
+    /// merely named after the word is not.
+    #[test]
+    fn in_attachments_is_by_segment() {
+        assert!(in_attachments("attachments/plan/a.png"));
+        assert!(in_attachments("attachments/site-v1/research/rules.md"));
+        assert!(in_attachments("projects/attachments/x.md"));
+        assert!(in_attachments("attachments"));
+        assert!(!in_attachments("attachments-list.md"));
+        assert!(!in_attachments("notes/my attachments.md"));
+        assert!(!in_attachments("inbox.md"));
     }
 
     #[test]

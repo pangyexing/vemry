@@ -33,7 +33,7 @@ pub mod vault;
 pub mod watcher;
 pub mod weburl;
 
-pub use attach_migrate::MigrationReport;
+pub use attach_migrate::{in_attachments, MigrationReport};
 pub use block::{Block, BlockKind, Field, Priority, TaskState, WikiLink};
 pub use blockid::{plan_block_id, BlockIdInsert, BlockIdPlan, BlockSelector, PlanTarget};
 pub use event::VaultEvent;

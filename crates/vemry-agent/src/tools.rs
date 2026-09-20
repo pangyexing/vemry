@@ -197,7 +197,7 @@ pub fn propose_actions_def() -> ToolDef {
                             "text": {"type": "string"},
                             "owner": {"type": "string"},
                             "due": {"type": "string", "description": "YYYY-MM-DD"},
-                            "target": {"type": "string", "description": "Vault-relative note path the item should land in"},
+                            "target": {"type": "string", "description": "Vault-relative note path the item should land in — a note outside any attachments/ folder (those hold a note's files, never its content)"},
                             "source": {"type": "string", "description": "Where it came from: a [[note#handle]] or the quoted sentence"},
                             "stay": {"type": "boolean", "description": "true for an item that stays where it already is (a capture with no home): shown as staying and unticked, written only if the user gives it a target; leave target out"},
                             "fields": {"type": "object", "description": "Extra editable fields, key → value (a scoring's reach / impact / confidence / effort); write them afterwards with set_block_field", "additionalProperties": {"type": "string"}}
@@ -242,7 +242,17 @@ pub fn parse_action_items(args: &Value) -> Result<Vec<crate::permission::ActionI
             })
             .unwrap_or_default();
         let stay = it.get("stay").and_then(|v| v.as_bool()).unwrap_or(false);
-        out.push(crate::permission::ActionItem { text: text.to_string(), owner: opt("owner"), due, target: opt("target"), source: opt("source"), fields, stay });
+        // An attachments folder holds a note's files; a .md found there is one of those
+        // files, not a home — the model is sent back to file the item elsewhere
+        let target = opt("target");
+        if let Some(t) = &target {
+            if vemry_core::in_attachments(t) {
+                return Err(format!(
+                    "target '{t}' is inside an attachments folder: those hold a note's files (images, PDFs, exported bundles), and a .md found there is one of those files, not a home — file the item into a note outside attachments/, or mark it stay"
+                ));
+            }
+        }
+        out.push(crate::permission::ActionItem { text: text.to_string(), owner: opt("owner"), due, target, source: opt("source"), fields, stay });
     }
     if out.is_empty() || out.len() > ACTIONS_MAX_ITEMS {
         return Err(format!("an action list has 1-{ACTIONS_MAX_ITEMS} items"));
@@ -2327,6 +2337,18 @@ mod tests {
         assert!(!items[1].stay);
         let j = serde_json::to_string(&items).unwrap();
         assert_eq!(j.matches("\"stay\"").count(), 1, "{j}");
+    }
+
+    /// A target inside an attachments folder is refused at parse time: such a folder holds
+    /// a note's files, and a .md found there is one of those files rather than a home.
+    #[test]
+    fn action_items_refuse_attachment_targets() {
+        let err = parse_action_items(&json!({ "items": [
+            { "text": "logo brief", "target": "attachments/site-v1/research/rules.md" }
+        ] }))
+        .unwrap_err();
+        assert!(err.contains("attachments folder"), "{err}");
+        assert!(parse_action_items(&json!({ "items": [{ "text": "logo brief", "target": "projects/site.md" }] })).is_ok());
     }
 
     /// update_plan's argument grammar: statuses, the item cap, and the wording the model corrects itself by.

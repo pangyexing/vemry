@@ -1863,6 +1863,14 @@ export function noteBucketOf(notePath: string | null): string {
   return rel ? `attachments/${rel}` : "attachments";
 }
 
+/** Whether a vault path lies in an attachments folder: any segment named `attachments`
+ *  (the current buckets, the pre-v0.9 ones, a folder's own). Such a folder holds a note's
+ *  files and is never a home for a note's content, so the action card's target candidates
+ *  leave the notes found there out. Mirrors vemry_core::in_attachments. */
+export function inAttachments(path: string): boolean {
+  return path.split("/").includes("attachments");
+}
+
 /** `<prefix>-YYYYMMDD-HHMMSS`: the name of clipboard content that arrived with no file
  *  name — the editor's `pasted-`, the capture window's `capture-`; the backend deduplicates
  *  a second one in the same second. */

@@ -2365,8 +2365,13 @@ them" rather than "keep none". Only the flag makes a row a staying one: a target
 that is the source's own note is a write like any other (meeting-actions lands a
 new task line in the meeting note it was read from), and the quick task query
 skips the row's own source block, so a task-shaped capture proposed as a move is
-not marked a duplicate of itself. The proposal itself touches no note: the dry
-run is free, and the only things that land are the rows the user kept.
+not marked a duplicate of itself. A target under an `attachments/` folder is
+refused when the call is parsed (`vemry_core::in_attachments`: any path segment
+of that name, so the current buckets, the old ones and a folder's own all count):
+such a folder holds a note's files, and a `.md` found there is one of those files
+rather than a home, so the model is told to file the item elsewhere or mark it
+staying. The proposal itself touches no note: the dry run is free, and the only
+things that land are the rows the user kept.
 
 ### Reading input: files, PDFs, and the read gate
 

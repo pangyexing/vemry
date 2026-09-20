@@ -2,7 +2,7 @@
 name: tidy-inbox
 description: File the captures in inbox.md — grouped by theme, a home proposed for each, moved as blocks
 triggers: [file the inbox, sort the inbox, inbox zero, process my captures, file my captures, where should these go, 整理速记, 整理收件箱, 清理收件箱, 归类速记, 受信箱を整理, 速記を振り分け, インボックスゼロ, 인박스 정리, 메모 분류, 수신함 비우기, trier la boîte de réception, classer les notes rapides, vider l'inbox, Eingang sortieren, Notizen einsortieren, Inbox leeren, ordenar la bandeja de entrada, archivar las notas rápidas, vaciar el inbox]
-version: 1
+version: 2
 ---
 
 # File the inbox
@@ -77,6 +77,9 @@ what went where, what stayed and why.
 
 - Delete a capture, or a line that is not one.
 - Retype a capture instead of moving its block.
+- File a capture into anything under an `attachments/` folder: those hold a
+  note's files (images, PDFs, an exported bundle), and a `.md` found there is
+  one of those files, not a home.
 - write_note on the inbox: a whole-note rewrite loses what you did not see, and a
   note holding a private block refuses it.
 - Move a capture the user did not keep on the card.
