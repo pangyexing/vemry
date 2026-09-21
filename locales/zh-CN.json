@@ -828,6 +828,7 @@
   "ipc.hosted.hosted_disabled": "vemry 托管暂停维护中——期间可改用自己的 key",
   "ipc.hosted.hosted_not_allowed": "此账户未开通托管模型(Pro 与算力包含此权益,见定价页);自带 key 不受影响",
   "ipc.hosted.insufficient_balance": "托管余额已用完——到「设置 › 账户」充值算力包,或等本月配额重置",
+  "ipc.hosted.mail_unavailable": "验证码暂时发不出去——稍后再试",
   "ipc.hosted.model_unknown": "vemry 托管不提供所选模型——请到设置里换一个",
   "ipc.hosted.moderation_refused": "请求被内容审核拒绝",
   "ipc.hosted.network": "连不上账户服务:{error}",

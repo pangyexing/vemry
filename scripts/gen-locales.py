@@ -2587,6 +2587,8 @@ add("ipc.", {
     "hosted.moderation_refused": ("The request was refused by content moderation", "请求被内容审核拒绝"),
     "hosted.email_invalid": ("That is not an e-mail address", "这不是一个邮箱地址"),
     "hosted.otp_invalid": ("The code is wrong or has expired — send a new one", "验证码错误或已过期——请重新发送"),
+    "hosted.mail_unavailable": ("The sign-in code could not be sent right now — try again in a moment",
+                                "验证码暂时发不出去——稍后再试"),
     "hosted.code_invalid": ("The code is unknown, already used or expired", "兑换码无效、已使用或已过期"),
 })
 
