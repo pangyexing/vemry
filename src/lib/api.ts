@@ -387,12 +387,17 @@ export interface SettingsView {
   /** Derived and read-only: the model requests actually name (the hosted choice or the catalog's default in hosted mode, `model` otherwise). */
   active_model: string;
   /** Quick capture: the global shortcut in the shortcut plugin's grammar ("Alt+Shift+Space"; capture.ts renders it),
-   *  the registration's failure (derived and read-only; null = the shortcut works), and where Enter lands a capture. */
+   *  the registration's failure (derived and read-only; null = the shortcut works), and where Enter lands a capture.
+   *  The pin is the open vault's (`capture_pin` in its .vemry/config.json; empty with no vault open): served in this
+   *  one view and written back through settingsSet into that vault, so each vault keeps its own. */
   capture_hotkey: string;
   capture_hotkey_error: string | null;
   capture_target: CaptureTarget;
   capture_pinned_path: string;
   capture_pinned_heading: string;
+  /** The vault a capture from a phone lands in (its root; null = whichever vault is open). Set to the open vault when
+   *  the first pairing code is shown (inbox.rs, "The landing vault"). */
+  inbox_vault: string | null;
   /** The resident state (closing the main window hides it behind a menu bar / tray icon; tray.rs), and the icon's
    *  creation failure (derived and read-only; null = the icon is there, or the switch is off). */
   tray_resident: boolean;
@@ -435,8 +440,11 @@ export interface SettingsUpdate {
   /** Refused (nothing else in the update is lost) when the combination does not parse or another app holds it. */
   capture_hotkey?: string;
   capture_target?: CaptureTarget;
+  /** Written into the open vault's .vemry/config.json (see SettingsView); ignored with no vault open. */
   capture_pinned_path?: string;
   capture_pinned_heading?: string;
+  /** "" = whichever vault is open. */
+  inbox_vault?: string;
   tray_resident?: boolean;
 }
 
@@ -890,6 +898,16 @@ export interface PairStart {
   url: string;
   expires_at: string;
   svg: string;
+  /** The landing vault after this code was shown (the open vault became it when none was fixed yet). */
+  inbox_vault: string | null;
+}
+
+/** Captures written straight into the landing vault while another vault (or none) was open (inbox://landed): the
+ *  receipt names the vault by its folder name and the spot as capture.ts's spotLabel spells it. */
+export interface InboxLanded {
+  count: number;
+  vault: string;
+  target: string;
 }
 
 /** An @ context reference: only the path identifier travels, and resolution (with the
@@ -1490,6 +1508,14 @@ export function onAccountChanged(handler: (s: AccountStatus) => void): Promise<U
 /** Items pulled from the phone inbox (inbox://items): the main window lands them and acks or fails each. */
 export function onInboxItems(handler: (items: InboxItem[]) => void): Promise<UnlistenFn> {
   return listen<{ items: InboxItem[] }>("inbox://items", (event) => handler(event.payload.items));
+}
+/** Rust landed captures straight into the phone's vault (it was not the open one): show the receipt. */
+export function onInboxLanded(handler: (landed: InboxLanded) => void): Promise<UnlistenFn> {
+  return listen<InboxLanded>("inbox://landed", (event) => handler(event.payload));
+}
+/** The phone's vault could not take the captures (inbox://home-failed); Rust offers them again in a few minutes. */
+export function onInboxHomeFailed(handler: (failure: { vault: string; error: string }) => void): Promise<UnlistenFn> {
+  return listen<{ vault: string; error: string }>("inbox://home-failed", (event) => handler(event.payload));
 }
 
 export function onVaultEvent(handler: (e: VaultEvent) => void): Promise<UnlistenFn> {

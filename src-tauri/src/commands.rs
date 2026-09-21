@@ -1044,12 +1044,17 @@ pub struct SettingsView {
     pub active_model: String,
     /// Quick capture: the global shortcut (the plugin's grammar), the registration's
     /// failure if any (derived and read-only — None means the shortcut works), and
-    /// the landing target with its pin.
+    /// the landing target with its pin. The pin is the open vault's (`capture_pin`
+    /// in its `.vemry/config.json`; empty with no vault open): served here so the
+    /// readers of the settings — the capture window, the settings page — see one
+    /// view, and written back through settings_set into that vault.
     pub capture_hotkey: String,
     pub capture_hotkey_error: Option<String>,
     pub capture_target: settings::CaptureTarget,
     pub capture_pinned_path: String,
     pub capture_pinned_heading: String,
+    /// The vault a capture from a phone lands in (None = the open vault; settings.rs).
+    pub inbox_vault: Option<String>,
     /// The resident state (closing the main window hides it behind a tray icon),
     /// and the icon's creation failure if any (derived and read-only — None means
     /// the icon is there, or the switch is off).
@@ -1092,8 +1097,11 @@ pub struct SettingsUpdate {
     pub translate_addendum: Option<String>,
     pub capture_hotkey: Option<String>,
     pub capture_target: Option<settings::CaptureTarget>,
+    /// The open vault's pin (see SettingsView); ignored with no vault open.
     pub capture_pinned_path: Option<String>,
     pub capture_pinned_heading: Option<String>,
+    /// "" = the open vault (a partial update cannot say "clear" with a nested Option).
+    pub inbox_vault: Option<String>,
     pub tray_resident: Option<bool>,
 }
 
@@ -1108,6 +1116,8 @@ fn memory_template(app: &AppHandle) -> String {
 #[tauri::command]
 pub fn settings_get(app: AppHandle) -> SettingsView {
     let s = settings::load(&app);
+    let state = app.state::<AppState>();
+    let pin = state.vault.lock().unwrap().as_ref().map(capture_pin).unwrap_or_default();
     let web_search_available = s.provider_config().web_search_available();
     let web_search_active = s.web_search_active();
     let reasoning_effort_active = s.reasoning_active();
@@ -1152,8 +1162,9 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         capture_hotkey: s.capture_hotkey,
         capture_hotkey_error: crate::capture_window::hotkey_error(&app),
         capture_target: s.capture_target,
-        capture_pinned_path: s.capture_pinned_path,
-        capture_pinned_heading: s.capture_pinned_heading,
+        capture_pinned_path: pin.path,
+        capture_pinned_heading: pin.heading,
+        inbox_vault: s.inbox_vault,
         tray_resident: s.tray_resident,
         tray_error: crate::tray::error(&app),
     }
@@ -1253,11 +1264,28 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     if let Some(v) = update.capture_target {
         s.capture_target = v;
     }
-    if let Some(v) = update.capture_pinned_path {
-        s.capture_pinned_path = v.trim().to_string();
+    // The pin goes to the open vault, not to settings.json (SettingsView says why);
+    // with no vault open there is nothing to pin into, and the page hides the fields
+    if update.capture_pinned_path.is_some() || update.capture_pinned_heading.is_some() {
+        let state = app.state::<AppState>();
+        let guard = state.vault.lock().unwrap();
+        if let Some(vault) = guard.as_ref() {
+            let mut pin = capture_pin(vault);
+            if let Some(v) = update.capture_pinned_path {
+                pin.path = v.trim().to_string();
+            }
+            if let Some(v) = update.capture_pinned_heading {
+                pin.heading = v.trim().to_string();
+            }
+            capture_pin_set(vault, &pin)?;
+        }
     }
-    if let Some(v) = update.capture_pinned_heading {
-        s.capture_pinned_heading = v.trim().to_string();
+    let mut inbox_vault_changed = false;
+    if let Some(v) = update.inbox_vault {
+        let v = v.trim();
+        let v = (!v.is_empty()).then(|| v.to_string());
+        inbox_vault_changed = v != s.inbox_vault;
+        s.inbox_vault = v;
     }
     if let Some(v) = update.tray_resident {
         s.tray_resident = v;
@@ -1317,6 +1345,11 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     // The tray icon follows the switch, and its menu the language and the shortcut
     // hint — after every write, so the three cannot drift apart
     crate::tray::reconcile(&app);
+    // The phone inbox's loop may be waiting for a vault to land in: a new landing
+    // vault is a reason to look again
+    if inbox_vault_changed {
+        crate::inbox::wake(&app);
+    }
     hotkey_refused.map_or(Ok(()), Err)
 }
 
@@ -1341,15 +1374,52 @@ fn vault_write_policy(vault: &Vault) -> WritePolicy {
 }
 
 /// Merge one key into the vault's .vemry/config.json — overwriting the whole file
-/// would wipe out the other keys.
+/// would wipe out the other keys. `Null` removes the key: a setting back at its
+/// default leaves no line behind.
 fn vault_config_set(vault: &Vault, key: &str, value: serde_json::Value) -> Result<(), String> {
     // meta_dir is a pure accessor now (it creates nothing), so a write path creates the directory itself
     let dir = vault.meta_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("config.json");
     let mut obj = vault_config_read(vault).and_then(|v| v.as_object().cloned()).unwrap_or_default();
-    obj.insert(key.into(), value);
+    if value.is_null() {
+        obj.remove(key);
+    } else {
+        obj.insert(key.into(), value);
+    }
     std::fs::write(&path, serde_json::Value::Object(obj).to_string()).map_err(|e| e.to_string())
+}
+
+/// The key in .vemry/config.json holding the quick capture pin.
+const CAPTURE_PIN_KEY: &str = "capture_pin";
+
+/// Where a capture lands when the capture target is "pinned": a note path
+/// relative to the vault and, optionally, a heading in it. The vault's own
+/// (`.vemry/config.json`): a path names a note in one vault only, so it travels
+/// with the vault and each vault has its own — the reason the clip target is
+/// bucketed per vault too. Empty = nothing pinned (a capture falls back to
+/// inbox.md).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CapturePin {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub heading: String,
+}
+
+/// The vault's capture pin (a missing or unreadable key is no pin).
+pub(crate) fn capture_pin(vault: &Vault) -> CapturePin {
+    vault_config_get(vault, CAPTURE_PIN_KEY).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+}
+
+/// Store the pin; an empty one removes the key.
+fn capture_pin_set(vault: &Vault, pin: &CapturePin) -> Result<(), String> {
+    let value = if pin.path.is_empty() && pin.heading.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::to_value(pin).map_err(|e| e.to_string())?
+    };
+    vault_config_set(vault, CAPTURE_PIN_KEY, value)
 }
 
 fn persist_allow_always(state: &State<'_, AppState>) {

@@ -1074,7 +1074,9 @@ palette.
   contract as the palette's pick-note (`pickNote.ts`), without pinning anything;
   the standing target is the `capture_target` setting (inbox.md, today's journal
   note, or a pinned note and section, in Settings › Quick capture, which also
-  records the shortcut). Pasted or dropped images and files are held in the
+  records the shortcut; the pin itself is the vault's own — `capture_pin` in its
+  `.vemry/config.json`, since a note path names a note in one vault only — and
+  `settings_get` serves the open vault's so the readers see one view). Pasted or dropped images and files are held in the
   window and saved into the target note's attachment bucket at landing time (the
   bucket depends on the note chosen then), and the block is the existing capture
   line with the embeds as continuation lines. The text itself is relayed to the
@@ -2814,6 +2816,37 @@ had to be built in Rust. The `tidy-inbox` skill is the other end of the same
 loop: the captures that piled up in inbox.md, grouped by theme, a home proposed
 for each on the action card, and moved as blocks (`move_blocks`, through the
 gate, stamps and embeds travelling whole) once the user has kept them.
+
+### The phone inbox
+
+A capture made on a phone reaches the desk through the hosted service's inbox
+(`src-tauri/src/inbox.rs`; the phone side is the service's capture page, paired
+once by a QR code the settings page renders). One background loop long-polls the
+inbox with the device token for as long as the app runs and the account is
+signed in, and the notes are written by the same funnel as the capture window:
+the items are handed to the main window's `vault.capture`, acked only once
+written, and a ledger in the vault (`.vemry/inbox-seen.json`, written before the
+ack) makes a lost ack or a second computer sharing the vault a no-op rather than
+a duplicate.
+
+**The landing vault is fixed, not whichever is open.** A phone cannot see which
+vault is open on the desk, and privacy zones are a vault's: a private thought
+must not land in the work vault because that one happened to be open. So the
+vault a phone's captures land in is an application setting (`inbox_vault`, the
+root spelled like `last_vault`), set to the vault open when the first pairing
+code is shown and changed in Settings › Quick capture › Phone. The loop decides
+the door per pull: the landing vault open in the main window, the items go
+through the window (its editor buffer may hold the target note); any other
+vault open, or none, Rust opens the landing vault as a second `Vault` for the
+moment and writes them itself, at the same capture spot (the mirror of
+capture.ts's `defaultCaptureSpot`, the vault's own pin included), with the same
+line and the same provenance line the window's landing writes. Nothing on this
+side watches that vault and no buffer can hold its notes, so the write is as
+safe as any external program's — the one exception to "only the main webview
+lands a capture", and safe for exactly the reason that rule exists. The main
+window gets a receipt naming the vault, and a landing vault that cannot be
+written is reported and retried. Without a fixed vault (a pairing from before
+the setting existed), the open vault takes them through the window, as before.
 
 ### Attachments bucketed by a note's full path
 

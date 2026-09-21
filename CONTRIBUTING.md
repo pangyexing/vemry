@@ -34,6 +34,7 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | Browser tabs and panel / detached window / clip commands / ad blocking | `src-tauri/src/browser/` + `src/lib/components/BrowserPanel.svelte` | Rust + TS |
 | The detached AI chat window (creation / handoff / close handshake / relay) | `src-tauri/src/agent_window.rs` + `src/AgentWindow.svelte` + `src/lib/host.ts` | Rust + TS |
 | The quick capture window (the global shortcut / show and hide / the landing relay) | `src-tauri/src/capture_window.rs` + `src/CaptureWindow.svelte` + `src/lib/components/CaptureComposer.svelte` + `src/lib/capture.ts` | Rust + TS |
+| The phone inbox (the pull loop, the landing vault and the direct landing, the ledger, pairing) | `src-tauri/src/inbox.rs` + the phone section of `src/lib/components/SettingsModal.svelte` | Rust + TS |
 | The resident state (the close button hides the main window, the menu bar / tray icon) | `src-tauri/src/tray.rs` + the close hooks in `src-tauri/src/lib.rs` | Rust |
 | Parsing / indexing / search | `crates/vemry-core/src/` | Rust |
 | Note history (what a write replaced, and restoring it) | `crates/vemry-core/src/history.rs` + `src/lib/components/HistoryDialog.svelte` | Rust + Svelte |

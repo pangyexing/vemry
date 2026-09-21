@@ -23,36 +23,62 @@
 //! stayed in flight for the life of the process. The loop therefore waits until
 //! the main window says it is ready — its listener registered and a vault open
 //! (`inbox_ready`, sent again on every vault opened later, which also re-offers
-//! what could not land) — and a page load of the main window (`page_reloading`)
-//! closes the gate again and returns what was in flight to the pool: the page
-//! those items went to is gone.
+//! what could not land) — before pulling for it, and a page load of the main
+//! window (`page_reloading`) closes the gate again and returns what was in
+//! flight to the pool: the page those items went to is gone. A direct landing
+//! (below) needs no window and does not wait for one.
 //!
-//! **The ledger.** `.vemry/inbox-seen.json` in the vault lists the ids already
-//! written into it. It is written *before* the ack goes out: an ack lost to the
-//! network leaves the item on the server, the next pull finds its id in the
-//! ledger and acks it without landing it again. Because the file lives in the
-//! vault, two computers sharing one vault through a sync folder share the ledger
-//! too, and the second one skips what the first already landed.
+//! **The landing vault.** A phone cannot see which vault is open on the desk,
+//! and privacy zones are a vault's: a private thought must not land in the work
+//! vault because that one happened to be open. So the vault a phone's captures
+//! land in is fixed (`inbox_vault` in settings.json: the vault open when the
+//! first pairing code was shown, changed in Settings › Quick capture › Phone),
+//! and `route` decides the door per pull. The landing vault open in the main
+//! window: the items go through the window as above (its editor buffer may hold
+//! the target note). Any other vault open, or none: `land_direct` writes them
+//! here, straight into the landing vault — opened as a second `Vault` for the
+//! moment, at the same capture spot (`capture_spot`, the mirror of capture.ts's
+//! defaultCaptureSpot: inbox.md, today's journal note, or the vault's own pin),
+//! with the same line and the same provenance line the window's landing writes.
+//! Nothing on this side watches that vault and no buffer can hold its notes, so
+//! the write is as safe as any external program's. No landing vault fixed (a
+//! pairing from before the field existed): the open vault, through the window.
+//!
+//! **The ledger.** `.vemry/inbox-seen.json` in the landing vault lists the ids
+//! already written into it. It is written *before* the ack goes out: an ack lost
+//! to the network leaves the item on the server, the next pull finds its id in
+//! the ledger and acks it without landing it again. Because the file lives in
+//! the vault, two computers sharing one vault through a sync folder share the
+//! ledger too, and the second one skips what the first already landed.
 //!
 //! Pairing is the desktop's job as well: `inbox_pair_start` asks the service
 //! for a single-use code and renders the QR code the phone scans (the capture
 //! page's URL with the code in its fragment); the settings page lists the paired
-//! phones and revokes one by id. Rust here never writes into the vault except
-//! the ledger; the notes are the main window's.
+//! phones and revokes one by id.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+use vemry_core::{InsertOrigin, ProvenanceEntry, Vault};
 
+use crate::commands::CapturePin;
+use crate::settings::CaptureTarget;
 use crate::{account, AppState};
 
 /// To the main window: land these items (the payload is `{ items: InboxItem[] }`).
 const EV_ITEMS: &str = "inbox://items";
+/// To the main window: captures written straight into the landing vault, for the
+/// receipt (`{ count, vault, target }`; mirrored as `InboxLanded` in api.ts).
+const EV_LANDED: &str = "inbox://landed";
+/// To the main window: the landing vault could not take the captures
+/// (`{ vault, error }`); they are offered again in a few minutes.
+const EV_HOME_FAILED: &str = "inbox://home-failed";
 /// How long the service holds a pull open (its own cap is 25 s).
 const WAIT_SECS: u64 = 25;
 /// The pull's own timeout: the hold plus the network's share.
@@ -112,6 +138,9 @@ pub struct PairStart {
     pub url: String,
     pub expires_at: String,
     pub svg: String,
+    /// The landing vault after this code was shown (the open vault became it
+    /// when none was fixed yet), so the settings page can show it at once.
+    pub inbox_vault: Option<String>,
 }
 
 #[derive(Default)]
@@ -147,22 +176,28 @@ struct Ledger {
     ids: Vec<String>,
 }
 
+/// The open vault's ledger (the door the main window lands through).
 fn ledger_path(app: &AppHandle) -> Option<PathBuf> {
     let state = app.state::<AppState>();
     let guard = crate::lock(&state.vault);
     guard.as_ref().map(|v| v.meta_dir().join(LEDGER_FILE))
 }
 
-fn ledger_read(path: &PathBuf) -> Ledger {
+fn ledger_read(path: &Path) -> Ledger {
     std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
-/// Add ids to the vault's ledger (the file is created with the meta directory
-/// on the first write). No vault open: nothing to remember, and the caller has
-/// nothing to land either.
+/// Add ids to the open vault's ledger. No vault open: nothing to remember, and
+/// the caller has nothing to land either.
 fn ledger_add(app: &AppHandle, ids: &[String]) -> Result<(), String> {
     let Some(path) = ledger_path(app) else { return Ok(()) };
-    let mut ledger = ledger_read(&path);
+    ledger_add_at(&path, ids)
+}
+
+/// Add ids to the ledger at this path (the file is created with the meta
+/// directory on the first write).
+fn ledger_add_at(path: &Path, ids: &[String]) -> Result<(), String> {
+    let mut ledger = ledger_read(path);
     let known: HashSet<&String> = ledger.ids.iter().collect();
     let fresh: Vec<String> = ids.iter().filter(|i| !known.contains(i)).cloned().collect();
     if fresh.is_empty() {
@@ -176,7 +211,40 @@ fn ledger_add(app: &AppHandle, ids: &[String]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    crate::config_store::write(&path, &ledger)
+    crate::config_store::write(path, &ledger)
+}
+
+// ---------------------------------------------------------------------------
+// the route: which door the items go through
+// ---------------------------------------------------------------------------
+
+/// Where a pull's items go (the module comment, "The landing vault").
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Route {
+    /// Through the main window's `vault.capture`: the open vault is the landing
+    /// vault, or none is fixed.
+    Window,
+    /// Written here, straight into the landing vault at this root: it is not the
+    /// vault the main window has open.
+    Direct(PathBuf),
+}
+
+fn route(app: &AppHandle) -> Route {
+    let home = crate::settings::load(app).inbox_vault.filter(|h| !h.trim().is_empty());
+    let Some(home) = home else { return Route::Window };
+    let state = app.state::<AppState>();
+    let open = crate::lock(&state.vault).as_ref().map(|v| v.root().to_string_lossy().to_string());
+    pick_route(&home, open.as_deref())
+}
+
+/// The landing vault against the open vault's root, both spelled the way
+/// `vault_open` stores them (canonical, verbatim prefix washed).
+fn pick_route(home: &str, open: Option<&str>) -> Route {
+    if open == Some(home) {
+        Route::Window
+    } else {
+        Route::Direct(PathBuf::from(home))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -191,16 +259,16 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut backoff = BACKOFF_MIN;
         loop {
-            wait_ready(&app).await;
+            let route = wait_routable(&app).await;
             let token = account::cached(&app).token;
             if token.is_empty() {
                 tokio::time::sleep(IDLE_SIGNED_OUT).await;
                 continue;
             }
-            match pull(&app, &token).await {
+            match pull(&app, &token, &route).await {
                 Ok(Pulled::Fresh(items)) => {
                     backoff = BACKOFF_MIN;
-                    deliver(&app, items);
+                    land(&app, &token, items).await;
                 }
                 Ok(Pulled::Nothing) => backoff = BACKOFF_MIN,
                 // The service answers at once while an unacked item exists, and every item it
@@ -222,7 +290,8 @@ pub fn start(app: &AppHandle) {
 }
 
 enum Pulled {
-    /// New items, marked in flight.
+    /// New items: not in flight, not waiting for a retry, not in the open
+    /// vault's ledger (a direct landing checks the landing vault's ledger itself).
     Fresh(Vec<InboxItem>),
     /// The service had nothing (the hold timed out).
     Nothing,
@@ -232,24 +301,33 @@ enum Pulled {
     NotReady,
 }
 
-/// Block until the gate is open. `notify_one` stores a permit when nobody is
-/// waiting, so a readiness announced between the check and the wait is not lost.
-async fn wait_ready(app: &AppHandle) {
+/// Block until the items have a door: the landing vault is fixed and not the open
+/// one (they are written here), or the main window is ready. `notify_one` stores a
+/// permit when nobody is waiting, so a readiness (or a landing vault, `wake`)
+/// announced between the check and the wait is not lost.
+async fn wait_routable(app: &AppHandle) -> Route {
     let state = app.state::<AppState>();
     loop {
-        if state.inbox.lock().ready {
-            return;
+        let route = route(app);
+        if matches!(route, Route::Direct(_)) || state.inbox.lock().ready {
+            return route;
         }
         state.inbox.ready.notified().await;
     }
 }
 
+/// Something the route depends on changed (the landing vault in the settings):
+/// the loop looks again if it was waiting.
+pub fn wake(app: &AppHandle) {
+    app.state::<AppState>().inbox.ready.notify_one();
+}
+
 /// One long poll. Items already in flight, waiting for their retry, or in the
-/// ledger are not returned: the last kind is acked right here, since the vault
-/// already has it. The ledger is read under the same lock `inbox_ack` writes it
-/// under, so an ack landing between the read and the in-flight check cannot make
-/// an item look new twice.
-async fn pull(app: &AppHandle, token: &str) -> Result<Pulled, String> {
+/// open vault's ledger are not returned: the last kind is acked right here, since
+/// the vault already has it. The ledger is read under the same lock `inbox_ack`
+/// writes it under, so an ack landing between the read and the in-flight check
+/// cannot make an item look new twice.
+async fn pull(app: &AppHandle, token: &str, route: &Route) -> Result<Pulled, String> {
     let url = format!("{}/v1/inbox/pull?since=0&wait={WAIT_SECS}", account::base());
     let resp = account::client()
         .get(url)
@@ -278,19 +356,22 @@ async fn pull(app: &AppHandle, token: &str) -> Result<Pulled, String> {
     let fresh: Vec<InboxItem> = {
         let state = app.state::<AppState>();
         let mut inner = state.inbox.lock();
-        // Checked under the lock the gate is closed under: an item enters the in-flight set
-        // only while the window that will receive it is listening
-        if !inner.ready {
+        // Checked under the lock the gate is closed under (the page reloaded under the pull)
+        if *route == Route::Window && !inner.ready {
             return Ok(Pulled::NotReady);
         }
-        let ledger: HashSet<String> = ledger_path(app).map(|p| ledger_read(&p).ids.into_iter().collect()).unwrap_or_default();
+        // The open vault's ledger answers for the window's door only; a direct landing
+        // reads the landing vault's ledger once that vault is open
+        let ledger: HashSet<String> = match route {
+            Route::Window => ledger_path(app).map(|p| ledger_read(&p).ids.into_iter().collect()).unwrap_or_default(),
+            Route::Direct(_) => HashSet::new(),
+        };
         inner.retry_at.retain(|_, at| *at > now);
         let mut out = Vec::new();
         for it in all {
             if ledger.contains(&it.id) {
                 seen_already.push(it.id);
             } else if !inner.in_flight.contains(&it.id) && !inner.retry_at.contains_key(&it.id) {
-                inner.in_flight.insert(it.id.clone());
                 out.push(it);
             }
         }
@@ -308,8 +389,29 @@ async fn pull(app: &AppHandle, token: &str) -> Result<Pulled, String> {
     Ok(if fresh.is_empty() { Pulled::AllInFlight } else { Pulled::Fresh(fresh) })
 }
 
+/// Land what a pull returned. The route is taken again here rather than kept
+/// from the pull: a vault opened or closed during the hold moves the items to
+/// the other door, and only the door that is right now writes.
+async fn land(app: &AppHandle, token: &str, items: Vec<InboxItem>) {
+    match route(app) {
+        Route::Window => deliver(app, items),
+        Route::Direct(root) => land_direct(app, token, root, items).await,
+    }
+}
+
+/// Hand the items to the main window. They enter the in-flight set under the
+/// lock the gate is closed under, and only while the window is listening: with
+/// the gate closed nothing is handed over, and the next pull returns them.
 fn deliver(app: &AppHandle, items: Vec<InboxItem>) {
     let ids: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
+    {
+        let state = app.state::<AppState>();
+        let mut inner = state.inbox.lock();
+        if !inner.ready {
+            return;
+        }
+        inner.in_flight.extend(ids.iter().cloned());
+    }
     if crate::browser::window::relay_to_main(app, EV_ITEMS, json!({ "items": items }), false).is_err() {
         // No main window to land in (the app is on its way out): back to the pool
         let state = app.state::<AppState>();
@@ -317,6 +419,229 @@ fn deliver(app: &AppHandle, items: Vec<InboxItem>) {
         for id in ids {
             inner.in_flight.remove(&id);
         }
+    }
+}
+
+/// Write the items straight into the landing vault (the module comment, "The
+/// landing vault"): open it, skip what its ledger lists, land the rest at the
+/// capture spot, write the ledger, ack. The vault itself unreachable, or a
+/// capture that cannot be written: offered again in a few minutes, and the main
+/// window is told so the user learns the landing vault needs looking at.
+async fn land_direct(app: &AppHandle, token: &str, root: PathBuf, items: Vec<InboxItem>) {
+    let mode = crate::settings::load(app).capture_target;
+    let ids: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
+    let at_root = root.clone();
+    // A full vault open and a few file writes: off the async runtime's threads
+    let outcome = tauri::async_runtime::spawn_blocking(move || land_into(&at_root, mode, &items))
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r);
+    let vault_name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| root.to_string_lossy().to_string());
+    let landing = match outcome {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("inbox: landing vault {}: {e}", root.display());
+            retry_later(app, &ids);
+            let _ = crate::browser::window::relay_to_main(app, EV_HOME_FAILED, json!({ "vault": vault_name, "error": e }), false);
+            return;
+        }
+    };
+    let failed: Vec<String> = landing.failed.iter().map(|(id, _)| id.clone()).collect();
+    retry_later(app, &failed);
+    let ack: Vec<String> = landing.landed.iter().chain(&landing.already).cloned().collect();
+    if !ack.is_empty() {
+        if let Err(e) = ack_remote(app, token, &ack).await {
+            eprintln!("inbox ack after a direct landing: {e}");
+        }
+    }
+    if !landing.landed.is_empty() {
+        let _ = crate::browser::window::relay_to_main(
+            app,
+            EV_LANDED,
+            json!({ "count": landing.landed.len(), "vault": vault_name, "target": landing.target }),
+            false,
+        );
+    }
+    if let Some((_, e)) = landing.failed.first() {
+        let _ = crate::browser::window::relay_to_main(app, EV_HOME_FAILED, json!({ "vault": vault_name, "error": e }), false);
+    }
+}
+
+fn retry_later(app: &AppHandle, ids: &[String]) {
+    if ids.is_empty() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let mut inner = state.inbox.lock();
+    let at = Instant::now() + RETRY_FAILED;
+    for id in ids {
+        inner.retry_at.insert(id.clone(), at);
+    }
+}
+
+/// What a direct landing did, by item id.
+#[derive(Debug, Default)]
+struct Landing {
+    landed: Vec<String>,
+    /// In the vault's ledger already: acked, not written again.
+    already: Vec<String>,
+    /// Could not be written, with the reason (the user's language).
+    failed: Vec<(String, String)>,
+    /// The spot's label for the receipt (`note.md › Section`, as capture.ts spells it).
+    target: String,
+}
+
+/// The synchronous heart of a direct landing, on a vault opened for the purpose.
+/// The ledger is written before the caller acks (the module comment); the
+/// ledger itself failing to write after the notes did returns the error, and
+/// the items land twice next time — the failure the design prefers to losing them.
+fn land_into(root: &Path, mode: CaptureTarget, items: &[InboxItem]) -> Result<Landing, String> {
+    let mut vault = Vault::open(root).map_err(crate::i18n::err)?;
+    let ledger_path = vault.meta_dir().join(LEDGER_FILE);
+    let known: HashSet<String> = ledger_read(&ledger_path).ids.into_iter().collect();
+    let spot = capture_spot(mode, &crate::commands::capture_pin(&vault));
+    let mut landing = Landing { target: spot.label(), ..Landing::default() };
+    for it in items {
+        if known.contains(&it.id) {
+            landing.already.push(it.id.clone());
+            continue;
+        }
+        match land_one(&mut vault, &spot, it) {
+            Ok(()) => landing.landed.push(it.id.clone()),
+            Err(e) => landing.failed.push((it.id.clone(), e)),
+        }
+    }
+    if !landing.landed.is_empty() {
+        ledger_add_at(&ledger_path, &landing.landed)?;
+    }
+    Ok(landing)
+}
+
+/// One capture into the vault: the same line the main window's `vault.capture`
+/// builds, inserted the way `note_insert` does, with the provenance line
+/// `provenance_record` writes (origin capture; a private note records nothing).
+fn land_one(vault: &mut Vault, spot: &Spot, it: &InboxItem) -> Result<(), String> {
+    let id = vault.note_id(&spot.path).map_err(crate::i18n::err)?;
+    let line = capture_line(&inbox_text(it), stamp_time(it));
+    vault.insert_note(&id, &line, spot.heading.as_deref()).map_err(crate::i18n::err)?;
+    if !vault.is_private(&id) {
+        let blocks = vemry_core::stamps_of(&line);
+        if !blocks.is_empty() {
+            vault.record_provenance(ProvenanceEntry::Insert {
+                ts: vemry_core::provenance::now_ts(),
+                origin: InsertOrigin::Capture,
+                session: None,
+                url: None,
+                path: id.to_string(),
+                blocks,
+            });
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// the capture spot and the capture line: mirrors of the frontend's
+// ---------------------------------------------------------------------------
+
+/// A note and, optionally, the heading of the section a capture lands in
+/// (capture.ts CaptureSpot).
+#[derive(Debug, PartialEq, Eq)]
+struct Spot {
+    path: String,
+    heading: Option<String>,
+}
+
+impl Spot {
+    fn inbox() -> Spot {
+        Spot { path: "inbox.md".into(), heading: None }
+    }
+
+    /// `note.md › Section` (capture.ts spotLabel).
+    fn label(&self) -> String {
+        match &self.heading {
+            Some(h) => format!("{} › {h}", self.path),
+            None => self.path.clone(),
+        }
+    }
+}
+
+/// Where a capture lands, from the capture target and the vault's pin — the
+/// mirror of capture.ts's `defaultCaptureSpot`, for a vault the main window does
+/// not have open: inbox.md, today's journal note, or the pinned note and section
+/// (a pin with no note set falls back to inbox.md rather than failing).
+fn capture_spot(mode: CaptureTarget, pin: &CapturePin) -> Spot {
+    match mode {
+        CaptureTarget::Inbox => Spot::inbox(),
+        CaptureTarget::Journal => Spot { path: journal_today(), heading: None },
+        CaptureTarget::Pinned => {
+            let p = pin.path.trim();
+            if p.is_empty() {
+                return Spot::inbox();
+            }
+            let path = if p.to_ascii_lowercase().ends_with(".md") { p.to_string() } else { format!("{p}.md") };
+            let heading = pin.heading.trim();
+            Spot { path, heading: (!heading.is_empty()).then(|| heading.to_string()) }
+        }
+    }
+}
+
+/// Today's journal note, `journal/YYYY-MM-DD.md` by this machine's clock
+/// (tasks.ts journalToday — the two must agree).
+fn journal_today() -> String {
+    format!("journal/{}.md", Local::now().format("%Y-%m-%d"))
+}
+
+/// The capture as one list item, the mirror of `vault.capture` in
+/// vault.svelte.ts: `- ` before the first line, two spaces before every other,
+/// and the stamp `*(YYYY-MM-DD HH:MM)*` on the last line (a space before it
+/// unless that line is empty). The stamp's shape is what tasks.ts's STAMP_RE
+/// strips, so the three must not drift.
+fn capture_line(text: &str, at: DateTime<Local>) -> String {
+    let stamp = format!("*({})*", at.format("%Y-%m-%d %H:%M"));
+    let lines: Vec<&str> = text.split('\n').map(str::trim_end).collect();
+    let last = lines.len() - 1;
+    lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            let lead = if i == 0 { "- " } else { "  " };
+            if i == last {
+                format!("{lead}{l}{}{stamp}", if l.is_empty() { "" } else { " " })
+            } else {
+                format!("{lead}{l}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The item's text with its link, as App.svelte's `inboxText` builds it: a
+/// share carries a URL (and a title), which becomes the last line.
+fn inbox_text(it: &InboxItem) -> String {
+    let Some(url) = it.url.as_deref().filter(|u| !u.is_empty()) else { return it.text.clone() };
+    let link = match it.title.as_deref().filter(|t| !t.is_empty()) {
+        Some(title) => format!("[{title}]({url})"),
+        None => url.to_string(),
+    };
+    if it.text.trim().is_empty() {
+        link
+    } else {
+        format!("{}\n{link}", it.text)
+    }
+}
+
+/// The stamp's moment, as App.svelte's `inboxTime` picks it: the phone's clock
+/// (the moment the thought was had), unless it is a day or more away from the
+/// service's (a phone with the wrong date), then the service's; neither parsing,
+/// now. Rendered in this machine's zone, like the window's `new Date(...)`.
+fn stamp_time(it: &InboxItem) -> DateTime<Local> {
+    let parse = |s: &str| DateTime::parse_from_rfc3339(s.trim()).ok().map(|d| d.with_timezone(&Local));
+    match (parse(&it.created_at), parse(&it.received_at)) {
+        (Some(phone), Some(service)) if (phone - service).num_seconds().abs() > 86_400 => service,
+        (Some(phone), _) => phone,
+        (None, Some(service)) => service,
+        (None, None) => Local::now(),
     }
 }
 
@@ -399,7 +724,21 @@ pub async fn inbox_pair_start(app: AppHandle) -> Result<PairStart, String> {
     let url = v.get("url").and_then(Value::as_str).ok_or("no url in the answer")?.to_string();
     let expires_at = v.get("expires_at").and_then(Value::as_str).unwrap_or_default().to_string();
     let svg = qr_svg(&url)?;
-    Ok(PairStart { url, expires_at, svg })
+    // The landing vault defaults to the vault open when the code is shown (the module
+    // comment, "The landing vault"); once fixed it is the settings page's to change
+    let state = app.state::<AppState>();
+    let open = crate::lock(&state.vault).as_ref().map(|v| v.root().to_string_lossy().to_string());
+    if let Some(root) = open {
+        crate::settings::update(&app, |s| {
+            if s.inbox_vault.is_some() {
+                return false;
+            }
+            s.inbox_vault = Some(root);
+            true
+        })?;
+    }
+    let inbox_vault = crate::settings::load(&app).inbox_vault;
+    Ok(PairStart { url, expires_at, svg, inbox_vault })
 }
 
 /// The paired phones.
@@ -453,13 +792,124 @@ mod tests {
         assert!(svg.contains("currentColor"));
     }
 
+    fn at(h: u32, m: u32) -> DateTime<Local> {
+        use chrono::TimeZone;
+        Local.with_ymd_and_hms(2026, 9, 22, h, m, 0).unwrap()
+    }
+
+    fn item(id: &str, text: &str) -> InboxItem {
+        InboxItem {
+            seq: 1,
+            id: id.into(),
+            created_at: "2026-09-22T10:05:00+08:00".into(),
+            received_at: "2026-09-22T02:05:30Z".into(),
+            text: text.into(),
+            source: "pwa".into(),
+            url: None,
+            title: None,
+            door_kind: String::new(),
+            door_name: String::new(),
+        }
+    }
+
+    /// The line the main window builds (vault.capture), byte for byte.
+    #[test]
+    fn capture_line_mirrors_the_windows_capture() {
+        let t = at(10, 5);
+        assert_eq!(capture_line("a thought", t), "- a thought *(2026-09-22 10:05)*");
+        assert_eq!(capture_line("first\nsecond  ", t), "- first\n  second *(2026-09-22 10:05)*");
+        assert_eq!(capture_line("", t), "- *(2026-09-22 10:05)*");
+        assert_eq!(capture_line("line\n", t), "- line\n  *(2026-09-22 10:05)*");
+    }
+
+    #[test]
+    fn inbox_text_appends_the_link_the_way_the_window_does() {
+        let mut it = item("x", "see this");
+        assert_eq!(inbox_text(&it), "see this");
+        it.url = Some("https://example.org/p".into());
+        assert_eq!(inbox_text(&it), "see this\nhttps://example.org/p");
+        it.title = Some("A page".into());
+        assert_eq!(inbox_text(&it), "see this\n[A page](https://example.org/p)");
+        it.text = "  ".into();
+        assert_eq!(inbox_text(&it), "[A page](https://example.org/p)");
+    }
+
+    /// The phone's clock stamps the note; a phone a day or more off yields to the service's.
+    #[test]
+    fn stamp_time_prefers_the_phone_unless_a_day_off() {
+        let mut it = item("x", "t");
+        let phone = DateTime::parse_from_rfc3339("2026-09-22T10:05:00+08:00").unwrap();
+        assert_eq!(stamp_time(&it), phone.with_timezone(&Local));
+        it.created_at = "2026-09-20T10:05:00+08:00".into();
+        let service = DateTime::parse_from_rfc3339("2026-09-22T02:05:30Z").unwrap();
+        assert_eq!(stamp_time(&it), service.with_timezone(&Local));
+        it.created_at = "yesterday".into();
+        assert_eq!(stamp_time(&it), service.with_timezone(&Local));
+    }
+
+    #[test]
+    fn capture_spot_follows_the_target_and_falls_back_to_inbox() {
+        let none = CapturePin::default();
+        assert_eq!(capture_spot(CaptureTarget::Inbox, &none), Spot::inbox());
+        assert_eq!(capture_spot(CaptureTarget::Pinned, &none), Spot::inbox());
+        let pinned = CapturePin { path: "notes/ideas".into(), heading: " Later ".into() };
+        let spot = capture_spot(CaptureTarget::Pinned, &pinned);
+        assert_eq!(spot, Spot { path: "notes/ideas.md".into(), heading: Some("Later".into()) });
+        assert_eq!(spot.label(), "notes/ideas.md › Later");
+        assert!(capture_spot(CaptureTarget::Journal, &none).path.starts_with("journal/"));
+    }
+
+    #[test]
+    fn the_route_is_the_window_only_for_the_landing_vault_itself() {
+        assert_eq!(pick_route("/v/home", Some("/v/home")), Route::Window);
+        assert_eq!(pick_route("/v/home", Some("/v/work")), Route::Direct(PathBuf::from("/v/home")));
+        assert_eq!(pick_route("/v/home", None), Route::Direct(PathBuf::from("/v/home")));
+    }
+
+    /// A direct landing writes the capture line, the ledger and the provenance
+    /// line into a vault the main window does not have open, and a second
+    /// landing of the same items writes nothing again.
+    #[test]
+    fn land_into_writes_once_and_remembers() {
+        let dir = std::env::temp_dir().join(format!("vemry-inbox-land-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".vemry")).unwrap();
+        std::fs::write(dir.join("inbox.md"), "# Inbox\n\n- older *(2026-09-01 09:00)*\n").unwrap();
+        std::fs::write(dir.join(".vemry/config.json"), r#"{"capture_pin":{"path":"notes/ideas","heading":"Later"}}"#).unwrap();
+        let mut with_link = item("b", "");
+        with_link.url = Some("https://example.org".into());
+        with_link.title = Some("Example".into());
+        let items = vec![item("a", "a thought"), with_link];
+
+        let l = land_into(&dir, CaptureTarget::Inbox, &items).unwrap();
+        assert_eq!((l.landed.len(), l.already.len(), l.failed.len()), (2, 0, 0));
+        assert_eq!(l.target, "inbox.md");
+        let inbox = std::fs::read_to_string(dir.join("inbox.md")).unwrap();
+        assert!(inbox.contains("- a thought *(2026-09-22 "), "{inbox}");
+        assert!(inbox.contains("- [Example](https://example.org) *(2026-09-22 "), "{inbox}");
+        let ledger = ledger_read(&dir.join(".vemry").join(LEDGER_FILE));
+        assert_eq!(ledger.ids, vec!["a".to_string(), "b".to_string()]);
+        let prov = std::fs::read_to_string(dir.join(".vemry/provenance.jsonl")).unwrap();
+        assert!(prov.contains("\"origin\":\"capture\""), "{prov}");
+
+        let again = land_into(&dir, CaptureTarget::Inbox, &items).unwrap();
+        assert_eq!((again.landed.len(), again.already.len()), (0, 2));
+        assert_eq!(std::fs::read_to_string(dir.join("inbox.md")).unwrap(), inbox);
+
+        // The pinned mode reads the vault's own pin, and a missing note is created
+        let l = land_into(&dir, CaptureTarget::Pinned, &[item("c", "pinned")]).unwrap();
+        assert_eq!(l.target, "notes/ideas.md › Later");
+        let ideas = std::fs::read_to_string(dir.join("notes/ideas.md")).unwrap();
+        assert!(ideas.contains("- pinned *("), "{ideas}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn ledger_keeps_the_newest_ids() {
         let dir = std::env::temp_dir().join(format!("vemry-inbox-ledger-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join(LEDGER_FILE);
-        let mut ledger = Ledger::default();
-        ledger.ids = (0..LEDGER_CAP + 10).map(|i| i.to_string()).collect();
+        let mut ledger = Ledger { ids: (0..LEDGER_CAP + 10).map(|i| i.to_string()).collect() };
         let drop = ledger.ids.len() - LEDGER_CAP;
         ledger.ids.drain(..drop);
         std::fs::create_dir_all(&dir).unwrap();

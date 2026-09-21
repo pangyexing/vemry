@@ -2,7 +2,7 @@
   import { t, tn } from "$lib/i18n/i18n.svelte";
   import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { extractOutline } from "$lib/outline";
-  import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onCaptureAction, onInboxItems, onMenuEvent, onQuitRequested, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
+  import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onCaptureAction, onInboxHomeFailed, onInboxItems, onInboxLanded, onMenuEvent, onQuitRequested, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
   import { defaultCaptureSpot, hotkeyLabel, spotLabel } from "$lib/capture";
   import { runHostAction } from "$lib/host";
   import { executeCommand, registerCommand, syncScriptCommands } from "$lib/commands/registry";
@@ -372,6 +372,11 @@
     }
     if (failed.length) void api.inboxFailed(failed).catch(() => {});
   });
+  // Captures Rust wrote straight into the phone's vault, because that vault was not the one open
+  // here (inbox.rs, "The landing vault"): the receipt names the vault, since it is not the one
+  // on screen; and the failure, since a landing vault that cannot be written needs the user
+  void onInboxLanded((l) => toast.push(tn("app.inboxLandedIn", l.count, { vault: l.vault, target: l.target })));
+  void onInboxHomeFailed((f) => toast.push(t("app.inboxHomeFailed", { vault: f.vault, error: f.error }), "error"));
   // Items are handed over only once this window is listening and has a vault to land them in:
   // an event emitted before the listener is dropped, and at launch the loop would otherwise
   // pull — and lose — whatever the phone dropped while the app was closed. Sent again for every

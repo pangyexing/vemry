@@ -78,6 +78,12 @@
   let captureTarget = $state<CaptureTarget>("inbox");
   let capturePinnedPath = $state("");
   let capturePinnedHeading = $state("");
+  /** The vault a phone's captures land in ("" = whichever is open); the choices are the recent vaults. */
+  let inboxVault = $state("");
+  let recentVaults = $state<string[]>([]);
+  const inboxVaultChoices = $derived(inboxVault && !recentVaults.includes(inboxVault) ? [inboxVault, ...recentVaults] : recentVaults);
+  /** The folder name, which is how the user knows a vault; the full path is the option's title. */
+  const vaultName = (root: string) => root.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || root;
   /** The phone inbox: the pairing QR code on show (null = none), the paired phones, the last failure. */
   let phonePair = $state<PairStart | null>(null);
   let phonePairing = $state(false);
@@ -89,6 +95,8 @@
     phoneError = null;
     try {
       phonePair = await api.inboxPairStart();
+      // Showing the first code fixes the landing vault to the open one (inbox.rs): the field follows unless the user is mid-edit
+      if (!touched.has("inboxVault")) inboxVault = phonePair.inbox_vault ?? "";
       // Until the code is claimed (a new phone appears) or expires, the list is polled so the
       // page can say "paired" and drop the code by itself
       const before = phoneDoors.length;
@@ -252,6 +260,8 @@
       fill("captureTarget", () => (captureTarget = s.capture_target));
       fill("capturePinnedPath", () => (capturePinnedPath = s.capture_pinned_path));
       fill("capturePinnedHeading", () => (capturePinnedHeading = s.capture_pinned_heading));
+      fill("inboxVault", () => (inboxVault = s.inbox_vault ?? ""));
+      recentVaults = s.recent_vaults;
       fill("trayResident", () => (trayResident = s.tray_resident));
       trayError = s.tray_error;
     });
@@ -473,6 +483,7 @@
       capture_target: captureTarget,
       capture_pinned_path: capturePinnedPath.trim(),
       capture_pinned_heading: capturePinnedHeading.trim(),
+      inbox_vault: inboxVault,
       tray_resident: trayResident,
     });
     } catch (e) {
@@ -977,7 +988,9 @@
                 </label>
                 <small>{t("settings.capture.targetHint", { key: k("Mod+Enter") })}</small>
               </div>
-              {#if captureTarget === "pinned"}
+              {#if captureTarget === "pinned" && !vault.root}
+                <small class="empty">{t("settings.capture.pinnedNeedsVault")}</small>
+              {:else if captureTarget === "pinned"}
                 <label>
                   <span>{t("settings.capture.pinnedNote")}</span>
                   <input
@@ -1020,6 +1033,16 @@
                     <small class="err-text">{phoneError}</small>
                   {/if}
                 </div>
+                <label>
+                  <span>{t("settings.capture.phoneVault")}</span>
+                  <select bind:value={inboxVault} onchange={() => touch("inboxVault")}>
+                    <option value="">{t("settings.capture.phoneVaultOpen")}</option>
+                    {#each inboxVaultChoices as root (root)}
+                      <option value={root} title={root}>{vaultName(root)}</option>
+                    {/each}
+                  </select>
+                  <small>{t("settings.capture.phoneVaultHint")}</small>
+                </label>
                 <div class="field">
                   <span class="field-title">{t("settings.capture.phoneDoors")}</span>
                   {#if phoneDoors.length}

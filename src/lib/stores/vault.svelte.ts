@@ -6,6 +6,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { api, onVaultEvent, type EditorSelection, type NoteSummary, type Origin, type PendingNote, type VaultEvent } from "$lib/api";
 import { agent } from "$lib/stores/agent.svelte";
 import { clips } from "$lib/stores/clips.svelte";
+import { prefs } from "$lib/stores/prefs.svelte";
 import { toast } from "$lib/stores/toast.svelte";
 import { POSITIONAL_RE, blocksOf, findBlock, parseRefTarget } from "$lib/citation";
 import { types } from "$lib/stores/types.svelte";
@@ -718,6 +719,8 @@ class VaultStore {
       agent.reset();
       // The paths in the citation-landed cache belong to the old vault
       clips.reset();
+      // The capture pin in the settings mirror is the vault's own (settings_get serves the open vault's): re-read for this one
+      void prefs.refresh();
       await this.refreshNotes();
       void this.refreshPendingVault();
       // folders is fresh at this point: prune the expanded entries that no longer exist (orphans of an external or agent rename)

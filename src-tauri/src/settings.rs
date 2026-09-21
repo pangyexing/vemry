@@ -171,14 +171,20 @@ pub struct Settings {
     pub capture_hotkey: String,
     /// Where Enter in the capture window lands a thought (⌘Enter still picks a note
     /// for one capture): inbox.md, today's journal note, or a pinned note and
-    /// section. The pin is its own pair of fields and not the clip target — a clip
-    /// pin is a browsing session's destination, a capture pin a long-lived inbox.
+    /// section. The pin itself is not here: a note path is relative to one vault,
+    /// so it lives in that vault's `.vemry/config.json` (`capture_pin`, read and
+    /// written through commands.rs) and every vault has its own, the way the clip
+    /// target does. The mode alone is an application preference.
     #[serde(default)]
     pub capture_target: CaptureTarget,
+    /// The vault a capture from a phone lands in (the root, spelled like
+    /// `last_vault`): set to the open vault when the first pairing code is shown,
+    /// changed in Settings › Quick capture › Phone. A phone cannot see which vault
+    /// is open on the desk, and privacy zones are a vault's, so the landing vault
+    /// is fixed here rather than taken from whatever happens to be open. None =
+    /// the open vault, whichever it is (a pairing from before the field existed).
     #[serde(default)]
-    pub capture_pinned_path: String,
-    #[serde(default)]
-    pub capture_pinned_heading: String,
+    pub inbox_vault: Option<String>,
     /// An application behaviour (Settings › General): keep running in the menu
     /// bar (system tray) when the main window is closed — the close button hides
     /// the window instead of quitting, a tray icon stands for the app (a click on
@@ -346,8 +352,7 @@ impl Default for Settings {
             hosted_model: String::new(),
             capture_hotkey: default_capture_hotkey(),
             capture_target: CaptureTarget::default(),
-            capture_pinned_path: String::new(),
-            capture_pinned_heading: String::new(),
+            inbox_vault: None,
             tray_resident: true,
         }
     }
@@ -448,6 +453,7 @@ fn clean_vault_paths(s: &mut Settings) {
     }
     s.recent_vaults = cleaned;
     s.last_vault = s.last_vault.take().map(|p| strip_verbatim(&p));
+    s.inbox_vault = s.inbox_vault.take().map(|p| strip_verbatim(&p));
 }
 
 fn strip_verbatim(p: &str) -> String {
@@ -649,22 +655,33 @@ mod tests {
     }
 
     /// The capture fields are added later: an old config missing them takes the
-    /// default shortcut and inbox.md, and stored values must be kept.
+    /// default shortcut, inbox.md and no fixed vault for the phone, and stored
+    /// values must be kept. The pin is the vault's, not a field here: a config
+    /// that still carries one is read without complaint.
     #[test]
     fn capture_fields_default_and_keep_stored() {
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(s.capture_hotkey, "Alt+Shift+Space");
         assert_eq!(s.capture_target, CaptureTarget::Inbox);
-        assert!(s.capture_pinned_path.is_empty() && s.capture_pinned_heading.is_empty());
+        assert_eq!(s.inbox_vault, None);
         let s: Settings = serde_json::from_str(
-            r#"{"capture_hotkey":"Ctrl+Shift+Space","capture_target":"pinned","capture_pinned_path":"notes/ideas.md","capture_pinned_heading":"Later"}"#,
+            r#"{"capture_hotkey":"Ctrl+Shift+Space","capture_target":"pinned","capture_pinned_path":"notes/ideas.md","inbox_vault":"/home/me/notes"}"#,
         )
         .unwrap();
         assert_eq!(s.capture_hotkey, "Ctrl+Shift+Space");
         assert_eq!(s.capture_target, CaptureTarget::Pinned);
-        assert_eq!((s.capture_pinned_path.as_str(), s.capture_pinned_heading.as_str()), ("notes/ideas.md", "Later"));
+        assert_eq!(s.inbox_vault.as_deref(), Some("/home/me/notes"));
         let s: Settings = serde_json::from_str(r#"{"capture_target":"journal"}"#).unwrap();
         assert_eq!(s.capture_target, CaptureTarget::Journal);
+    }
+
+    /// The phone's vault is washed like the other two stored roots.
+    #[test]
+    fn inbox_vault_is_washed_of_the_verbatim_prefix() {
+        let mut s: Settings = serde_json::from_str("{}").unwrap();
+        s.inbox_vault = Some(r"\\?\D:\notes".to_string());
+        clean_vault_paths(&mut s);
+        assert_eq!(s.inbox_vault.as_deref(), Some(r"D:\notes"));
     }
 
     /// The resident switch is on for an old config (the capture promise holds
