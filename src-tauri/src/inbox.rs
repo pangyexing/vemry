@@ -14,6 +14,19 @@
 //! acked, so a crash between landing and acking would land it twice — the
 //! ledger below makes that a no-op.
 //!
+//! **The ready gate.** A Tauri event reaches only the listeners registered at
+//! that moment; one emitted to the main window before its page has run is
+//! dropped without an error. The account is warm from the first millisecond,
+//! and the service answers a pull at once while an unacked item exists, so
+//! without a gate the very first pull of a launch handed the items dropped
+//! while the app was closed to a window that was not listening yet, and they
+//! stayed in flight for the life of the process. The loop therefore waits until
+//! the main window says it is ready — its listener registered and a vault open
+//! (`inbox_ready`, sent again on every vault opened later, which also re-offers
+//! what could not land) — and a page load of the main window (`page_reloading`)
+//! closes the gate again and returns what was in flight to the pool: the page
+//! those items went to is gone.
+//!
 //! **The ledger.** `.vemry/inbox-seen.json` in the vault lists the ids already
 //! written into it. It is written *before* the ack goes out: an ack lost to the
 //! network leaves the item on the server, the next pull finds its id in the
@@ -102,10 +115,16 @@ pub struct PairStart {
 }
 
 #[derive(Default)]
-pub struct InboxState(Mutex<Inner>);
+pub struct InboxState {
+    inner: Mutex<Inner>,
+    /// Woken by `inbox_ready`; the loop waits on it while the gate is closed.
+    ready: tokio::sync::Notify,
+}
 
 #[derive(Default)]
 struct Inner {
+    /// The main window is listening and has a vault open (see the module comment).
+    ready: bool,
     /// Handed to the main window, neither acked nor failed yet.
     in_flight: HashSet<String>,
     /// Could not land; offered again once the instant has passed.
@@ -114,7 +133,7 @@ struct Inner {
 
 impl InboxState {
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        crate::lock(&self.0)
+        crate::lock(&self.inner)
     }
 }
 
@@ -164,14 +183,15 @@ fn ledger_add(app: &AppHandle, ids: &[String]) -> Result<(), String> {
 // the poll loop
 // ---------------------------------------------------------------------------
 
-/// Start the background loop (once, at startup). It idles while signed out and
-/// backs off while the service cannot be reached; a 401 clears the account the
-/// way every other call does.
+/// Start the background loop (once, at startup). It waits for the main window
+/// to be ready, idles while signed out and backs off while the service cannot
+/// be reached; a 401 clears the account the way every other call does.
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut backoff = BACKOFF_MIN;
         loop {
+            wait_ready(&app).await;
             let token = account::cached(&app).token;
             if token.is_empty() {
                 tokio::time::sleep(IDLE_SIGNED_OUT).await;
@@ -189,6 +209,8 @@ pub fn start(app: &AppHandle) {
                     backoff = BACKOFF_MIN;
                     tokio::time::sleep(IN_FLIGHT_PAUSE).await;
                 }
+                // The gate closed under the pull (the page is reloading): back to waiting
+                Ok(Pulled::NotReady) => backoff = BACKOFF_MIN,
                 Err(e) => {
                     eprintln!("inbox pull: {e}");
                     tokio::time::sleep(backoff).await;
@@ -206,6 +228,20 @@ enum Pulled {
     Nothing,
     /// It had items, every one already with the main window or waiting for its retry.
     AllInFlight,
+    /// It had items, but the main window is not listening: nothing was handed over.
+    NotReady,
+}
+
+/// Block until the gate is open. `notify_one` stores a permit when nobody is
+/// waiting, so a readiness announced between the check and the wait is not lost.
+async fn wait_ready(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    loop {
+        if state.inbox.lock().ready {
+            return;
+        }
+        state.inbox.ready.notified().await;
+    }
 }
 
 /// One long poll. Items already in flight, waiting for their retry, or in the
@@ -242,6 +278,11 @@ async fn pull(app: &AppHandle, token: &str) -> Result<Pulled, String> {
     let fresh: Vec<InboxItem> = {
         let state = app.state::<AppState>();
         let mut inner = state.inbox.lock();
+        // Checked under the lock the gate is closed under: an item enters the in-flight set
+        // only while the window that will receive it is listening
+        if !inner.ready {
+            return Ok(Pulled::NotReady);
+        }
         let ledger: HashSet<String> = ledger_path(app).map(|p| ledger_read(&p).ids.into_iter().collect()).unwrap_or_default();
         inner.retry_at.retain(|_, at| *at > now);
         let mut out = Vec::new();
@@ -307,6 +348,32 @@ pub async fn inbox_ack(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
         return Ok(());
     }
     ack_remote(&app, &token, &ids).await
+}
+
+/// The main window is listening and has a vault open: items may be handed over
+/// from now on, and what could not land earlier is offered again at once (sent
+/// on every vault opened, so a capture that found no vault lands when one is).
+#[tauri::command]
+pub fn inbox_ready(app: AppHandle) {
+    let state = app.state::<AppState>();
+    {
+        let mut inner = state.inbox.lock();
+        inner.ready = true;
+        inner.retry_at.clear();
+    }
+    state.inbox.ready.notify_one();
+}
+
+/// The main window's page is starting to load (the first time, or anew): its
+/// listeners are gone, so the gate closes until it reports ready again, and what
+/// was handed to the page that went away returns to the pool. Landed there but
+/// not yet acked, an item lands twice — the ledger is written at the ack — which
+/// is the failure the design prefers to losing it.
+pub fn page_reloading(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let mut inner = state.inbox.lock();
+    inner.ready = false;
+    inner.in_flight.clear();
 }
 
 /// The main window could not land these (no vault open, a note that cannot be

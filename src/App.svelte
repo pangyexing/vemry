@@ -352,7 +352,7 @@
   // moment the thought was had, not the moment it reached this machine — and is acked only
   // once written (the ledger first, so a lost ack cannot land it twice). What cannot land now
   // (no vault open) is reported back and offered again later.
-  void onInboxItems(async (items) => {
+  const inboxListener = onInboxItems(async (items) => {
     const landed: string[] = [];
     const failed: string[] = [];
     const spot = defaultCaptureSpot();
@@ -371,6 +371,14 @@
       toast.push(tn("app.inboxLanded", landed.length, { target: spotLabel(spot) }));
     }
     if (failed.length) void api.inboxFailed(failed).catch(() => {});
+  });
+  // Items are handed over only once this window is listening and has a vault to land them in:
+  // an event emitted before the listener is dropped, and at launch the loop would otherwise
+  // pull — and lose — whatever the phone dropped while the app was closed. Sent again for every
+  // vault opened later, which re-offers what found no vault at the time.
+  $effect(() => {
+    if (!vault.root) return;
+    void inboxListener.then(() => api.inboxReady()).catch(() => {});
   });
   // After a hot reload or an unusual startup the window may already be open: mirror the real state once
   void api.agentWindowIsOpen().then((open) => (agent.windowOpen = open)).catch(() => {});

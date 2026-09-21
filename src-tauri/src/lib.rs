@@ -88,6 +88,15 @@ pub fn run() {
         // directly, and images are fetched by Rust through this protocol (SSRF
         // validation, no cookies, a disk cache)
         .register_asynchronous_uri_scheme_protocol("vemry-asset", browser::assets::handle)
+        // The main window's page starting to load, at launch or on a reload: its event
+        // listeners are gone, so the phone inbox stops handing items to it until the new
+        // page reports ready (inbox.rs, "The ready gate")
+        .on_page_load(|webview, payload| {
+            use tauri::Manager;
+            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                inbox::page_reloading(webview.app_handle());
+            }
+        })
         .manage(AppState {
             vault: Arc::new(Mutex::new(None)),
             watcher: Mutex::new(None),
@@ -249,6 +258,7 @@ pub fn run() {
             account::account_redeem,
             inbox::inbox_ack,
             inbox::inbox_failed,
+            inbox::inbox_ready,
             inbox::inbox_pair_start,
             inbox::inbox_doors,
             inbox::inbox_door_revoke,

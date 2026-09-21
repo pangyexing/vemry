@@ -1328,6 +1328,8 @@ export const api = {
   inboxAck: (ids: string[]) => invoke<void>("inbox_ack", { ids }),
   /** These could not land (no vault open, a note that cannot be written); they are offered again in a few minutes. */
   inboxFailed: (ids: string[]) => invoke<void>("inbox_failed", { ids }),
+  /** This window is listening and has a vault open: items may be handed over, and what could not land is offered again now. */
+  inboxReady: () => invoke<void>("inbox_ready"),
   /** A fresh single-use pairing code, as the QR code the phone scans. */
   inboxPairStart: () => invoke<PairStart>("inbox_pair_start"),
   inboxDoors: () => invoke<InboxDoor[]>("inbox_doors"),
