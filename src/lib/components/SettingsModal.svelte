@@ -5,8 +5,9 @@
 
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, EFFORT_OPTIONS, type CaptureTarget, type InboxDoor, type LangSetting, type LinkOpenMode, type PairStart, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
+  import { api, EFFORT_OPTIONS, type CaptureTarget, type InboxDoor, type InboxLanding, type InboxStatus, type LangSetting, type LinkOpenMode, type PairStart, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
   import { comboFromEvent, hotkeyLabel, isModifierKey } from "$lib/capture";
+  import { copyText } from "$lib/copytext";
   import { account } from "$lib/stores/account.svelte";
   import AccountPanel from "./AccountPanel.svelte";
   import { scaffold } from "$lib/scaffold";
@@ -89,39 +90,72 @@
   let phonePairing = $state(false);
   let phoneDoors = $state<InboxDoor[]>([]);
   let phoneError = $state<string | null>(null);
+  /** What "retry" after the failure does: show a code again, or read the list again. */
+  let phoneRetry: (() => Promise<void>) | null = null;
+  /** The phone that just claimed the code: the card is a tick for three seconds, then folds. */
+  let phoneJustPaired = $state<InboxDoor | null>(null);
+  /** The code's remaining time, m:ss, ticking every second while a code is on show. */
+  let phoneCodeLeft = $state("");
+  let phoneCopied = $state(false);
+  /** The last landing of captures from a phone (inbox_status). */
+  let inboxStatus = $state<InboxStatus | null>(null);
   let phoneWatch: ReturnType<typeof setInterval> | null = null;
+  let phoneTick: ReturnType<typeof setInterval> | null = null;
+  let phoneOkTimer: ReturnType<typeof setTimeout> | null = null;
   async function showPairCode() {
     phonePairing = true;
     phoneError = null;
+    phoneCopied = false;
     try {
       phonePair = await api.inboxPairStart();
       // Showing the first code fixes the landing vault to the open one (inbox.rs): the field follows unless the user is mid-edit
       if (!touched.has("inboxVault")) inboxVault = phonePair.inbox_vault ?? "";
-      // Until the code is claimed (a new phone appears) or expires, the list is polled so the
-      // page can say "paired" and drop the code by itself
-      const before = phoneDoors.length;
+      // Until the code is claimed or expires, the paired phones are polled: a new one turns the
+      // card into a tick, and an expiry while the page is still open asks for a fresh code
+      const before = new Set(phoneDoors.map((d) => d.id));
       const until = new Date(phonePair.expires_at).getTime();
       stopPhoneWatch();
       phoneWatch = setInterval(async () => {
         await loadDoors();
-        if (phoneDoors.length > before) {
+        const fresh = phoneDoors.find((d) => !before.has(d.id));
+        if (fresh) {
           stopPhoneWatch();
           phonePair = null;
-          toast.push(t("settings.capture.phonePaired"));
-        } else if (Number.isNaN(until) || Date.now() > until) {
+          phoneJustPaired = fresh;
+          phoneOkTimer = setTimeout(() => (phoneJustPaired = null), 3000);
+        } else if (Number.isNaN(until)) {
           stopPhoneWatch();
           phonePair = null;
+        } else if (Date.now() > until) {
+          stopPhoneWatch();
+          void showPairCode();
         }
       }, 4000);
+      phoneCodeLeft = countdown(until);
+      phoneTick = setInterval(() => (phoneCodeLeft = countdown(until)), 1000);
     } catch (e) {
+      phonePair = null;
       phoneError = e instanceof Error ? e.message : String(e);
+      phoneRetry = showPairCode;
     } finally {
       phonePairing = false;
     }
   }
+  function countdown(until: number): string {
+    const s = Math.max(0, Math.round((until - Date.now()) / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
   function stopPhoneWatch() {
     if (phoneWatch) clearInterval(phoneWatch);
+    if (phoneTick) clearInterval(phoneTick);
     phoneWatch = null;
+    phoneTick = null;
+  }
+  /** The code as a link, for a phone that cannot scan: sent to it any way at all, it pairs on opening. */
+  async function copyPairLink() {
+    if (!phonePair) return;
+    phoneCopied = await copyText(phonePair.url);
+    if (phoneCopied) setTimeout(() => (phoneCopied = false), 2000);
   }
   async function loadDoors() {
     if (!account.loggedIn) {
@@ -132,27 +166,80 @@
       phoneDoors = await api.inboxDoors();
     } catch (e) {
       phoneError = e instanceof Error ? e.message : String(e);
+      phoneRetry = loadDoors;
+    }
+  }
+  async function loadInboxStatus() {
+    try {
+      inboxStatus = await api.inboxStatus();
+    } catch {
+      inboxStatus = null;
     }
   }
   async function revokeDoor(id: number) {
     try {
       await api.inboxDoorRevoke(id);
       phoneDoors = phoneDoors.filter((d) => d.id !== id);
+      toast.push(t("settings.capture.phoneRevoked"));
     } catch (e) {
       phoneError = e instanceof Error ? e.message : String(e);
+      phoneRetry = loadDoors;
     }
   }
-  function doorLabel(d: InboxDoor): string {
-    const kind = d.kind === "pwa" ? t("settings.capture.kindPwa") : d.kind === "shortcut" ? t("settings.capture.kindShortcut") : t("settings.capture.kindOther");
-    return d.name ? `${d.name} · ${kind}` : kind;
+  function retryPhone() {
+    phoneError = null;
+    void (phoneRetry ?? loadDoors)();
   }
-  // The capture page opened: the paired phones are read once; leaving it drops a code on show
+  function kindLabel(d: InboxDoor): string {
+    return d.kind === "pwa" ? t("settings.capture.kindPwa") : d.kind === "shortcut" ? t("settings.capture.kindShortcut") : t("settings.capture.kindOther");
+  }
+  /** The phone's own name ("Android · 微信"); its kind when it gave none. */
+  const doorName = (d: InboxDoor) => d.name || kindLabel(d);
+  const monthDay = $derived(new Intl.DateTimeFormat(i18n.locale, { month: "long", day: "numeric" }));
+  const yearMonthDay = $derived(new Intl.DateTimeFormat(i18n.locale, { year: "numeric", month: "long", day: "numeric" }));
+  const relative = $derived(new Intl.RelativeTimeFormat(i18n.locale, { numeric: "auto" }));
+  /** "today", or the day (with its year when it is not this year's). */
+  function dateLabel(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) return t("settings.capture.today");
+    return (d.getFullYear() === now.getFullYear() ? monthDay : yearMonthDay).format(d);
+  }
+  /** "just now", "2 minutes ago", "yesterday". */
+  function ago(iso: string): string {
+    const ms = Date.now() - new Date(iso).getTime();
+    if (Number.isNaN(ms)) return "";
+    const min = Math.round(ms / 60000);
+    if (min < 1) return t("settings.capture.justNow");
+    if (min < 60) return relative.format(-min, "minute");
+    const h = Math.round(min / 60);
+    if (h < 24) return relative.format(-h, "hour");
+    return relative.format(-Math.round(h / 24), "day");
+  }
+  /** "paired Sep 21 · sent 7 minutes ago": when the door was made, and its last drop (the service's last_seen_at). */
+  function doorWhen(d: InboxDoor): string {
+    const since = t("settings.capture.phoneDoorSince", { date: dateLabel(d.created_at) });
+    const seen = d.last_seen_at ? t("settings.capture.phoneDoorSeen", { ago: ago(d.last_seen_at) }) : t("settings.capture.phoneDoorNever");
+    return `${since} · ${seen}`;
+  }
+  /** "Last one filed 7 minutes ago in inbox.md", naming the vault when it was not the open one. */
+  function lastLandedLine(l: InboxLanding): string {
+    return l.vault
+      ? t("settings.capture.phoneLastLandedIn", { ago: ago(l.at), vault: l.vault, target: l.target })
+      : t("settings.capture.phoneLastLanded", { ago: ago(l.at), target: l.target });
+  }
+  // The capture page opened: the paired phones and the last landing are read once; leaving it drops a code on show
   $effect(() => {
     if (open && tab === "capture") {
       void loadDoors();
+      void loadInboxStatus();
     } else {
       stopPhoneWatch();
+      if (phoneOkTimer) clearTimeout(phoneOkTimer);
+      phoneOkTimer = null;
       phonePair = null;
+      phoneJustPaired = null;
     }
   });
   /** The resident state (the close button hides the window behind a tray icon) and the icon's creation failure. */
@@ -1016,21 +1103,45 @@
               <h4>{t("settings.capture.phone")}</h4>
               <small>{t("settings.capture.phoneHint")}</small>
               {#if !account.loggedIn}
-                <small class="empty">{t("settings.capture.phoneSignIn")}</small>
+                <small class="empty">{t("settings.capture.phoneSignIn")} <button class="link" onclick={() => (tab = "account")}>{t("settings.capture.phoneSignInGo")} →</button></small>
               {:else}
+                {#if inboxStatus?.last_landed}
+                  <small>{lastLandedLine(inboxStatus.last_landed)}</small>
+                {/if}
+                <!-- The pairing card's four states: folded (a button and a hint), a code on show with its countdown,
+                     just paired (a tick for three seconds), failed (the error and a retry) -->
                 <div class="field">
-                  {#if phonePair}
-                    <!-- The QR code is our own SVG (inbox.rs renders it in currentColor); nothing user-written is in it -->
-                    <div class="qr" title={phonePair.url}>{@html phonePair.svg}</div>
-                    <small>{t("settings.capture.phoneCodeHint")}</small>
+                  {#if phoneJustPaired}
+                    <div class="pair-ok">
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3 3 7-7" /></svg>
+                      <span>{t("settings.capture.phonePairedAs", { name: doorName(phoneJustPaired) })}</span>
+                    </div>
+                  {:else if phonePair}
+                    <div class="pair-card">
+                      <!-- The QR code is our own SVG (inbox.rs renders it in currentColor); nothing user-written is in it -->
+                      <div class="qr" title={phonePair.url}>{@html phonePair.svg}</div>
+                      <div class="pair-steps">
+                        <b>{t("settings.capture.phoneScanTitle")}</b>
+                        <ol>
+                          <li>{t("settings.capture.phoneStep1")}</li>
+                          <li>{t("settings.capture.phoneStep2")}</li>
+                          <li>{t("settings.capture.phoneStep3")}</li>
+                        </ol>
+                        <small>{t("settings.capture.phoneCodeLeft", { time: phoneCodeLeft })}</small>
+                        <div class="hotkey-row">
+                          <button class="btn small" onclick={copyPairLink}>{phoneCopied ? t("settings.capture.phoneCopied") : t("settings.capture.phoneCopyLink")}</button>
+                          <button class="btn small" disabled={phonePairing} onclick={showPairCode}>{t("settings.capture.phoneNewCode")}</button>
+                        </div>
+                      </div>
+                    </div>
+                  {:else}
+                    <div class="hotkey-row">
+                      <button class="btn small" disabled={phonePairing} onclick={showPairCode}>{t("settings.capture.phoneShowCode")}</button>
+                      <small>{t("settings.capture.phoneCodeHint")}</small>
+                    </div>
                   {/if}
-                  <div class="hotkey-row">
-                    <button class="btn small" disabled={phonePairing} onclick={showPairCode}>
-                      {phonePair ? t("settings.capture.phoneNewCode") : t("settings.capture.phoneShowCode")}
-                    </button>
-                  </div>
                   {#if phoneError}
-                    <small class="err-text">{phoneError}</small>
+                    <small class="err-text">{phoneError} <button class="link" onclick={retryPhone}>{t("settings.capture.phoneRetry")}</button></small>
                   {/if}
                 </div>
                 <label>
@@ -1046,11 +1157,12 @@
                 <div class="field">
                   <span class="field-title">{t("settings.capture.phoneDoors")}</span>
                   {#if phoneDoors.length}
-                    <ul class="rules">
+                    <ul class="doors">
                       {#each phoneDoors as d (d.id)}
                         <li>
-                          <span class="rule-text">{doorLabel(d)}</span>
-                          <button class="rule-del" title={t("settings.capture.phoneRevoke")} onclick={() => revokeDoor(d.id)}>✕</button>
+                          <span class="door-name">{doorName(d)}{#if d.name}<span class="door-kind">{kindLabel(d)}</span>{/if}</span>
+                          <button class="link door-del" onclick={() => revokeDoor(d.id)}>{t("settings.capture.phoneRevoke")}</button>
+                          <small class="door-when">{doorWhen(d)}</small>
                         </li>
                       {/each}
                     </ul>
@@ -1320,11 +1432,19 @@
   .err-text {
     color: var(--danger);
   }
-  /* The shortcut recorder: a field that reads like an input and takes a key combination instead of text */
+  /* The pairing card: the code at the left, the three steps and the countdown at the right */
+  .pair-card {
+    display: grid;
+    grid-template-columns: 148px 1fr;
+    gap: 16px;
+    align-items: start;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
   .qr {
-    width: 220px;
-    height: 220px;
-    margin: 6px 0 8px;
+    width: 148px;
+    height: 148px;
     color: var(--fg);
   }
   .qr :global(svg) {
@@ -1332,6 +1452,71 @@
     height: 100%;
     display: block;
   }
+  .pair-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: var(--fs-sm);
+  }
+  .pair-steps ol {
+    margin: 0;
+    padding-left: 1.3em;
+  }
+  .pair-steps li {
+    margin: 2px 0;
+  }
+  .pair-ok {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+  }
+  /* The paired phones: the phone's own name with its kind faint after it, when it paired and last
+     sent below, and unpair always in view — it is the action the list exists for */
+  .doors {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .doors li {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0 12px;
+    align-items: center;
+    padding: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .doors li:last-child {
+    border-bottom: 0;
+  }
+  .door-name {
+    font-size: var(--fs-sm);
+  }
+  .door-kind {
+    color: var(--fg-faint);
+    font-size: var(--fs-xs);
+    margin-left: 6px;
+  }
+  .door-when {
+    grid-column: 1;
+    color: var(--fg-muted);
+    font-size: var(--fs-xs);
+  }
+  .door-del {
+    grid-row: 1 / span 2;
+    color: var(--fg-muted);
+  }
+  .door-del:hover {
+    color: var(--danger);
+  }
+  /* The shortcut recorder: a field that reads like an input and takes a key combination instead of text */
   .hotkey-row {
     display: flex;
     align-items: center;

@@ -367,7 +367,7 @@
       }
     }
     if (landed.length) {
-      void api.inboxAck(landed).catch((e) => console.warn("phone inbox: ack", e));
+      void api.inboxAck(landed, spotLabel(spot)).catch((e) => console.warn("phone inbox: ack", e));
       toast.push(tn("app.inboxLanded", landed.length, { target: spotLabel(spot) }));
     }
     if (failed.length) void api.inboxFailed(failed).catch(() => {});

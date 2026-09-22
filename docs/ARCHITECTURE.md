@@ -2847,6 +2847,11 @@ lands a capture", and safe for exactly the reason that rule exists. The main
 window gets a receipt naming the vault, and a landing vault that cannot be
 written is reported and retried. Without a fixed vault (a pairing from before
 the setting existed), the open vault takes them through the window, as before.
+Every landing, through either door, is remembered in the settings
+(`inbox_last_landed`: when, the spot's label, the vault when it was not the open
+one) so the settings page can say when the last capture from a phone was filed
+and where — the question a user asks right after a restart, which is why it is
+on disk rather than in memory.
 
 ### Attachments bucketed by a note's full path
 

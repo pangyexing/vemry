@@ -902,6 +902,18 @@ export interface PairStart {
   inbox_vault: string | null;
 }
 
+/** One landing of captures from a phone (settings.rs InboxLanding): when, the spot's label, and the vault's folder
+ *  name when they were written straight into a vault other than the open one (null through the window). */
+export interface InboxLanding {
+  at: string;
+  target: string;
+  vault: string | null;
+}
+/** What the settings page shows under Phone besides the paired phones (inbox.rs InboxStatus). */
+export interface InboxStatus {
+  last_landed: InboxLanding | null;
+}
+
 /** Captures written straight into the landing vault while another vault (or none) was open (inbox://landed): the
  *  receipt names the vault by its folder name and the spot as capture.ts's spotLabel spells it. */
 export interface InboxLanded {
@@ -1342,8 +1354,11 @@ export const api = {
   accountRefresh: () => invoke<AccountStatus>("account_refresh"),
   accountRedeem: (code: string) => invoke<AccountStatus>("account_redeem", { code }),
   // ---- the phone inbox (inbox.rs): items arrive on onInboxItems; the main window lands them and acks ----
-  /** The main window wrote these items into the vault (the ledger first, then the service). */
-  inboxAck: (ids: string[]) => invoke<void>("inbox_ack", { ids }),
+  /** The main window wrote these items into the vault (the ledger first, then the service); `target` is the
+   *  spot's label (spotLabel), for the settings page's "last one filed". */
+  inboxAck: (ids: string[], target?: string) => invoke<void>("inbox_ack", { ids, target: target ?? null }),
+  /** The last landing of captures from a phone, for the settings page. */
+  inboxStatus: () => invoke<InboxStatus>("inbox_status"),
   /** These could not land (no vault open, a note that cannot be written); they are offered again in a few minutes. */
   inboxFailed: (ids: string[]) => invoke<void>("inbox_failed", { ids }),
   /** This window is listening and has a vault open: items may be handed over, and what could not land is offered again now. */

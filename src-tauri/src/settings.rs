@@ -185,6 +185,12 @@ pub struct Settings {
     /// the open vault, whichever it is (a pairing from before the field existed).
     #[serde(default)]
     pub inbox_vault: Option<String>,
+    /// The last time captures from a phone landed (`inbox_status`, the settings
+    /// page's "last one filed n minutes ago in inbox.md"). Kept on disk rather than
+    /// in memory because the question it answers — is the phone connected? — is
+    /// asked most right after a restart.
+    #[serde(default)]
+    pub inbox_last_landed: Option<InboxLanding>,
     /// An application behaviour (Settings › General): keep running in the menu
     /// bar (system tray) when the main window is closed — the close button hides
     /// the window instead of quitting, a tray icon stands for the app (a click on
@@ -195,6 +201,21 @@ pub struct Settings {
     /// prompted about it; the settings hint says what closing means.
     #[serde(default = "default_true")]
     pub tray_resident: bool,
+}
+
+/// One landing of captures from a phone, for the settings page (mirrored as
+/// `InboxLanding` in api.ts).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InboxLanding {
+    /// RFC 3339, this machine's clock.
+    pub at: String,
+    /// The spot's label (`note.md › Section`, as capture.ts spells it).
+    pub target: String,
+    /// The vault's folder name when the captures were written straight into a
+    /// vault other than the open one (inbox.rs, "The landing vault"); None when
+    /// they went through the main window.
+    #[serde(default)]
+    pub vault: Option<String>,
 }
 
 /// The capture target's wire values, mirrored as `CaptureTarget` in api.ts.
@@ -353,6 +374,7 @@ impl Default for Settings {
             capture_hotkey: default_capture_hotkey(),
             capture_target: CaptureTarget::default(),
             inbox_vault: None,
+            inbox_last_landed: None,
             tray_resident: true,
         }
     }

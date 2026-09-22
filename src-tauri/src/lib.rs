@@ -260,6 +260,7 @@ pub fn run() {
             inbox::inbox_failed,
             inbox::inbox_ready,
             inbox::inbox_pair_start,
+            inbox::inbox_status,
             inbox::inbox_doors,
             inbox::inbox_door_revoke,
             commands::agent_start,

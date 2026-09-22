@@ -54,7 +54,9 @@
 //! Pairing is the desktop's job as well: `inbox_pair_start` asks the service
 //! for a single-use code and renders the QR code the phone scans (the capture
 //! page's URL with the code in its fragment); the settings page lists the paired
-//! phones and revokes one by id.
+//! phones and revokes one by id. Every landing, through the window or direct,
+//! is remembered in the settings (`inbox_last_landed`) so the settings page can
+//! say when the last capture from a phone was filed and where (`inbox_status`).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -68,7 +70,7 @@ use tauri::{AppHandle, Manager};
 use vemry_core::{InsertOrigin, ProvenanceEntry, Vault};
 
 use crate::commands::CapturePin;
-use crate::settings::CaptureTarget;
+use crate::settings::{CaptureTarget, InboxLanding};
 use crate::{account, AppState};
 
 /// To the main window: land these items (the payload is `{ items: InboxItem[] }`).
@@ -455,6 +457,7 @@ async fn land_direct(app: &AppHandle, token: &str, root: PathBuf, items: Vec<Inb
         }
     }
     if !landing.landed.is_empty() {
+        remember_landing(app, &landing.target, Some(vault_name.clone()));
         let _ = crate::browser::window::relay_to_main(
             app,
             EV_LANDED,
@@ -464,6 +467,18 @@ async fn land_direct(app: &AppHandle, token: &str, root: PathBuf, items: Vec<Inb
     }
     if let Some((_, e)) = landing.failed.first() {
         let _ = crate::browser::window::relay_to_main(app, EV_HOME_FAILED, json!({ "vault": vault_name, "error": e }), false);
+    }
+}
+
+/// The settings page's "last one filed": written after every landing, through
+/// the window (the ack names the spot) or direct.
+fn remember_landing(app: &AppHandle, target: &str, vault: Option<String>) {
+    let landing = InboxLanding { at: Local::now().to_rfc3339(), target: target.to_string(), vault };
+    if let Err(e) = crate::settings::update(app, |s| {
+        s.inbox_last_landed = Some(landing);
+        true
+    }) {
+        eprintln!("inbox: remembering the landing: {e}");
     }
 }
 
@@ -655,9 +670,10 @@ async fn ack_remote(app: &AppHandle, token: &str, ids: &[String]) -> Result<(), 
 // ---------------------------------------------------------------------------
 
 /// The main window wrote these items into the vault: remember them, then tell
-/// the service. The ledger comes first (see the module comment).
+/// the service. The ledger comes first (see the module comment). `target` is the
+/// spot's label (capture.ts spotLabel), for the settings page's "last one filed".
 #[tauri::command]
-pub async fn inbox_ack(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+pub async fn inbox_ack(app: AppHandle, ids: Vec<String>, target: Option<String>) -> Result<(), String> {
     {
         // Under the lock the pull loop reads the ledger with: the id leaves the in-flight
         // set and enters the ledger in one step, so no pull sees it in neither
@@ -667,6 +683,9 @@ pub async fn inbox_ack(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
         for id in &ids {
             inner.in_flight.remove(id);
         }
+    }
+    if let Some(target) = target.filter(|_| !ids.is_empty()) {
+        remember_landing(&app, &target, None);
     }
     let token = account::cached(&app).token;
     if token.is_empty() {
@@ -739,6 +758,19 @@ pub async fn inbox_pair_start(app: AppHandle) -> Result<PairStart, String> {
     }
     let inbox_vault = crate::settings::load(&app).inbox_vault;
     Ok(PairStart { url, expires_at, svg, inbox_vault })
+}
+
+/// What the settings page shows under "Phone" besides the paired phones
+/// (mirrored as `InboxStatus` in api.ts).
+#[derive(Clone, Debug, Serialize)]
+pub struct InboxStatus {
+    /// The last landing of captures from a phone, if any since the field existed.
+    pub last_landed: Option<InboxLanding>,
+}
+
+#[tauri::command]
+pub fn inbox_status(app: AppHandle) -> InboxStatus {
+    InboxStatus { last_landed: crate::settings::load(&app).inbox_last_landed }
 }
 
 /// The paired phones.
