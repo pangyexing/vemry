@@ -2827,7 +2827,10 @@ signed in, and the notes are written by the same funnel as the capture window:
 the items are handed to the main window's `vault.capture`, acked only once
 written, and a ledger in the vault (`.vemry/inbox-seen.json`, written before the
 ack) makes a lost ack or a second computer sharing the vault a no-op rather than
-a duplicate.
+a duplicate. Rust works out every item's text, its stamp moment (the phone's
+clock unless it is a day or more out) and the capture spot for both doors
+below, so the window only writes what it is handed and the two doors cannot
+file an item differently.
 
 **The landing vault is fixed, not whichever is open.** A phone cannot see which
 vault is open on the desk, and privacy zones are a vault's: a private thought

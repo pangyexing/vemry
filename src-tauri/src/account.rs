@@ -306,7 +306,7 @@ fn account_error(app: &AppHandle, status: u16, body: &str) -> String {
     }
 }
 
-pub(crate) fn on_unauthorized(app: &AppHandle) {
+fn on_unauthorized(app: &AppHandle) {
     if cached(app).token.is_empty() {
         return;
     }
@@ -316,18 +316,37 @@ pub(crate) fn on_unauthorized(app: &AppHandle) {
 
 // ---- the calls ----
 
-pub(crate) fn base() -> String {
+fn base() -> String {
     hosted_base_url()
 }
 
-pub(crate) fn client() -> &'static reqwest::Client {
+fn client() -> &'static reqwest::Client {
     vemry_agent::client::shared_client()
 }
 
+/// A request to the service as the signed-in device (`path` from the base URL on);
+/// signed out is an error in the user's words, as for every other signed-in call.
+pub(crate) fn authed(app: &AppHandle, method: reqwest::Method, path: &str) -> Result<reqwest::RequestBuilder, String> {
+    let token = cached(app).token;
+    if token.is_empty() {
+        return Err(t(i18n::current(), "ipc.hosted.signIn"));
+    }
+    Ok(client().request(method, format!("{}{path}", base())).bearer_auth(token))
+}
+
 pub(crate) async fn send(app: &AppHandle, req: reqwest::RequestBuilder) -> Result<(reqwest::StatusCode, reqwest::header::HeaderMap, String), String> {
+    send_timed(app, req, REQUEST_TIMEOUT).await
+}
+
+/// `send` with its own timeout (a long poll holds the connection longer than a call).
+pub(crate) async fn send_timed(
+    app: &AppHandle,
+    req: reqwest::RequestBuilder,
+    timeout: Duration,
+) -> Result<(reqwest::StatusCode, reqwest::header::HeaderMap, String), String> {
     let resp = req
         .header(reqwest::header::USER_AGENT, vemry_agent::client::user_agent())
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(timeout)
         .send()
         .await
         .map_err(|e| i18n::tf(i18n::current(), "ipc.hosted.network", &[("error", &e.to_string())]))?;

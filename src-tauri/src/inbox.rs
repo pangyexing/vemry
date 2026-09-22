@@ -2,7 +2,9 @@
 //! service's inbox are pulled here, handed to the main window to land through
 //! the same funnel as the quick capture window (`vault.capture`: the editor
 //! buffer when the target note is open, `note_insert` otherwise), and acked
-//! once the main window reports them written.
+//! once the main window reports them written. What a capture says, when it was
+//! had and where it goes are worked out here for both doors (below), so the
+//! window only writes what it is handed.
 //!
 //! One background loop long-polls `GET /v1/inbox/pull` with the device token
 //! for as long as the app runs and the account is signed in; a drop on the
@@ -56,7 +58,8 @@
 //! page's URL with the code in its fragment); the settings page lists the paired
 //! phones and revokes one by id. Every landing, through the window or direct,
 //! is remembered in the settings (`inbox_last_landed`) so the settings page can
-//! say when the last capture from a phone was filed and where (`inbox_status`).
+//! say when the last capture from a phone was filed and where (served with the
+//! settings).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -67,13 +70,13 @@ use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
-use vemry_core::{InsertOrigin, ProvenanceEntry, Vault};
+use vemry_core::{InsertOrigin, Vault};
 
 use crate::commands::CapturePin;
 use crate::settings::{CaptureTarget, InboxLanding};
 use crate::{account, AppState};
 
-/// To the main window: land these items (the payload is `{ items: InboxItem[] }`).
+/// To the main window: land these items (a `WindowBatch`; mirrored as `InboxBatch` in api.ts).
 const EV_ITEMS: &str = "inbox://items";
 /// To the main window: captures written straight into the landing vault, for the
 /// receipt (`{ count, vault, target }`; mirrored as `InboxLanded` in api.ts).
@@ -91,32 +94,53 @@ const IDLE_SIGNED_OUT: Duration = Duration::from_secs(10);
 const RETRY_FAILED: Duration = Duration::from_secs(5 * 60);
 /// Everything the service returned is in flight to the main window: the next pull waits this long.
 const IN_FLIGHT_PAUSE: Duration = Duration::from_secs(3);
+/// Everything the service returned is waiting for its retry: the next pull waits at most this
+/// long. The service answers at once while an unacked item exists, so no pull is held open in
+/// the meantime, and this is how late a new drop can be while a failed one waits.
+const RETRY_PAUSE_MAX: Duration = Duration::from_secs(15);
 const BACKOFF_MIN: Duration = Duration::from_secs(5);
 const BACKOFF_MAX: Duration = Duration::from_secs(5 * 60);
 const LEDGER_FILE: &str = "inbox-seen.json";
 /// The ledger keeps the newest this many ids; the server forgets an acked item after a week anyway.
 const LEDGER_CAP: usize = 5000;
 
-/// One item as the service hands it out (`PullItem` in the protocol); mirrored as
-/// `InboxItem` in api.ts.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// One item as the service hands it out (`PullItem` in the protocol; the fields
+/// this side does not read are left to serde to skip).
+#[derive(Clone, Debug, Deserialize)]
 pub struct InboxItem {
-    pub seq: i64,
     pub id: String,
     /// The phone's local time with its offset — the stamp the note gets.
     pub created_at: String,
     pub received_at: String,
     pub text: String,
     #[serde(default)]
-    pub source: String,
-    #[serde(default)]
     pub url: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
-    #[serde(default)]
-    pub door_kind: String,
-    #[serde(default)]
-    pub door_name: String,
+}
+
+/// What the main window lands (`EV_ITEMS`): every item's finished text and stamp
+/// moment, and the one spot they all go to — the same values a direct landing
+/// writes, so the two doors cannot file an item differently.
+#[derive(Debug, Serialize)]
+struct WindowBatch {
+    items: Vec<WindowItem>,
+    path: String,
+    heading: Option<String>,
+    /// The spot's label, for the receipt and the ack.
+    target: String,
+    /// The root of the vault the spot was worked out for (the open one at the moment
+    /// of handing over): a window that has switched vaults since lands nothing and
+    /// reports the items failed, so they cannot land in a vault that is not theirs.
+    root: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WindowItem {
+    id: String,
+    text: String,
+    /// RFC 3339: the moment the stamp names (`stamp_time`).
+    at: String,
 }
 
 /// A paired phone, for the settings page (mirrored as `InboxDoor` in api.ts).
@@ -189,14 +213,7 @@ fn ledger_read(path: &Path) -> Ledger {
     std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
-/// Add ids to the open vault's ledger. No vault open: nothing to remember, and
-/// the caller has nothing to land either.
-fn ledger_add(app: &AppHandle, ids: &[String]) -> Result<(), String> {
-    let Some(path) = ledger_path(app) else { return Ok(()) };
-    ledger_add_at(&path, ids)
-}
-
-/// Add ids to the ledger at this path (the file is created with the meta
+/// Add ids to the ledger at this path (`config_store::write` creates the meta
 /// directory on the first write).
 fn ledger_add_at(path: &Path, ids: &[String]) -> Result<(), String> {
     let mut ledger = ledger_read(path);
@@ -209,9 +226,6 @@ fn ledger_add_at(path: &Path, ids: &[String]) -> Result<(), String> {
     if ledger.ids.len() > LEDGER_CAP {
         let drop = ledger.ids.len() - LEDGER_CAP;
         ledger.ids.drain(..drop);
-    }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     crate::config_store::write(path, &ledger)
 }
@@ -262,22 +276,26 @@ pub fn start(app: &AppHandle) {
         let mut backoff = BACKOFF_MIN;
         loop {
             let route = wait_routable(&app).await;
-            let token = account::cached(&app).token;
-            if token.is_empty() {
+            if account::cached(&app).token.is_empty() {
                 tokio::time::sleep(IDLE_SIGNED_OUT).await;
                 continue;
             }
-            match pull(&app, &token, &route).await {
+            match pull(&app, &route).await {
                 Ok(Pulled::Fresh(items)) => {
                     backoff = BACKOFF_MIN;
-                    land(&app, &token, items).await;
+                    land(&app, items).await;
                 }
                 Ok(Pulled::Nothing) => backoff = BACKOFF_MIN,
                 // The service answers at once while an unacked item exists, and every item it
-                // returned is with the main window already: wait for that, do not spin
-                Ok(Pulled::AllInFlight) => {
+                // returned is with the main window or waiting for its retry: wait for that, do not
+                // spin. A ready (a vault opened, which re-offers the failed ones) ends the wait early
+                Ok(Pulled::AllInFlight(pause)) => {
                     backoff = BACKOFF_MIN;
-                    tokio::time::sleep(IN_FLIGHT_PAUSE).await;
+                    let state = app.state::<AppState>();
+                    tokio::select! {
+                        _ = tokio::time::sleep(pause) => {}
+                        _ = state.inbox.ready.notified() => {}
+                    }
                 }
                 // The gate closed under the pull (the page is reloading): back to waiting
                 Ok(Pulled::NotReady) => backoff = BACKOFF_MIN,
@@ -297,8 +315,9 @@ enum Pulled {
     Fresh(Vec<InboxItem>),
     /// The service had nothing (the hold timed out).
     Nothing,
-    /// It had items, every one already with the main window or waiting for its retry.
-    AllInFlight,
+    /// It had items, every one already with the main window or waiting for its retry:
+    /// pull again after this long (the in-flight pause, or until the first retry is due).
+    AllInFlight(Duration),
     /// It had items, but the main window is not listening: nothing was handed over.
     NotReady,
 }
@@ -329,25 +348,9 @@ pub fn wake(app: &AppHandle) {
 /// the vault already has it. The ledger is read under the same lock `inbox_ack`
 /// writes it under, so an ack landing between the read and the in-flight check
 /// cannot make an item look new twice.
-async fn pull(app: &AppHandle, token: &str, route: &Route) -> Result<Pulled, String> {
-    let url = format!("{}/v1/inbox/pull?since=0&wait={WAIT_SECS}", account::base());
-    let resp = account::client()
-        .get(url)
-        .bearer_auth(token)
-        .header(reqwest::header::USER_AGENT, vemry_agent::client::user_agent())
-        .timeout(PULL_TIMEOUT)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        account::on_unauthorized(app);
-        return Err("unauthorized".into());
-    }
-    if !status.is_success() {
-        return Err(format!("HTTP {status}: {}", body.chars().take(200).collect::<String>()));
-    }
+async fn pull(app: &AppHandle, route: &Route) -> Result<Pulled, String> {
+    let req = account::authed(app, reqwest::Method::GET, &format!("/v1/inbox/pull?since=0&wait={WAIT_SECS}"))?;
+    let (_, _, body) = account::send_timed(app, req, PULL_TIMEOUT).await?;
     let v: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let all: Vec<InboxItem> = serde_json::from_value(v.get("items").cloned().unwrap_or(Value::Array(vec![]))).map_err(|e| e.to_string())?;
     if all.is_empty() {
@@ -355,6 +358,16 @@ async fn pull(app: &AppHandle, token: &str, route: &Route) -> Result<Pulled, Str
     }
     let mut seen_already = Vec::new();
     let now = Instant::now();
+    let mut in_flight = false;
+    let mut first_retry: Option<Instant> = None;
+    // The open vault's ledger answers for the window's door only; a direct landing reads
+    // the landing vault's ledger once that vault is open. Its path is taken before the inbox
+    // lock: the vault lock can be held through a long vault operation, and the page-load
+    // callback and the window's commands wait on the inbox lock
+    let ledger_at = match route {
+        Route::Window => ledger_path(app),
+        Route::Direct(_) => None,
+    };
     let fresh: Vec<InboxItem> = {
         let state = app.state::<AppState>();
         let mut inner = state.inbox.lock();
@@ -362,18 +375,17 @@ async fn pull(app: &AppHandle, token: &str, route: &Route) -> Result<Pulled, Str
         if *route == Route::Window && !inner.ready {
             return Ok(Pulled::NotReady);
         }
-        // The open vault's ledger answers for the window's door only; a direct landing
-        // reads the landing vault's ledger once that vault is open
-        let ledger: HashSet<String> = match route {
-            Route::Window => ledger_path(app).map(|p| ledger_read(&p).ids.into_iter().collect()).unwrap_or_default(),
-            Route::Direct(_) => HashSet::new(),
-        };
+        let ledger: HashSet<String> = ledger_at.map(|p| ledger_read(&p).ids.into_iter().collect()).unwrap_or_default();
         inner.retry_at.retain(|_, at| *at > now);
         let mut out = Vec::new();
         for it in all {
             if ledger.contains(&it.id) {
                 seen_already.push(it.id);
-            } else if !inner.in_flight.contains(&it.id) && !inner.retry_at.contains_key(&it.id) {
+            } else if inner.in_flight.contains(&it.id) {
+                in_flight = true;
+            } else if let Some(&at) = inner.retry_at.get(&it.id) {
+                first_retry = Some(first_retry.map_or(at, |f| f.min(at)));
+            } else {
                 out.push(it);
             }
         }
@@ -381,23 +393,28 @@ async fn pull(app: &AppHandle, token: &str, route: &Route) -> Result<Pulled, Str
     };
     if !seen_already.is_empty() {
         // Already in the vault (a lost ack, or the other computer sharing this vault landed it)
-        if let Err(e) = ack_remote(app, token, &seen_already).await {
+        if let Err(e) = ack_remote(app, &seen_already).await {
             eprintln!("inbox ack of already-landed items: {e}");
         }
-        if fresh.is_empty() {
-            return Ok(Pulled::Nothing);
-        }
     }
-    Ok(if fresh.is_empty() { Pulled::AllInFlight } else { Pulled::Fresh(fresh) })
+    if !fresh.is_empty() {
+        return Ok(Pulled::Fresh(fresh));
+    }
+    // Every item was acked just now: nothing is left on the service to answer at once
+    Ok(match (in_flight, first_retry) {
+        (false, None) => Pulled::Nothing,
+        (false, Some(at)) => Pulled::AllInFlight(at.saturating_duration_since(now).min(RETRY_PAUSE_MAX)),
+        (true, _) => Pulled::AllInFlight(IN_FLIGHT_PAUSE),
+    })
 }
 
 /// Land what a pull returned. The route is taken again here rather than kept
 /// from the pull: a vault opened or closed during the hold moves the items to
 /// the other door, and only the door that is right now writes.
-async fn land(app: &AppHandle, token: &str, items: Vec<InboxItem>) {
+async fn land(app: &AppHandle, items: Vec<InboxItem>) {
     match route(app) {
         Route::Window => deliver(app, items),
-        Route::Direct(root) => land_direct(app, token, root, items).await,
+        Route::Direct(root) => land_direct(app, root, items).await,
     }
 }
 
@@ -406,6 +423,19 @@ async fn land(app: &AppHandle, token: &str, items: Vec<InboxItem>) {
 /// the gate closed nothing is handed over, and the next pull returns them.
 fn deliver(app: &AppHandle, items: Vec<InboxItem>) {
     let ids: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
+    let (pin, root) = {
+        let state = app.state::<AppState>();
+        let guard = crate::lock(&state.vault);
+        guard.as_ref().map(|v| (crate::commands::capture_pin(v), v.root().to_string_lossy().to_string())).unwrap_or_default()
+    };
+    let spot = capture_spot(crate::settings::load(app).capture_target, &pin);
+    let batch = WindowBatch {
+        items: items.iter().map(|it| WindowItem { id: it.id.clone(), text: inbox_text(it), at: stamp_time(it).to_rfc3339() }).collect(),
+        target: spot.label(),
+        path: spot.path,
+        heading: spot.heading,
+        root,
+    };
     {
         let state = app.state::<AppState>();
         let mut inner = state.inbox.lock();
@@ -414,7 +444,7 @@ fn deliver(app: &AppHandle, items: Vec<InboxItem>) {
         }
         inner.in_flight.extend(ids.iter().cloned());
     }
-    if crate::browser::window::relay_to_main(app, EV_ITEMS, json!({ "items": items }), false).is_err() {
+    if crate::browser::window::relay_to_main(app, EV_ITEMS, json!(batch), false).is_err() {
         // No main window to land in (the app is on its way out): back to the pool
         let state = app.state::<AppState>();
         let mut inner = state.inbox.lock();
@@ -429,7 +459,7 @@ fn deliver(app: &AppHandle, items: Vec<InboxItem>) {
 /// capture spot, write the ledger, ack. The vault itself unreachable, or a
 /// capture that cannot be written: offered again in a few minutes, and the main
 /// window is told so the user learns the landing vault needs looking at.
-async fn land_direct(app: &AppHandle, token: &str, root: PathBuf, items: Vec<InboxItem>) {
+async fn land_direct(app: &AppHandle, root: PathBuf, items: Vec<InboxItem>) {
     let mode = crate::settings::load(app).capture_target;
     let ids: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
     let at_root = root.clone();
@@ -444,7 +474,7 @@ async fn land_direct(app: &AppHandle, token: &str, root: PathBuf, items: Vec<Inb
         Err(e) => {
             eprintln!("inbox: landing vault {}: {e}", root.display());
             retry_later(app, &ids);
-            let _ = crate::browser::window::relay_to_main(app, EV_HOME_FAILED, json!({ "vault": vault_name, "error": e }), false);
+            home_failed(app, &vault_name, &e);
             return;
         }
     };
@@ -452,7 +482,7 @@ async fn land_direct(app: &AppHandle, token: &str, root: PathBuf, items: Vec<Inb
     retry_later(app, &failed);
     let ack: Vec<String> = landing.landed.iter().chain(&landing.already).cloned().collect();
     if !ack.is_empty() {
-        if let Err(e) = ack_remote(app, token, &ack).await {
+        if let Err(e) = ack_remote(app, &ack).await {
             eprintln!("inbox ack after a direct landing: {e}");
         }
     }
@@ -466,8 +496,12 @@ async fn land_direct(app: &AppHandle, token: &str, root: PathBuf, items: Vec<Inb
         );
     }
     if let Some((_, e)) = landing.failed.first() {
-        let _ = crate::browser::window::relay_to_main(app, EV_HOME_FAILED, json!({ "vault": vault_name, "error": e }), false);
+        home_failed(app, &vault_name, e);
     }
+}
+
+fn home_failed(app: &AppHandle, vault: &str, error: &str) {
+    let _ = crate::browser::window::relay_to_main(app, EV_HOME_FAILED, json!({ "vault": vault, "error": error }), false);
 }
 
 /// The settings page's "last one filed": written after every landing, through
@@ -507,13 +541,16 @@ struct Landing {
 }
 
 /// The synchronous heart of a direct landing, on a vault opened for the purpose.
-/// The ledger is written before the caller acks (the module comment); the
-/// ledger itself failing to write after the notes did returns the error, and
-/// the items land twice next time — the failure the design prefers to losing them.
+/// The ledger is written before the caller acks (the module comment).
 fn land_into(root: &Path, mode: CaptureTarget, items: &[InboxItem]) -> Result<Landing, String> {
-    let mut vault = Vault::open(root).map_err(crate::i18n::err)?;
-    let ledger_path = vault.meta_dir().join(LEDGER_FILE);
+    // The ledger is a plain file (`Vault::meta_dir`): read before the vault is opened, so
+    // items another computer already landed cost no full open of the vault
+    let ledger_path = root.join(".vemry").join(LEDGER_FILE);
     let known: HashSet<String> = ledger_read(&ledger_path).ids.into_iter().collect();
+    if items.iter().all(|it| known.contains(&it.id)) {
+        return Ok(Landing { already: items.iter().map(|it| it.id.clone()).collect(), ..Landing::default() });
+    }
+    let mut vault = Vault::open(root).map_err(crate::i18n::err)?;
     let spot = capture_spot(mode, &crate::commands::capture_pin(&vault));
     let mut landing = Landing { target: spot.label(), ..Landing::default() };
     for it in items {
@@ -527,7 +564,12 @@ fn land_into(root: &Path, mode: CaptureTarget, items: &[InboxItem]) -> Result<La
         }
     }
     if !landing.landed.is_empty() {
-        ledger_add_at(&ledger_path, &landing.landed)?;
+        // The notes are written: a ledger that cannot be written does not un-write them,
+        // and the caller acks them all the same (the ledger only guards a lost ack) —
+        // failing the batch here would land it again at every retry
+        if let Err(e) = ledger_add_at(&ledger_path, &landing.landed) {
+            eprintln!("inbox: the ledger of {}: {e}", root.display());
+        }
     }
     Ok(landing)
 }
@@ -539,19 +581,7 @@ fn land_one(vault: &mut Vault, spot: &Spot, it: &InboxItem) -> Result<(), String
     let id = vault.note_id(&spot.path).map_err(crate::i18n::err)?;
     let line = capture_line(&inbox_text(it), stamp_time(it));
     vault.insert_note(&id, &line, spot.heading.as_deref()).map_err(crate::i18n::err)?;
-    if !vault.is_private(&id) {
-        let blocks = vemry_core::stamps_of(&line);
-        if !blocks.is_empty() {
-            vault.record_provenance(ProvenanceEntry::Insert {
-                ts: vemry_core::provenance::now_ts(),
-                origin: InsertOrigin::Capture,
-                session: None,
-                url: None,
-                path: id.to_string(),
-                blocks,
-            });
-        }
-    }
+    crate::commands::record_insert(vault, &id, &line, InsertOrigin::Capture, None, None);
     Ok(())
 }
 
@@ -631,8 +661,8 @@ fn capture_line(text: &str, at: DateTime<Local>) -> String {
         .join("\n")
 }
 
-/// The item's text with its link, as App.svelte's `inboxText` builds it: a
-/// share carries a URL (and a title), which becomes the last line.
+/// The item's text with its link: a share carries a URL (and a title), which
+/// becomes the last line.
 fn inbox_text(it: &InboxItem) -> String {
     let Some(url) = it.url.as_deref().filter(|u| !u.is_empty()) else { return it.text.clone() };
     let link = match it.title.as_deref().filter(|t| !t.is_empty()) {
@@ -646,10 +676,9 @@ fn inbox_text(it: &InboxItem) -> String {
     }
 }
 
-/// The stamp's moment, as App.svelte's `inboxTime` picks it: the phone's clock
-/// (the moment the thought was had), unless it is a day or more away from the
-/// service's (a phone with the wrong date), then the service's; neither parsing,
-/// now. Rendered in this machine's zone, like the window's `new Date(...)`.
+/// The stamp's moment: the phone's clock (the moment the thought was had),
+/// unless it is a day or more away from the service's (a phone with the wrong
+/// date), then the service's; neither parsing, now. In this machine's zone.
 fn stamp_time(it: &InboxItem) -> DateTime<Local> {
     let parse = |s: &str| DateTime::parse_from_rfc3339(s.trim()).ok().map(|d| d.with_timezone(&Local));
     match (parse(&it.created_at), parse(&it.received_at)) {
@@ -660,8 +689,8 @@ fn stamp_time(it: &InboxItem) -> DateTime<Local> {
     }
 }
 
-async fn ack_remote(app: &AppHandle, token: &str, ids: &[String]) -> Result<(), String> {
-    let req = account::client().post(format!("{}/v1/inbox/ack", account::base())).bearer_auth(token).json(&json!({ "ids": ids }));
+async fn ack_remote(app: &AppHandle, ids: &[String]) -> Result<(), String> {
+    let req = account::authed(app, reqwest::Method::POST, "/v1/inbox/ack")?.json(&json!({ "ids": ids }));
     account::send(app, req).await.map(|_| ())
 }
 
@@ -674,24 +703,30 @@ async fn ack_remote(app: &AppHandle, token: &str, ids: &[String]) -> Result<(), 
 /// spot's label (capture.ts spotLabel), for the settings page's "last one filed".
 #[tauri::command]
 pub async fn inbox_ack(app: AppHandle, ids: Vec<String>, target: Option<String>) -> Result<(), String> {
-    {
+    // The path before the inbox lock, as in `pull` (the vault lock is never taken under it)
+    let ledger_at = ledger_path(&app);
+    let ledger = {
         // Under the lock the pull loop reads the ledger with: the id leaves the in-flight
-        // set and enters the ledger in one step, so no pull sees it in neither
+        // set and enters the ledger in one step, so no pull sees it in neither. The items
+        // are written whether or not the ledger could be: they leave the in-flight set and
+        // are acked all the same (the ledger only guards a lost ack), rather than staying
+        // in flight for the life of the page and landing again after it. No vault open:
+        // nothing to remember, and the window had nothing to land in either
         let state = app.state::<AppState>();
         let mut inner = state.inbox.lock();
-        ledger_add(&app, &ids)?;
+        let ledger = ledger_at.map_or(Ok(()), |p| ledger_add_at(&p, &ids));
         for id in &ids {
             inner.in_flight.remove(id);
         }
-    }
+        ledger
+    };
     if let Some(target) = target.filter(|_| !ids.is_empty()) {
         remember_landing(&app, &target, None);
     }
-    let token = account::cached(&app).token;
-    if token.is_empty() {
-        return Ok(());
+    if !account::cached(&app).token.is_empty() {
+        ack_remote(&app, &ids).await?;
     }
-    ack_remote(&app, &token, &ids).await
+    ledger
 }
 
 /// The main window is listening and has a vault open: items may be handed over
@@ -724,79 +759,60 @@ pub fn page_reloading(app: &AppHandle) {
 /// written): they are offered again in a few minutes.
 #[tauri::command]
 pub fn inbox_failed(app: AppHandle, ids: Vec<String>) {
-    let state = app.state::<AppState>();
-    let mut inner = state.inbox.lock();
-    let at = Instant::now() + RETRY_FAILED;
-    for id in ids {
-        inner.in_flight.remove(&id);
-        inner.retry_at.insert(id, at);
+    {
+        let state = app.state::<AppState>();
+        let mut inner = state.inbox.lock();
+        for id in &ids {
+            inner.in_flight.remove(id);
+        }
     }
+    retry_later(&app, &ids);
 }
 
 /// A fresh pairing code, rendered as the QR code the phone scans.
 #[tauri::command]
 pub async fn inbox_pair_start(app: AppHandle) -> Result<PairStart, String> {
-    let token = signed_in(&app)?;
-    let req = account::client().post(format!("{}/v1/inbox/pair/start", account::base())).bearer_auth(&token).json(&json!({}));
+    let req = account::authed(&app, reqwest::Method::POST, "/v1/inbox/pair/start")?.json(&json!({}));
     let (_, _, text) = account::send(&app, req).await?;
-    let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let url = v.get("url").and_then(Value::as_str).ok_or("no url in the answer")?.to_string();
+    let v: Value = serde_json::from_str(&text).map_err(|e| bad_answer(&e.to_string()))?;
+    let url = v.get("url").and_then(Value::as_str).ok_or_else(|| bad_answer("no url in the answer"))?.to_string();
     let expires_at = v.get("expires_at").and_then(Value::as_str).unwrap_or_default().to_string();
     let svg = qr_svg(&url)?;
     // The landing vault defaults to the vault open when the code is shown (the module
     // comment, "The landing vault"); once fixed it is the settings page's to change
     let state = app.state::<AppState>();
     let open = crate::lock(&state.vault).as_ref().map(|v| v.root().to_string_lossy().to_string());
-    if let Some(root) = open {
-        crate::settings::update(&app, |s| {
-            if s.inbox_vault.is_some() {
-                return false;
-            }
-            s.inbox_vault = Some(root);
-            true
-        })?;
-    }
-    let inbox_vault = crate::settings::load(&app).inbox_vault;
+    let mut inbox_vault = None;
+    crate::settings::update(&app, |s| {
+        let fix = s.inbox_vault.is_none() && open.is_some();
+        if fix {
+            s.inbox_vault = open;
+        }
+        inbox_vault = s.inbox_vault.clone();
+        fix
+    })?;
     Ok(PairStart { url, expires_at, svg, inbox_vault })
-}
-
-/// What the settings page shows under "Phone" besides the paired phones
-/// (mirrored as `InboxStatus` in api.ts).
-#[derive(Clone, Debug, Serialize)]
-pub struct InboxStatus {
-    /// The last landing of captures from a phone, if any since the field existed.
-    pub last_landed: Option<InboxLanding>,
-}
-
-#[tauri::command]
-pub fn inbox_status(app: AppHandle) -> InboxStatus {
-    InboxStatus { last_landed: crate::settings::load(&app).inbox_last_landed }
 }
 
 /// The paired phones.
 #[tauri::command]
 pub async fn inbox_doors(app: AppHandle) -> Result<Vec<InboxDoor>, String> {
-    let token = signed_in(&app)?;
-    let req = account::client().get(format!("{}/v1/inbox/doors", account::base())).bearer_auth(&token);
+    let req = account::authed(&app, reqwest::Method::GET, "/v1/inbox/doors")?;
     let (_, _, text) = account::send(&app, req).await?;
-    let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    serde_json::from_value(v.get("doors").cloned().unwrap_or(Value::Array(vec![]))).map_err(|e| e.to_string())
+    let v: Value = serde_json::from_str(&text).map_err(|e| bad_answer(&e.to_string()))?;
+    serde_json::from_value(v.get("doors").cloned().unwrap_or(Value::Array(vec![]))).map_err(|e| bad_answer(&e.to_string()))
+}
+
+/// An answer from the service this side cannot read, in the user's words (the settings page shows it).
+fn bad_answer(detail: &str) -> String {
+    crate::i18n::tf(crate::i18n::current(), "ipc.hosted.failed", &[("error", detail)])
 }
 
 /// This phone's token stops working; what it dropped stays.
 #[tauri::command]
 pub async fn inbox_door_revoke(app: AppHandle, id: i64) -> Result<(), String> {
-    let token = signed_in(&app)?;
-    let req = account::client().delete(format!("{}/v1/inbox/doors/{id}", account::base())).bearer_auth(&token);
+    let req = account::authed(&app, reqwest::Method::DELETE, &format!("/v1/inbox/doors/{id}"))?;
     account::send(&app, req).await.map(|_| ())
-}
-
-fn signed_in(app: &AppHandle) -> Result<String, String> {
-    let token = account::cached(app).token;
-    if token.is_empty() {
-        return Err(crate::i18n::t(crate::i18n::current(), "ipc.hosted.auth_invalid"));
-    }
-    Ok(token)
 }
 
 /// The QR code as an SVG drawn in `currentColor` on nothing, so the settings
@@ -831,16 +847,12 @@ mod tests {
 
     fn item(id: &str, text: &str) -> InboxItem {
         InboxItem {
-            seq: 1,
             id: id.into(),
             created_at: "2026-09-22T10:05:00+08:00".into(),
             received_at: "2026-09-22T02:05:30Z".into(),
             text: text.into(),
-            source: "pwa".into(),
             url: None,
             title: None,
-            door_kind: String::new(),
-            door_name: String::new(),
         }
     }
 
@@ -941,11 +953,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vemry-inbox-ledger-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join(LEDGER_FILE);
-        let mut ledger = Ledger { ids: (0..LEDGER_CAP + 10).map(|i| i.to_string()).collect() };
-        let drop = ledger.ids.len() - LEDGER_CAP;
-        ledger.ids.drain(..drop);
-        std::fs::create_dir_all(&dir).unwrap();
-        crate::config_store::write(&path, &ledger).unwrap();
+        ledger_add_at(&path, &(0..LEDGER_CAP + 10).map(|i| i.to_string()).collect::<Vec<_>>()).unwrap();
         let back = ledger_read(&path);
         assert_eq!(back.ids.len(), LEDGER_CAP);
         assert_eq!(back.ids.first().map(String::as_str), Some("10"));

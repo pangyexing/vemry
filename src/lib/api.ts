@@ -398,6 +398,8 @@ export interface SettingsView {
   /** The vault a capture from a phone lands in (its root; null = whichever vault is open). Set to the open vault when
    *  the first pairing code is shown (inbox.rs, "The landing vault"). */
   inbox_vault: string | null;
+  /** The last landing of captures from a phone (derived and read-only). */
+  inbox_last_landed: InboxLanding | null;
   /** The resident state (closing the main window hides it behind a menu bar / tray icon; tray.rs), and the icon's
    *  creation failure (derived and read-only; null = the icon is there, or the switch is off). */
   tray_resident: boolean;
@@ -870,20 +872,16 @@ export interface CaptureResult {
   error?: string;
 }
 
-/** One capture pulled from the phone inbox (inbox.rs InboxItem, the service's PullItem).
- *  created_at is the phone's local time with its offset — the stamp the note gets; received_at
- *  is the service's clock, the fallback when the phone's is a day or more out. */
-export interface InboxItem {
-  seq: number;
-  id: string;
-  created_at: string;
-  received_at: string;
-  text: string;
-  source: string;
-  url: string | null;
-  title: string | null;
-  door_kind: string;
-  door_name: string;
+/** Captures pulled from the phone inbox for the main window to land (inbox.rs WindowBatch): each item's finished
+ *  text and the moment its stamp names (RFC 3339), and the spot they all go to with its label. Rust works these out
+ *  for both of its doors, so the window only writes. */
+export interface InboxBatch {
+  items: { id: string; text: string; at: string }[];
+  path: string;
+  heading: string | null;
+  target: string;
+  /** The root of the vault the spot was worked out for: a window on another vault by now lands nothing. */
+  root: string;
 }
 /** A paired phone (inbox.rs InboxDoor): kind is pwa | shortcut | other, name what the phone called itself. */
 export interface InboxDoor {
@@ -909,11 +907,6 @@ export interface InboxLanding {
   target: string;
   vault: string | null;
 }
-/** What the settings page shows under Phone besides the paired phones (inbox.rs InboxStatus). */
-export interface InboxStatus {
-  last_landed: InboxLanding | null;
-}
-
 /** Captures written straight into the landing vault while another vault (or none) was open (inbox://landed): the
  *  receipt names the vault by its folder name and the spot as capture.ts's spotLabel spells it. */
 export interface InboxLanded {
@@ -1357,8 +1350,6 @@ export const api = {
   /** The main window wrote these items into the vault (the ledger first, then the service); `target` is the
    *  spot's label (spotLabel), for the settings page's "last one filed". */
   inboxAck: (ids: string[], target?: string) => invoke<void>("inbox_ack", { ids, target: target ?? null }),
-  /** The last landing of captures from a phone, for the settings page. */
-  inboxStatus: () => invoke<InboxStatus>("inbox_status"),
   /** These could not land (no vault open, a note that cannot be written); they are offered again in a few minutes. */
   inboxFailed: (ids: string[]) => invoke<void>("inbox_failed", { ids }),
   /** This window is listening and has a vault open: items may be handed over, and what could not land is offered again now. */
@@ -1521,8 +1512,8 @@ export function onAccountChanged(handler: (s: AccountStatus) => void): Promise<U
 }
 
 /** Items pulled from the phone inbox (inbox://items): the main window lands them and acks or fails each. */
-export function onInboxItems(handler: (items: InboxItem[]) => void): Promise<UnlistenFn> {
-  return listen<{ items: InboxItem[] }>("inbox://items", (event) => handler(event.payload.items));
+export function onInboxItems(handler: (batch: InboxBatch) => void): Promise<UnlistenFn> {
+  return listen<InboxBatch>("inbox://items", (event) => handler(event.payload));
 }
 /** Rust landed captures straight into the phone's vault (it was not the open one): show the receipt. */
 export function onInboxLanded(handler: (landed: InboxLanded) => void): Promise<UnlistenFn> {

@@ -185,7 +185,7 @@ pub struct Settings {
     /// the open vault, whichever it is (a pairing from before the field existed).
     #[serde(default)]
     pub inbox_vault: Option<String>,
-    /// The last time captures from a phone landed (`inbox_status`, the settings
+    /// The last time captures from a phone landed (served in `SettingsView`, the settings
     /// page's "last one filed n minutes ago in inbox.md"). Kept on disk rather than
     /// in memory because the question it answers — is the phone connected? — is
     /// asked most right after a restart.

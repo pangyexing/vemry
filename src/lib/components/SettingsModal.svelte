@@ -5,7 +5,7 @@
 
 <script lang="ts">
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, EFFORT_OPTIONS, type CaptureTarget, type InboxDoor, type InboxLanding, type InboxStatus, type LangSetting, type LinkOpenMode, type PairStart, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
+  import { api, EFFORT_OPTIONS, type CaptureTarget, type InboxDoor, type InboxLanding, type LangSetting, type LinkOpenMode, type PairStart, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
   import { comboFromEvent, hotkeyLabel, isModifierKey } from "$lib/capture";
   import { copyText } from "$lib/copytext";
   import { account } from "$lib/stores/account.svelte";
@@ -14,7 +14,7 @@
   import { skillDesc, skillSourceLabel } from "$lib/skills";
   import { setLanguage, t, LANGS, langName, compareNames, i18n } from "$lib/i18n/i18n.svelte";
   import { targetLabel, TARGET_TAGS } from "$lib/stores/translate.svelte";
-  import { vault } from "$lib/stores/vault.svelte";
+  import { vault, vaultName } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { browser } from "$lib/stores/browser.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -83,8 +83,6 @@
   let inboxVault = $state("");
   let recentVaults = $state<string[]>([]);
   const inboxVaultChoices = $derived(inboxVault && !recentVaults.includes(inboxVault) ? [inboxVault, ...recentVaults] : recentVaults);
-  /** The folder name, which is how the user knows a vault; the full path is the option's title. */
-  const vaultName = (root: string) => root.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || root;
   /** The phone inbox: the pairing QR code on show (null = none), the paired phones, the last failure. */
   let phonePair = $state<PairStart | null>(null);
   let phonePairing = $state(false);
@@ -97,8 +95,8 @@
   /** The code's remaining time, m:ss, ticking every second while a code is on show. */
   let phoneCodeLeft = $state("");
   let phoneCopied = $state(false);
-  /** The last landing of captures from a phone (inbox_status). */
-  let inboxStatus = $state<InboxStatus | null>(null);
+  /** The last landing of captures from a phone (served with the settings). */
+  let inboxLastLanded = $state<InboxLanding | null>(null);
   let phoneWatch: ReturnType<typeof setInterval> | null = null;
   let phoneTick: ReturnType<typeof setInterval> | null = null;
   let phoneOkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -107,13 +105,24 @@
     phoneError = null;
     phoneCopied = false;
     try {
-      phonePair = await api.inboxPairStart();
+      // The phones paired before this code, read fresh: a list still loading (or failed) would make
+      // every phone already paired look like the one that just claimed the code
+      await loadDoors();
+      if (phoneError) {
+        phoneRetry = showPairCode;
+        return;
+      }
+      const before = new Set(phoneDoors.map((d) => d.id));
+      const pair = await api.inboxPairStart();
+      // The page was left while the code was on its way: no card to show it on, and no watch to start
+      // (a watch nothing stops would poll, and renew the code at every expiry, for the life of the app)
+      if (!open || tab !== "capture") return;
+      phonePair = pair;
       // Showing the first code fixes the landing vault to the open one (inbox.rs): the field follows unless the user is mid-edit
-      if (!touched.has("inboxVault")) inboxVault = phonePair.inbox_vault ?? "";
+      if (!touched.has("inboxVault")) inboxVault = pair.inbox_vault ?? "";
       // Until the code is claimed or expires, the paired phones are polled: a new one turns the
       // card into a tick, and an expiry while the page is still open asks for a fresh code
-      const before = new Set(phoneDoors.map((d) => d.id));
-      const until = new Date(phonePair.expires_at).getTime();
+      const until = new Date(pair.expires_at).getTime();
       stopPhoneWatch();
       phoneWatch = setInterval(async () => {
         await loadDoors();
@@ -169,11 +178,11 @@
       phoneRetry = loadDoors;
     }
   }
-  async function loadInboxStatus() {
+  async function loadLastLanded() {
     try {
-      inboxStatus = await api.inboxStatus();
+      inboxLastLanded = (await api.settingsGet()).inbox_last_landed;
     } catch {
-      inboxStatus = null;
+      inboxLastLanded = null;
     }
   }
   async function revokeDoor(id: number) {
@@ -233,7 +242,7 @@
   $effect(() => {
     if (open && tab === "capture") {
       void loadDoors();
-      void loadInboxStatus();
+      void loadLastLanded();
     } else {
       stopPhoneWatch();
       if (phoneOkTimer) clearTimeout(phoneOkTimer);
@@ -574,17 +583,20 @@
       tray_resident: trayResident,
     });
     } catch (e) {
-      // The expected refusal is a capture shortcut that does not parse or that another app
-      // holds: everything else in the update has landed on the Rust side, so what landed is
-      // read back and applied here as a success would (the language switch, the updater's
-      // checkbox, the prefs mirror) — and the dialog stays for another try. A write that
-      // failed outright reads back unchanged, and the toast carries its reason
+      // The expected refusals are a capture shortcut that does not parse or that another app
+      // holds, and a capture pin the open vault would not take: everything else in the update
+      // has landed on the Rust side, so what landed is read back and applied here as a success
+      // would (the language switch, the updater's checkbox, the prefs mirror) — and the dialog
+      // stays for another try. A write that failed outright reads back unchanged, and the
+      // toast carries its reason
       toast.push(String(e), "error");
       const s = await prefs.refresh();
       if (s) {
         setLanguage(s.language);
         updater.autoCheck = s.updater_auto_check;
-        captureHotkeyError = s.capture_hotkey_error ?? String(e);
+        // The error is the shortcut's only when the shortcut sent did not become the stored one
+        // (a refused pin leaves it as it was, and the toast alone carries that refusal)
+        captureHotkeyError = s.capture_hotkey_error ?? (s.capture_hotkey !== captureHotkey.trim() ? String(e) : null);
       } else {
         captureHotkeyError = String(e);
       }
@@ -1105,8 +1117,8 @@
               {#if !account.loggedIn}
                 <small class="empty">{t("settings.capture.phoneSignIn")} <button class="link" onclick={() => (tab = "account")}>{t("settings.capture.phoneSignInGo")} →</button></small>
               {:else}
-                {#if inboxStatus?.last_landed}
-                  <small>{lastLandedLine(inboxStatus.last_landed)}</small>
+                {#if inboxLastLanded}
+                  <small>{lastLandedLine(inboxLastLanded)}</small>
                 {/if}
                 <!-- The pairing card's four states: folded (a button and a hint), a code on show with its countdown,
                      just paired (a tick for three seconds), failed (the error and a retry) -->

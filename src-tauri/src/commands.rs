@@ -950,23 +950,30 @@ pub fn provenance_record(
     };
     with_vault_mut(&state, |v| {
         let id = v.note_id(&path).map_err(crate::i18n::err)?;
-        if v.is_private(&id) {
-            return Ok(());
-        }
-        let blocks = vemry_core::stamps_of(&text);
-        if blocks.is_empty() {
-            return Ok(());
-        }
-        v.record_provenance(ProvenanceEntry::Insert {
-            ts: vemry_core::provenance::now_ts(),
-            origin,
-            session,
-            url,
-            path: id.to_string(),
-            blocks,
-        });
+        record_insert(v, &id, &text, origin, session, url);
         Ok(())
     })
+}
+
+/// The provenance line for text placed into note `id` (see `provenance_record`):
+/// nothing for a private note or text without blocks. The phone inbox's direct
+/// landing writes it too.
+pub(crate) fn record_insert(v: &mut Vault, id: &vemry_core::NoteId, text: &str, origin: InsertOrigin, session: Option<String>, url: Option<String>) {
+    if v.is_private(id) {
+        return;
+    }
+    let blocks = vemry_core::stamps_of(text);
+    if blocks.is_empty() {
+        return;
+    }
+    v.record_provenance(ProvenanceEntry::Insert {
+        ts: vemry_core::provenance::now_ts(),
+        origin,
+        session,
+        url,
+        path: id.to_string(),
+        blocks,
+    });
 }
 
 /// Resolve a wikilink target to a note path, if it exists.
@@ -1055,6 +1062,8 @@ pub struct SettingsView {
     pub capture_pinned_heading: String,
     /// The vault a capture from a phone lands in (None = the open vault; settings.rs).
     pub inbox_vault: Option<String>,
+    /// The last landing of captures from a phone (derived and read-only; settings.rs).
+    pub inbox_last_landed: Option<settings::InboxLanding>,
     /// The resident state (closing the main window hides it behind a tray icon),
     /// and the icon's creation failure if any (derived and read-only — None means
     /// the icon is there, or the switch is off).
@@ -1165,6 +1174,7 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         capture_pinned_path: pin.path,
         capture_pinned_heading: pin.heading,
         inbox_vault: s.inbox_vault,
+        inbox_last_landed: s.inbox_last_landed,
         tray_resident: s.tray_resident,
         tray_error: crate::tray::error(&app),
     }
@@ -1265,19 +1275,26 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
         s.capture_target = v;
     }
     // The pin goes to the open vault, not to settings.json (SettingsView says why);
-    // with no vault open there is nothing to pin into, and the page hides the fields
+    // with no vault open there is nothing to pin into, and the page hides the fields.
+    // The page sends the pin with every save: it is written only when it changed, and
+    // a refusal (a read-only vault) is returned after the rest of the update has
+    // landed, like the shortcut's, rather than costing the user everything else
+    let mut pin_refused = None;
     if update.capture_pinned_path.is_some() || update.capture_pinned_heading.is_some() {
         let state = app.state::<AppState>();
-        let guard = state.vault.lock().unwrap();
+        let guard = crate::lock(&state.vault);
         if let Some(vault) = guard.as_ref() {
-            let mut pin = capture_pin(vault);
+            let old = capture_pin(vault);
+            let mut pin = old.clone();
             if let Some(v) = update.capture_pinned_path {
                 pin.path = v.trim().to_string();
             }
             if let Some(v) = update.capture_pinned_heading {
                 pin.heading = v.trim().to_string();
             }
-            capture_pin_set(vault, &pin)?;
+            if pin != old {
+                pin_refused = capture_pin_set(vault, &pin).err();
+            }
         }
     }
     let mut inbox_vault_changed = false;
@@ -1350,7 +1367,7 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     if inbox_vault_changed {
         crate::inbox::wake(&app);
     }
-    hotkey_refused.map_or(Ok(()), Err)
+    hotkey_refused.or(pin_refused).map_or(Ok(()), Err)
 }
 
 /// Read the whole object of .vemry/config.json (missing or broken JSON = None).
