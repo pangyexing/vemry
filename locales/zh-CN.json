@@ -817,6 +817,7 @@
   "ipc.agentRunning": "agent 已在运行中",
   "ipc.captureHotkeyInvalid": "这不是系统能注册的快捷键",
   "ipc.captureNoMainWindow": "vemry 主窗口未打开",
+  "ipc.capturePinFailed": "钉住的笔记没能存进这个知识库({error})——其他设置已保存",
   "ipc.contentEmpty": "内容为空",
   "ipc.copyImageUnsupported": "当前平台暂不支持复制图片",
   "ipc.dirNotEmpty": "目标目录已存在且不为空——新建请换一个位置,已有的库走「打开知识库」",

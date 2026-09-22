@@ -817,6 +817,7 @@
   "ipc.agentRunning": "The agent is already running",
   "ipc.captureHotkeyInvalid": "That is not a shortcut the system can register",
   "ipc.captureNoMainWindow": "The vemry main window is not open",
+  "ipc.capturePinFailed": "The pinned note could not be saved in this vault ({error}) — the other settings were saved",
   "ipc.contentEmpty": "The content is empty",
   "ipc.copyImageUnsupported": "Copying images is not supported on this platform yet",
   "ipc.dirNotEmpty": "That folder exists and is not empty — pick another place for a new vault, or open the existing one with “Open vault”",

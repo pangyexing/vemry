@@ -2535,6 +2535,8 @@ add("clip.", {
 add("ipc.", {
     "captureNoMainWindow": ("The vemry main window is not open", "vemry 主窗口未打开"),
     "captureHotkeyInvalid": ("That is not a shortcut the system can register", "这不是系统能注册的快捷键"),
+    "capturePinFailed": ("The pinned note could not be saved in this vault ({error}) — the other settings were saved",
+                         "钉住的笔记没能存进这个知识库({error})——其他设置已保存"),
     "fileExists": ("A file with that name already exists: {path}", "已存在同名文件: {path}"),
     "followPrivate": ("A private note cannot be followed by the AI", "私密笔记不能让 AI 跟随"),
     "dirNotEmpty": ("That folder exists and is not empty — pick another place for a new vault, or open "

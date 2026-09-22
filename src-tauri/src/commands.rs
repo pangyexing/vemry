@@ -1293,7 +1293,9 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
                 pin.heading = v.trim().to_string();
             }
             if pin != old {
-                pin_refused = capture_pin_set(vault, &pin).err();
+                pin_refused = capture_pin_set(vault, &pin)
+                    .err()
+                    .map(|e| crate::i18n::tf(crate::i18n::current(), "ipc.capturePinFailed", &[("error", &e)]));
             }
         }
     }

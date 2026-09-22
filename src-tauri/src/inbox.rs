@@ -180,8 +180,10 @@ pub struct InboxState {
 struct Inner {
     /// The main window is listening and has a vault open (see the module comment).
     ready: bool,
-    /// Handed to the main window, neither acked nor failed yet.
-    in_flight: HashSet<String>,
+    /// Handed to the main window, neither acked nor failed yet, with the root of the vault
+    /// the batch was worked out for: its ledger is the one the ack writes, whichever vault
+    /// the window has open by the time the ack comes back.
+    in_flight: HashMap<String, PathBuf>,
     /// Could not land; offered again once the instant has passed.
     retry_at: HashMap<String, Instant>,
 }
@@ -381,7 +383,7 @@ async fn pull(app: &AppHandle, route: &Route) -> Result<Pulled, String> {
         for it in all {
             if ledger.contains(&it.id) {
                 seen_already.push(it.id);
-            } else if inner.in_flight.contains(&it.id) {
+            } else if inner.in_flight.contains_key(&it.id) {
                 in_flight = true;
             } else if let Some(&at) = inner.retry_at.get(&it.id) {
                 first_retry = Some(first_retry.map_or(at, |f| f.min(at)));
@@ -442,7 +444,7 @@ fn deliver(app: &AppHandle, items: Vec<InboxItem>) {
         if !inner.ready {
             return;
         }
-        inner.in_flight.extend(ids.iter().cloned());
+        inner.in_flight.extend(ids.iter().map(|id| (id.clone(), PathBuf::from(&batch.root))));
     }
     if crate::browser::window::relay_to_main(app, EV_ITEMS, json!(batch), false).is_err() {
         // No main window to land in (the app is on its way out): back to the pool
@@ -703,22 +705,29 @@ async fn ack_remote(app: &AppHandle, ids: &[String]) -> Result<(), String> {
 /// spot's label (capture.ts spotLabel), for the settings page's "last one filed".
 #[tauri::command]
 pub async fn inbox_ack(app: AppHandle, ids: Vec<String>, target: Option<String>) -> Result<(), String> {
-    // The path before the inbox lock, as in `pull` (the vault lock is never taken under it)
-    let ledger_at = ledger_path(&app);
+    // The open vault's path, for an id no longer in flight (the page reloaded under it); taken
+    // before the inbox lock, as in `pull` (the vault lock is never taken under it)
+    let open_ledger = ledger_path(&app);
     let ledger = {
         // Under the lock the pull loop reads the ledger with: the id leaves the in-flight
         // set and enters the ledger in one step, so no pull sees it in neither. The items
         // are written whether or not the ledger could be: they leave the in-flight set and
         // are acked all the same (the ledger only guards a lost ack), rather than staying
-        // in flight for the life of the page and landing again after it. No vault open:
-        // nothing to remember, and the window had nothing to land in either
+        // in flight for the life of the page and landing again after it. Each id goes into
+        // the ledger of the vault it was handed over for: the window may have switched vaults
+        // since, and a ledger in the wrong vault guards nothing. No vault at all: nothing to
+        // remember, and the window had nothing to land in either
         let state = app.state::<AppState>();
         let mut inner = state.inbox.lock();
-        let ledger = ledger_at.map_or(Ok(()), |p| ledger_add_at(&p, &ids));
+        let mut by_ledger: HashMap<PathBuf, Vec<String>> = HashMap::new();
         for id in &ids {
-            inner.in_flight.remove(id);
+            let handed = inner.in_flight.remove(id).filter(|root| !root.as_os_str().is_empty());
+            let at = handed.map(|root| root.join(".vemry").join(LEDGER_FILE)).or_else(|| open_ledger.clone());
+            if let Some(at) = at {
+                by_ledger.entry(at).or_default().push(id.clone());
+            }
         }
-        ledger
+        by_ledger.iter().map(|(at, ids)| ledger_add_at(at, ids)).fold(Ok(()), Result::and)
     };
     if let Some(target) = target.filter(|_| !ids.is_empty()) {
         remember_landing(&app, &target, None);
