@@ -1496,7 +1496,10 @@
   .doors li:last-child {
     border-bottom: 0;
   }
+  /* Every cell is named: an item locked to a row alone is placed before the free ones and would take the first column */
   .door-name {
+    grid-column: 1;
+    grid-row: 1;
     font-size: var(--fs-sm);
   }
   .door-kind {
@@ -1506,11 +1509,14 @@
   }
   .door-when {
     grid-column: 1;
+    grid-row: 2;
     color: var(--fg-muted);
     font-size: var(--fs-xs);
   }
   .door-del {
+    grid-column: 2;
     grid-row: 1 / span 2;
+    justify-self: end;
     color: var(--fg-muted);
   }
   .door-del:hover {
