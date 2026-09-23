@@ -185,7 +185,9 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   The icon is the app's own, in its colours, everywhere: an 18-point rendering
   of the app icon on macOS (`icons/tray-mac.png`, by `scripts/gen-tray-icon.py`;
   not a template image, which the system would flatten to black or white) and
-  the 32 px app icon elsewhere. The tray menu's events arrive through the
+  the 32 px app icon elsewhere. Every icon comes from the one mark defined in
+  `scripts/gen-app-icons.py`, which redraws the bundle icons and then runs the
+  tray and installer scripts. The tray menu's events arrive through the
   process's one menu listener (`menu::listen`, registered once at startup: the
   runtime keeps every listener ever registered, so one per rebuild would fire a
   click once per language or shortcut change), which hands the `tray:` ids here.
