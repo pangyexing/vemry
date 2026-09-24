@@ -12,6 +12,7 @@
   import { history } from "$lib/stores/history.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { toast } from "$lib/stores/toast.svelte";
+  import DiffLines from "./DiffLines.svelte";
 
   let snapshots = $state<HistorySnapshot[]>([]);
   let selected = $state<string | null>(null);
@@ -135,8 +136,7 @@
         <div class="pane">
           {#if entry}
             {#if entry.diff}
-              <pre class="diff">{#each diffLines as line, i (i)}<span class={line.cls}>{line.text}
-</span>{/each}</pre>
+              <pre class="diff"><DiffLines lines={diffLines} /></pre>
             {:else}
               <div class="same">{t("history.sameAsNow")}</div>
             {/if}
@@ -265,27 +265,6 @@
     -webkit-user-select: text;
     user-select: text;
   }
-  .diff span {
-    display: block;
-    padding: 0 10px;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-  .diff .add {
-    background: var(--diff-add-bg);
-    color: var(--accent);
-  }
-  .diff .del {
-    background: var(--diff-del-bg);
-    color: var(--danger);
-  }
-  .diff .hunk,
-  .diff .meta {
-    color: var(--fg-faint);
-  }
-  .diff .ctx {
-    color: var(--fg-muted);
-  }
   .same {
     flex: 1;
     display: grid;
@@ -303,9 +282,39 @@
   }
   .hint {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .spacer {
     flex: 1;
+  }
+  /* The footer's buttons: the permission dialog's shapes (they had none of their own and
+     drew as bare text) */
+  .btn {
+    font-size: var(--fs-sm);
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+  .btn.subtle {
+    color: var(--fg-muted);
+  }
+  .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+  }
+  .btn.primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 88%, var(--fg));
+    border-color: color-mix(in srgb, var(--accent) 88%, var(--fg));
+  }
+  /* Unavailable: an outline only, so no label is ever greyed out by transparency */
+  .btn.primary:disabled {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--fg-muted);
   }
 </style>

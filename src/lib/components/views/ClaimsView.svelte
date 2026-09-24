@@ -6,6 +6,13 @@
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
   import PrivacyIcon from "../PrivacyIcon.svelte";
+  import { cliptip } from "$lib/cliptip";
+  import { selectingIn } from "$lib/views/select";
+
+  /** A row opens its note on a click, unless the click ended a drag that selected its text. */
+  function open(e: MouseEvent, path: string) {
+    if (!selectingIn(e.currentTarget as Element)) void vault.openNote(path);
+  }
 
   let claims = $state<ClaimWithEvidence[]>([]);
   let query = $state("");
@@ -39,6 +46,7 @@
     bind:filter={query}
   />
   <div class="body">
+    <div class="list">
     {#if claims.length === 0}
       <ViewEmpty>
         {t("claimsView.empty1")}<code>&gt; [!claim] a claim ^id</code
@@ -62,7 +70,7 @@
               class="claim"
               role="button"
               tabindex="0"
-              onclick={() => vault.openNote(c.claim.note)}
+              onclick={(e) => open(e, c.claim.note)}
               onkeydown={(e) => (e.key === "Enter" || e.key === " ") && vault.openNote(c.claim.note)}
             >
               {#if /^\s*(?:>\s*)?\[!decision\]/i.test(c.claim.block.content)}<span class="kind">{t("claims.decision")}</span>{/if}
@@ -83,12 +91,12 @@
                       class="ev-row"
                       role="button"
                       tabindex="0"
-                      onclick={() => vault.openNote(ev.evidence.note)}
+                      onclick={(e) => open(e, ev.evidence.note)}
                       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && vault.openNote(ev.evidence.note)}
                     >
                       <span class="ev-mark">⊢</span>
-                      <span class="ev-text">{ev.text}</span>
-                      <span class="chip">{ev.evidence.note_title}</span>
+                      <span class="ev-text" use:cliptip={ev.text}>{ev.text}</span>
+                      <span class="chip note" use:cliptip={ev.evidence.note_title}>{ev.evidence.note_title}</span>
                     </div>
                   </li>
                 {/each}
@@ -109,6 +117,7 @@
         {/each}
       </section>
     {/each}
+    </div>
   </div>
 </div>
 
@@ -123,6 +132,12 @@
     flex: 1;
     overflow-y: auto;
     padding: 10px 20px 30px;
+  }
+  /* A list view's width is capped like any reading surface: on a wide screen a claim ran to
+     a line of 170 letters */
+  .list {
+    max-width: 64em;
+    margin: 0 auto;
   }
   section {
     margin-bottom: 16px;
@@ -144,7 +159,7 @@
   .path {
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .card {
     border: 1px solid var(--border);
@@ -169,7 +184,7 @@
   }
   .kind {
     flex-shrink: 0;
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1;
     padding: 2px 5px;
     border-radius: 3px;
@@ -177,10 +192,18 @@
     color: var(--fg-muted);
     margin-right: 6px;
   }
+  /* The claim is the card's sentence to read: body ink at the reading size, regular weight
+     (a whole paragraph in semibold reads as shouting, and the note's title above is the
+     semibold that groups), capped at the readable column. Selectable: a phrase of it can be
+     copied or looked up */
   .text {
     flex: 1;
-    font-size: var(--fs-sm);
-    font-weight: 600;
+    min-width: 0;
+    max-width: var(--content-width);
+    font-size: var(--fs-md);
+    line-height: 1.6;
+    -webkit-user-select: text;
+    user-select: text;
   }
   .chip {
     flex-shrink: 0;
@@ -219,10 +242,26 @@
     color: var(--accent);
     flex-shrink: 0;
   }
+  /* Two lines of the evidence, the rest in the clip tip */
   .ev-text {
     flex: 1;
     min-width: 0;
+    max-width: var(--content-width);
     color: var(--fg-muted);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  /* The note's name gives way before the evidence does: a long title shrinks to an ellipsis
+     rather than squeezing the sentence beside it into one */
+  .chip.note {
+    flex-shrink: 1;
+    min-width: 3em;
+    max-width: 40%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -231,7 +270,7 @@
     margin-top: 4px;
     padding-left: 18px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .lock {
     display: inline-flex;

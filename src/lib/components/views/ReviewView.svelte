@@ -9,6 +9,9 @@
   import { cardKey, GRADES, gradeCard, isDue, parseCard, rekey, schedule, type Card, type Grade } from "$lib/views/cards";
   import { chipDate, localDate } from "$lib/views/tasks";
   import { byNote } from "$lib/views/queryrows";
+  import { handleCodeCopyClick, renderNoteMarkdown } from "$lib/markdown";
+  import { vaultImages } from "$lib/views/assets";
+  import "katex/dist/katex.min.css";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
 
@@ -136,6 +139,19 @@
     }
   }
 
+  // The two faces are the note's Markdown rendered as the note renders it (maths, links,
+  // emphasis, code), not its source characters
+  const images = vaultImages();
+  $effect(() => () => images.dispose());
+  function onCardClick(e: MouseEvent) {
+    if (handleCodeCopyClick(e)) return;
+    const a = (e.target as HTMLElement).closest<HTMLElement>("a[data-wiki], a.md-link");
+    if (!a) return;
+    e.preventDefault();
+    if (a.dataset.wiki) void vault.followLink(a.dataset.wiki);
+    else if (a.dataset.url) api.urlOpen(a.dataset.url, false).catch((err) => toast.push(String(err), "error"));
+  }
+
   function openCurrent() {
     if (current) void vault.openBlockAt(current.hit.note, current.hit.block.span.start, current.hit.block.content);
   }
@@ -167,11 +183,16 @@
           <button class="note-link" onclick={openCurrent}>{c.hit.note_title}</button>
           {#if c.due === null}<span class="tag">{t("reviewView.newCard")}</span>{/if}
         </div>
-        <article class="card">
-          <p class="front">{c.front}</p>
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+        <article class="card" use:images.fill onclick={onCardClick}>
+          <div class="front md-body">{@html renderNoteMarkdown(c.front)}</div>
           {#if flipped}
             <hr />
-            <p class="back" class:none={!c.back}>{c.back || t("reviewView.noAnswer")}</p>
+            {#if c.back}
+              <div class="back md-body">{@html renderNoteMarkdown(c.back)}</div>
+            {:else}
+              <p class="back none">{t("reviewView.noAnswer")}</p>
+            {/if}
           {/if}
         </article>
         <div class="actions">
@@ -216,8 +237,13 @@
     overflow-y: auto;
     padding: 10px 20px 30px;
   }
+  /* The stage has a fixed height, and the card takes what the meta line and the buttons
+     leave: showing the answer grows the card's content, never the stage, so the grade buttons
+     appear exactly where "show answer" was and stay put card after card. A long answer
+     scrolls inside the card */
   .stage {
     max-width: 640px;
+    height: min(calc(100% - 24px), 560px);
     margin: 24px auto 0;
     display: flex;
     flex-direction: column;
@@ -246,40 +272,41 @@
   }
   .tag,
   .ahead-tag {
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1;
     padding: 2px 5px;
     border-radius: 3px;
     border: 1px solid var(--border);
   }
   .card {
+    flex: 1 1 auto;
+    min-height: 140px;
+    overflow-y: auto;
     border: 1px solid var(--border);
     border-left: 2px solid var(--accent);
     border-radius: 8px;
     padding: 22px 26px;
     background: var(--bg-panel);
-    min-height: 140px;
+    /* Both faces at the reading size (the answer is usually the longer of the two), and
+       selectable: a term can be copied out or looked up */
+    font-size: var(--fs-note);
+    -webkit-user-select: text;
+    user-select: text;
   }
   .front {
-    font-size: var(--fs-lg);
     font-weight: 600;
-    line-height: 1.5;
-    white-space: pre-wrap;
     text-wrap: balance;
+  }
+  .actions {
+    flex-shrink: 0;
   }
   hr {
     border: none;
     border-top: 1px solid var(--border);
     margin: 16px 0;
   }
-  .back {
-    font-size: var(--fs-sm);
-    line-height: 1.6;
-    white-space: pre-wrap;
-  }
   .back.none {
-    color: var(--fg-faint);
-    font-style: italic;
+    color: var(--fg-muted);
   }
   .actions {
     display: flex;
@@ -323,8 +350,8 @@
   }
   kbd {
     font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-faint);
+    font-size: 11px;
+    color: var(--fg-muted);
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 0 4px;

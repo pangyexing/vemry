@@ -19,18 +19,37 @@
 
   /** With no more nodes than this every label is drawn: beyond it, zooming and hovering are the way to pick them out. */
   const SMALL_VAULT = 60;
-  /** How many characters of a label are drawn at most. A long clipped title can run to forty
-   *  characters and more, and drawing it whole both covers half the graph and stretches the
-   *  content-fitting bounding box until the main cluster is squashed — what the graph is for
-   *  is recognising which note it is, not reading the title. */
-  const LABEL_MAX = 18;
-
-  /** The label's font size (constant in world coordinates, scaled by 1/k when drawn). Measuring
-   *  and drawing have to use the same number, or the fitting bounding box would not match the
-   *  text actually drawn. */
-  const LABEL_PX = 11;
+  /** The label's font size (constant in world coordinates, scaled by 1/k when drawn): the
+   *  smallest readable size. Measuring and drawing have to use the same number, or the
+   *  fitting bounding box would not match the text actually drawn. */
+  const LABEL_PX = 12;
+  /** How wide a label is drawn at most, in the same units: about ten ideographs or twenty
+   *  letters. A long clipped title can run to forty characters and more, and drawing it
+   *  whole both covers half the graph and stretches the content-fitting bounding box until
+   *  the main cluster is squashed — what the graph is for is recognising which note it is,
+   *  not reading the title. A width, not a count: ten ideographs are as wide as twenty
+   *  letters. */
+  const LABEL_MAX_PX = LABEL_PX * 10;
+  /** The app's own face (the interface stack with its CJK faces for the interface
+   *  language), read from the page: a canvas knows no CSS variables. */
+  let labelFamily = "system-ui, sans-serif";
   /** Measuring and drawing have to use the same font string, so it is built here alone; the current scale is passed in when drawing. */
-  const labelFont = (k = 1) => `${LABEL_PX / k}px system-ui, sans-serif`;
+  const labelFont = (k = 1) => `${LABEL_PX / k}px ${labelFamily}`;
+  /** Cut by user-perceived characters, so an emoji or a letter with its accent is never
+   *  split in half. */
+  const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+  /** The title as drawn: whole when it fits, else as many whole characters as fit before the "…". */
+  function fitLabel(ctx: CanvasRenderingContext2D, title: string): string {
+    if (ctx.measureText(title).width <= LABEL_MAX_PX) return title;
+    const room = LABEL_MAX_PX - ctx.measureText("…").width;
+    let out = "";
+    for (const { segment } of graphemes.segment(title)) {
+      if (ctx.measureText(out + segment).width > room) break;
+      out += segment;
+    }
+    return out.trimEnd() + "…";
+  }
 
   /** Node id → the truncated label and its half width (in world coordinates). Both are
    *  functions of the node set and are recomputed only when it changes — truncating allocates
@@ -46,10 +65,11 @@
     if (!ctx) return;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    labelFamily = getComputedStyle(canvas!).fontFamily || labelFamily;
     ctx.font = labelFont();
     labels.clear();
     for (const n of nodes) {
-      const text = n.title.length > LABEL_MAX ? n.title.slice(0, LABEL_MAX) + "…" : n.title;
+      const text = fitLabel(ctx, n.title);
       labels.set(n.id, { text, half: ctx.measureText(text).width / 2 });
     }
     ctx.restore();
@@ -99,7 +119,8 @@
   function readPalette(): Palette {
     const s = getComputedStyle(document.documentElement);
     const v = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback;
-    // A canvas does not understand CSS variables, so they are read once and cached; they are read again on a resize (a theme change remounts it)
+    // A canvas does not understand CSS variables, so they are read once and cached; they are
+    // read again on a resize and when the system switches between light and dark
     return {
       node: v("--fg-muted", "#888"),
       nodeHot: v("--accent", "#6d8dff"),
@@ -134,7 +155,7 @@
       minX = Math.min(minX, n.x - half);
       maxX = Math.max(maxX, n.x + half);
       minY = Math.min(minY, n.y - r);
-      maxY = Math.max(maxY, n.y + r + 14);
+      maxY = Math.max(maxY, n.y + r + 16);
     }
     if (seen === 0) return;
     const pad = 32;
@@ -235,15 +256,16 @@
     ctx.lineJoin = "round";
     ctx.fillStyle = p.label;
     const labelAll = nodes.length <= SMALL_VAULT;
-    const baseline = 12 / view.k;
+    const baseline = 13 / view.k;
     for (const n of nodes) {
       if (n.x === undefined || n.y === undefined) continue;
-      const show = labelAll || view.k >= 1.2 || (hovered !== null && hotIds!.has(n.id)) || n.degree >= 5;
+      // While a node is hovered only its neighbourhood is named: the others' names are left
+      // out rather than faded (faded text is text nobody can read)
+      if (hotIds !== null && !hotIds.has(n.id)) continue;
+      const show = labelAll || view.k >= 1.2 || hotIds !== null || n.degree >= 5;
       if (!show) continue;
       const label = labels.get(n.id);
       if (!label) continue;
-      const hot = hotIds === null || hotIds.has(n.id);
-      ctx.globalAlpha = hot ? 0.85 : 0.1;
       const y = n.y + nodeRadius(n) + baseline;
       ctx.strokeText(label.text, n.x, y);
       ctx.fillText(label.text, n.x, y);
@@ -260,6 +282,11 @@
       const data = await api.graphGet();
       if (seq !== refreshSeq) return;
       const merged = mergeGraph(nodes, data);
+      // The layout restarts only when a note came or went: a re-index that changed nothing
+      // in the node set (an edit inside a note, a link count) keeps every node where it is,
+      // instead of shaking the whole graph and its labels on every save
+      const before = new Set(nodes.map((n) => n.id));
+      const reshaped = merged.nodes.length !== nodes.length || merged.nodes.some((n) => !before.has(n.id));
       nodes = merged.nodes;
       links = merged.links;
       adj = adjacency(links);
@@ -291,7 +318,7 @@
       } else {
         sim.nodes(nodes);
         linkForce?.links(links);
-        sim.alpha(0.3).restart();
+        if (reshaped) sim.alpha(0.3).restart();
       }
       render();
     } catch (e) {
@@ -331,10 +358,19 @@
       render();
     });
     if (container) ro.observe(container);
+    // The system switches between light and dark on its own (at sunset, say): the colours
+    // are read again and the labels redrawn in them
+    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const onScheme = () => {
+      palette = readPalette();
+      draw();
+    };
+    scheme.addEventListener("change", onScheme);
     // Svelte 5's onwheel is passive by default and preventDefault would be ignored — so it is attached non-passive by hand
     canvas?.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       ro.disconnect();
+      scheme.removeEventListener("change", onScheme);
       canvas?.removeEventListener("wheel", onWheel);
     };
   });

@@ -1,9 +1,10 @@
 <script lang="ts">
   import { t } from "$lib/i18n/i18n.svelte";
   import { agent } from "$lib/stores/agent.svelte";
-  import { classifyDiff } from "$lib/views/diff";
+  import { classifyDiff, type DiffLine } from "$lib/views/diff";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import Chevron from "./Chevron.svelte";
+  import DiffLines from "./DiffLines.svelte";
 
   let editing = $state(false);
   /** A block-level request (a restructure, a block move) opens on its block diff; this switches to the raw line diff. */
@@ -23,17 +24,17 @@
     }
   });
 
-  let diffLines = $derived.by(() => {
+  let diffLines = $derived.by((): DiffLine[] => {
     if (!req) return [];
     // A move has no content diff: two lines of paths, borrowing the diff's add and delete
-    // colours — the rendering still goes through the single {#each} below, so how a line is
+    // drawing — the rendering still goes through the one DiffLines below, so how a line is
     // drawn is decided in one place
     if (req.to_path) {
-      const paths = [{ cls: "del", text: `- ${req.path}` }, { cls: "add", text: `+ ${req.to_path}` }];
+      const paths: DiffLine[] = [{ cls: "del", text: `- ${req.path}` }, { cls: "add", text: `+ ${req.to_path}` }];
       // The links the move rewrites follow as an ordinary diff (one hunk per note)
       return req.diff ? [...paths, { cls: "ctx", text: "" }, ...classifyDiff(req.diff)] : paths;
     }
-    if (!req.diff) return [{ cls: "ctx", text: t("permission.newFile") }, ...req.new_content.split("\n").map((l) => ({ cls: "add", text: `+ ${l}` }))];
+    if (!req.diff) return [{ cls: "ctx", text: t("permission.newFile") }, ...req.new_content.split("\n").map((l): DiffLine => ({ cls: "add", text: `+ ${l}` }))];
     return classifyDiff(req.diff);
   });
 
@@ -145,8 +146,7 @@
           {/each}
         </div>
       {:else}
-        <pre class="diff">{#each diffLines as line, i (i)}<span class={line.cls}>{line.text}
-</span>{/each}</pre>
+        <pre class="diff"><DiffLines lines={diffLines} /></pre>
       {/if}
 
       <footer>
@@ -228,29 +228,6 @@
     user-select: text;
     min-height: 120px;
   }
-  .diff span {
-    display: block;
-    padding: 0 10px;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-  .diff .add {
-    background: var(--diff-add-bg);
-    color: var(--accent);
-  }
-  .diff .del {
-    background: var(--diff-del-bg);
-    color: var(--danger);
-  }
-  .diff .hunk {
-    color: var(--fg-faint);
-  }
-  .diff .meta {
-    color: var(--fg-faint);
-  }
-  .diff .ctx {
-    color: var(--fg-muted);
-  }
   .bdiff {
     flex: 1;
     overflow: auto;
@@ -287,19 +264,24 @@
     padding: 1px 0 1px 14px;
     font-family: var(--font-mono);
     white-space: pre-wrap;
-    word-break: break-all;
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
+  /* What goes is read in the body ink (the danger red was 4.24:1 on the dark ground), struck
+     through in the danger colour — the same drawing as a deleted line in DiffLines */
   .bdiff-row.removed {
-    color: var(--danger);
+    color: var(--fg);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in srgb, var(--danger) 70%, transparent);
   }
   .bdiff-row.added {
     color: var(--accent);
   }
   .bdiff-row.moved {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .bdiff-old {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     text-decoration: line-through;
   }
   .bdiff-arrow {
@@ -333,14 +315,17 @@
   .btn:hover {
     background: var(--bg-hover);
   }
+  /* The label on the accent ground is the page's own ground colour: white on the dark
+     theme's lighter accent was 2.6:1. Hover moves the accent toward the ink, which deepens
+     the contrast in both themes rather than fading the label */
   .btn.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--bg);
   }
   .btn.primary:hover {
-    opacity: 0.9;
-    background: var(--accent);
+    background: color-mix(in srgb, var(--accent) 88%, var(--fg));
+    border-color: color-mix(in srgb, var(--accent) 88%, var(--fg));
   }
   .btn.subtle {
     color: var(--fg-muted);

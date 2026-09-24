@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { NoteSummary } from "$lib/api";
   import { fuzzyKeep } from "$lib/commands/registry";
+  import { cliptip } from "$lib/cliptip";
+  import { selectingIn } from "$lib/views/select";
   import { i18n, t, tn } from "$lib/i18n/i18n.svelte";
   import { parentOf, stemOf, vault } from "$lib/stores/vault.svelte";
   import { ymd } from "$lib/views/tasks";
@@ -10,6 +13,51 @@
   import PrivacyIcon from "../PrivacyIcon.svelte";
 
   let query = $state("");
+  let body = $state<HTMLDivElement | null>(null);
+
+  // ---- background changes wait while the reader is down the list ----
+  // Every vault event re-sorts the whole column: a note edited, written by the AI or synced
+  // in jumps to "today" and every row under it moves down. At the top of the list that is
+  // the news and it shows at once; further down, the rows the reader is on stay where they
+  // are, and "N new changes" at the top offers the update.
+  const stamp = (n: NoteSummary) => `${n.mtime_ms}|${n.created ?? ""}|${n.title}|${n.tags.join(" ")}`;
+  /** How many notes differ between two lists: changed or new, plus the ones gone. */
+  function changes(before: NoteSummary[], after: NoteSummary[]): number {
+    if (before === after) return 0;
+    const old = new Map(before.map((n) => [n.id, stamp(n)]));
+    let n = 0;
+    for (const x of after) {
+      if (old.get(x.id) !== stamp(x)) n++;
+      old.delete(x.id);
+    }
+    return n + old.size;
+  }
+  /** The notes the column is drawn from: the live list while the reader is at the top. */
+  let shown = $state.raw<NoteSummary[]>(vault.notes);
+  let atTop = $state(true);
+  $effect(() => {
+    const next = vault.notes;
+    untrack(() => {
+      if (atTop || changes(shown, next) === 0) shown = next;
+    });
+  });
+  const pending = $derived(changes(shown, vault.notes));
+  function onscroll() {
+    if (!body) return;
+    atTop = body.scrollTop <= 0;
+    if (atTop && pending > 0) shown = vault.notes;
+  }
+  /** Taking the update is the reader's own act, and what it is for is seeing the changes:
+   *  the list takes them and goes to its top, where they are. */
+  function showChanges() {
+    shown = vault.notes;
+    if (body) body.scrollTop = 0;
+  }
+
+  /** A row opens its note on a click, unless the click ended a drag that selected its text. */
+  function open(e: MouseEvent, id: string) {
+    if (!selectingIn(e.currentTarget as Element)) void vault.openNote(id);
+  }
 
   /** The frontmatter `created` is free text; it is used when it parses, and mtime otherwise */
   function parseCreated(s: string): Date | null {
@@ -33,7 +81,7 @@
   }
 
   const rows = $derived.by(() => {
-    const all: Row[] = vault.notes.map((note) => {
+    const all: Row[] = shown.map((note) => {
       const created = note.created ? parseCreated(note.created) : null;
       return created
         ? { note, time: created, source: "created" as const }
@@ -43,16 +91,19 @@
     return filtered.sort((a, b) => b.time.getTime() - a.time.getTime());
   });
 
-  // Weekday names come from Intl rather than a hand-written table: it is the
-  // one list that has to exist in every locale we ever add.
-  const weekday = $derived(new Intl.DateTimeFormat(i18n.locale, { weekday: "short" }));
+  // A day is written the way the interface language writes a date (month, day and
+  // weekday in its own order and words: "Tue, Sep 22", "9月22日 周二"), with the year only
+  // across years. Built once per language, not once per row.
+  const dayFmt = $derived(new Intl.DateTimeFormat(i18n.locale, { month: "short", day: "numeric", weekday: "short" }));
+  const yearDayFmt = $derived(new Intl.DateTimeFormat(i18n.locale, { year: "numeric", month: "short", day: "numeric", weekday: "short" }));
 
   function dayLabel(key: string, d: Date): string {
-    const today = ymd(new Date());
+    const now = new Date();
+    const today = ymd(now);
     const yesterday = ymd(new Date(Date.now() - 86400_000));
     if (key === today) return t("timeline.today");
     if (key === yesterday) return t("timeline.yesterday");
-    return `${key} ${weekday.format(d)}`;
+    return (d.getFullYear() === now.getFullYear() ? dayFmt : yearDayFmt).format(d);
   }
 
   // The clock in the interface language: 24-hour where the locale uses one, 12-hour with
@@ -103,14 +154,14 @@
       class:created={r.source === "created"}
       role="button"
       tabindex="0"
-      onclick={() => vault.openNote(r.note.id)}
+      onclick={(e) => open(e, r.note.id)}
       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && vault.openNote(r.note.id)}
     >
       <!-- The end of a row no longer prints "modified" on every line (T1); which kind this
         row's time is hangs on the time's own hover tip, so nothing is lost and it does not
         take the end of the line -->
       <span class="time" title={t(r.source === "created" ? "timeline.createdTime" : "timeline.modifiedTime")}>{hhmm(r.time)}</span>
-      <span class="title">{r.note.title}</span>
+      <span class="title" use:cliptip={r.note.title}>{r.note.title}</span>
       <span class="path">{pathHint(r.note)}</span>
       <!-- frontmatter tags are not deduplicated, and a repeated tag would collide as a key -->
       {#each [...new Set(r.note.tags)].slice(0, 3) as tag (tag)}
@@ -126,8 +177,14 @@
 {/snippet}
 
 <div class="view">
-  <ViewHeader title={t("view.timeline")} total={countLabel(rows.length, vault.notes.length, "timeline.noteCount")} filterPlaceholder={t("timeline.filterPlaceholder")} bind:filter={query} />
-  <div class="body">
+  <ViewHeader title={t("view.timeline")} total={countLabel(rows.length, shown.length, "timeline.noteCount")} filterPlaceholder={t("timeline.filterPlaceholder")} bind:filter={query} />
+  <div class="body" bind:this={body} {onscroll}>
+    <!-- No height of its own: the offer floats over the list rather than pushing it down -->
+    {#if pending > 0 && !atTop}
+      <div class="news-wrap">
+        <button class="news" onclick={showChanges}>{tn("timeline.newChanges", pending)}</button>
+      </div>
+    {/if}
     {#each days as day (day.key)}
       <section>
         <h3>{day.label}</h3>
@@ -186,6 +243,28 @@
   }
   section {
     margin-bottom: 10px;
+  }
+  .news-wrap {
+    position: sticky;
+    top: 0;
+    height: 0;
+    z-index: 2;
+    display: flex;
+    justify-content: center;
+  }
+  .news {
+    margin-top: 6px;
+    font-size: var(--fs-xs);
+    color: var(--accent);
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 2px 12px;
+    box-shadow: var(--shadow);
+    white-space: nowrap;
+  }
+  .news:hover {
+    background: var(--bg-hover);
   }
   h3 {
     font-size: var(--fs-sm);
@@ -274,7 +353,7 @@
     flex-shrink: 0;
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .title {
     font-weight: 600;
@@ -285,13 +364,15 @@
     min-width: 0;
     flex-shrink: 1;
     max-width: 55%;
+    -webkit-user-select: text;
+    user-select: text;
   }
   .path {
     flex: 1;
     min-width: 0;
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -307,7 +388,7 @@
   .source {
     flex-shrink: 0;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .lock {
     display: inline-flex;

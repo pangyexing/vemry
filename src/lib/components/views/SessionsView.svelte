@@ -25,6 +25,9 @@
   import type { ActionItem } from "$lib/api";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import PrivacyIcon from "../PrivacyIcon.svelte";
+  import DiffLines from "../DiffLines.svelte";
+  import { cliptip } from "$lib/cliptip";
+  import { langAttrs, noteLanguage } from "$lib/notelang";
 
   let sessions = $state<SessionMeta[]>([]);
 
@@ -37,6 +40,10 @@
   let selected = $state<string | null>(null);
   let entries = $state<SessionEntry[]>([]);
   let expanded = $state<Record<number, boolean>>({});
+  let replay = $state<HTMLDivElement | null>(null);
+  /** The sessions the list held when it was first read or last looked at: one started since
+   *  is marked in the list, and the replay stays on what the reader is reading. */
+  let known = $state<Set<string> | null>(null);
 
   async function loadList() {
     try {
@@ -55,11 +62,14 @@
    *  filtering narrows the list and does not overturn what is being read. */
   const shown = $derived(fuzzyKeep(sessions, query, (s) => `${displayTitle(s)} ${formatSessionId(s.id)}`));
 
-  /** The user switches sessions: the expansion state and the render cache are reset */
+  /** The user switches sessions: the expansion state and the render cache are reset, and
+   *  the replay starts at the session's top (not at the scroll offset the previous one left) */
   async function select(id: string) {
     selected = id;
     expanded = {};
     htmlCache = new Map();
+    if (known && !known.has(id)) known = new Set([...known, id]);
+    if (replay) replay.scrollTop = 0;
     await reread(id);
   }
 
@@ -71,11 +81,16 @@
    *  Only assistant.content goes through {@html} — user/tool_result/raw/diff are audit
    *  evidence, stay text nodes and never pass through {@html}. */
   const NO_CITES = new Map<string, number>();
-  let htmlCache = new Map<string, string>();
-  function assistantHtml(content: string): string {
-    let h = htmlCache.get(content);
-    if (h == null) htmlCache.set(content, (h = renderAssistantMarkdownBlocks(content, NO_CITES).join("")));
-    return h;
+  let htmlCache = new Map<string, { html: string; lang: ReturnType<typeof langAttrs> }>();
+  /** The answer's HTML and what it reads as (fonts, line breaking and the column width
+   *  follow the answer's own language), memoised together. */
+  function assistantView(content: string): { html: string; lang: ReturnType<typeof langAttrs> } {
+    let v = htmlCache.get(content);
+    if (v == null) {
+      v = { html: renderAssistantMarkdownBlocks(content, NO_CITES).join(""), lang: langAttrs(noteLanguage(content)) };
+      htmlCache.set(content, v);
+    }
+    return v;
   }
 
   /** The rendered links and copy buttons go through click delegation (generated HTML cannot
@@ -115,7 +130,9 @@
 
   // Every discrete agent event triggers a refresh (behind a debounce): a running replay
   // follows the log as it grows rather than waiting for the run to end.
-  // The selection follows the newest session unless the user deliberately chose an earlier one.
+  // Opening the view shows the newest session; after that the replay stays on the session
+  // being read, and a session that starts meanwhile is marked in the list instead of taking
+  // the replay over (one click reads it).
   let refreshing = false;
   let queued = false;
   async function refresh() {
@@ -125,10 +142,10 @@
     }
     refreshing = true;
     try {
-      const prevHead: string | undefined = sessions[0]?.id;
       await loadList();
+      if (known === null) known = new Set(sessions.map((s) => s.id));
       const head: string | undefined = sessions[0]?.id;
-      if (head && (selected === null || (selected === prevHead && head !== prevHead))) {
+      if (head && selected === null) {
         await select(head);
       } else if (selected) {
         await reread(selected);
@@ -222,8 +239,14 @@
             />
           </div>
         {:else}
+          {@const fresh = known !== null && !known.has(s.id)}
           <button class="session" class:active={s.id === selected} onclick={() => select(s.id)} oncontextmenu={(e) => sessionMenu(e, s)}>
-            <span class="s-title">{#if s.forked}<span class="s-fork" title={t("sessionsView.forked")}>⑂</span>{/if}{displayTitle(s)}</span>
+            <span class="s-title" use:cliptip={displayTitle(s)}
+              >{#if fresh}<span class="s-new" title={t("sessionsView.newSession")} aria-label={t("sessionsView.newSession")}></span>{/if}{#if s.forked}<span
+                  class="s-fork"
+                  title={t("sessionsView.forked")}>⑂</span
+                >{/if}{displayTitle(s)}</span
+            >
             <span class="s-meta">{formatSessionId(s.id)}{s.turns ? ` · ${t("sessionsView.turns", { n: s.turns })}` : ""}</span>
           </button>
         {/if}
@@ -234,7 +257,7 @@
       {/each}
     </aside>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <div class="replay" onclick={onReplayClick}>
+    <div class="replay" bind:this={replay} onclick={onReplayClick}>
       <!-- .rows keeps a press in the padding or a flex gap off the scroll container itself (the same WebKit anchor bug as AgentChat .turns) -->
       <div class="rows">
       {#each entries as e, i (i)}
@@ -247,10 +270,11 @@
             </div>
           </div>
         {:else if e.kind === "assistant"}
+          {@const view = assistantView(e.content)}
           <div class="row">
             <span class="ts">{hhmmss(e.ts)}</span>
-            <div class="msg assistant md-body">
-              {@html assistantHtml(e.content)}
+            <div class="msg assistant md-body" {...view.lang}>
+              {@html view.html}
               {#if e.tool_calls > 0}<span class="faint">{t("sessionsView.calledTools", { n: e.tool_calls })}</span>{/if}
             </div>
           </div>
@@ -290,8 +314,7 @@
                 {/if}
               </div>
               {#if e.diff}
-                <pre class="diff">{#each classifyDiff(e.diff) as line, j (j)}<span class={line.cls}>{line.text}
-</span>{/each}</pre>
+                <pre class="diff"><DiffLines lines={classifyDiff(e.diff)} /></pre>
               {:else if !e.to}
                 <span class="faint">{t("permission.newFile")}</span>
               {/if}
@@ -316,8 +339,7 @@
               </div>
               {#if e.applied_diff}
                 <span class="faint">{t("sessionsView.appliedDiff")}</span>
-                <pre class="diff">{#each classifyDiff(e.applied_diff) as line, j (j)}<span class={line.cls}>{line.text}
-</span>{/each}</pre>
+                <pre class="diff"><DiffLines lines={classifyDiff(e.applied_diff)} /></pre>
               {/if}
             </div>
           </div>
@@ -569,6 +591,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* A session that started while the reader was reading another: a dot, and no move */
+  .s-new {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    vertical-align: 2px;
+    margin-right: 5px;
+  }
   /* The ⑂ fork mark — a forked row shares its title with the source session and is told
      apart by it. The glyph is naturally small and floats above the baseline: enlarged a
      step, pushed back down, and given room to breathe next to the title */
@@ -582,8 +614,11 @@
   }
   .s-meta {
     font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-faint);
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .session:hover {
     background: var(--bg-hover);
@@ -595,11 +630,17 @@
   .replay {
     overflow-y: auto;
   }
+  /* The replay is read like the chat: at the body's font size, in a column capped at the
+     readable width plus the time gutter, centred (on a wide pane the question used to sit
+     at the far right and its answer at the far left) */
   .rows {
     padding: 12px 20px 30px;
     display: flex;
     flex-direction: column;
     gap: 6px;
+    font-size: var(--fs-note);
+    max-width: calc(var(--content-width) + 108px);
+    margin: 0 auto;
   }
   .row {
     display: flex;
@@ -608,17 +649,15 @@
   }
   .ts {
     flex-shrink: 0;
-    width: 58px;
+    width: 60px;
     font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-faint);
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
     text-align: right;
     -webkit-user-select: none;
     user-select: none;
   }
   .msg {
-    font-size: 15px;
-    line-height: 1.65;
     word-break: break-word;
     -webkit-user-select: text;
     user-select: text;
@@ -638,11 +677,15 @@
   .row:has(.msg.user) {
     justify-content: flex-end;
   }
+  /* An answer is capped by its own writing system (data-script from noteLanguage) */
+  .msg.assistant {
+    max-width: var(--content-width);
+  }
   /* The assistant Markdown's whole typography hangs off the global .md-body (app.css) —
      markdown.ts's class-name contract has one style implementation. The :global() rules are
      not copied out again here. */
   .faint {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-xs);
   }
   /* The audit stream's mono ledger rows — the same signature element as AgentPanel's */
@@ -730,27 +773,7 @@
     overflow: auto;
     -webkit-user-select: text;
     user-select: text;
-  }
-  .diff span {
-    display: block;
-    padding: 0 6px;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-  .diff .add {
-    background: var(--diff-add-bg);
-    color: var(--accent);
-  }
-  .diff .del {
-    background: var(--diff-del-bg);
-    color: var(--danger);
-  }
-  .diff .hunk,
-  .diff .meta {
-    color: var(--fg-faint);
-  }
-  .diff .ctx {
-    color: var(--fg-muted);
+    --diff-pad: 6px;
   }
   .permission {
     display: flex;
@@ -818,7 +841,7 @@
     min-width: 0;
   }
   .ws-n {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     flex-shrink: 0;
   }
   .ws-title {
@@ -830,7 +853,7 @@
     white-space: nowrap;
   }
   .ws-url {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -839,10 +862,10 @@
   }
   .raw {
     font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-faint);
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
     white-space: pre-wrap;
-    word-break: break-all;
+    overflow-wrap: anywhere;
   }
   .empty {
     color: var(--fg-muted);

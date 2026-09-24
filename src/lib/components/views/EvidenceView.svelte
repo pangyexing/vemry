@@ -6,6 +6,12 @@
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
   import PrivacyIcon from "../PrivacyIcon.svelte";
+  import { selectingIn } from "$lib/views/select";
+
+  /** A row opens its note on a click, unless the click ended a drag that selected its text. */
+  function open(e: MouseEvent, path: string) {
+    if (!selectingIn(e.currentTarget as Element)) void vault.openNote(path);
+  }
 
   let evidence = $state<EvidenceWithClaims[]>([]);
   let onlyBroken = $state(false);
@@ -56,6 +62,7 @@
     {/snippet}
   </ViewHeader>
   <div class="body">
+    <div class="list">
     {#if evidence.length === 0}
       <ViewEmpty>
         {t("evidenceView.empty1")}<code>&gt; [!evidence] data supports:[[note#^id]]</code>{t("evidenceView.empty2")}
@@ -82,7 +89,7 @@
               class="ev"
               role="button"
               tabindex="0"
-              onclick={() => vault.openNote(ev.evidence.note)}
+              onclick={(e) => open(e, ev.evidence.note)}
               onkeydown={(e) => (e.key === "Enter" || e.key === " ") && vault.openNote(ev.evidence.note)}
             >
               <span class="text">{ev.text}</span>
@@ -113,6 +120,7 @@
         {/each}
       </section>
     {/each}
+    </div>
   </div>
 </div>
 
@@ -136,6 +144,11 @@
     overflow-y: auto;
     padding: 10px 20px 30px;
   }
+  /* A list view's width is capped like any reading surface */
+  .list {
+    max-width: 64em;
+    margin: 0 auto;
+  }
   section {
     margin-bottom: 16px;
   }
@@ -156,7 +169,7 @@
   .path {
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .card {
     border: 1px solid var(--border);
@@ -172,8 +185,14 @@
   .ev:hover {
     background: var(--bg-hover);
   }
+  /* The evidence is prose to read: capped at the readable column, and selectable */
   .text {
+    display: block;
+    max-width: var(--content-width);
     font-size: var(--fs-sm);
+    line-height: 1.6;
+    -webkit-user-select: text;
+    user-select: text;
   }
   .links {
     display: flex;
@@ -200,12 +219,14 @@
   .chip.warn {
     color: var(--danger);
   }
+  /* The two explanations are words to read, in the secondary ink on their chip ground
+     (≥ 4.5:1); a link that resolves to nothing keeps its strike */
   .chip.broken {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     text-decoration: line-through;
   }
   .chip.faint {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .lock {
     display: inline-flex;
