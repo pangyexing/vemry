@@ -422,8 +422,8 @@ button:focus-visible,
 /* Scrollbars: WebKit's custom ones never hide by themselves, so a bar stood beside the
    text at all times — and at 1.2:1 it was too faint to find a place by when it was
    wanted. Now the thumb is clear (the faint ink, 3.3:1) while the pointer is over the
-   area being scrolled, which is also whenever a wheel or a trackpad scrolls it, and gone
-   otherwise */
+   area being scrolled, which is also whenever a wheel or a trackpad scrolls it, and while
+   the note scrolls by keyboard (setup.ts scrollingThumb), and gone otherwise */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -432,7 +432,8 @@ button:focus-visible,
   background: transparent;
   border-radius: 4px;
 }
-:hover::-webkit-scrollbar-thumb {
+:hover::-webkit-scrollbar-thumb,
+.cm-scroller.cm-scrolling::-webkit-scrollbar-thumb {
   background: var(--fg-faint);
 }
 ::-webkit-scrollbar-thumb:hover {

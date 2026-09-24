@@ -102,6 +102,28 @@ const followScheme = ViewPlugin.fromClass(
   },
 );
 
+/** The scrollbar shows while the note scrolls, not only while the pointer is over it
+ *  (app.css draws the thumb on :hover): a keyboard scroll, or the view following the
+ *  cursor, shows where in the note the reader is, and the thumb fades once it settles. */
+const scrollingThumb = ViewPlugin.fromClass(
+  class {
+    timer = 0;
+    constructor(readonly view: EditorView) {}
+    destroy() {
+      clearTimeout(this.timer);
+    }
+  },
+  {
+    eventObservers: {
+      scroll() {
+        this.view.scrollDOM.classList.add("cm-scrolling");
+        clearTimeout(this.timer);
+        this.timer = window.setTimeout(() => this.view.scrollDOM.classList.remove("cm-scrolling"), 900);
+      },
+    },
+  },
+);
+
 // The characters drawn as a visible placeholder: the control characters, and the ones
 // that can make a line say something other than it looks (the bidi overrides, the
 // interlinear annotation marks). Left out, and so drawn as the browser draws them: the
@@ -458,6 +480,7 @@ function buildState(opts: EditorOptions): EditorState {
       darkMode.of(darkFacet()),
       followScheme,
       perLineDirection,
+      scrollingThumb,
       EditorView.lineWrapping,
       closeBrackets(),
       ...mode,
