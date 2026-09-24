@@ -7,8 +7,14 @@
   --bg-hover: #ecebe8;
   --bg-active: #e4e2de;
   --fg: #1c1917;
-  --fg-muted: #78716c;
-  --fg-faint: #a8a29e;
+  /* Three inks by use (the reading-first rules): --fg for every piece of content text
+     (≥ 7:1); --fg-muted for secondary content — dates, sources, finished tasks — at
+     ≥ 4.5:1 on every ground it appears on, hover and selection included (5.56 / 5.28 /
+     4.88 on --bg / --bg-panel / --bg-hover); --fg-faint for non-text marks only (arrows,
+     dividers, scrollbar thumbs, ≥ 3:1). No text is ever set in --fg-faint, and no text is
+     faded with opacity. */
+  --fg-muted: #6b645f;
+  --fg-faint: #8f8883;
   --border: #e7e5e4;
   /* The structural divider (between the activity bar, the two sidebars, the status bar
      and the content area) is one step heavier than an ordinary stroke: on the same
@@ -22,6 +28,8 @@
   --accent-soft: rgba(15, 118, 110, 0.1);
   --danger: #b91c1c;
   --ok: #2e7d4f;
+  /* A caution in text ("unverified"): 4.5:1 on --bg */
+  --warning: #9a6408;
   /* The ink of an inverted surface (a notice): the other theme's accent and danger, since the
      ground under them is the other theme's ground */
   --accent-inverse: #38b2a3;
@@ -94,7 +102,7 @@
      viewport), so dragging a sidebar wider or docking a panel follows automatically; em
      resolves where it is used, so a larger body font makes the column wider with it.
      With the "readable line width" setting off, prefs.applyReadableLineWidth overrides it
-     inline on :root to none */
+     inline on :root to none (and --content-width-off, which the per-script widths read) */
   --content-width: clamp(42em, 66%, 54em);
 
   /* The single source of truth for the bottom status bar's height: StatusBar's own height
@@ -116,8 +124,8 @@
     --bg-hover: #2e2e2b;
     --bg-active: #363633;
     --fg: #dedcd8;
-    --fg-muted: #98948b;
-    --fg-faint: #6a675f;
+    --fg-muted: #a19d94;
+    --fg-faint: #7d796f;
     /* One step up from the original #33322f: the file tree's indent guides (.guide) and the
        three-column dividers all sit on --border, and at the old value they were less than a
        step of grey from --bg-panel (#252523) and effectively invisible */
@@ -127,6 +135,7 @@
     --accent-soft: rgba(56, 178, 163, 0.13);
     --danger: #e06c6c;
     --ok: #7cc494;
+    --warning: #e0a63a;
     --accent-inverse: #0f766e;
     --danger-inverse: #b91c1c;
     --diff-add-bg: rgba(56, 178, 163, 0.1);
@@ -202,13 +211,22 @@
   --hyphens: auto;
 }
 /* Latin prose reads best at 60-75 characters; the CJK-tuned column (42-54em, about 40-50
-   ideographs) is a third too wide for it. Follows the interface language; the readable
-   line width setting's inline override on :root still wins. */
+   ideographs) is a third too wide for it. The width follows the writing system of the text
+   itself: a surface stamps data-script from notelang.ts's noteLanguage() (a note, a chat
+   answer, a translated cell), and only a text too short to judge falls back to the
+   interface language. The readable line width setting switches the column off with
+   --content-width-off on :root, which wins over both. */
 :root[lang="en"],
 :root[lang="fr"],
 :root[lang="de"],
-:root[lang="es"] {
-  --content-width: clamp(36em, 66%, 44em);
+:root[lang="es"],
+[data-script="latin"],
+[data-script="other"],
+[data-script="rtl"] {
+  --content-width: var(--content-width-off, clamp(36em, 66%, 44em));
+}
+[data-script="cjk"] {
+  --content-width: var(--content-width-off, clamp(42em, 66%, 54em));
 }
 
 html,
