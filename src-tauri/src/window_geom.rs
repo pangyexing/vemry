@@ -190,24 +190,18 @@ fn area_at_pointer(app: &AppHandle) -> Option<Area> {
 /// The display the pointer is on; None when the pointer cannot be read.
 pub fn monitor_at_pointer(app: &AppHandle) -> Option<tauri::Monitor> {
     let p = app.cursor_position().ok()?;
-    // Where the pointer and the monitors share one pixel space, the lookup answers
-    // directly. On a Mac with displays of different scales it does not: the pointer
-    // comes back as its logical point times the primary display's scale, while each
-    // display's position is in its own pixels (measured: pointer x 3767 on a 1x
-    // external display at x 1470, beside a 2x built-in one). There both are brought
-    // to logical points and compared
-    app.monitor_from_point(p.x, p.y).ok().flatten().or_else(|| {
+    // On a Mac the pointer comes back as its logical point times the primary display's
+    // scale, while the lookup tests each display's bounds in logical points (measured:
+    // pointer x 3767 on a 1x external display at x 1470, beside a 2x built-in one). The
+    // raw point is not merely missing there: on the right half of a 2x built-in display
+    // it lands inside an external display to its right and names the wrong one. So on a
+    // Mac the point is always brought back to logical points first
+    #[cfg(target_os = "macos")]
+    let p = {
         let scale = app.primary_monitor().ok().flatten()?.scale_factor();
-        let point = (p.x / scale, p.y / scale);
-        app.available_monitors().ok()?.into_iter().find(|m| holds(&bounds_of(m), point))
-    })
-}
-
-/// A display's whole bounds in logical points.
-fn bounds_of(m: &tauri::Monitor) -> Area {
-    let pos = m.position().to_logical::<f64>(m.scale_factor());
-    let size = m.size().to_logical::<f64>(m.scale_factor());
-    Area { x: pos.x, y: pos.y, w: size.width, h: size.height }
+        tauri::PhysicalPosition::new(p.x / scale, p.y / scale)
+    };
+    app.monitor_from_point(p.x, p.y).ok().flatten()
 }
 
 /// Note the main window's geometry after a move or a resize (in memory). Minimised,

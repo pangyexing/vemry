@@ -16,7 +16,7 @@
 import { t } from "$lib/i18n/i18n.svelte";
 import { selectingIn } from "$lib/views/select";
 import { blockRoot, liveRefresh, queryRefresh, recordHeight, selectableIsland, swapInPlace, unwatchLive, watchLive } from "./blockwidget";
-import { cliptip } from "$lib/cliptip";
+import { cliptip, dropTipsIn } from "$lib/cliptip";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { type EditorState, type Extension, StateField } from "@codemirror/state";
@@ -207,6 +207,7 @@ class QueryWidget extends WidgetType {
   }
   destroy(dom: HTMLElement) {
     unwatchLive(dom);
+    dropTipsIn(dom);
   }
 
   /** One row: a task's checkbox in the margin, the words, the chips (a state field's
@@ -412,6 +413,7 @@ class QueryWidget extends WidgetType {
       if (sig === shown) return; // the same answer: the DOM is not touched
       shown = sig;
       swapInPlace(view, root, () => {
+        dropTipsIn(wrap);
         root.style.minHeight = "";
         wrap.classList.toggle("cm-queryblock-error", error);
         if (typeof els === "string") wrap.textContent = els;

@@ -44,6 +44,9 @@ export interface EmbedHost {
   /** What a note reads as, from the index (NoteSummary.lang/script); absent or null,
    *  the body follows the note it is shown in. */
   langOf?(note: string): NoteLanguage | null;
+  /** The index version now, which a fresh state starts from: a resolution cached on an
+   *  earlier visit at an older version is then not taken for current. Absent, 0. */
+  indexVersion?(): number;
 }
 
 const NO_LANG: NoteLanguage = { lang: null, script: null };
@@ -490,7 +493,7 @@ function build(state: EditorState, host: EmbedHost, versionOf: (state: EditorSta
  *  widgets in place, and the field only records the version for later mounts. */
 export function embedExtension(host: EmbedHost): Extension {
   const field: StateField<{ version: number } & BuildResult> = StateField.define({
-    create: (state) => ({ version: 0, ...build(state, host, versionOf) }),
+    create: (state) => ({ version: host.indexVersion?.() ?? 0, ...build(state, host, versionOf) }),
     update(value, tr) {
       let version = value.version;
       for (const e of tr.effects) if (e.is(queryRefresh)) version = e.value;

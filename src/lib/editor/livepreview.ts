@@ -620,12 +620,15 @@ export async function primeImageDims(
   read: (paths: string[]) => Promise<([number, number] | null)[]>,
 ): Promise<boolean> {
   const byPath = new Map<string, string[]>();
-  const want = (raw: string) => {
+  // keyed as the image widget keys its target: a `![](…)` URL decoded, a `![[…]]` as written
+  const want = (raw: string, encoded: boolean) => {
     let target = raw.trim();
-    try {
-      target = decodeURIComponent(target);
-    } catch {
-      /* not encoded: kept as written */
+    if (encoded) {
+      try {
+        target = decodeURIComponent(target);
+      } catch {
+        /* not encoded: kept as written */
+      }
     }
     if (/^[a-z][a-z0-9+.-]*:/i.test(target) || !IMAGE_EXT_RE.test(target) || imageDims.has(target)) return;
     const path = resolve(target);
@@ -634,8 +637,8 @@ export async function primeImageDims(
     if (!targets) byPath.set(path, [target]);
     else if (!targets.includes(target)) targets.push(target);
   };
-  for (const m of doc.matchAll(WIKI_IMAGE_RE)) want(m[1]);
-  for (const m of doc.matchAll(MD_IMAGE_RE)) want(m[1]);
+  for (const m of doc.matchAll(WIKI_IMAGE_RE)) want(m[1], false);
+  for (const m of doc.matchAll(MD_IMAGE_RE)) want(m[1], true);
   if (!byPath.size) return false;
   const paths = [...byPath.keys()];
   const sizes = await read(paths).catch(() => null);

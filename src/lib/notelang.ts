@@ -8,7 +8,7 @@ export function noteLang(head: string): string | null {
   if (end === -1) return null;
   const fm = head.slice(3, end);
   const m = /(?:^|\r?\n)lang:[ \t]*["']?([A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*)["']?[ \t]*(?=\r?\n|$)/.exec(fm);
-  return m ? m[1].replace("_", "-") : null;
+  return m ? m[1].replaceAll("_", "-") : null;
 }
 
 /** The writing system a text is set in, which is what the column width, the direction

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t, compareNames } from "$lib/i18n/i18n.svelte";
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { EditorView } from "@codemirror/view";
   import { type EditorState, Text, Transaction } from "@codemirror/state";
@@ -723,6 +723,8 @@
     openBlockAt: (note: string, byteStart: number, content?: string) => void vault.openBlockAt(note, byteStart, content),
     currentNote: () => docPath,
     loadAsset,
+    // untracked: a fresh state is built inside the load, which must not come to depend on it
+    indexVersion: () => untrack(() => vault.indexVersion),
     // what the embedded note reads as, as the index judged it (NoteSummary.lang/script)
     langOf: (note: string) => {
       const s = vault.noteById.get(note);

@@ -71,10 +71,21 @@ fn is_latin(c: char) -> bool {
     c.is_ascii_alphabetic() || matches!(c as u32, 0x00C0..=0x024F | 0x1E00..=0x1EFF)
 }
 
+/// A `lang:` value shaped like a BCP 47 tag (`de`, `zh-Hant`, `pt_BR`): the same pattern
+/// `notelang.ts`'s `noteLang()` accepts. Anything else (`English`, `中文`) is not a
+/// declaration, and the letters decide, as they do in the editor.
+fn is_lang_tag(tag: &str) -> bool {
+    let mut parts = tag.split(['-', '_']);
+    let primary = parts.next().unwrap_or("");
+    (2..=3).contains(&primary.len())
+        && primary.bytes().all(|b| b.is_ascii_alphabetic())
+        && parts.all(|p| (2..=8).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+
 /// What a note's raw text reads as: `lang` from the frontmatter (already parsed by the
 /// caller) wins; otherwise the letters of the body decide.
 pub fn note_language(declared: Option<&str>, body: &str) -> NoteLanguage {
-    if let Some(tag) = declared.map(str::trim).filter(|t| !t.is_empty()) {
+    if let Some(tag) = declared.map(str::trim).filter(|t| is_lang_tag(t)) {
         let tag = tag.replace('_', "-");
         let script = script_of_lang(&tag);
         return NoteLanguage { lang: Some(tag), script: Some(script) };
@@ -148,6 +159,8 @@ mod tests {
         let nl = note_language(Some("de_AT"), "短");
         assert_eq!(nl.lang.as_deref(), Some("de-AT"));
         assert_eq!(nl.script, Some(Script::Latin));
+        // not a tag: the letters decide, as notelang.ts's noteLang() has it
+        assert_eq!(note_language(Some("English"), "短"), NoteLanguage::default());
     }
 
     #[test]

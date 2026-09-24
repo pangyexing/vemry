@@ -928,11 +928,17 @@ export function taskText(content: string): string {
   return plainText(foldTaskMeta(stripAnchor(s.replace(STAMP_RE, ""))));
 }
 
+/** A `#tag` anywhere in a line (TRAILING_TAG_RE's shape, unanchored). */
+const TAG_IN_WORDS_RE = /(^|[^\p{L}\p{N}#&])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
+
 /** The tags a row shows in its meta line: the block's tags, each once, less the ones its
  *  words already carry (a tag in the middle of the sentence is read there). */
 function metaTags(hit: BlockHit, text: string): string[] {
-  const words = text.toLowerCase();
-  return [...new Set(hit.block.tags ?? [])].filter((tag) => !words.includes("#" + tag.toLowerCase()));
+  const tags = [...new Set(hit.block.tags ?? [])];
+  if (!text.includes("#")) return tags;
+  // the tags the words carry, whole (a `#project` in the words does not account for `proj`)
+  const inWords = new Set([...text.matchAll(TAG_IN_WORDS_RE)].map((m) => m[2].toLowerCase()));
+  return tags.filter((tag) => !inWords.has(tag.toLowerCase()));
 }
 
 /** A task block's view row: the kind unpacked, and the display text stripped once (not

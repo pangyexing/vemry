@@ -38,6 +38,14 @@ function hide() {
   shownFor = null;
 }
 
+/** For content replaced outside a component's teardown (a query block's rows swapped in
+ *  place): the box of an element inside `root`, and its pending timer's claim, go with it
+ *  — a removed element never sees the pointer leave. */
+export function dropTipsIn(root: Element): void {
+  if (shownFor && root.contains(shownFor)) hide();
+  if (armed && root.contains(armed)) armed = null;
+}
+
 function box(): HTMLDivElement {
   if (!tip) {
     tip = document.createElement("div");

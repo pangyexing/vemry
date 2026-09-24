@@ -340,7 +340,8 @@ const COLLECT_JS: &str = r#"
         if ((r.width === 0 && r.height === 0) || (!stack && r.left + r.width / 2 >= lr.left)) { hidden.push(it); continue; }
         rows.push({ it, t: stack ? 0 : r.top - lr.top, hb: r.height, h: 0, y: 0 });
       }
-      for (const it of gone) if (it.out.isConnected) it.out.remove();
+      // a block the page dropped: its entry goes, and the observer lets go of the node
+      for (const it of gone) { if (it.out.isConnected) it.out.remove(); S.ro.unobserve(it.el); }
       for (const it of hidden) if (it.out.style.display !== 'none') it.out.style.display = 'none';
       for (const x of rows) {
         // a page that rendered its block again may have dropped the entry beside it
