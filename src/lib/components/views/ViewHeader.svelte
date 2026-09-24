@@ -89,11 +89,13 @@
   <span class="spring"></span>
   <!-- The right side is one flex item: in a pane too narrow for the whole row it drops
     under the title as a whole and keeps its right alignment (margin-left auto), rather
-    than its members being squeezed to a character's width one by one -->
+    than its members being squeezed to a character's width one by one; only when even a
+    line of its own is too narrow do its members wrap, each whole -->
   <span class="tools">
     {@render right?.()}
     {#if askAi}
-      <button class="ask" title={t("viewChrome.askAiHint")} onclick={askAi}>{t("viewChrome.askAi")}</button>
+      <!-- It says what it does in words, so it carries no tip -->
+      <button class="ask" onclick={askAi}>{t("viewChrome.askAi")}</button>
     {/if}
     {#if hint}<span class="hint">{hint}</span>{/if}
     {#if filterPlaceholder !== undefined}
@@ -102,8 +104,8 @@
     <!-- ✕ is Esc's visible entry point: it closes that view's tab, and closeTab activates the neighbour -->
     <button
       class="close"
-      title={closeHint ?? t("viewChrome.closeView")}
       aria-label={t("viewChrome.closeViewLabel")}
+      use:cliptip={{ text: closeHint ?? t("viewChrome.closeView"), always: true }}
       onclick={() => (onclose ? onclose() : void vault.closeActiveView())}>✕</button
     >
   </span>
@@ -140,10 +142,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* The count is the one place that says how much a filter left out, and the hint a
+     sentence to read: both secondary text, in the secondary ink */
   .total {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
   .spring {
     flex: 1;
@@ -152,14 +157,15 @@
   }
   .tools {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: center;
-    gap: 10px;
+    gap: 6px 10px;
     margin-left: auto;
-    min-width: 0;
   }
   .hint {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     /* In a narrow pane the hint is truncated first, so the filter box is not squeezed out —
        the hint is a sentence one can do without, and the filter box is an entry point */
     min-width: 0;

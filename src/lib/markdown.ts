@@ -173,16 +173,49 @@ const unescapeMd = (s: string) => s.replace(/\\([\\`*_{}[\]()#+.!|~<>-])/g, "$1"
 /** The same escapes, for the inline renderers (which stash the protected character). */
 const ESCAPE_RE = /\\([\\`*_{}[\]()#+.!|~<>-])/g;
 
+/** The emphasis family the editor hides the markers of: **bold** and __bold__, *italic*
+ *  and _italic_, ~~struck~~, ==highlighted==. An underscore only counts at a word's
+ *  edge (`snake_case_name` is a word, as the renderer reads it), and a strike or a
+ *  highlight needs its words right inside the markers (`a == b` is not highlighted). */
+const EMPHASIS: [RegExp, string][] = [
+  [/\*\*([^*]+)\*\*/g, "$1"],
+  [/__([^_]+)__/g, "$1"],
+  [/\*([^*]+)\*/g, "$1"],
+  [/(^|[^\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])/gu, "$1$2"],
+  [/~~(?=\S)([^~\n]*?\S)~~/g, "$1"],
+  [/==(?=\S)([^=\n]*?\S)==/g, "$1"],
+];
+
 /** The plain-text form of a marker's, a source card's or an image chip's title, and of
- *  an Agenda task row: escapes and the emphasis and code markers (**bold**, *italic*,
- *  `code`) are stripped, so they are not parsed a second time inside a tag attribute
- *  or a chip's text. */
+ *  an Agenda task row: escapes, the emphasis markers (EMPHASIS) and the code markers
+ *  are stripped, so they are not parsed a second time inside a tag attribute or a
+ *  chip's text. What sits inside a code span is left as written — `a_b_c` or `**` in
+ *  code is the text itself. */
 export function plainLabel(s: string): string {
   return unescapeMd(s)
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
+    .split(/(`[^`]+`)/)
+    .map((part, i) => (i % 2 ? part.slice(1, -1) : EMPHASIS.reduce((acc, [re, to]) => acc.replace(re, to), part)))
+    .join("")
     .trim();
+}
+
+/** The character references a line of Markdown carries in practice; an unknown name is
+ *  left as written rather than guessed. */
+const ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ensp: " ", emsp: " ", thinsp: " ",
+  mdash: "—", ndash: "–", hellip: "…", middot: "·", bull: "•", times: "×", divide: "÷", deg: "°",
+  plusmn: "±", copy: "©", reg: "®", trade: "™", laquo: "«", raquo: "»", ldquo: "“", rdquo: "”",
+  lsquo: "‘", rsquo: "’", larr: "←", rarr: "→", uarr: "↑", darr: "↓", harr: "↔",
+};
+
+/** `&amp;`, `&#8212;`, `&#x2014;` → the character. */
+function decodeEntities(s: string): string {
+  if (!s.includes("&")) return s;
+  return s.replace(/&(#\d{1,7}|#x[0-9a-f]{1,6}|[a-z]{2,8});/gi, (m, ref: string) => {
+    if (ref[0] !== "#") return ENTITIES[ref.toLowerCase()] ?? m;
+    const code = ref[1] === "x" || ref[1] === "X" ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+  });
 }
 
 /** The plain-text form of the projection layer (claim and evidence cards, Agenda and
@@ -194,10 +227,15 @@ export function plainLabel(s: string): string {
  *  a hard constraint: images before links (or READ_LINK eats [alt](url) and leaves a
  *  lone !), and links before bare URLs. plainLabel's existing consumers (a marker's
  *  label, an image chip) are unchanged, and this layer sits on top of it.
+ *  What the editor hides in a line and a projection must not show either: an autolink's
+ *  angle brackets, a footnote mark `[^1]`, inline HTML tags (`<mark>`, `<br>`), and —
+ *  last, so a decoded `&lt;b&gt;` or `&#42;` stays text — character references.
  *  READ_LINK/READ_IMAGE are defined in the reading-mode section below (this is only
  *  called once the module has finished evaluating). */
 export function plainText(s: string): string {
-  let out = s.replace(READ_IMAGE, (_, alt: string) => alt.trim() || t("editor.image"));
+  // `<https://…>`: the URL alone, which the bare-URL fold below reads
+  let out = s.replace(/<(https?:\/\/[^\s<>]+)>/g, "$1");
+  out = out.replace(READ_IMAGE, (_, alt: string) => alt.trim() || t("editor.image"));
   out = out.replace(READ_LINK, (_, label: string) => label);
   out = out.replace(BARE_URL, (m) => {
     const url = stripTrailingPunct(m);
@@ -210,7 +248,11 @@ export function plainText(s: string): string {
   // Embeds and wikilinks: the label the editor shows — the alias, else the note's stem
   // with › heading or ¶ block; an embed is marked ⧉, as it is inside embedded content
   out = out.replace(/(!?)\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_, bang: string, target: string, alias?: string) => `${bang ? "⧉ " : ""}${wikiLabel(target.trim(), alias?.trim())}`);
-  return plainLabel(out).replace(/\s{2,}/g, " ").trim();
+  // A footnote mark is a pointer to text elsewhere, not a word of this one
+  out = out.replace(/\[\^[^\]\s]+\]/g, "");
+  // Inline HTML: a comment goes whole, a tag leaves its words (a line break a space)
+  out = out.replace(/<!--[\s\S]*?-->/g, "").replace(/<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s[^<>]*)?\/?>/g, (_, tag: string) => (tag.toLowerCase() === "br" ? " " : ""));
+  return decodeEntities(plainLabel(out)).replace(/\s{2,}/g, " ").trim();
 }
 
 /** `[key:: value]`, `(key:: value)` and `key:: value` as the chip reads them. */

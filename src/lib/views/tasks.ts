@@ -4,7 +4,7 @@
 // menus Agenda and the board share. The Rust side is the agent's copy of the same rules;
 // change the two together.
 import { i18n, t, tn } from "$lib/i18n/i18n.svelte";
-import { ANCHOR_TAIL_RE, anchorTailStart, appendBeforeAnchor, cutSpan, scanFields, setFieldValue, stripAnchor, stripFields } from "$lib/fields";
+import { ANCHOR_TAIL_RE, anchorTailStart, appendBeforeAnchor, cutSpan, scanFields, setFieldValue, stripAnchor } from "$lib/fields";
 import { api, type BlockHit, type Priority, type TaskState } from "$lib/api";
 import { byNote } from "$lib/views/queryrows";
 import { readBlockSpan } from "$lib/views/blockspan";
@@ -887,9 +887,36 @@ export async function updateTask(hit: BlockHit, edit: TaskEdit): Promise<boolean
 
 /* ---------------------------------------------------------------- rows */
 
+/** A `#tag` closing a line (livepreview's TAG_RE, anchored at the end). */
+const TRAILING_TAG_RE = /(^|[^\p{L}\p{N}#&])#[\p{L}\p{N}_][\p{L}\p{N}_/-]*\s*$/u;
+
+/** A line's words with its metadata taken apart the way a sentence reads: what closes
+ *  the line — `[key:: value]` fields and `#tags` after the last word — is metadata and
+ *  goes (the view shows it once, in the row's meta line); a field in the middle of the
+ *  sentence is a word of it and keeps its value ("Review [status:: draft] chapter" reads
+ *  "Review draft chapter", where dropping it read "Review chapter"). A tag in the middle
+ *  stays as written. A line that is nothing but tags keeps them: they are then its words. */
+function foldTaskMeta(s: string): string {
+  let out = s.replace(/\s+$/, "");
+  for (;;) {
+    const last = scanFields(out).at(-1);
+    if (last && !out.slice(last.to).trim()) {
+      out = out.slice(0, last.from).replace(/\s+$/, "");
+      continue;
+    }
+    const tag = TRAILING_TAG_RE.exec(out);
+    if (!tag) break;
+    out = out.slice(0, tag.index + tag[1].length).replace(/\s+$/, "");
+  }
+  if (!out.trim()) out = s;
+  const marks = scanFields(out);
+  for (let i = marks.length - 1; i >= 0; i--) out = out.slice(0, marks[i].from) + marks[i].value + out.slice(marks[i].to);
+  return out;
+}
+
 /** Task text for display: checkbox prefix, every attribute, capture stamps and
  *  markdown ornaments stripped — Agenda is a projection, and cramming the source's
- *  markers into a single line would only be noise.
+ *  markers into a single line would only be noise. Fields and tags follow foldTaskMeta.
  *  Folding emphasis, links, wikilinks and bare URLs is collected in plainText (shared
  *  with the claim and evidence cards), so "the plain-text form" has one rule only. */
 export function taskText(content: string): string {
@@ -897,13 +924,15 @@ export function taskText(content: string): string {
   // the attributes of the trailing run; a `📅` in the description and a decorative `⏳ waiting` are words
   const marks = scanTaskAttrs(s).filter((m) => m.tail);
   for (let i = marks.length - 1; i >= 0; i--) s = cutSpan(s, marks[i].start, marks[i].end);
-  return plainText(
-    stripAnchor(
-      // a block id minted on the line is a badge in the editor, not a word
-      stripFields(s) // `[key:: value]` metadata is a chip on the card, not part of the words
-        .replace(STAMP_RE, ""), // the memo or clip signature
-    ),
-  );
+  // the memo or clip signature, and a block id minted on the line (a badge in the editor, not a word)
+  return plainText(foldTaskMeta(stripAnchor(s.replace(STAMP_RE, ""))));
+}
+
+/** The tags a row shows in its meta line: the block's tags, each once, less the ones its
+ *  words already carry (a tag in the middle of the sentence is read there). */
+function metaTags(hit: BlockHit, text: string): string[] {
+  const words = text.toLowerCase();
+  return [...new Set(hit.block.tags ?? [])].filter((tag) => !words.includes("#" + tag.toLowerCase()));
 }
 
 /** A task block's view row: the kind unpacked, and the display text stripped once (not
@@ -913,7 +942,12 @@ export function taskText(content: string): string {
  *  point of divergence. */
 export interface TaskRow {
   hit: BlockHit;
+  /** The row's identity across requeries (TaskKeys): what the list is keyed by, what a
+   *  row the reader changed is remembered by, and the scroll anchor. */
+  key: string;
   text: string;
+  /** The tags the meta line shows: each once, and none the words already carry. */
+  tags: string[];
   state: TaskState;
   due?: string;
   scheduled?: string;
@@ -932,14 +966,19 @@ export interface TaskRow {
   modified: number;
 }
 
-export function rowOf(hit: BlockHit): TaskRow {
+/** `key` is the row's identity from TaskKeys; without one (a caller that keeps no
+ *  history) the row is keyed by its position in the note, which holds for one query. */
+export function rowOf(hit: BlockHit, key = `${hit.note}@${hit.block.span.start}`): TaskRow {
   const k = hit.block.kind;
   const text = taskText(hit.block.content);
+  const tags = metaTags(hit, text);
   const modified = hit.block.modified_ms ?? 0;
-  if (k.type !== "task") return { hit, text, state: "todo", priority: "normal", deleteOnDone: false, dependsOn: [], modified };
+  if (k.type !== "task") return { hit, key, text, tags, state: "todo", priority: "normal", deleteOnDone: false, dependsOn: [], modified };
   return {
     hit,
+    key,
     text,
+    tags,
     state: k.state,
     due: k.due,
     scheduled: k.scheduled,
@@ -960,28 +999,132 @@ export function rowOf(hit: BlockHit): TaskRow {
 /** The filter key of Agenda and the kanban — one definition, so the two views give the
  *  same answer to the same keystroke.
  *  The body is the display text rowOf already stripped (markers from the source would
- *  only match spuriously), plus the raw dates: both views bucket dates coarsely —
+ *  only match spuriously), plus the tags the meta line shows (a closing `#tag` is no
+ *  longer in the words, and must still find its task), plus the raw dates: both views
+ *  bucket dates coarsely —
  *  everything past 7 days becomes "later" and every future date becomes "scheduled" —
  *  so "which ones are due in September" has nowhere to land on screen, and the filter
  *  box is the only place it can be expressed. fuzzyKeep is binary and order-preserving,
  *  so a longer key does not disturb the order. */
 export const taskFilterKey = (r: TaskRow) =>
-  `${r.text} ${r.hit.note_title} ${r.hit.note} ${r.due ?? ""} ${r.scheduled ?? ""} ${r.start ?? ""} ${r.taskId ?? ""}`;
+  `${r.text} ${r.tags.map((tag) => "#" + tag).join(" ")} ${r.hit.note_title} ${r.hit.note} ${r.due ?? ""} ${r.scheduled ?? ""} ${r.start ?? ""} ${r.taskId ?? ""}`;
 
-/** A task's identity across requeries: the note plus the block's byte span start,
- *  physically unique within a note (an explicit ^id may be copied into duplicates and
- *  cannot be a key). Both views key their lists by it, so the DOM of an unchanged row
- *  survives a requery, and the board finds a card again in whatever hits are current. */
-export const taskKey = (r: TaskRow) => r.hit.note + ":" + r.hit.block.span.start;
+/** A task's identity across requeries — what both views key their lists by, so the DOM
+ *  of a row survives a requery (its hover, its focus, a tip being read), and what a row
+ *  the reader changed is remembered by. */
+export const taskKey = (r: TaskRow) => r.key;
+
+/** Gives every task hit a key that survives the edits a requery follows. Neither thing a
+ *  hit carries will do on its own: the byte offset moves with every character typed
+ *  above the task, and an explicit `^id` or `🆔` may be copied into duplicates. So each
+ *  pass is matched against the previous one, note by note: a task whose text is
+ *  unchanged keeps its key (its offset may have moved); a task whose text changed — the
+ *  one just ticked, rescheduled or retyped — keeps the key of the unmatched task that
+ *  stood between the same unchanged neighbours; whatever is left is new. One instance
+ *  per view, living as long as the view does. */
+export class TaskKeys {
+  private notes = new Map<string, { content: string; key: string }[]>();
+  private seq = 0;
+
+  /** The keys of `hits`, in their order. */
+  assign(hits: BlockHit[]): string[] {
+    const byNote = new Map<string, number[]>();
+    hits.forEach((h, i) => {
+      const list = byNote.get(h.note);
+      if (list) list.push(i);
+      else byNote.set(h.note, [i]);
+    });
+    const keys = new Array<string>(hits.length);
+    const next = new Map<string, { content: string; key: string }[]>();
+    for (const [note, idx] of byNote) {
+      idx.sort((a, b) => hits[a].block.span.start - hits[b].block.span.start);
+      const cur = idx.map((i) => hits[i].block.content);
+      const old = this.notes.get(note) ?? [];
+      const match = this.match(old.map((o) => o.content), cur);
+      const entries = cur.map((content, j) => ({ content, key: match[j] >= 0 ? old[match[j]].key : `${note}#${++this.seq}` }));
+      entries.forEach((e, j) => (keys[idx[j]] = e.key));
+      next.set(note, entries);
+    }
+    this.notes = next;
+    return keys;
+  }
+
+  /** For each current task, the index of the previous task it is (or -1). First the
+   *  unchanged texts, in order; then, between two matched neighbours, the unmatched old
+   *  and new tasks are paired from the end of the gap — a ticked repeating task writes
+   *  its next occurrence above itself, and the ticked line (the one the reader acted
+   *  on) is the later of the two. */
+  private match(old: string[], cur: string[]): number[] {
+    const match = new Array<number>(cur.length).fill(-1);
+    const used = new Array<boolean>(old.length).fill(false);
+    const queues = new Map<string, number[]>();
+    old.forEach((c, i) => {
+      const q = queues.get(c);
+      if (q) q.push(i);
+      else queues.set(c, [i]);
+    });
+    cur.forEach((c, j) => {
+      const i = queues.get(c)?.shift();
+      if (i !== undefined) {
+        match[j] = i;
+        used[i] = true;
+      }
+    });
+    for (let j = 0; j < cur.length; ) {
+      if (match[j] >= 0) {
+        j++;
+        continue;
+      }
+      let end = j;
+      while (end < cur.length && match[end] < 0) end++;
+      const lo = j > 0 ? match[j - 1] : -1;
+      const hi = end < cur.length ? match[end] : old.length;
+      const free: number[] = [];
+      for (let i = lo + 1; i < hi; i++) if (!used[i]) free.push(i);
+      for (let n = end - 1, f = free.length - 1; n >= j && f >= 0; n--, f--) {
+        match[n] = free[f];
+        used[free[f]] = true;
+      }
+      j = end;
+    }
+    return match;
+  }
+}
 
 /** The date a task groups by: due first, then the ⏳ scheduled day, then the ⏩ start —
  *  otherwise a task "starting next week" would carry a date chip while lying under "no
- *  date". It places a task; it does not date it — whether a task is *late* is its due
- *  day's business alone (the board's overdue column and Agenda's isLate both read
- *  `due ?? scheduled`, never the start day).
+ *  date". It orders a task; it does not place or date it (placeTask does).
  *  Asked for one `field`, it reads that field alone: Agenda with a date kind pressed
- *  places every task by the date the user asked to see, not by the due-first default. */
+ *  orders every task by the date the user asked to see, not by the due-first default. */
 export const whenOf = (r: TaskRow, field?: DateField) => (field ? r[field] : (r.due ?? r.scheduled ?? r.start));
+
+/** Where a task stands on the time axis. Agenda's groups are these phases; the board's
+ *  state columns are coarser cuts of the same ones (kanban.ts stateColumn) — one
+ *  function, so the two views cannot put one task in two different places. */
+export type TaskPhase = "overdue" | "today" | "week" | "later" | "future" | "doing" | "nodate" | "done";
+
+/** A task's phase, and the date that decided it — the date a row or a card shows.
+ *  The three dates cut a task's life into four spans: before its start day it is not to
+ *  be done yet; from its scheduled day to its due day it is today's work; past the due
+ *  day it is overdue. Only the due day makes a task late: a day it was scheduled for
+ *  that has come and gone is still today's work. A task with neither a scheduled nor a
+ *  due day sits by its state; a start day alone that has passed dates nothing. A
+ *  closed task is done, whatever its dates, and shows the date it was planned by.
+ *  Given a `field` (Agenda's legend pressed), that one date places every task. */
+export function placeTask(r: TaskRow, today: string, field?: DateField): { phase: TaskPhase; field?: DateField } {
+  const weekEnd = addDays(today, 7);
+  const by = (f: DateField, d: string): { phase: TaskPhase; field: DateField } => ({
+    phase: d < today ? "overdue" : d === today ? "today" : d <= weekEnd ? "week" : "later",
+    field: f,
+  });
+  if (isClosed(r.state)) return { phase: "done", field: field ?? (r.due ? "due" : r.scheduled ? "scheduled" : undefined) };
+  if (field) return r[field] ? by(field, r[field]) : { phase: r.state === "doing" ? "doing" : "nodate" };
+  if (r.start && r.start > today) return { phase: "future", field: "start" };
+  if (r.due && r.due <= today) return by("due", r.due);
+  if (r.scheduled && r.scheduled <= today) return { phase: "today", field: "scheduled" };
+  if (r.due || r.scheduled) return by(r.due ? "due" : "scheduled", (r.due ?? r.scheduled)!);
+  return { phase: r.state === "doing" ? "doing" : "nodate" };
+}
 
 /** Date ascending (whenOf's date, or the one `field` when given), and within a day the
  *  source order (the note's path, then the block's position in it) — so the order is
@@ -1069,14 +1212,12 @@ function daysUntil(date: string): number {
  *  same test wherever a due chip is painted; Agenda spells it out, since with a date kind
  *  pressed its groups follow that date and not the due one.
  *
- *  Two densities, because the two views' horizontal budgets differ by an order of
- *  magnitude — but the wording is the same sentence, and "N days late" reads as the
+ *  Two densities, but the wording is the same sentence, and "N days late" reads as the
  *  same thing everywhere:
- *   - full: Agenda's 13em fixed-width date track, where the absolute date and the
- *     lateness both fit
- *   - short: a kanban card, where the full form overflowed (a measured screenshot had it
- *     cut to "2026-08-08 · ov"), and the absolute date falls back to the title; a date
- *     that is not late is a named day or a date without the current year (nearDate) */
+ *   - short: what Agenda's rows, a kanban card and a query block's rows show — the
+ *     lateness alone, or for a date that is not late a named day or a date without the
+ *     current year (nearDate); the absolute date is in the tip
+ *   - full: the absolute date and the lateness together, for a surface with the room */
 export function dueLabel(due: string, overdue: boolean, density: "full" | "short" = "full"): string {
   if (!overdue) return density === "short" ? nearDate(due) : due;
   const late = -daysUntil(due);
@@ -1090,7 +1231,7 @@ export function dueLabel(due: string, overdue: boolean, density: "full" | "short
 interface ChipFormats {
   short: Intl.DateTimeFormat;
   long: Intl.DateTimeFormat;
-  weekday: Intl.DateTimeFormat;
+  weekday: (d: Date) => string;
   near: Intl.RelativeTimeFormat;
 }
 const CHIP_FORMATS = new Map<string, ChipFormats>();
@@ -1101,7 +1242,7 @@ function chipFormats(): ChipFormats {
     f = {
       short: new Intl.DateTimeFormat(tag, { month: "short", day: "numeric" }),
       long: new Intl.DateTimeFormat(tag, { year: "numeric", month: "short", day: "numeric" }),
-      weekday: new Intl.DateTimeFormat(tag, { weekday: "short" }),
+      weekday: weekdayFormat(tag),
       // numeric "auto" is what turns 0 and 1 days into the words: today / tomorrow, 今天 / 明天
       near: new Intl.RelativeTimeFormat(tag, { numeric: "auto" }),
     };
@@ -1110,9 +1251,23 @@ function chipFormats(): ChipFormats {
   return f;
 }
 
-/** A date at a kanban card's density, in the interface language ("Sep 10", "9月10日"):
- *  the year is dropped while it is the current one, so the date fits beside the title
- *  on a 176px card. The ISO date stays in the button's title, and is what the file
+/** A weekday of at least two characters. The short form is one character in Japanese
+ *  and Korean (水, 수), which beside a task name reads as a word of it rather than a
+ *  day; a language whose short form is a single character takes Intl's long form
+ *  (水曜日, 수요일) — the day name as the language itself writes it, rather than a
+ *  suffix spelled here. Chinese keeps 周三, English Wed. */
+function weekdayFormat(tag: string): (d: Date) => string {
+  const short = new Intl.DateTimeFormat(tag, { weekday: "short" });
+  const long = new Intl.DateTimeFormat(tag, { weekday: "long" });
+  return (d) => {
+    const s = short.format(d);
+    return [...s].length >= 2 ? s : long.format(d);
+  };
+}
+
+/** A date at a view's density, in the interface language ("Sep 10", "9月10日"): the year
+ *  is dropped while it is the current one, so the date fits Agenda's date column and
+ *  the first line of a 176px card. The ISO date stays in the tip, and is what the file
  *  holds — this is display only. A date in another year keeps the year: that is the
  *  one case where it carries information. */
 export function chipDate(ymd: string): string {
@@ -1123,20 +1278,21 @@ export function chipDate(ymd: string): string {
   return (ymd.startsWith(localDate().slice(0, 4) + "-") ? short : long).format(dt);
 }
 
-/** A date at a kanban card's density, as the eye takes it in: today and tomorrow by
- *  their names (Intl's own words: 今天 / 明天), a day within the coming week by its
- *  weekday (周四 / Thu — the one name a day has inside a week), anything further, and
- *  anything past, as chipDate's date. A name is read without counting; a date within
- *  the week is counted from today every time it is looked at (the list screen this
- *  follows writes "Tomorrow" beside "08/29"). Agenda keeps the ISO date: its date track
- *  is a column to scan and sort by eye, and a name there would break the column. */
+/** A date as the eye takes it in, the one vocabulary Agenda's rows and the kanban's
+ *  cards share: today and tomorrow by their names (Intl's own words: 今天 / 明天), a day
+ *  within the coming week by its weekday (周四 / Thu — the one name a day has inside a
+ *  week), anything further, and anything past, as chipDate's date. A name is read
+ *  without counting; a date within the week is counted from today every time it is
+ *  looked at. Agenda used to keep the ISO date for a column to scan by eye; a column of
+ *  short words is as scannable, and it gave the task names back the width a full date
+ *  and its lateness took (the full date is in the tip). */
 export function nearDate(ymd: string): string {
   const days = daysUntil(ymd);
   if (!Number.isFinite(days) || days < 0 || days > 6) return chipDate(ymd);
   const { near, weekday } = chipFormats();
   if (days <= 1) return near.format(days, "day");
   const [y, mo, d] = ymd.split("-").map(Number);
-  return weekday.format(new Date(y, mo - 1, d));
+  return weekday(new Date(y, mo - 1, d));
 }
 
 /** What a task's context menu does, as the view that raised it does them. An Agenda row

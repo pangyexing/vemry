@@ -1,10 +1,10 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { api, type BlockQuery, type BlockHit } from "$lib/api";
   import { viewContext } from "$lib/stores/viewContext.svelte";
   import { askAboutView } from "$lib/askview";
   import { vault, stemOf } from "$lib/stores/vault.svelte";
   import {
-    DATE_FIELDS,
     dateFieldLabel,
     type DateField,
     dateIconSvg,
@@ -13,6 +13,7 @@
     localDate,
     nearDate,
     rescheduleTask,
+    TaskKeys,
     taskFilterKey,
     taskKey,
     taskMenuEntries,
@@ -32,6 +33,7 @@
     columnsOf,
     DEFAULT_ORDER,
     defaultDesc,
+    droppedCard,
     dropEdit,
     fieldKeysOf,
     parseSortKey,
@@ -40,6 +42,7 @@
     type Card,
     type CardOrder,
     type GroupMode,
+    type HeldCard,
   } from "$lib/views/kanban";
   import { t } from "$lib/i18n/i18n.svelte";
   import { types } from "$lib/stores/types.svelte";
@@ -47,6 +50,7 @@
   import { commitTaskWrite, copyTaskId } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
+  import { captureAnchor, restoreAnchor } from "$lib/scrollanchor";
   import { toast } from "$lib/stores/toast.svelte";
   import { loadBucketMap, saveBucket } from "$lib/persist";
   import { noteKey } from "$lib/pickNote";
@@ -60,16 +64,28 @@
   import PrivacyIcon from "../PrivacyIcon.svelte";
   import Chevron from "../Chevron.svelte";
 
-  let hits = $state<BlockHit[]>([]);
+  /** The task hits and their identities (TaskKeys), in one assignment (Agenda's shape). */
+  let data = $state.raw<{ hits: BlockHit[]; keys: string[] }>({ hits: [], keys: [] });
+  const ids = new TaskKeys();
   let query = $state("");
+  /** The board: each column's list scrolls on its own, and each keeps its first visible card in place across a requery. */
+  let boardEl = $state<HTMLElement>();
   // With events firing in quick succession several loads run at once and an older response may arrive later: only the newest one lands (the same as Agenda's)
   let loadSeq = 0;
 
+  /** A requery is never the reader scrolling: every column's first visible card keeps its
+   *  place on screen while cards above it come and go (scrollanchor.ts, per column). */
   async function load() {
     const seq = ++loadSeq;
     try {
       const res = await api.queryBlocks({ kind: "task", limit: 5000 });
-      if (seq === loadSeq) hits = res;
+      if (seq !== loadSeq) return;
+      const keys = ids.assign(res);
+      const lists = boardEl ? [...boardEl.querySelectorAll<HTMLElement>(".cards")] : [];
+      const anchors = lists.map((el) => [el, captureAnchor(el)] as const);
+      data = { hits: res, keys };
+      await tick();
+      for (const [el, a] of anchors) if (el.isConnected) restoreAnchor(el, a);
     } catch (e) {
       vault.error = String(e);
     }
@@ -94,7 +110,10 @@
    *  dates cardOf settled, and the filtering reads taskFilterKey — the same key as Agenda's,
    *  so the two views give the same answer to the same keystroke; and building a card happens
    *  once per block rather than on every keystroke. */
-  const allCards = $derived(cardsOf(hits, localDate(), types.enabled));
+  const allCards = $derived(cardsOf(data.hits, data.keys, localDate(), types.enabled));
+  /** Each note's language (the index's reading of it): a card's title is set in its
+   *  note's language, whatever the interface is (Agenda's rows do the same). */
+  const langOf = $derived(new Map(vault.notes.map((n) => [n.id, n.lang])));
   const shown = $derived(fuzzyKeep(allCards, query, taskFilterKey));
   const total = $derived(shown.length);
 
@@ -107,7 +126,18 @@
 
   async function onToggle(e: Event, card: Card) {
     e.stopPropagation();
+    hold(card);
     await applyEdit(card.hit, { state: isClosed(card.state) ? "todo" : "done" }, t("task.act.toggle"));
+  }
+
+  /** Cards the reader changed in place — ticked, set to a state, given a date from the
+   *  card — and where they stood: each stays in its column, at its place, showing what
+   *  it is now, until the view closes (Agenda's rows do the same). A card dragged
+   *  somewhere is moved, not changed in place: the drop lets go of it. Plain rather than
+   *  reactive: it is written just before the write whose requery reads it. */
+  const stay = new Map<string, HeldCard>();
+  function hold(card: Card) {
+    if (!stay.has(card.key)) stay.set(card.key, { col: cardCol(card, groupBy, types.enabled), as: card });
   }
 
   /** Clicking a card jumps to the task's line. Agenda uses the same vault.openBlockAt — the
@@ -115,28 +145,28 @@
    *  one place. */
   const openCard = (card: Card) => vault.openBlockAt(card.hit.note, card.hit.block.span.start);
 
-  // ---- The card's dates: one in the main slot right of the title, the other (if any) on the
-  // meta line. The list screen this follows keeps a column of dates at the right edge and
-  // writes them as words where a word exists ----
-  type MainField = "due" | "scheduled";
+  // ---- The card's dates: the one that put it in its column floats at the right end of the
+  // title's first line, the others (if any) go to the meta line, written as words where a
+  // word exists — Agenda's rows write the same ones ----
   /** Today's date is not written in the "today" column: the column name says it. State
    *  grouping only — a field's column says nothing about the day. */
   const hiddenToday = (card: Card, date: string) => groupBy.by === "state" && card.col === "today" && date === localDate();
-  /** The date in the main slot: the due date, else the scheduled day; none while a
-   *  drop's provisional date stands in for that very field (pendField), none when it is
-   *  today in the "today" column. An overdue due date reads as its lateness (dueLabel,
-   *  the danger colour); everything else as a named day or a date (nearDate). */
-  function mainDate(card: Card, pendField: DateField | null): { field: MainField; text: string; overdue: boolean } | null {
-    const field: MainField | null = card.due ? "due" : card.scheduled ? "scheduled" : null;
-    if (!field || field === pendField) return null;
+  /** The date in the main slot: the one that placed the card (placeTask's), else — a card
+   *  in a field's column, or one no date placed — its due date, else its scheduled day;
+   *  none while a drop's provisional date stands in for that very field (pendField), none
+   *  when it is today in the "today" column. An overdue due date reads as its lateness
+   *  (dueLabel, the danger colour); everything else as a named day or a date (nearDate). */
+  function mainDate(card: Card, pendField: DateField | null): { field: DateField; text: string; overdue: boolean } | null {
+    const field: DateField | null = card.colField ?? (card.due ? "due" : card.scheduled ? "scheduled" : null);
+    if (!field || field === pendField || !card[field]) return null;
     const date = card[field]!;
     if (hiddenToday(card, date)) return null;
     const overdue = field === "due" && card.col === "overdue";
     return { field, text: overdue ? dueLabel(date, true, "short") : nearDate(date), overdue };
   }
-  /** The scheduled day goes to the meta line when the due date holds the main slot. */
-  const metaScheduled = (card: Card, pendField: DateField | null) =>
-    !!card.scheduled && !!card.due && pendField !== "scheduled" && !hiddenToday(card, card.scheduled);
+  /** The due date and the scheduled day the main slot does not show, for the meta line. */
+  const metaDates = (card: Card, main: DateField | undefined, pendField: DateField | null) =>
+    (["due", "scheduled"] as const).filter((f) => f !== main && f !== pendField && !!card[f] && !hiddenToday(card, card[f]!));
 
   // ---- Dragging: pointer events, the same contract as FileTree's (a 5px threshold, a ghost
   // that intercepts no events, elementFromPoint to resolve the drop target, suppressClick to
@@ -162,20 +192,22 @@
   type MenuState =
     | { mode: "drop"; x: number; y: number; card: Card }
     | { mode: "chip"; x: number; y: number; card: Card; field: DateField; current?: string };
-  let menu = $state<MenuState | null>(null);
+  // raw: replaced whole, never changed in place — and the card in it is handed on as it is
+  let menu = $state.raw<MenuState | null>(null);
   /** The card a menu is about keeps its hover colour while the menu is open (Agenda's rows
    *  do the same): the context menu, and the date menu it opens, float at the right-click
    *  with the pointer gone from the card, and a date menu with no card lit does not say
    *  which task it is setting. The context menu remembers what it was opened for (owner)
    *  until it closes. */
   const heldKey = $derived(menu ? taskKey(menu.card) : contextMenu.owner);
-  /** A card dropped into "scheduled" shows there at once, at the top of the column, rather
-   *  than only after its date is picked: date null while the menu is open (Esc or a click
-   *  outside puts the card back where it was), then the picked date until a query made after
-   *  the write has landed the card in its real place. The card is looked up by key in
-   *  whatever hits are current, so a reload while the menu is open does not lose it, and a
-   *  reload from elsewhere while the write is in flight (still showing the old date) does not
-   *  put it back early — only the write's own completion clears it. */
+  /** A card dropped into "scheduled" shows there at once rather than only after its date
+   *  is picked: at the top of the column while the menu is open (it has no date to sort by
+   *  yet; Esc or a click outside puts the card back where it was), then — the day picked —
+   *  as the write will leave it (droppedCard), already at the place the reload puts it,
+   *  so it does not jump once the write lands. The card is looked up by key in whatever
+   *  hits are current, so a reload while the menu is open does not lose it, and a reload
+   *  from elsewhere while the write is in flight (still showing the old date) does not put
+   *  it back early — only the write's own completion clears it. */
   let pendingDrop = $state.raw<{ card: Card; date: string | null } | null>(null);
   /** The pending card's key, read once per render by the column pass and by every card. */
   const pendingKey = $derived(pendingDrop ? taskKey(pendingDrop.card) : null);
@@ -217,6 +249,7 @@
     dropTarget = null;
     swallowNextClick();
     if (target === null) return;
+    stay.delete(d.key);
     if (target === "scheduled" && groupBy.by === "state") {
       // The date menu pops up at the drop point and only writes once a date is chosen (Esc or
       // a click outside cancels); the card moves into the column right away, not after the choice
@@ -278,6 +311,7 @@
       });
     } else {
       const { hit } = m.card;
+      hold(m.card);
       void commit(hit, t("task.act.editDate"), () => rescheduleTask(hit, m.field, date));
     }
   }
@@ -293,7 +327,10 @@
       taskMenuEntries(card, {
         open: () => void openCard(card),
         editDate: (field, current) => (menu = { mode: "chip", ...at, card, field, current }),
-        setState: (state, act) => void applyEdit(card.hit, { state }, act),
+        setState: (state, act) => {
+          hold(card);
+          void applyEdit(card.hit, { state }, act);
+        },
         copyId: () => void copyTaskId(card, commit),
         remove: () => void commit(card.hit, t("task.act.remove"), () => deleteTask(card.hit)),
       }),
@@ -324,13 +361,37 @@
     const key = saved && parseSortKey(saved.key);
     return key ? { key, desc: !!saved?.desc } : DEFAULT_ORDER;
   }
-  /** The columns follow the grouping: the five state columns, or one per value of the chosen field plus "none". */
-  const defs = $derived(columnDefsFor(groupBy, shown, types.enabled));
+  /** The columns follow the grouping: the five state columns, or one per value of the
+   *  chosen field plus "none". A field's column that had cards earlier in this visit stays
+   *  when its last card goes elsewhere (an edit in the note, an AI write): a column that
+   *  vanished took the board's width with it and reflowed every card. A new grouping or a
+   *  new filter is the reader's own and starts afresh. Plain rather than reactive: it only
+   *  remembers what the last pass drew. */
+  let keptCols = { sig: "", ids: [] as string[] };
+  const defs = $derived.by(() => {
+    const sig = `${groupBy.by === "field" ? groupBy.key : ""}\u0000${query}`;
+    if (keptCols.sig !== sig) keptCols = { sig, ids: [] };
+    const d = columnDefsFor(groupBy, shown, types.enabled, keptCols.ids);
+    keptCols.ids = d.map((c) => c.id);
+    return d;
+  });
   const cols = $derived.by(() => {
-    const cols = columnsOf(shown, defs, groupBy, order, types.enabled);
-    // The card of a drop still landing sits at the top of "scheduled" (it has no date yet to
-    // sort by), whichever column its data still puts it in; the write's reload sorts it in
-    if (pendingKey && groupBy.by === "state") {
+    const today = localDate();
+    let cards = shown;
+    const pend = pendingDrop;
+    const state = groupBy.by === "state";
+    if (pend && pendingKey && state) {
+      const i = cards.findIndex((c) => taskKey(c) === pendingKey);
+      // the day picked: the card as the write leaves it, sorted where the reload puts it
+      if (i >= 0 && pend.date) {
+        cards = [...cards];
+        cards[i] = droppedCard(cards[i], pend.date, today);
+      }
+    }
+    const cols = columnsOf(cards, defs, groupBy, order, types.enabled, stay);
+    // The day not yet picked: the card sits at the top of "scheduled", whichever column
+    // its data still puts it in
+    if (pend && pendingKey && state && !pend.date) {
       for (const list of Object.values(cols)) {
         const i = list.findIndex((c) => taskKey(c) === pendingKey);
         if (i < 0) continue;
@@ -356,6 +417,8 @@
     groupBy = key?.by === "field" ? key : { by: "state" };
     collapsed = {};
     expanded = {};
+    // a new grouping files every card afresh, the ones held in place included
+    stay.clear();
     persistUi();
   }
   /** How many cards a column renders before it stops and offers the rest behind one
@@ -510,14 +573,16 @@
   }}
 />
 
-{#snippet dateChip(card: Card, field: DateField, title: string, text: string, cls: string, icon: boolean)}
+{#snippet dateChip(card: Card, field: DateField, tip: string, text: string, cls: string, icon: boolean)}
   <!-- pointerdown is stopped: otherwise holding the button and moving 5px would trigger
     pressCard's drag plus pointer capture (the same discipline as the .check button's); click is
     stopped so the whole card's openCard is not triggered. The icon is drawn where the date
-    needs telling apart (the scheduled day on the meta line, the ghost), not on the main date -->
+    needs telling apart (a date on the meta line, a start day in the main slot, the ghost),
+    not on the main due or scheduled date. The tip is the full date (or what the ghost sets) -->
   <button
     class={cls}
-    {title}
+    aria-label={tip}
+    use:cliptip={{ text: tip, always: true }}
     onpointerdown={(e) => e.stopPropagation()}
     onclick={(e) => openChipMenu(e, card, field)}
   >
@@ -539,13 +604,15 @@
 <div class="view">
   <ViewHeader
     title={t("view.kanban")}
-    total={countLabel(total, hits.length, "task.count")}
+    total={countLabel(total, data.hits.length, "task.count")}
     filterPlaceholder={t("task.filterPlaceholder")}
     bind:filter={query}
     askAi={askAboutView}
   >
     {#snippet right()}
-      <!-- The grouping: the time axis, or any inline field the tasks carry (one column per value) -->
+      <!-- The grouping: the time axis, or any inline field the tasks carry (one column per
+        value). A caption never wraps: in a narrow pane the header moves the tool group
+        under the title as a whole (ViewHeader) -->
       <label class="tool">
         <span>{t("kanban.groupBy")}</span>
         <select value={groupSel} onchange={(e) => setGroup(e.currentTarget.value)}>
@@ -559,9 +626,10 @@
       <span class="tool">
         <label>
           <span>{t("kanban.sortBy")}</span>
+          <!-- "Default" does not say what it orders by: its tip does. The other keys say it in their own word -->
           <select
             value={sortSel}
-            title={order.key.by === "auto" ? t("kanban.sortAutoHint") : undefined}
+            use:cliptip={{ text: order.key.by === "auto" ? t("kanban.sortAutoHint") : "", always: true }}
             onchange={(e) => setSort(e.currentTarget.value)}
           >
             <option value="auto">{t("kanban.sortAuto")}</option>
@@ -573,7 +641,13 @@
           </select>
         </label>
         {#if order.key.by !== "auto"}
-          <button class="sort-dir" title={order.desc ? t("kanban.sortDesc") : t("kanban.sortAsc")} aria-pressed={order.desc} onclick={flipSortDir}>
+          <button
+            class="sort-dir"
+            aria-label={order.desc ? t("kanban.sortDesc") : t("kanban.sortAsc")}
+            use:cliptip={{ text: order.desc ? t("kanban.sortDesc") : t("kanban.sortAsc"), always: true }}
+            aria-pressed={order.desc}
+            onclick={flipSortDir}
+          >
             <!-- an arrow beside bars growing (ascending) or shrinking (descending), on the 24 viewBox of the other card icons -->
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d={order.desc ? "m3 16 4 4 4-4M7 20V4M11 4h10M11 8h7M11 12h4" : "m3 8 4-4 4 4M7 4v16M11 12h4M11 16h7M11 20h10"} />
@@ -585,7 +659,7 @@
   </ViewHeader>
   {#if total === 0}
     <div class="empty-pad">
-      {#if hits.length === 0}
+      {#if data.hits.length === 0}
         <ViewEmpty>
           {t("task.empty1")}<code>- [ ] a task 📅 2026-01-01</code>{t("task.empty2")}<code>- [/]</code
           >{t("task.empty3")}<code>⏳ 2026-01-01</code>{t("task.empty4")}
@@ -595,8 +669,9 @@
       {/if}
     </div>
   {:else}
-    <!-- dragging: while dragging, an empty column grows back to full size so a drop target does not shrink -->
-    <div class="board" class:dragging={!!drag}>
+    <!-- dragging: the cursor only — the columns keep their widths through a drag (a width
+      that changed as the drag began reflowed every card under the pointer) -->
+    <div class="board" class:dragging={!!drag} bind:this={boardEl}>
       {#each defs as colDef (colDef.id)}
         {@const cards = cols[colDef.id]}
         <!-- adding: the quick-create form needs the full column width (in the scheduled column
@@ -613,13 +688,15 @@
           <!-- The column header sits outside the .cards scrolling container and naturally does
             not scroll with the cards — do not move it inside the ul.
             Clicking collapses and expands it; collapsed into a strip it is still a valid drop target -->
+          <!-- The header says what it is in words, so it carries no tip; a name too long for
+            the column ends in an ellipsis, and that one reads whole from cliptip -->
           <button
             class="col-head"
             class:overdue-title={colDef.id === "overdue" && groupBy.by === "state"}
-            title={collapsed[colDef.id] ? t("kanban.expand") : t("kanban.collapse")}
+            aria-expanded={!collapsed[colDef.id]}
             onclick={() => toggleCollapse(colDef.id)}
           >
-            {#if colDef.glyph}<i class="col-glyph">{@html colDef.glyph}</i>{:else}<i class="dot" data-tone={colDef.tone}></i>{/if}<span class="col-title">{colDef.title}</span><span class="count"
+            {#if colDef.glyph}<i class="col-glyph">{@html colDef.glyph}</i>{:else}<i class="dot" data-tone={colDef.tone}></i>{/if}<span class="col-title" use:cliptip={colDef.title}>{colDef.title}</span><span class="count"
               >{cards.length}</span
             >
             <!-- The affordance of "this header collapses": the same chevron as Agenda's
@@ -640,14 +717,18 @@
               <!-- The field the pending drop writes: activeField, the same one dropEdit picks -->
               {@const pendField = pend ? activeField(card) : null}
               {@const w = mainDate(card, pendField)}
+              <!-- A card the reader changed in place keeps its shape: a card ticked done still
+                has its meta line and its lines, so nothing below it moves -->
+              {@const stayed = stay.has(card.key)}
               <!-- doing on the li: the row after a doing card draws no separator of its own
                 (the card's frame is the separation) -->
-              <li class:doing={card.state === "doing"}>
+              <li class:doing={card.state === "doing"} data-anchor={taskKey(card)}>
                 <!-- A done card dragged out is reopened by the drop, and the provisional card already shows it so -->
                 <div
                   class="card"
                   class:doing={card.state === "doing"}
                   class:done={isClosed(card.state) && !pend}
+                  class:stayed
                   class:held={heldKey === taskKey(card)}
                   role="button"
                   tabindex="0"
@@ -657,64 +738,86 @@
                   onkeydown={(e) =>
                     e.target === e.currentTarget && (e.key === "Enter" || e.key === " ") && void openCard(card)}
                 >
-                  <div class="card-main">
-                    <button
-                      class="check"
-                      title={t("task.toggleDone")}
-                      onpointerdown={(e) => e.stopPropagation()}
-                      onclick={(e) => void onToggle(e, card)}
-                    >
-                      {@html taskStateIconSvg(pend && isClosed(card.state) ? "todo" : card.state)}
-                    </button>
-                    <!-- Clamped to two lines: a long task is read whole from cliptip's box, a quarter second into the hover -->
-                    <span class="text" use:cliptip={card.text}>{card.text}</span>
-                    <!-- The main date, right of the title, so a column's dates stand one under
-                      another (mainDate says which date and when it is left out). The provisional
-                      date of a drop still landing stands in for it: an ellipsis while the day is
-                      being picked, the day itself until the write lands — a label, not a button,
-                      the menu is already open -->
-                    {#if pend}
-                      <span class="when pending">{pend.date ? nearDate(pend.date) : "…"}</span>
-                    {:else if w}
-                      {@render dateChip(card, w.field, t("task.editDateWith", { field: dateFieldLabel(w.field), date: card[w.field] ?? "" }), w.text, w.overdue ? "when overdue" : "when", false)}
-                    {/if}
-                  </div>
-                  <!-- The rest of the card as one line: the scheduled day when the due date holds
-                    the main slot (its clock icon is what tells the two dates apart, so it is the
-                    one date that keeps an icon), the priority, the fields, the tags, the note.
-                    A done card has none: it is a record, one struck line, and its note is one
-                    click away (the same as the glance list's rows) -->
-                  {#if pend || !isClosed(card.state)}
-                  <div class="card-meta">
-                    {#if metaScheduled(card, pendField)}
-                      {@render dateChip(card, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: card.scheduled ?? "" }), nearDate(card.scheduled ?? ""), "mi date", true)}
-                    {/if}
-                    {#if card.priority !== "normal"}
-                      <!-- The priority as its icon alone: the card has no room for a word, the title carries it -->
-                      <span class="mi pri" class:urgent={isUrgent(card.priority)} title={priorityLabel(card.priority)}>{@html attrIconSvg("priority", card.priority)}</span>
-                    {/if}
-                    {#each card.fieldChips as f (f.key)}
-                      {#if f.step !== undefined && f.of !== undefined}
-                        <!-- A state field's value (fields.ts's stateField): the step's glyph, the key left to the title -->
-                        <span class="mi field state" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
-                      {:else}
-                        <span class="mi field" title={`${f.key}:: ${f.value}`}><span class="fk">{f.key}</span>{f.value}</span>
+                  <!-- The checkbox is a column of its own; the title and the meta line hang from
+                    the column beside it -->
+                  <button
+                    class="check"
+                    aria-label={t("task.toggleDone")}
+                    onpointerdown={(e) => e.stopPropagation()}
+                    onclick={(e) => void onToggle(e, card)}
+                  >
+                    {@html taskStateIconSvg(pend && isClosed(card.state) ? "todo" : card.state)}
+                  </button>
+                  <div class="card-body">
+                    <!-- The title, clamped to three lines (a long task reads whole from cliptip's
+                      box, laid over it a quarter second into the hover). The main date floats
+                      at the right end of its first line, so from the second line on the title
+                      has the card's whole width (D9), and a column's dates still stand one
+                      under another. mainDate says which date and when it is left out. The
+                      provisional date of a drop still landing stands in for it: an ellipsis
+                      while the day is being picked, the day itself until the write lands — a
+                      label, not a button, the menu is already open. The float sits in a plain
+                      block inside the clamping box: the clamp's own box would not let a float
+                      share its lines -->
+                    <div class="tline" use:cliptip={card.text}>
+                      <div class="flow">
+                        {#if pend}
+                          <span class="when pending">{pend.date ? nearDate(pend.date) : "…"}</span>
+                        {:else if w}
+                          {@render dateChip(card, w.field, t("task.editDateWith", { field: dateFieldLabel(w.field), date: card[w.field] ?? "" }), w.text, w.overdue ? "when overdue" : "when", w.field === "start")}
+                        {/if}
+                        <span class="text" lang={langOf.get(card.hit.note) ?? undefined} dir="auto">{card.text}</span>
+                      </div>
+                    </div>
+                    <!-- The rest of the card as one line: the dates the main slot does not show
+                      (each with its icon — it is what tells a due date from a scheduled day),
+                      the priority, the fields, the tags, the note. A done card has none: it is
+                      a record, one struck line, and its note is one click away (the same as the
+                      glance list's rows) — unless the reader just ticked it here, where it
+                      keeps its shape. The tip reads the whole line -->
+                    {#if pend || !isClosed(card.state) || stayed}
+                    <div class="card-meta" use:cliptip={{}}>
+                      {#each metaDates(card, w?.field, pendField) as f (f)}
+                        {@render dateChip(card, f, t("task.editDateWith", { field: dateFieldLabel(f), date: card[f] ?? "" }), nearDate(card[f] ?? ""), "mi date", true)}<span class="sep">{" · "}</span>
+                      {/each}
+                      {#if card.priority !== "normal"}
+                        <!-- The priority as its icon alone: the card has no room for a word; the tip names it -->
+                        <span
+                          class="mi pri"
+                          class:urgent={isUrgent(card.priority) && !isClosed(card.state)}
+                          role="img"
+                          aria-label={priorityLabel(card.priority)}
+                          use:cliptip={{ text: priorityLabel(card.priority), always: true }}>{@html attrIconSvg("priority", card.priority)}</span
+                        ><span class="sep">{" · "}</span>
                       {/if}
-                    {/each}
-                    {#each card.tags as tag (tag)}
-                      <span class="mi tag">#{tag}</span>
-                    {/each}
-                    <span class="mi note" title={card.hit.note}>{card.hit.note_title}</span>
-                    {#if !card.due && !card.scheduled && !isClosed(card.state) && !pend}
-                      <!-- A card with no date shows a calendar ghost on hover: a new field goes
-                        through activeField = due. It floats over the checkbox's indent gap of the
-                        meta line (25px, structurally always empty) and stays out of the flow —
-                        .ghost-date says why the other placements failed -->
-                      {@render dateChip(card, activeField(card), t("task.setDate", { field: dateFieldLabel(activeField(card)) }), "", "ghost-date", true)}
+                      {#each card.fieldChips as f (f.key)}
+                        {#if f.step !== undefined && f.of !== undefined}
+                          <!-- A state field's value (fields.ts's stateField): the step's glyph, the key left to the title -->
+                          <span class="mi"><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span><span class="sep">{" · "}</span>
+                        {:else}
+                          <span class="mi">{f.key}: {f.value}</span><span class="sep">{" · "}</span>
+                        {/if}
+                      {/each}
+                      {#each card.tags as tag (tag)}
+                        <span class="mi">#{tag}</span><span class="sep">{" · "}</span>
+                      {/each}
+                      <span class="mi">{card.hit.note_title}</span>
+                      {#if !card.due && !card.scheduled && !isClosed(card.state) && !pend}
+                        <!-- A card with no date shows a calendar ghost on hover: a new field goes
+                          through activeField = due. It floats under the checkbox, in the
+                          checkbox's column (structurally always empty below the box), and stays
+                          out of the flow — .ghost-date says why the other placements failed -->
+                        {@render dateChip(card, activeField(card), t("task.setDate", { field: dateFieldLabel(activeField(card)) }), "", "ghost-date", true)}
+                      {/if}
+                      {#if vault.privatePaths.has(card.hit.note)}<span
+                          class="lock"
+                          role="img"
+                          aria-label={t("statusBar.privacyZoneHint")}
+                          use:cliptip={{ text: t("statusBar.privacyZoneHint"), always: true }}><PrivacyIcon size={14} /></span
+                        >{/if}
+                    </div>
                     {/if}
-                    {#if vault.privatePaths.has(card.hit.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
                   </div>
-                  {/if}
                 </div>
               </li>
             {:else}
@@ -744,12 +847,13 @@
                       use:focusIt
                     />
                     {#if colDef.id === "scheduled" && groupBy.by === "state"}
-                      <input type="date" class="add-date" title={t("kanban.scheduleDate")} bind:value={addDate} />
+                      <input type="date" class="add-date" aria-label={t("kanban.scheduleDate")} bind:value={addDate} />
                     {/if}
                   </div>
+                  <!-- It shows where a new task lands, not what a click does: the tip says that -->
                   <button
                     class="add-target"
-                    title={t("kanban.pickTargetNote")}
+                    use:cliptip={{ text: t("kanban.pickTargetNote"), always: true }}
                     onclick={() => {
                       pickingTarget = !pickingTarget;
                       targetQuery = "";
@@ -810,13 +914,23 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    /* A card's title size: the reader's note size, a step down (Agenda's rows read the
+       same) — it follows the setting rather than staying at 13px. Whole pixels */
+    --kb-fs: round(nearest, calc(var(--fs-note) * 0.875), 1px);
+    /* Late in the danger colour drawn a fifth of the way to the text colour: as it is it
+       falls to 4.24:1 on a hovered card in dark; mixed, 4.98 (Agenda's --ag-late) */
+    --kb-late: color-mix(in srgb, var(--danger) 80%, var(--fg));
   }
   /* ViewEmpty brings its own 20px above and below; the kanban's empty state hangs straight
      under the header without .body's horizontal padding, which this layer supplies */
   .empty-pad {
     padding: 0 20px;
   }
-  /* A flex-weight layout: columns with cards share the space evenly and empty ones narrow to give way; on a very narrow viewport the whole board still scrolls horizontally as a backstop */
+  /* A flex-weight layout: columns with cards share the space evenly and empty ones narrow
+     to give way; on a very narrow viewport the whole board still scrolls horizontally as a
+     backstop. A column is at most 22em of the card's size (about 310px): on a wide screen
+     a card's title, date and meta stay within one glance, the board keeps to the left
+     under the header and the extra width stays at its right */
   .board {
     flex: 1;
     min-height: 0;
@@ -826,29 +940,30 @@
     overflow-x: auto;
     overscroll-behavior-x: contain;
   }
+  /* No transition on the width: a column animating from narrow to wide carried every card
+     of the board through a dozen reflows */
   .col {
     flex: 1 1 0;
     min-width: 176px;
+    max-width: calc(var(--kb-fs) * 22);
     display: flex;
     flex-direction: column;
     min-height: 0;
     border-radius: 8px;
     padding: 4px;
-    transition:
-      flex-grow 0.15s ease,
-      min-width 0.15s ease;
     /* The drop highlight uses outline: it does not squeeze the content */
   }
   .board.dragging,
   .board.dragging .card {
     cursor: grabbing;
   }
-  /* An empty column narrows (its header "Scheduled 0" stays fully readable); while dragging it
-    grows back to full size so a drop target does not shrink, and so does a column whose
-    quick-create form is open (108px cannot hold the text and date inputs side by side: the
-    text input was squeezed to a sliver and the date input poked out of the column). A
-    collapsed column is excluded — collapsing wins over the empty narrowing */
-  .board:not(.dragging) .col.is-empty:not(.collapsed):not(.adding) {
+  /* An empty column narrows (its header "Scheduled 0" stays fully readable, and 108px is a
+    drop target a pointer finds). It keeps that width through a drag: growing it back as a
+    drag began reflowed every card on the board under the pointer. A column whose
+    quick-create form is open does grow back — the reader opened it, and 108px cannot hold
+    the text and date inputs side by side. A collapsed column is excluded — collapsing wins
+    over the empty narrowing */
+  .col.is-empty:not(.collapsed):not(.adding) {
     flex-grow: 0.35;
     min-width: 108px;
   }
@@ -911,6 +1026,16 @@
     border-bottom: 0;
     border-radius: 6px;
   }
+  /* A column's name never wraps and never runs into the next column: it ends in an
+     ellipsis, and the count and the chevron after it keep their room */
+  .col-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .col-head > :not(.col-title) {
+    flex-shrink: 0;
+  }
   .col-head:hover {
     background: var(--bg-hover);
   }
@@ -941,7 +1066,7 @@
   .count {
     font-size: var(--fs-xs);
     font-weight: 400;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-variant-numeric: tabular-nums;
   }
   .cards {
@@ -958,6 +1083,9 @@
     overflow-x: hidden;
     /* Scrolling a column to its end does not carry the board or the page along */
     overscroll-behavior: contain;
+    /* The scrollbar's room is kept whether or not the list scrolls: a column that grew one
+       card too many used to lose 6px and reflow every card in it */
+    scrollbar-gutter: stable;
     display: flex;
     flex-direction: column;
     padding: 0 2px 2px;
@@ -979,11 +1107,17 @@
     background: var(--border);
     border-radius: 3px;
   }
+  /* Two columns: the checkbox, and the title with the meta line hanging from it */
   .card {
     /* relative: the positioning anchor of the ghost "+" button */
     position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 6px;
+    align-items: start;
     padding: 7px 8px;
-    font-size: var(--fs-sm);
+    font-size: var(--kb-fs);
+    line-height: 1.5;
     cursor: pointer;
     -webkit-user-select: none;
     user-select: none;
@@ -1008,32 +1142,30 @@
     padding: 6px 7px;
     margin: 2px 0 3px;
   }
-  /* A done card is quietened as a whole and becomes readable again on hover */
-  .card.done {
-    opacity: 0.7;
+  /* A done card steps back to the secondary ink, struck through — readable, not faded (a
+     card-wide opacity took its title to 1.8:1). Read as a record, not worked on: one line
+     of text (the title says the rest) makes the column a list, and the open columns beside
+     it the board — except a card the reader just ticked here, which keeps its shape until
+     the view closes, so the cards under it do not move */
+  .card.done .text,
+  .card.done .when {
+    color: var(--fg-muted);
   }
-  .card.done:hover {
-    opacity: 1;
-  }
-  /* Done cards are read as a record, not worked on: one line of text (the title says the
-     rest) makes the column a list, and the open columns beside it the board */
   .card.done .text {
-    color: var(--fg-faint);
     text-decoration: line-through;
+  }
+  .card.done:not(.stayed) .tline {
     -webkit-line-clamp: 1;
     line-clamp: 1;
   }
-  .card-main {
-    display: flex;
-    align-items: flex-start;
-    gap: 6px;
+  .card-body {
+    min-width: 0;
   }
-  /* 3px of padding pulled back by a negative margin: a 20px hit area in the same 18px of
-     layout, so the text's position is unchanged */
+  /* 3px of padding pulled back by a negative side margin: a 21px hit area centred on the
+     title's first line, the text's position unchanged */
   .check {
-    flex-shrink: 0;
     padding: 3px;
-    margin: -1px;
+    margin: 0 -1px;
     border-radius: 4px;
     display: inline-flex;
   }
@@ -1050,22 +1182,32 @@
   .check:hover :global(.vstate) {
     color: var(--accent);
   }
-  .text {
-    min-width: 0;
-    /* Truncated to two lines: the card's height stays controlled and a long task does not burst the column */
+  /* The title, clamped to three lines: the card's height stays controlled and a long task
+     does not burst the column. The clamp counts the lines of the plain block inside it,
+     which is what lets the date float on the first line (a float cannot share the lines
+     of the clamping box itself — measured in the app's WebKit) */
+  .tline {
     display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
     -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
     overflow: hidden;
   }
-  /* The main date, right of the title: a small muted figure with tabular digits, so a
-     column's dates line up under one another (the list screen's column of dates); a
-     button that looks like text, since it reschedules on click */
+  .flow {
+    display: block;
+  }
+  .text {
+    text-align: start;
+  }
+  /* The main date, floated at the right end of the title's first line: a small muted
+     figure with tabular digits, so a column's dates line up under one another, and the
+     title takes the card's full width from its second line on. A button that looks like
+     text, since it reschedules on click. Its box is no taller than the title's line, so
+     only the first line gives way to it */
   .when {
-    flex-shrink: 0;
-    align-self: flex-start;
-    margin: 1px -3px 0 0;
+    float: right;
+    /* 1px down puts its baseline on the title's */
+    margin: 1px -3px 0 6px;
     padding: 0 3px;
     border-radius: 4px;
     font-size: var(--fs-xs);
@@ -1079,7 +1221,13 @@
     background: var(--bg-active);
   }
   .when.overdue {
-    color: var(--danger);
+    color: var(--kb-late);
+  }
+  .when > :global(svg) {
+    width: 0.9em;
+    height: 0.9em;
+    vertical-align: -1px;
+    margin-right: 3px;
   }
   /* The provisional date of a drop still landing (pendingDrop): the accent with the
      ghost's dash underneath says "provisional", kept through the write's few milliseconds
@@ -1089,31 +1237,28 @@
     border-bottom: 1px dashed var(--accent);
     border-radius: 0;
   }
-  /* The rest of the card as one line of small muted text, a dot between its parts and an
-     ellipsis where it runs out (what is cut is the note's name at the end, whole in its
-     title). A line rather than a row of chips: with a chip per part a column of twenty
-     cards was a wall of small boxes, and the row wrapped onto a second line whenever the
-     note's name was long */
+  /* The rest of the card as one line of small secondary text, a dot between its parts and
+     an ellipsis where it runs out (what is cut is the note's name at the end; the tip reads
+     the whole line). A line rather than a row of chips: with a chip per part a column of
+     twenty cards was a wall of small boxes, and the row wrapped onto a second line whenever
+     the note's name was long */
   .card-meta {
     margin-top: 2px;
-    padding-left: 25px;
     font-size: var(--fs-xs);
     line-height: 1.5;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   /* A part of the line is inline text (a button too), so the one ellipsis runs across all
-     of them; the source's line break between parts is the space before each dot */
+     of them */
   .mi {
     display: inline;
     padding: 0;
-    color: var(--fg-muted);
   }
-  .mi + .mi::before {
-    content: "·";
-    margin-right: 3px;
+  /* The dot between parts is a mark, not a word: the faint ink */
+  .sep {
     color: var(--fg-faint);
   }
   .mi > :global(svg) {
@@ -1125,37 +1270,23 @@
   button.mi:hover {
     color: var(--accent);
   }
-  /* An inline #tag keeps the accent (it is the writer's own classification); the note's
-     name, the provenance, is the faintest thing on the card */
-  .mi.tag {
-    color: var(--accent);
-  }
-  .mi.note {
-    color: var(--fg-faint);
-  }
   .mi.pri > :global(svg) {
     width: 0.95em;
     height: 0.95em;
     margin-right: 0;
   }
   .mi.pri.urgent {
-    color: var(--danger);
+    color: var(--kb-late);
   }
-  /* A field: the key faint before the value; a state field's with its glyph (chips.ts, which colours itself) */
-  .mi.field .fk {
-    color: var(--fg-faint);
-  }
-  .mi.field .fk::after {
-    content: ": ";
-  }
-  .mi.state .glyph {
+  /* A state field's value with its glyph (chips.ts, which colours itself) */
+  .mi .glyph {
     display: inline-block;
     width: 15px;
     height: 15px;
     vertical-align: -3px;
     margin-right: 3px;
   }
-  .mi.state .glyph :global(svg) {
+  .mi .glyph :global(svg) {
     width: 100%;
     height: 100%;
   }
@@ -1167,11 +1298,11 @@
   }
   /* A card with no date shows the calendar icon only on hover; always showing it would
     fill a column with plus signs (the same reason as Agenda's). It is absolutely
-    positioned over the checkbox's indent gap at the start of the meta line (card-meta's
-    padding-left of 25px, structurally always blank), out of the flow and overlapping
-    nothing — hidden with opacity in the flow it would still take space, and floating it
-    in the bottom-right corner would land it on the note's name; both were tried and
-    failed. Not `.add-date`: that class is the quick-create form's date input */
+    positioned in the checkbox's column, under the box (structurally always blank), out of
+    the flow and overlapping nothing — hidden with opacity in the flow it would still take
+    space, and floating it in the bottom-right corner would land it on the note's name;
+    both were tried and failed. Not `.add-date`: that class is the quick-create form's
+    date input */
   .ghost-date {
     position: absolute;
     left: 8px;
@@ -1210,7 +1341,7 @@
     align-items: center;
     justify-content: center;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .col-empty.armed {
     border-color: var(--accent);
@@ -1236,11 +1367,11 @@
     padding: 6px 8px;
     border-radius: 6px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     text-align: left;
   }
   .add-open:hover {
-    color: var(--fg-muted);
+    color: var(--fg);
     background: var(--bg-hover);
   }
   .add-form {
@@ -1274,7 +1405,7 @@
     align-self: flex-start;
     max-width: 100%;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 1px 6px;
     border-radius: 4px;
     overflow: hidden;
@@ -1321,7 +1452,7 @@
   .target-none {
     padding: 4px 8px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .drag-ghost {
     position: fixed;
@@ -1347,7 +1478,11 @@
     align-items: center;
     gap: 6px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
+    /* A caption is never squeezed into one character per line: the header wraps the tool
+       group as a whole instead (ViewHeader) */
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .tool select {
     font-size: var(--fs-xs);

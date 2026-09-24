@@ -3,10 +3,9 @@
 // scheduled / unscheduled / done) — or by an inline field, one column per value the
 // tasks carry plus "none". Dragging a card writes back what the column means: a date
 // edit in state mode, `[key:: value]` in field mode.
-// The state grouping reads tasks.ts's whenOf (due first, and a scheduled-only task's
-// scheduled date counts as its date; a task starting today with ⏳ belongs to today
-// even when its due date is later) — the same rule as Agenda, so the two views cannot
-// disagree about a task.
+// The state grouping reads tasks.ts's placeTask, the function Agenda's groups are: a
+// state column is a coarser cut of the same phases (stateColumn), so the two views
+// cannot disagree about a task, and a card shows the date that put it in its column.
 // doing is not a column (it is orthogonal to the date dimension): it lands in its
 // column by date as usual, and the card shows a marker and sorts to the top of that
 // column.
@@ -22,9 +21,29 @@ import { cmpMissingLast, cmpValue } from "$lib/views/queryrows";
 import type { BlockType } from "$lib/api";
 import { stateField, stateIndex } from "$lib/fields";
 import { stateGlyphSvg } from "$lib/chips";
-import { isClosed, TASK_ATTR_KEYS, bySource, DATE_FIELDS, type DateField, rowOf, type TaskEdit, type TaskRow, whenOf } from "$lib/views/tasks";
+import { isClosed, TASK_ATTR_KEYS, bySource, DATE_FIELDS, type DateField, placeTask, rowOf, type TaskEdit, type TaskPhase, type TaskRow, whenOf } from "$lib/views/tasks";
 
 type ColumnId = "overdue" | "today" | "scheduled" | "unscheduled" | "done";
+
+/** The state column a phase falls in: every future date is "scheduled" (the next
+ *  seven days, later, and a start day still to come), a task with no date to place it
+ *  "unscheduled" whether or not it is in progress. */
+const PHASE_COLUMN: Record<TaskPhase, ColumnId> = {
+  overdue: "overdue",
+  today: "today",
+  week: "scheduled",
+  later: "scheduled",
+  future: "scheduled",
+  doing: "unscheduled",
+  nodate: "unscheduled",
+  done: "done",
+};
+
+/** A task's state column and the date that decided it (placeTask). */
+export function stateColumn(r: TaskRow, today: string): { col: ColumnId; field?: DateField } {
+  const p = placeTask(r, today);
+  return { col: PHASE_COLUMN[p.phase], field: p.field };
+}
 
 /** What the columns mean: the time axis, or one inline field's values. */
 export type GroupMode = { by: "state" } | { by: "field"; key: string };
@@ -35,8 +54,8 @@ const NONE_COL = "__none__";
 export interface Card extends TaskRow {
   /** The time-axis column (the state grouping's column; the field grouping reads `fields`). */
   col: ColumnId;
-  /** The card's tags: deduplicated and truncated once here rather than recomputed in the template on every render of every card. */
-  tags: string[];
+  /** The date that put the card in its column — the one its main date slot shows. */
+  colField?: DateField;
   /** The task's inline fields, lowercase key → first value (the date fields excluded: they are the chips). */
   fields: Record<string, string>;
   /** The field chips a card shows (at most two): the key, the value, and — when the key
@@ -90,11 +109,13 @@ function columnTitle(id: ColumnId): string {
  *  declare it), the columns are its vocabulary in the declared order, every value a
  *  column whether or not a card sits in it, with each step's glyph; a value outside
  *  the vocabulary follows them. */
-export function columnDefsFor(mode: GroupMode, cards: Card[], types: BlockType[]): ColumnDef[] {
+export function columnDefsFor(mode: GroupMode, cards: Card[], types: BlockType[], kept: Iterable<string> = []): ColumnDef[] {
   if (mode.by === "state") return COLUMNS.map((c) => ({ ...c, title: columnTitle(c.id) }));
   const key = mode.key.toLowerCase();
   const declared = stateField(types, mode.key);
-  const seen = [...new Set(cards.map((c) => c.fields[key]).filter((v): v is string => v !== undefined))];
+  // `kept`: values that had a column earlier in this visit — a column whose last card
+  // went elsewhere stays, empty, rather than taking the board's width with it
+  const seen = [...new Set([...cards.map((c) => c.fields[key]).filter((v): v is string => v !== undefined), ...[...kept].filter((v) => v !== NONE_COL)])];
   let defs: ColumnDef[];
   if (declared) {
     const extra = seen.filter((v) => stateIndex(declared, v) < 0).sort(cmpValue);
@@ -160,29 +181,15 @@ const MAX_FIELD_CHIPS = 2;
 /** Block → card, once per block. It is kept apart from the column assignment because
  *  the kanban's filter box filters at the card level: filtering reads tasks.ts's
  *  taskFilterKey (the same key as Agenda's), and building the cards should not rerun
- *  rowOf's chain of regexes on every keystroke. */
-export function cardsOf(hits: BlockHit[], today: string, types: BlockType[]): Card[] {
-  return hits.map((hit) => cardOf(hit, today, types));
+ *  rowOf's chain of regexes on every keystroke. `keys` are the hits' identities
+ *  (TaskKeys), in their order. */
+export function cardsOf(hits: BlockHit[], keys: string[], today: string, types: BlockType[]): Card[] {
+  return hits.map((hit, i) => cardOf(hit, keys[i], today, types));
 }
 
-function cardOf(hit: BlockHit, today: string, types: BlockType[]): Card {
-  const r = rowOf(hit);
-  const when = whenOf(r);
-  // Only a day the task was to be finished by makes it late: a start day that has come
-  // and gone says the task may be worked on, not that it is overdue (Agenda's isLate and
-  // its groups read the same rule) — whenOf's start fallback places the card, it does
-  // not date it
-  const late = r.due ?? r.scheduled;
-  const col: ColumnId =
-    isClosed(r.state)
-      ? "done"
-      : late && late < today
-        ? "overdue"
-        : when === today || r.scheduled === today
-          ? "today"
-          : when
-            ? "scheduled"
-            : "unscheduled";
+function cardOf(hit: BlockHit, key: string | undefined, today: string, types: BlockType[]): Card {
+  const r = rowOf(hit, key);
+  const { col, field: colField } = stateColumn(r, today);
   const fields: Record<string, string> = {};
   for (const f of hit.block.fields ?? []) {
     const k = f.key.toLowerCase();
@@ -192,7 +199,8 @@ function cardOf(hit: BlockHit, today: string, types: BlockType[]): Card {
   return {
     ...r,
     col,
-    tags: [...new Set(hit.block.tags ?? [])].slice(0, MAX_TAGS),
+    colField,
+    tags: r.tags.slice(0, MAX_TAGS),
     fields,
     fieldChips: Object.entries(fields)
       .slice(0, MAX_FIELD_CHIPS)
@@ -290,12 +298,36 @@ function columnComparator(col: string, mode: GroupMode, order: CardOrder, types:
   return cardComparator(noDate ? MODIFIED_DESC : DATE_ASC, types);
 }
 
-export function columnsOf(cards: Card[], defs: ColumnDef[], mode: GroupMode, order: CardOrder, types: BlockType[]): Record<string, Card[]> {
-  const cols: Record<string, Card[]> = Object.fromEntries(defs.map((d) => [d.id, [] as Card[]]));
+/** A card held where it stood: the column it was in and the card as it was then, which
+ *  it is sorted as — so neither its column nor its place in it moves (the view's `stay`). */
+export interface HeldCard {
+  col: string;
+  as: Card;
+}
+
+/** The cards of each column, sorted. A card in `held` sits in the column it was held
+ *  in (when that column is still on the board) and sorts as it was then. */
+export function columnsOf(
+  cards: Card[],
+  defs: ColumnDef[],
+  mode: GroupMode,
+  order: CardOrder,
+  types: BlockType[],
+  held?: ReadonlyMap<string, HeldCard>,
+): Record<string, Card[]> {
+  const cols: Record<string, { card: Card; as: Card }[]> = Object.fromEntries(defs.map((d) => [d.id, []]));
   const declared = mode.by === "field" ? stateField(types, mode.key) : null;
-  for (const c of cards) cols[cardCol(c, mode, types, declared)]?.push(c);
-  for (const [id, list] of Object.entries(cols)) list.sort(columnComparator(id, mode, order, types));
-  return cols;
+  for (const c of cards) {
+    const h = held?.get(c.key);
+    const col = h && h.col in cols ? h.col : cardCol(c, mode, types, declared);
+    cols[col]?.push({ card: c, as: h && h.col in cols ? h.as : c });
+  }
+  const out: Record<string, Card[]> = {};
+  for (const [id, list] of Object.entries(cols)) {
+    const cmp = columnComparator(id, mode, order, types);
+    out[id] = list.sort((a, b) => cmp(a.as, b.as)).map((e) => e.card);
+  }
+  return out;
 }
 
 /** The date field the card's current grouping reads: due first (consistent with
@@ -303,6 +335,16 @@ export function columnsOf(cards: Card[], defs: ColumnDef[], mode: GroupMode, ord
  *  parser actually reads and never appends a second marker. */
 export function activeField(card: Card): DateField {
   return card.due ? "due" : card.scheduled ? "scheduled" : "due";
+}
+
+/** The card as a drop into "scheduled" leaves it once `date` is written (dropEdit's
+ *  write, read back): the date in activeField, a closed card reopened, and the column
+ *  and the date that places it. The view shows this card while the write lands, at the
+ *  place the reload will put it — so the card does not first sit somewhere else. */
+export function droppedCard(card: Card, date: string, today: string): Card {
+  const r: Card = { ...card, [activeField(card)]: date, state: isClosed(card.state) ? "todo" : card.state };
+  const { col, field } = stateColumn(r, today);
+  return { ...r, col, colField: field };
 }
 
 /** The landing semantics table: target column → one merged TaskEdit written back.

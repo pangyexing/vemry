@@ -1,32 +1,44 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { api, type BlockQuery, type BlockHit } from "$lib/api";
   import { viewContext } from "$lib/stores/viewContext.svelte";
   import { askAboutView } from "$lib/askview";
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
-  import { attrIconSvg, byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, estimateSum, formatEstimate, isBlocked, isClosed, isUrgent, localDate, openIds, priorityLabel, rescheduleTask, rowOf, taskFilterKey, taskKey, taskMenuEntries, type TaskRow, taskStateIconSvg, toggleTask, updateTask, whenOf } from "$lib/views/tasks";
+  import { byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, EDIT_FIELDS, type EditField, estimateSum, formatEstimate, isBlocked, isClosed, isUrgent, localDate, nearDate, openIds, placeTask, priorityLabel, rescheduleTask, rowOf, TaskKeys, taskFilterKey, taskKey, taskMenuEntries, type TaskPhase, type TaskRow, taskStateIconSvg, toggleTask, updateTask } from "$lib/views/tasks";
   import { fieldChipsOf, type FieldChip } from "$lib/views/blockrow";
   import { stateGlyphSvg } from "$lib/chips";
   import { types } from "$lib/stores/types.svelte";
   import { commitTaskWrite, copyTaskId } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
+  import { holdAnchor } from "$lib/scrollanchor";
   import Chevron from "../Chevron.svelte";
   import TaskDateMenu from "./TaskDateMenu.svelte";
   import ViewHeader, { countLabel } from "./ViewHeader.svelte";
   import ViewEmpty from "./ViewEmpty.svelte";
   import PrivacyIcon from "../PrivacyIcon.svelte";
 
-  let hits = $state<BlockHit[]>([]);
+  /** The task hits and their identities (TaskKeys), in one assignment: a row is built
+   *  from both, so they must never be read from two different queries. */
+  let data = $state.raw<{ hits: BlockHit[]; keys: string[] }>({ hits: [], keys: [] });
+  const ids = new TaskKeys();
+  /** The scrolling list: a requery keeps its first visible row where it was. */
+  let bodyEl = $state<HTMLElement>();
   // With events firing in quick succession several loads run at once and an older response may arrive later: only the newest one lands
   let loadSeq = 0;
 
+  /** A requery comes from anywhere — an autosave, an AI write, a phone capture landing, a
+   *  tick here — and none of it is the reader scrolling: the row at the top of the list
+   *  keeps its place on screen while rows above it come and go (scrollanchor.ts). */
   async function load() {
     const seq = ++loadSeq;
     try {
       const res = await api.queryBlocks({ kind: "task", limit: 5000 });
-      if (seq === loadSeq) hits = res;
+      if (seq !== loadSeq) return;
+      const keys = ids.assign(res);
+      await holdAnchor(bodyEl, () => void (data = { hits: res, keys }), tick);
     } catch (e) {
       vault.error = String(e);
     }
@@ -37,9 +49,9 @@
     void load();
   });
 
-  // Building a row, the grouping date and the ordering all live in views/tasks.ts: the
-  // kanban reads the same rules, so the two views cannot disagree about a task (Row is the
-  // local alias of TaskRow over there)
+  // Building a row, placing it and the ordering all live in views/tasks.ts: the kanban
+  // reads the same rules, so the two views cannot disagree about a task (Row is the local
+  // alias of TaskRow over there)
   type Row = TaskRow;
 
   let query = $state("");
@@ -49,7 +61,7 @@
    *  than the due-date view minus some rows. One kind at a time: a task with both dates is
    *  found by either, so a "both" state would only ever be a stricter version of one of
    *  them. */
-  let dateKind = $state<DateField>();
+  let dateKind = $state<EditField>();
 
   // What this view shows is attachable to the AI (the @ picker's "current view", the
   // header's "Ask AI"): the live query and the row count are registered while mounted.
@@ -67,7 +79,7 @@
    *  rowOf gave, the filtering reads taskFilterKey, and both share one Row — so rowOf runs
    *  once per block. The key holds the note's title and path, since "what else is unfinished
    *  in this note" is the most common way of searching. */
-  const allRows = $derived(hits.map(rowOf));
+  const allRows = $derived(data.hits.map((h, i) => rowOf(h, data.keys[i])));
   const shown = $derived.by(() => {
     const kept = fuzzyKeep(allRows, query, taskFilterKey);
     const kind = dateKind;
@@ -77,45 +89,68 @@
    *  button that cleared only the other would do nothing when pressed */
   const clearFilters = () => {
     query = "";
-    dateKind = undefined;
+    setDateKind(undefined);
   };
 
-  /** The day the rows are read against, taken once per requery: the grouping and the chips
+  /** The day the rows are read against, taken once per requery: the grouping and the dates
    *  of one render agree on it. */
   const today = $derived.by(() => {
-    void hits;
+    void data;
     return localDate();
   });
-  /** The groups: overdue / today / the next 7 days / later / not started yet / doing / no date / done (cancelled included).
-   *  In the default view the three dates cut a task's life into four spans: before the
-   *  start day it is not to be done yet; from the scheduled day to the due day it is
-   *  today's work; past the due day it is overdue; and a task with neither a scheduled
-   *  nor a due day sits by its state. The start day alone places nothing under a date —
-   *  a started task with no other date is simply available. With a date kind pressed
-   *  every task sits by that one date instead. */
+
+  /** The groups, in their order on screen: overdue / today / the next 7 days / later /
+   *  not started yet / in progress / no date / done (cancelled included) — the phases
+   *  tasks.ts's placeTask gives, which the kanban's columns are cut from too. */
+  const PHASES: TaskPhase[] = ["overdue", "today", "week", "later", "future", "doing", "nodate", "done"];
+
+  /** Rows the reader changed from this view — ticked, set to a state, given a date — and
+   *  where they stood: each stays in its group, at its place (sorted as it was, `as`),
+   *  showing what it is now, until the view closes. The reader sees the result of the
+   *  click where they clicked, and no other row moves under the pointer; the next visit
+   *  files it where it belongs. Plain rather than reactive: it is written just before the
+   *  write whose requery reads it. */
+  const stay = new Map<string, { group: TaskPhase; as: Row }>();
+  function hold(r: Row) {
+    if (!stay.has(r.key)) stay.set(r.key, { group: placeTask(r, today, dateKind).phase, as: r });
+  }
+  /** Pressing a legend entry regroups every row by another date: the rows held in the
+   *  previous grouping are let go with it. */
+  function setDateKind(kind: EditField | undefined) {
+    dateKind = kind;
+    stay.clear();
+  }
+
   const groups = $derived.by(() => {
-    const weekEnd = localDate(7);
     const kind = dateKind;
-    const g = { overdue: [] as Row[], today: [] as Row[], week: [] as Row[], later: [] as Row[], future: [] as Row[], doing: [] as Row[], nodate: [] as Row[], done: [] as Row[] };
+    const g = Object.fromEntries(PHASES.map((p) => [p, [] as { row: Row; as: Row }[]])) as Record<TaskPhase, { row: Row; as: Row }[]>;
     for (const r of shown) {
-      const when = kind ? r[kind] : (r.due ?? r.scheduled);
-      if (isClosed(r.state)) g.done.push(r);
-      else if (!kind && r.start && r.start > today) g.future.push(r);
-      // only a due day passes: a task scheduled last week with no due day is still today's work
-      else if (kind ? when && when < today : r.due && r.due < today) g.overdue.push(r);
-      else if (kind ? when === today : r.due === today || (r.scheduled && r.scheduled <= today)) g.today.push(r);
-      else if (when && when <= weekEnd) g.week.push(r);
-      else if (when) g.later.push(r);
-      else if (r.state === "doing") g.doing.push(r);
-      else g.nodate.push(r);
+      const s = stay.get(r.key);
+      g[s?.group ?? placeTask(r, today, kind).phase].push({ row: r, as: s?.as ?? r });
     }
     // Each group is sorted once: what is marked urgent comes first, then the two with no
     // date to read follow the task's own change time, most recently changed first, and the
     // rest go by date. With a date kind pressed every group goes by that date — it is the
     // order that was asked for, the done group included
     const byWhen = byPriority(byDate(kind));
-    for (const [name, rows] of Object.entries(g)) rows.sort(!kind && (name === "nodate" || name === "done") ? byPriority(byModified) : byWhen);
-    return g;
+    const out = {} as Record<TaskPhase, Row[]>;
+    for (const p of PHASES) {
+      const cmp = !kind && (p === "nodate" || p === "done") ? byPriority(byModified) : byWhen;
+      out[p] = g[p].sort((a, b) => cmp(a.as, b.as)).map((e) => e.row);
+    }
+    return out;
+  });
+
+  /** The groups that had rows at some point of this visit, under the current filters: a
+   *  group whose last row went elsewhere (done in another note, moved by an AI write)
+   *  keeps its heading, at 0, rather than taking the rows below it up by a heading's
+   *  height. A filter change is the reader's own regrouping and starts afresh. */
+  let kept = { sig: "", names: new Set<TaskPhase>() };
+  const keptGroups = $derived.by(() => {
+    const sig = `${query}\u0000${dateKind ?? ""}`;
+    if (kept.sig !== sig) kept = { sig, names: new Set() };
+    for (const p of PHASES) if (groups[p].length) kept.names.add(p);
+    return new Set(kept.names);
   });
 
   /** The ids the open tasks carry: what a ⛔ can still wait on. */
@@ -129,6 +164,10 @@
     for (const r of shown) m.set(taskKey(r), fieldChipsOf(r.hit, types_));
     return m;
   });
+  /** Each note's language (the index's reading of it): a row's words are set in their
+   *  note's language, so a Japanese note's task takes Japanese glyphs and line rules
+   *  whatever the interface is. */
+  const langOf = $derived(new Map(vault.notes.map((n) => [n.id, n.lang])));
   /** The estimates of the day added up, shown beside the group's count when any row has one. */
   const todayEstimate = $derived.by(() => {
     const sum = estimateSum(groups.today);
@@ -137,65 +176,63 @@
 
   const total = $derived(shown.length);
 
-  /** Whether a task's due chip reads as late is the task's own: its due date has passed
+  /** Whether a task's due date reads as late is the task's own: its due date has passed
    *  and it is not done. In the default view that is the same as sitting in the overdue
    *  group (a task's date is its due date whenever it has one); with the start date
    *  pressed the group follows the start date, and a task that started last month but is
    *  due next week must not be painted late. */
   const isLate = (r: Row) => !isClosed(r.state) && !!r.due && r.due < today;
-  /** The date track's width follows what the shown rows carry. Every row shares it, so the
-   *  source chips still line up into one column across the groups (the reason the track is
-   *  fixed at all); it is only as wide as the widest chip the current rows can show — the
-   *  full "date · N days late" (13em), a bare date (the chip is about 7.2em), or nothing but
-   *  the hover "+" — rather than reserving 13em for a lateness that no row in a filtered
-   *  list has. The task text keeps its own cap; the space goes to the source column. */
-  const dateTrack = $derived(shown.some(isLate) ? "13em" : shown.some((r) => r.due || r.scheduled || r.start) ? "7.5em" : "2.6em");
 
   /** The write funnel every path shares (taskwrite.ts, the kanban's too): the dirty guard, a requery on a stale span and error reporting. */
   const commit = (hit: BlockHit, act: string, write: () => Promise<boolean>) => commitTaskWrite(hit, act, write, load);
 
-  function onToggle(e: Event, hit: BlockHit) {
+  function onToggle(e: Event, r: Row) {
     e.stopPropagation();
-    void commit(hit, t("task.act.toggle"), () => toggleTask(hit));
+    hold(r);
+    void commit(r.hit, t("task.act.toggle"), () => toggleTask(r.hit));
   }
 
-  /** The reschedule menu a date chip opens; an empty current means the task does not have that date yet */
-  let dateMenu = $state<{ x: number; y: number; key: string; hit: BlockHit; field: DateField; current?: string } | null>(null);
+  /** The reschedule menu a date opens; an empty current means the task does not have that date yet */
+  let dateMenu = $state.raw<{ x: number; y: number; row: Row; field: DateField; current?: string } | null>(null);
 
   function openDateMenu(e: MouseEvent, r: Row, field: DateField) {
     e.stopPropagation();
-    dateMenu = { x: e.clientX, y: e.clientY, key: taskKey(r), hit: r.hit, field, current: r[field] };
+    dateMenu = { x: e.clientX, y: e.clientY, row: r, field, current: r[field] };
   }
 
-  /** The row a menu is about keeps its hover colour while the menu is open. A chip's date
-   *  menu hangs off the chip and the row is plain to see; the context menu, and the date
+  /** The row a menu is about keeps its hover colour while the menu is open. A date's
+   *  menu hangs off the date and the row is plain to see; the context menu, and the date
    *  menu it opens, float at the right-click with the pointer gone from the row — and a
    *  "start date: today / tomorrow" with no row lit says nothing about which task it is
    *  setting. The context menu remembers what it was opened for (owner) until it closes. */
-  const heldKey = $derived(dateMenu?.key ?? contextMenu.owner);
+  const heldKey = $derived(dateMenu ? taskKey(dateMenu.row) : contextMenu.owner);
 
   function applyDate(date: string | null) {
     const m = dateMenu;
     dateMenu = null;
-    if (m) void commit(m.hit, t("task.act.editDate"), () => rescheduleTask(m.hit, m.field, date));
+    if (!m) return;
+    hold(m.row);
+    void commit(m.row.hit, t("task.act.editDate"), () => rescheduleTask(m.row.hit, m.field, date));
   }
 
   /** A row's context menu: the entries are the kanban card's (taskMenuEntries), and the
-   *  date entries open the same TaskDateMenu a chip does, at the right-click. */
+   *  date entries open the same TaskDateMenu a date does, at the right-click. */
   function rowMenu(e: MouseEvent, r: Row) {
     e.stopPropagation();
     const at = { x: e.clientX, y: e.clientY };
-    const key = taskKey(r);
     contextMenu.open(
       e,
       taskMenuEntries(r, {
         open: () => void openTask(r.hit),
-        editDate: (field, current) => (dateMenu = { ...at, key, hit: r.hit, field, current }),
-        setState: (state, act) => void commit(r.hit, act, () => updateTask(r.hit, { state })),
+        editDate: (field, current) => (dateMenu = { ...at, row: r, field, current }),
+        setState: (state, act) => {
+          hold(r);
+          void commit(r.hit, act, () => updateTask(r.hit, { state }));
+        },
         copyId: () => void copyTaskId(r, commit),
         remove: () => void commit(r.hit, t("task.act.remove"), () => deleteTask(r.hit)),
       }),
-      key,
+      taskKey(r),
     );
   }
 
@@ -204,27 +241,41 @@
    *  in one place. */
   const openTask = (hit: BlockHit) => vault.openBlockAt(hit.note, hit.block.span.start);
 
+  /** How a date reads in a row: an overdue due date as its lateness, every other as a
+   *  named day or a short date — the kanban's words (D8). Today's date is not written in
+   *  the today group: the heading says it. */
+  function dateWord(r: Row, field: DateField, date: string): string {
+    return field === "due" && isLate(r) ? dueLabel(date, true, "short") : nearDate(date);
+  }
+  /** A date's tone, which is what tells the three apart on a row (the legend in the
+   *  header names them): the due date muted, or late; the scheduled day in the accent;
+   *  the start day in the go colour. A finished row's dates recede with its words. */
+  function dateTone(r: Row, field: DateField): string {
+    if (isClosed(r.state)) return "";
+    if (field === "due") return isLate(r) ? "late" : "";
+    return field === "scheduled" ? "scheduled" : field === "start" ? "start" : "";
+  }
 </script>
 
-{#snippet dateChip(r: Row, field: DateField, label: string, text: string, cls: string = "")}
-  <!-- The explanation uses aria-label rather than title: a native tooltip pops below the
-    cursor, exactly covering the next task row (the most obstructive place while hovering),
-    and the meaning of the calendar and hourglass icons is already explained by the legend
-    in the header, so a chip no longer has to be hovered to be recognised -->
-  <button class="chip {cls}" aria-label={label} onclick={(e) => openDateMenu(e, r, field)}>
-    {@html dateIconSvg(field)}{text}
-  </button>
+{#snippet dateButton(r: Row, field: DateField, date: string, cls: string)}
+  <!-- The date as a word; the full date is the tip (and what a click edits) -->
+  {@const tip = t("task.editDateWith", { field: dateFieldLabel(field), date })}
+  <button class="date {cls} {dateTone(r, field)}" aria-label={tip} use:cliptip={{ text: tip, always: true }} onclick={(e) => openDateMenu(e, r, field)}
+    >{dateWord(r, field, date)}</button
+  >
 {/snippet}
 
-{#snippet taskRow(r: Row)}
-  {@const dueOverdue = isLate(r)}
+{#snippet taskRow(r: Row, group: TaskPhase)}
   {@const closed = isClosed(r.state)}
   {@const blocked = isBlocked(r, open)}
-  <li>
+  {@const main = placeTask(r, today, dateKind).field}
+  {@const mainDate = main ? r[main] : undefined}
+  <li data-anchor={taskKey(r)}>
     <div
       class="row"
       class:held={taskKey(r) === heldKey}
       class:blocked
+      class:closed
       role="button"
       tabindex="0"
       onclick={() => void openTask(r.hit)}
@@ -232,76 +283,64 @@
       onkeydown={(e) =>
         e.target === e.currentTarget && (e.key === "Enter" || e.key === " ") && void openTask(r.hit)}
     >
-      <button class="check" aria-label={t("task.toggleDone")} onclick={(e) => onToggle(e, r.hit)}>
+      <button class="check" aria-label={t("task.toggleDone")} onclick={(e) => onToggle(e, r)}>
         {@html taskStateIconSvg(r.state)}
       </button>
-      <!-- The text is clipped to its track: a long task is read whole from cliptip's box, a quarter second into the hover (the kanban card does the same) -->
-      <span class="text" class:done={closed} use:cliptip={r.text}>{r.text}</span>
-      <!-- The date and the source each take a fixed-width slot: a row with no date holds its
-        place too, which is what lets the source chips line up into a real column (before
-        this, the chips of the with-date and without-date groups differed by nearly 70px on
-        the left and looked like a saw edge) -->
-      <span class="dates">
-        {#if r.due}
-          {@render dateChip(r, "due", t("task.editDateWith", { field: dateFieldLabel("due"), date: r.due }), dueLabel(r.due, dueOverdue), dueOverdue ? "due overdue" : "due")}
-        {/if}
-        {#if r.scheduled}
-          {@render dateChip(r, "scheduled", t("task.editDateWith", { field: dateFieldLabel("scheduled"), date: r.scheduled }), r.scheduled, "scheduled")}
-        {/if}
-        {#if r.start}
-          {@render dateChip(r, "start", t("task.editDateWith", { field: dateFieldLabel("start"), date: r.start }), r.start, "start")}
-        {/if}
-        {#if !r.due && !closed}
-          {@render dateChip(r, "due", t("task.setDate", { field: dateFieldLabel("due") }), "+", "add-date")}
+      <!-- The words take the row's width, clipped at their logical end (dir=auto: a
+        right-to-left task keeps its opening words); the whole text is cliptip's, laid
+        over the clipped line a quarter second into the hover -->
+      <span class="text" lang={langOf.get(r.hit.note) ?? undefined} dir="auto" use:cliptip={r.text}>{r.text}</span>
+      <!-- The date column: one date, the one that placed the row in its group, at a fixed
+        width so the column stands still whatever the filter leaves -->
+      <span class="when">
+        {#if main && mainDate}
+          {@render dateButton(r, main, mainDate, group === "today" && mainDate === today ? "quiet" : "")}
+        {:else if !closed}
+          <button class="date add-date" aria-label={t("task.setDate", { field: dateFieldLabel(dateKind ?? "due") })} use:cliptip={{ text: t("task.setDate", { field: dateFieldLabel(dateKind ?? "due") }), always: true }} onclick={(e) => openDateMenu(e, r, dateKind ?? "due")}>+</button>
         {/if}
       </span>
-      <span class="meta">
-        <!-- The task's other attributes, each its icon and value in its tone: what presses
-          (an urgent priority, a lock still shut) in danger, the rest muted -->
-        {#if r.priority !== "normal"}
-          <span class="chip attr-chip" class:urgent={isUrgent(r.priority)} title={priorityLabel(r.priority)}>{@html attrIconSvg("priority", r.priority)}{priorityLabel(r.priority)}</span>
-        {/if}
-        {#if blocked}
-          <span class="chip attr-chip urgent" title={t("task.chip.blockedBy", { ids: r.dependsOn.join(", ") })}>{@html attrIconSvg("depends")}{t("task.chip.blocked")}</span>
-        {/if}
-        {#if r.repeat}
-          <span class="chip attr-chip" title={t("task.chip.repeat", { rule: r.repeat })}>{@html attrIconSvg("repeat")}{r.repeat}</span>
-        {/if}
-        {#if r.estimate}
-          <span class="chip attr-chip" title={t("task.chip.estimate", { v: formatEstimate(r.estimate) })}>{@html attrIconSvg("estimate")}{formatEstimate(r.estimate)}</span>
-        {/if}
-        {#if r.deleteOnDone}
-          <span class="chip attr-chip" title={t("task.chip.deleteOnDone")}>{@html attrIconSvg("delete")}</span>
-        {/if}
-        <!-- The task's inline fields as chips (views/blockrow.ts's one derivation): a state
-          field with its step's glyph, the rest as key: value — the board shows the same -->
-        {#each chipsOf.get(taskKey(r)) ?? [] as f (f.key)}
-          {#if f.kind === "state"}
-            <span class="chip state-chip" title={`${f.key}:: ${f.value}`}><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span>
-          {:else}
-            <span class="chip field-chip" title={`${f.key}:: ${f.value}`}><span class="fk">{f.key}</span>{f.value}</span>
-          {/if}
-        {/each}
-        <span class="chip note-chip">{r.hit.note_title}</span>
-        {#if vault.privatePaths.has(r.hit.note)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
+      <span class="meta-cell">
+        <!-- The rest of the task as one line of secondary text ending in its source note:
+          the other dates, the attributes, the fields and the tags, each once. One
+          ellipsis runs across it, and the tip reads the whole line -->
+        <span class="meta" use:cliptip={{}}>
+          {#if r.priority !== "normal"}<span class="mi" class:late={isUrgent(r.priority) && !closed}>{priorityLabel(r.priority)}</span><span class="sep">{" · "}</span>{/if}
+          {#if blocked}<span class="mi late">{t("task.chip.blocked")}</span><span class="sep">{" · "}</span>{/if}
+          {#each EDIT_FIELDS as f (f)}
+            {#if f !== main && r[f]}{@render dateButton(r, f, r[f]!, "mi")}<span class="sep">{" · "}</span>{/if}
+          {/each}
+          {#if r.repeat}<span class="mi">{r.repeat}</span><span class="sep">{" · "}</span>{/if}
+          {#if r.estimate}<span class="mi">{t("task.chip.estimate", { v: formatEstimate(r.estimate) })}</span><span class="sep">{" · "}</span>{/if}
+          {#if r.deleteOnDone}<span class="mi">{t("task.chip.deleteOnDone")}</span><span class="sep">{" · "}</span>{/if}
+          <!-- The inline fields (views/blockrow.ts's one derivation): a state field with its
+            step's glyph, the rest as key: value — the board shows the same -->
+          {#each chipsOf.get(taskKey(r)) ?? [] as f (f.key)}
+            {#if f.kind === "state"}
+              <span class="mi"><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span><span class="sep">{" · "}</span>
+            {:else}
+              <span class="mi">{f.key}: {f.value}</span><span class="sep">{" · "}</span>
+            {/if}
+          {/each}
+          {#each r.tags as tag (tag)}<span class="mi">#{tag}</span><span class="sep">{" · "}</span>{/each}
+          <span class="mi">{r.hit.note_title}</span>
+        </span>
+        {#if vault.privatePaths.has(r.hit.note)}<span class="lock" aria-label={t("statusBar.privacyZoneHint")} use:cliptip={{ text: t("statusBar.privacyZoneHint"), always: true }}><PrivacyIcon size={14} /></span>{/if}
       </span>
     </div>
   </li>
 {/snippet}
 
-{#snippet dateKindToggle(field: DateField)}
-  <button
-    class="kind"
-    aria-pressed={dateKind === field}
-    title={t(dateKind === field ? "task.onlyWithOff" : "task.onlyWith", { field: dateFieldLabel(field) })}
-    onclick={() => (dateKind = dateKind === field ? undefined : field)}
-  >
+{#snippet dateKindToggle(field: EditField)}
+  <!-- A legend entry names its date by word and by the tone the rows write it in; pressed,
+    it is also the filter. It says what it is in words, so it carries no tip -->
+  <button class="kind {field}" aria-pressed={dateKind === field} onclick={() => setDateKind(dateKind === field ? undefined : field)}>
     {@html dateIconSvg(field)}{dateFieldLabel(field)}
   </button>
 {/snippet}
 
-{#snippet section(title: string, rows: Row[], collapsed: boolean, tone: "" | "late" | "today" = "", extra: string = "")}
-  {#if rows.length}
+{#snippet section(group: TaskPhase, title: string, collapsed: boolean, tone: "" | "late" | "today" = "", extra: string = "")}
+  {@const rows = groups[group]}
+  {#if rows.length || keptGroups.has(group)}
     <details open={!collapsed}>
       <summary>
         <!-- summary is display:flex, and the UA's disclosure triangle only renders on
@@ -314,7 +353,7 @@
       </summary>
       <ul>
         {#each rows as r (taskKey(r))}
-          {@render taskRow(r)}
+          {@render taskRow(r, group)}
         {/each}
       </ul>
     </details>
@@ -324,11 +363,11 @@
 <div class="view">
   <ViewHeader title={t("view.agenda")} total={countLabel(total, allRows.length, "task.count")} filterPlaceholder={t("task.filterPlaceholder")} bind:filter={query} askAi={askAboutView}>
     {#snippet left()}
-      <!-- The legend doubles as a filter. As a legend it names the calendar and hourglass
-        chip icons (they used to be recognisable only on hover); pressed, an entry keeps only
-        the tasks carrying that date, placed and ordered by it, and the count beside it shows
-        how many that left. It sits on the left, by the count it narrows, rather than among
-        the tools on the right -->
+      <!-- The legend doubles as a filter. As a legend it names the tones the rows write
+        their dates in (a row carries no icons: they are here, once); pressed, an entry
+        keeps only the tasks carrying that date, placed and ordered by it, and the count
+        beside it shows how many that left. It sits on the left, by the count it narrows,
+        rather than among the tools on the right -->
       <span class="legend">
         {@render dateKindToggle("due")}
         {@render dateKindToggle("scheduled")}
@@ -336,8 +375,8 @@
       </span>
     {/snippet}
   </ViewHeader>
-  <div class="body" style:--ag-date={dateTrack}>
-    {#if hits.length === 0}
+  <div class="body" bind:this={bodyEl}>
+    {#if data.hits.length === 0}
       <ViewEmpty>
         {t("task.empty1")}<code>- [ ] a task 📅 2026-01-01</code>{t("task.empty2")}<code>- [/]</code
         >{t("task.empty3")}<code>⏳ 2026-01-01</code>{t("task.empty4")}
@@ -347,14 +386,14 @@
     {:else if total === 0}
       <ViewEmpty onclear={clearFilters}>{t("task.noMatch", { query })}</ViewEmpty>
     {:else}
-      {@render section(t("agenda.overdue"), groups.overdue, false, "late")}
-      {@render section(t("agenda.today"), groups.today, false, "today", todayEstimate)}
-      {@render section(t("agenda.week"), groups.week, false)}
-      {@render section(t("agenda.later"), groups.later, true)}
-      {@render section(t("agenda.future"), groups.future, true)}
-      {@render section(t("agenda.doing"), groups.doing, false)}
-      {@render section(t("agenda.nodate"), groups.nodate, false)}
-      {@render section(t("agenda.done"), groups.done, true)}
+      {@render section("overdue", t("agenda.overdue"), false, "late")}
+      {@render section("today", t("agenda.today"), false, "today", todayEstimate)}
+      {@render section("week", t("agenda.week"), false)}
+      {@render section("later", t("agenda.later"), true)}
+      {@render section("future", t("agenda.future"), true)}
+      {@render section("doing", t("agenda.doing"), false)}
+      {@render section("nodate", t("agenda.nodate"), false)}
+      {@render section("done", t("agenda.done"), true)}
     {/if}
   </div>
 </div>
@@ -376,28 +415,36 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    /* The task name's size: the reader's note size, a step down — a list to scan is not
+       a page to read, but it follows the setting (18 → 15.75 → 16px) rather than staying
+       at 13px whatever the reader chose. Whole pixels, like every size here. The row's
+       tracks are in this em */
+    --ag-fs: round(nearest, calc(var(--fs-note) * 0.875), 1px);
+    /* The date tones: late in the danger colour, the start day in the go colour, each
+       drawn a fifth of the way to the text colour — as they are, the two fall under
+       4.5:1 on a hovered row (4.24 in dark, 4.23 in light); mixed, 4.98 and 5.50 */
+    --ag-late: color-mix(in srgb, var(--danger) 80%, var(--fg));
+    --ag-start: color-mix(in srgb, var(--ok) 80%, var(--fg));
   }
   .legend {
     display: flex;
     gap: 6px;
   }
-  /* Each entry wears the shape of the date chips it stands for, so the legend reads as
-     "these two chips". Faint at rest; pressed, it takes the accent — a hover only lifts the
-     background, so the pressed one stays distinguishable from a hovered one */
+  /* An entry: the date's icon in its row tone, then its name; pressed, it takes the
+     accent — a hover only lifts the background, so the pressed one stays
+     distinguishable from a hovered one */
   .kind {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
     white-space: nowrap;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
-    background: var(--bg-hover);
+    color: var(--fg-muted);
     border-radius: 4px;
     padding: 1px 6px;
   }
   .kind:hover {
-    color: var(--fg-muted);
-    background: var(--bg-active);
+    background: var(--bg-hover);
   }
   .kind[aria-pressed="true"] {
     color: var(--accent);
@@ -408,10 +455,15 @@
     width: 0.95em;
     height: 0.95em;
   }
-  /* The list scrolls sideways when the pane is narrower than the table's floor (the sum
-     of the tracks' minimums below), the way the board does when its columns no longer
-     fit: the table keeps its columns and the words their room, and the pane shows a part
-     of it. Folding the rows to two lines was tried first and read as a different view */
+  .kind.scheduled :global(svg) {
+    color: var(--accent);
+  }
+  .kind.start :global(svg) {
+    color: var(--ag-start);
+  }
+  /* The list scrolls sideways only when the pane is narrower than the table's floor (the
+     sum of the tracks' minimums below, about 330px at the default size), the way the
+     board does when its columns no longer fit */
   .body {
     flex: 1;
     overflow: auto;
@@ -419,10 +471,14 @@
     padding: 10px 20px 30px;
   }
   /* Each group is at least as wide as its rows' minimum, so it is the groups that overflow
-     the pane and scroll, not the tracks that collapse inside a row */
+     the pane and scroll, not the tracks that collapse inside a row. At most 60em of the
+     task name's size (840px at the default): on a wide screen the date and the source stay
+     within a glance of the task, the list left-aligned under the header, the extra width
+     to its right */
   details {
     margin-bottom: 6px;
     min-width: min-content;
+    max-width: calc(var(--ag-fs) * 60);
   }
   /* A group's heading stays at the top of the pane while its rows scroll under it (the
      timeline's day headings do the same): with 24 undated and 77 done tasks the eye
@@ -462,44 +518,35 @@
   .title.today {
     color: var(--accent);
   }
-  .count {
+  .count,
+  .extra {
     font-size: var(--fs-xs);
     font-weight: 400;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
   }
   ul {
     list-style: none;
   }
-  /* A four-column grid. The column widths can only be fixed: each row is its own grid
-     container, an auto track that fits its content only aligns within one container, and
-     per-row autos each grow their own way — across groups they line up even less. The price
-     is the blank space to the right of a short task, and what it buys is the date and source
-     columns sharing one x across the whole table (groups included).
-     --ag-text is also the task name's cap: .text used to take flex:1 and fill the row, which
-     pushed a short task's date out past 500px and made the eye sweep a whole row to pair
-     them up.
-     The date track uses minmax: the few rows carrying both 📅 and ⏳ let it grow rather than
-     squeezing the source column. Its floor, --ag-date, is set on .body from the rows shown
-     (dateTrack): 13em when a "date plus N days late" chip is on the table, less otherwise.
-     The floors — the text's --ag-text-min, the date's --ag-date, the source's --ag-note —
-     add up to where the table stops giving way and starts to scroll (.body): as the pane
-     narrows the text track shrinks from its cap to its floor, and below that the whole
-     table is wider than the pane. Without the text floor the words were the first thing
-     squeezed (a measured screenshot at ~370px had them down to four characters); without
-     the source floor the source chip was pushed out of its track. */
+  /* A four-column grid: the checkbox, the words, the date, the rest. Each row is its own
+     grid container, so the tracks can only line up across rows (and across groups) by
+     being the same in every row: nothing here sizes to a row's content. The words take
+     what the others leave (1fr) down to a floor of 14em; the date column is 6.2em, which
+     holds the longest short word ("12 days late", "2027年9月30日") in 12px; the rest
+     takes a fixed share of the row, so its source note ends every row at one edge. Below
+     the floors' sum the whole table scrolls sideways (.body) rather than squeezing the
+     words — a measured screenshot at ~370px once had them down to four characters. */
   .row {
-    --ag-text: 26em;
-    --ag-text-min: 14em;
-    --ag-note: 10em;
     display: grid;
-    grid-template-columns: auto minmax(var(--ag-text-min), var(--ag-text)) minmax(var(--ag-date, 13em), auto) minmax(var(--ag-note), 1fr);
+    grid-template-columns: auto minmax(14em, 1fr) 6.2em minmax(0, min(22%, 12em));
     align-items: center;
     width: 100%;
     text-align: left;
     padding: 5px 8px;
     border-radius: 6px;
     gap: 8px;
-    font-size: var(--fs-sm);
+    font-size: var(--ag-fs);
+    line-height: 1.5;
     cursor: pointer;
   }
   .row:hover,
@@ -519,7 +566,7 @@
     display: block;
   }
   .check:hover {
-    background: var(--bg-hover);
+    background: var(--bg-active);
   }
   .check:hover :global(.vstate) {
     color: var(--accent);
@@ -529,119 +576,109 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-align: start;
   }
-  .text.done {
-    color: var(--fg-faint);
+  /* A finished task, and one still waiting on another, step back to the secondary ink
+     (a done one struck through as well) — readable, not faded; what tells done from
+     cancelled is the checkbox's own shape */
+  .row.closed .text,
+  .row.blocked .text {
+    color: var(--fg-muted);
+  }
+  .row.closed .text {
     text-decoration: line-through;
   }
-  .dates,
-  .meta {
+  .when,
+  .meta-cell {
     display: flex;
     align-items: center;
-    gap: 6px;
     min-width: 0;
-  }
-  .chip {
-    flex-shrink: 0;
     font-size: var(--fs-xs);
-    color: var(--fg-muted);
-    background: var(--bg-hover);
-    border-radius: 4px;
-    padding: 1px 6px;
   }
-  .chip.due.overdue {
-    color: var(--danger);
-  }
-  /* The date chips' tones: a start date in the go colour, the scheduled day in the accent */
-  .chip.start {
-    color: var(--ok);
-  }
-  .chip.scheduled {
-    color: var(--accent);
-  }
-  /* The other attributes: the icon then the value; urgent in danger */
-  .attr-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .attr-chip :global(svg) {
-    width: 0.9em;
-    height: 0.9em;
-    flex-shrink: 0;
-  }
-  .attr-chip.urgent {
-    color: var(--danger);
-  }
-  /* A task waiting on another: read as not yet actionable */
-  .row.blocked .text {
-    color: var(--fg-faint);
-  }
-  .extra {
-    font-size: var(--fs-xs);
-    font-weight: 400;
-    color: var(--fg-faint);
-  }
-  /* A date chip is a button: the icon and the date in a row; a note-chip is still a span and is unaffected by flex */
-  button.chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  button.chip:hover {
-    color: var(--accent);
-    background: var(--bg-active);
-  }
-  button.chip :global(svg) {
-    width: 0.9em;
-    height: 0.9em;
-    flex-shrink: 0;
-  }
-  /* A task with no date shows "📅+" while its row is hovered; always showing it would fill the list with plus signs */
-  .add-date {
-    opacity: 0;
-  }
-  .row:hover .add-date,
-  .add-date:focus-visible {
-    opacity: 1;
-  }
-  /* The one chip allowed to shrink: in a narrow pane it has to give way and be truncated,
-     or the grid track cannot hold it (.chip is flex-shrink: 0 everywhere else) */
-  .note-chip {
-    flex-shrink: 1;
-    max-width: 160px;
+  /* A date: plain secondary text with tabular digits, no ground — a button because a
+     click reschedules. Its tone says which date it is (the legend) */
+  .date {
+    min-width: 0;
+    /* the side padding (the hover's ground) reaches into the gaps, so the words have the
+       whole column: "2027年9月30日" is 86px of the 87 */
+    max-width: calc(100% + 6px);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    padding: 0 3px;
+    margin: 0 -3px;
+    border-radius: 4px;
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .date:hover {
+    color: var(--accent);
+    background: var(--bg-active);
+  }
+  .date.late {
+    color: var(--ag-late);
+  }
+  .date.scheduled {
+    color: var(--accent);
+  }
+  .date.start {
+    color: var(--ag-start);
+  }
+  /* Today's date in the today group, and the "+" of a task with no date, show while the
+     row is hovered: the heading already says the day, and a column of plus signs would be
+     noise. Hidden whole (not faded), and still a button to reach by Tab */
+  .date.quiet,
+  .add-date {
+    opacity: 0;
+  }
+  .row:hover .date.quiet,
+  .row:hover .add-date,
+  .date:focus-visible {
+    opacity: 1;
+  }
+  /* The rest of the row as one line of secondary text, a dot between its parts, the
+     source note last; one ellipsis runs across all of it (the tip has the whole line) */
+  .meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fg-muted);
+  }
+  .mi {
+    display: inline;
+  }
+  /* A date on the meta line is a word of it: inline, so the line's one ellipsis runs
+     across it too */
+  .mi.date {
+    display: inline;
+    overflow: visible;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+  .mi.late {
+    color: var(--ag-late);
+  }
+  /* The dot between parts is a mark, not a word: the faint ink */
+  .sep {
+    color: var(--fg-faint);
+  }
+  .glyph {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    vertical-align: -3px;
+    margin-right: 3px;
+  }
+  .glyph :global(svg) {
+    width: 100%;
+    height: 100%;
   }
   .lock {
     display: inline-flex;
     flex-shrink: 0;
+    margin-left: 4px;
     color: var(--accent);
-  }
-  /* A field chip: the key faint before the value; a state field's with its glyph
-     (chips.ts, which colours itself) — the same shapes as the board's */
-  .field-chip .fk {
-    color: var(--fg-faint);
-    margin-right: 3px;
-  }
-  .field-chip .fk::after {
-    content: ":";
-  }
-  .state-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding-left: 4px;
-  }
-  .state-chip .glyph {
-    display: inline-flex;
-    width: 15px;
-    height: 15px;
-    flex-shrink: 0;
-  }
-  .state-chip .glyph :global(svg) {
-    width: 100%;
-    height: 100%;
   }
 </style>

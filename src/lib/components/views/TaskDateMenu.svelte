@@ -66,7 +66,7 @@
   <button role="menuitem" onclick={() => onpick(localDate(7))}>{t("dateMenu.nextWeek")}</button>
   <input
     type="date"
-    title={t("dateMenu.pickDate")}
+    aria-label={t("dateMenu.pickDate")}
     value={current ?? localDate()}
     onchange={(e) => {
       const v = e.currentTarget.value;
@@ -103,7 +103,7 @@
     align-items: center;
     gap: 5px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 4px 10px 2px;
   }
   /* dateIconSvg is injected with {@html}, and the svg carries no scope marker, so its size is matched with :global */
