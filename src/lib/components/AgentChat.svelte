@@ -29,7 +29,6 @@
   import { toast } from "$lib/stores/toast.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
-  import { executeCommand } from "$lib/commands/registry";
   import { t, i18n } from "$lib/i18n/i18n.svelte";
   import { PLAN_GLYPH, toolLabel } from "$lib/views/session";
   import {
@@ -1713,7 +1712,8 @@
     const entries: MenuEntry[] = [];
     if (prefs.model) {
       entries.push({ title: prefs.model });
-      if (!isAgentWindow) entries.push({ label: t("chat.changeModel"), action: () => void executeCommand("settings-ai") });
+      // The detached window has no settings of its own: hostDispatch relays it to the main window, brought to the front
+      entries.push({ label: t("chat.changeModel"), action: () => void hostDispatch({ kind: "settings", id: "ai.model" }) });
     }
     if (prefs.reasoningEffortActive) {
       if (entries.length) entries.push({ separator: true });

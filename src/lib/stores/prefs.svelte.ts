@@ -1,8 +1,8 @@
 // The in-process mirror of behavioural preferences. Rust's settings.json is the single
 // source of truth; this only caches the fields the editor's click path has to read
 // synchronously (a click gesture cannot await an IPC round trip). App refreshes it once
-// at startup, and SettingsModal writes the mirrored fields directly after a successful
-// save — outside those two there is no writer.
+// at startup, and the settings dialog refreshes it after every field it writes
+// (settings/form.svelte.ts) — outside those two there is no writer.
 import { api, type CaptureTarget, type ProviderSetting, type SettingsView } from "$lib/api";
 
 /** settings.rs default_capture_hotkey, in the shortcut plugin's grammar; the settings page's "reset" puts it back. */

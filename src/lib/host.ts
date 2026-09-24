@@ -12,9 +12,10 @@ import { vault } from "$lib/stores/vault.svelte";
 import { clipTarget } from "$lib/stores/clipTarget.svelte";
 import { toast } from "$lib/stores/toast.svelte";
 import { executeCommand } from "$lib/commands/registry";
+import { openSettings } from "$lib/stores/settingsUi.svelte";
 
 /** For a navigation or command action the user wants to see the result: relaying it also brings the main window to the front. */
-const FOCUS_MAIN = new Set<HostAction["kind"]>(["open-note", "follow-link", "command", "review-start"]);
+const FOCUS_MAIN = new Set<HostAction["kind"]>(["open-note", "follow-link", "command", "review-start", "settings"]);
 
 /** Run the action in the right window. From the chat window it is a one-way delivery
  *  (the result and any error toast in the main window); in the main window it runs
@@ -97,6 +98,9 @@ export async function runHostAction(a: HostAction): Promise<void> {
       return;
     case "command":
       await executeCommand(a.id);
+      return;
+    case "settings":
+      openSettings(a.id);
       return;
   }
 }

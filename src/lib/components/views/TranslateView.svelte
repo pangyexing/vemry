@@ -18,7 +18,7 @@
   import { translate, targetLabel, fmtTokens, TARGET_TAGS, type TranslateMode } from "$lib/stores/translate.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import { toast } from "$lib/stores/toast.svelte";
-  import { executeCommand } from "$lib/commands/registry";
+  import { openSettings } from "$lib/stores/settingsUi.svelte";
   import { handleCodeCopyClick, renderNoteMarkdown, streamingTail } from "$lib/markdown";
   import { langAttrs, noteLanguage, scriptOfLang, type NoteLanguage, type NoteScript } from "$lib/notelang";
   import { captureAnchor, restoreAnchor, type ScrollAnchor } from "$lib/scrollanchor";
@@ -457,7 +457,7 @@
       <button
         class="chip model"
         title={spent > 0 ? `${t("translate.modelHint")}\n${t("translate.usage", { n: fmtTokens(spent), input: fmtTokens(translate.usage.prompt), output: fmtTokens(translate.usage.completion) })}` : t("translate.modelHint")}
-        onclick={() => void executeCommand("settings-ai")}
+        onclick={() => openSettings("ai.translateModel")}
       >{doc.model}{#if spent > 0} · {fmtTokens(spent)}{/if}</button>
       <button title={t("translate.copyAll")} onclick={() => void copyAll()}>{t("translate.copy")}</button>
       <button class="primary" title={t("translate.saveHint")} disabled={translate.saving} onclick={() => void save()}

@@ -813,6 +813,8 @@ export type HostAction =
   | { kind: "pin"; payload: string; session?: string }
   | { kind: "memo"; text: string }
   | { kind: "command"; id: string }
+  /** Open the settings at one setting (an id of the settings index) or a page. */
+  | { kind: "settings"; id: string }
   /** Start reviewing the AI blocks of these notes (a turn's writes): the first still unreviewed opens on its first run. */
   | { kind: "review-start"; paths: string[] }
   /** Mark every unreviewed AI block of these notes as reviewed. */

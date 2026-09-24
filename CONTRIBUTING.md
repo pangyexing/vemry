@@ -34,10 +34,11 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | Browser tabs and panel / detached window / clip commands / ad blocking | `src-tauri/src/browser/` + `src/lib/components/BrowserPanel.svelte` | Rust + TS |
 | The detached AI chat window (creation / handoff / close handshake / relay) | `src-tauri/src/agent_window.rs` + `src/AgentWindow.svelte` + `src/lib/host.ts` | Rust + TS |
 | The quick capture window (the global shortcut / show and hide / the landing relay) | `src-tauri/src/capture_window.rs` + `src/CaptureWindow.svelte` + `src/lib/components/CaptureComposer.svelte` + `src/lib/capture.ts` | Rust + TS |
-| The phone inbox (the pull loop, the landing vault and the direct landing, the ledger, pairing) | `src-tauri/src/inbox.rs` + the phone section of `src/lib/components/SettingsModal.svelte` | Rust + TS |
+| The phone inbox (the pull loop, the landing vault and the direct landing, the ledger, pairing) | `src-tauri/src/inbox.rs` + the phone section of `src/lib/components/settings/CapturePage.svelte` | Rust + TS |
 | The resident state (the close button hides the main window, the menu bar / tray icon) | `src-tauri/src/tray.rs` + the close hooks in `src-tauri/src/lib.rs` | Rust |
 | Parsing / indexing / search | `crates/vemry-core/src/` | Rust |
 | Note history (what a write replaced, and restoring it) | `crates/vemry-core/src/history.rs` + `src/lib/components/HistoryDialog.svelte` | Rust + Svelte |
+| A setting (its row, its words, where search and "go to setting" find it) | `src/lib/settings/index.ts` (the id, page and catalog keys) + the page in `src/lib/components/settings/` + `src-tauri/src/settings.rs` | TS + Rust |
 | IPC commands | `src-tauri/src/commands.rs` + `src/lib/api.ts` | Rust + TS (change both together) |
 | Interface copy / adding a language | `scripts/gen-locales.py` → `locales/*.json` | Python + JSON (new terms go through `docs/GLOSSARY.md` first) |
 

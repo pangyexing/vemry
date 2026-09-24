@@ -1,1334 +1,175 @@
-<script lang="ts" module>
-  /** The category page ids; App's settings commands pick the page to open on through this */
-  export type SettingsTab = "general" | "ai" | "account" | "browser" | "capture" | "vault" | "updates";
-</script>
-
 <script lang="ts">
-  import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { api, EFFORT_OPTIONS, type CaptureTarget, type InboxDoor, type InboxLanding, type LangSetting, type LinkOpenMode, type PairStart, type ProviderSetting, type SkillEntry, type TypeExample } from "$lib/api";
-  import { comboFromEvent, hotkeyLabel, isModifierKey } from "$lib/capture";
-  import { copyText } from "$lib/copytext";
-  import { account } from "$lib/stores/account.svelte";
-  import AccountPanel from "./AccountPanel.svelte";
-  import { scaffold } from "$lib/scaffold";
-  import { skillDesc, skillSourceLabel } from "$lib/skills";
-  import { setLanguage, t, LANGS, langName, compareNames, i18n } from "$lib/i18n/i18n.svelte";
-  import { targetLabel, TARGET_TAGS } from "$lib/stores/translate.svelte";
-  import { vault, vaultName } from "$lib/stores/vault.svelte";
-  import { scripts } from "$lib/stores/scripts.svelte";
-  import { browser } from "$lib/stores/browser.svelte";
-  import { toast } from "$lib/stores/toast.svelte";
-  import { CAPTURE_HOTKEY_DEFAULT, prefs } from "$lib/stores/prefs.svelte";
-  import { updater } from "$lib/stores/updater.svelte";
-  import { isImeKeydown } from "$lib/ime";
-  import { isMac, k } from "$lib/shortcut";
-  import { untrack } from "svelte";
-  import PrivacyIcon from "./PrivacyIcon.svelte";
+  import { setContext, tick } from "svelte";
+  import { t, tn } from "$lib/i18n/i18n.svelte";
+  import { PAGES, pageLabel, searchSettings, settingById, type SettingsPage } from "$lib/settings";
+  import { settingsUi } from "$lib/stores/settingsUi.svelte";
+  import { vault } from "$lib/stores/vault.svelte";
+  import type { SearchContext } from "./settings/context";
+  import { form } from "./settings/form.svelte";
+  import AccountPage from "./settings/AccountPage.svelte";
+  import AiPage from "./settings/AiPage.svelte";
+  import BrowserPage from "./settings/BrowserPage.svelte";
+  import CapturePage from "./settings/CapturePage.svelte";
+  import EditingPage from "./settings/EditingPage.svelte";
+  import GeneralPage from "./settings/GeneralPage.svelte";
+  import PrivacyPage from "./settings/PrivacyPage.svelte";
+  import SkillsPage from "./settings/SkillsPage.svelte";
 
-  let { open = $bindable(false), tab = $bindable<SettingsTab>("general") }: { open: boolean; tab?: SettingsTab } =
-    $props();
+  // The settings dialog: the pages on the left under a search field, one page on the right.
+  // Every control writes the moment it changes (settings/form.svelte.ts), so there is no
+  // Save and no Cancel — Escape, a click outside and the close button all just close.
+  const PAGE_COMPONENTS = {
+    general: GeneralPage,
+    editing: EditingPage,
+    ai: AiPage,
+    account: AccountPage,
+    browser: BrowserPage,
+    capture: CapturePage,
+    privacy: PrivacyPage,
+    skills: SkillsPage,
+  } as const;
 
-  /** The category navigation on the left; everything on the "Vault" page acts on the vault immediately, so with no vault it is disabled rather than hidden */
-  const TABS: { id: SettingsTab; needsVault?: boolean }[] = [
-    { id: "general" },
-    { id: "ai" },
-    { id: "account" },
-    { id: "browser" },
-    { id: "capture" },
-    { id: "vault", needsVault: true },
-    { id: "updates" },
-  ];
+  let query = $state("");
+  let searchEl = $state<HTMLInputElement | null>(null);
+  let panelEl = $state<HTMLDivElement | null>(null);
+  const available = (p: { needsVault?: boolean }) => !p.needsVault || !!vault.root;
+  const hits = $derived(query.trim() ? searchSettings(query).filter((s) => available(PAGES.find((p) => p.id === s.page)!)) : []);
+  const hitIds = $derived(new Set(hits.map((h) => h.id)));
+  const hitPages = $derived(PAGES.filter((p) => hits.some((h) => h.page === p.id)));
 
-  let language = $state<LangSetting>("auto");
-  /** vemry hosted or bring your own key; the hosted model choice ("" = the catalog's default). */
-  let provider = $state<ProviderSetting>("custom");
-  let hostedModel = $state("");
-  let baseUrl = $state("");
-  let model = $state("");
-  let apiKey = $state("");
-  let envKeyPresent = $state(false);
-  let adblockEnabled = $state(true);
-  let webSearchEnabled = $state(false);
-  let planConfirm = $state(true);
-  let provenanceMarks = $state(true);
-  let reasoningEffort = $state("high");
-  let reasoningActive = $state(false);
-  let openLinksIn = $state<LinkOpenMode>("reading");
-  let clickOpensLinks = $state(true);
-  let readingImagesEnabled = $state(true);
-  let clipLocalizeImages = $state(true);
-  let formatAgentWrites = $state(true);
-  let formatClips = $state(true);
-  let formatCjkSpacing = $state(false);
-  let formatPunctuation = $state(false);
-  let updaterAutoCheck = $state(false);
-  let noteFontSize = $state(16);
-  let readableLineWidth = $state(true);
-  /** Side-by-side translation: the target ("" = the interface language, "custom" = the tag typed below), the model, the extra rule. */
-  let translateTarget = $state("");
-  let translateTargetCustom = $state("");
-  let translateModel = $state("");
-  let translateAddendum = $state("");
-  let ruleUrls = $state("");
-  /** Quick capture: the shortcut in the plugin's grammar (recorded from a keydown), the
-   *  registration's failure as Rust reports it, and the landing target with its pin. */
-  let captureHotkey = $state(CAPTURE_HOTKEY_DEFAULT);
-  let captureHotkeyError = $state<string | null>(null);
-  let recording = $state(false);
-  let recordingError = $state<string | null>(null);
-  let captureTarget = $state<CaptureTarget>("inbox");
-  let capturePinnedPath = $state("");
-  let capturePinnedHeading = $state("");
-  /** The vault a phone's captures land in ("" = whichever is open); the choices are the recent vaults. */
-  let inboxVault = $state("");
-  let recentVaults = $state<string[]>([]);
-  const inboxVaultChoices = $derived(inboxVault && !recentVaults.includes(inboxVault) ? [inboxVault, ...recentVaults] : recentVaults);
-  /** The phone inbox: the pairing QR code on show (null = none), the paired phones, the last failure. */
-  let phonePair = $state<PairStart | null>(null);
-  let phonePairing = $state(false);
-  let phoneDoors = $state<InboxDoor[]>([]);
-  let phoneError = $state<string | null>(null);
-  /** What "retry" after the failure does: show a code again, or read the list again. */
-  let phoneRetry: (() => Promise<void>) | null = null;
-  /** The phone that just claimed the code: the card is a tick for three seconds, then folds. */
-  let phoneJustPaired = $state<InboxDoor | null>(null);
-  /** The code's remaining time, m:ss, ticking every second while a code is on show. */
-  let phoneCodeLeft = $state("");
-  let phoneCopied = $state(false);
-  /** The last landing of captures from a phone (served with the settings). */
-  let inboxLastLanded = $state<InboxLanding | null>(null);
-  let phoneWatch: ReturnType<typeof setInterval> | null = null;
-  let phoneTick: ReturnType<typeof setInterval> | null = null;
-  let phoneOkTimer: ReturnType<typeof setTimeout> | null = null;
-  async function showPairCode() {
-    phonePairing = true;
-    phoneError = null;
-    phoneCopied = false;
-    try {
-      // The phones paired before this code, read fresh: a list still loading (or failed) would make
-      // every phone already paired look like the one that just claimed the code
-      await loadDoors();
-      if (phoneError) {
-        phoneRetry = showPairCode;
+  setContext<SearchContext>("settings-search", {
+    get query() {
+      return query.trim();
+    },
+    matches: (id) => hitIds.has(id),
+    go: (id) => {
+      query = "";
+      const entry = settingById(id);
+      if (entry) {
+        settingsUi.page = entry.page;
+        settingsUi.focus = id;
+      }
+    },
+  });
+
+  // Each opening reads the settings afresh and puts the cursor in the search field
+  $effect(() => {
+    if (!settingsUi.open) return;
+    query = "";
+    void form.load();
+    if (!available(PAGES.find((p) => p.id === settingsUi.page)!)) settingsUi.page = "general";
+    queueMicrotask(() => searchEl?.focus());
+  });
+
+  // The setting an entry point asked for: scrolled to the middle and flashed once the page
+  // (and the settings it needs) has rendered
+  $effect(() => {
+    const id = settingsUi.focus;
+    if (!id || !settingsUi.open || !form.s) return;
+    void settingsUi.page;
+    void tick().then(() => {
+      const row = panelEl?.querySelector<HTMLElement>(`[data-setting="${id}"]`);
+      settingsUi.focus = null;
+      if (!row) return;
+      row.scrollIntoView({ block: "center" });
+      row.classList.add("flash");
+      setTimeout(() => row.classList.remove("flash"), 1400);
+    });
+  });
+
+  function go(page: SettingsPage) {
+    query = "";
+    settingsUi.page = page;
+    panelEl?.scrollTo({ top: 0 });
+  }
+
+  /** Close in any way: a text field still holding the focus is blurred first, so what was
+   *  typed into it is written like any other edit. */
+  function close() {
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    settingsUi.open = false;
+  }
+
+  /** Only a press and a release on the overlay count as a click outside: a drag that selects
+   *  text in a field and ends outside the dialog lands its click on the overlay too. */
+  let pressedOverlay = false;
+
+  function onWindowKey(e: KeyboardEvent) {
+    if (!settingsUi.open) return;
+    if (e.key === "Escape") {
+      // Escape in the search field with a query clears the query first
+      if (query && document.activeElement === searchEl) {
+        query = "";
         return;
       }
-      const before = new Set(phoneDoors.map((d) => d.id));
-      const pair = await api.inboxPairStart();
-      // The page was left while the code was on its way: no card to show it on, and no watch to start
-      // (a watch nothing stops would poll, and renew the code at every expiry, for the life of the app)
-      if (!open || tab !== "capture") return;
-      phonePair = pair;
-      // Showing the first code fixes the landing vault to the open one (inbox.rs): the field follows unless the user is mid-edit
-      if (!touched.has("inboxVault")) inboxVault = pair.inbox_vault ?? "";
-      // Until the code is claimed or expires, the paired phones are polled: a new one turns the
-      // card into a tick, and an expiry while the page is still open asks for a fresh code
-      const until = new Date(pair.expires_at).getTime();
-      stopPhoneWatch();
-      phoneWatch = setInterval(async () => {
-        await loadDoors();
-        const fresh = phoneDoors.find((d) => !before.has(d.id));
-        if (fresh) {
-          stopPhoneWatch();
-          phonePair = null;
-          phoneJustPaired = fresh;
-          phoneOkTimer = setTimeout(() => (phoneJustPaired = null), 3000);
-        } else if (Number.isNaN(until)) {
-          stopPhoneWatch();
-          phonePair = null;
-        } else if (Date.now() > until) {
-          stopPhoneWatch();
-          void showPairCode();
-        }
-      }, 4000);
-      phoneCodeLeft = countdown(until);
-      phoneTick = setInterval(() => (phoneCodeLeft = countdown(until)), 1000);
-    } catch (e) {
-      phonePair = null;
-      phoneError = e instanceof Error ? e.message : String(e);
-      phoneRetry = showPairCode;
-    } finally {
-      phonePairing = false;
-    }
-  }
-  function countdown(until: number): string {
-    const s = Math.max(0, Math.round((until - Date.now()) / 1000));
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  }
-  function stopPhoneWatch() {
-    if (phoneWatch) clearInterval(phoneWatch);
-    if (phoneTick) clearInterval(phoneTick);
-    phoneWatch = null;
-    phoneTick = null;
-  }
-  /** The code as a link, for a phone that cannot scan: sent to it any way at all, it pairs on opening. */
-  async function copyPairLink() {
-    if (!phonePair) return;
-    phoneCopied = await copyText(phonePair.url);
-    if (phoneCopied) setTimeout(() => (phoneCopied = false), 2000);
-  }
-  async function loadDoors() {
-    if (!account.loggedIn) {
-      phoneDoors = [];
-      return;
-    }
-    try {
-      phoneDoors = await api.inboxDoors();
-    } catch (e) {
-      phoneError = e instanceof Error ? e.message : String(e);
-      phoneRetry = loadDoors;
-    }
-  }
-  async function loadLastLanded() {
-    try {
-      inboxLastLanded = (await api.settingsGet()).inbox_last_landed;
-    } catch {
-      inboxLastLanded = null;
-    }
-  }
-  async function revokeDoor(id: number) {
-    try {
-      await api.inboxDoorRevoke(id);
-      phoneDoors = phoneDoors.filter((d) => d.id !== id);
-      toast.push(t("settings.capture.phoneRevoked"));
-    } catch (e) {
-      phoneError = e instanceof Error ? e.message : String(e);
-      phoneRetry = loadDoors;
-    }
-  }
-  function retryPhone() {
-    phoneError = null;
-    void (phoneRetry ?? loadDoors)();
-  }
-  function kindLabel(d: InboxDoor): string {
-    return d.kind === "pwa" ? t("settings.capture.kindPwa") : d.kind === "shortcut" ? t("settings.capture.kindShortcut") : t("settings.capture.kindOther");
-  }
-  /** The phone's own name ("Android · 微信"); its kind when it gave none. */
-  const doorName = (d: InboxDoor) => d.name || kindLabel(d);
-  const monthDay = $derived(new Intl.DateTimeFormat(i18n.locale, { month: "long", day: "numeric" }));
-  const yearMonthDay = $derived(new Intl.DateTimeFormat(i18n.locale, { year: "numeric", month: "long", day: "numeric" }));
-  const relative = $derived(new Intl.RelativeTimeFormat(i18n.locale, { numeric: "auto" }));
-  /** "today", or the day (with its year when it is not this year's). */
-  function dateLabel(iso: string): string {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const now = new Date();
-    if (d.toDateString() === now.toDateString()) return t("settings.capture.today");
-    return (d.getFullYear() === now.getFullYear() ? monthDay : yearMonthDay).format(d);
-  }
-  /** "just now", "2 minutes ago", "yesterday". */
-  function ago(iso: string): string {
-    const ms = Date.now() - new Date(iso).getTime();
-    if (Number.isNaN(ms)) return "";
-    const min = Math.round(ms / 60000);
-    if (min < 1) return t("settings.capture.justNow");
-    if (min < 60) return relative.format(-min, "minute");
-    const h = Math.round(min / 60);
-    if (h < 24) return relative.format(-h, "hour");
-    return relative.format(-Math.round(h / 24), "day");
-  }
-  /** "paired Sep 21 · sent 7 minutes ago": when the door was made, and its last drop (the service's last_seen_at). */
-  function doorWhen(d: InboxDoor): string {
-    const since = t("settings.capture.phoneDoorSince", { date: dateLabel(d.created_at) });
-    const seen = d.last_seen_at ? t("settings.capture.phoneDoorSeen", { ago: ago(d.last_seen_at) }) : t("settings.capture.phoneDoorNever");
-    return `${since} · ${seen}`;
-  }
-  /** "Last one filed 7 minutes ago in inbox.md", naming the vault when it was not the open one. */
-  function lastLandedLine(l: InboxLanding): string {
-    return l.vault
-      ? t("settings.capture.phoneLastLandedIn", { ago: ago(l.at), vault: l.vault, target: l.target })
-      : t("settings.capture.phoneLastLanded", { ago: ago(l.at), target: l.target });
-  }
-  // The capture page opened: the paired phones and the last landing are read once; leaving it drops a code on show
-  $effect(() => {
-    if (open && tab === "capture") {
-      void loadDoors();
-      void loadLastLanded();
-    } else {
-      stopPhoneWatch();
-      if (phoneOkTimer) clearTimeout(phoneOkTimer);
-      phoneOkTimer = null;
-      phonePair = null;
-      phoneJustPaired = null;
-    }
-  });
-  /** The resident state (the close button hides the window behind a tray icon) and the icon's creation failure. */
-  let trayResident = $state(true);
-  let trayError = $state<string | null>(null);
-  let updatingRules = $state(false);
-  let saved = $state(false);
-  /** The raw rule lines of .vemry/privacy; the operations take effect at once and do not follow the dialog's save semantics */
-  let rules = $state<string[]>([]);
-  /** This vault's persistent write policy: "allow" = AI writes are pre-authorised (allow_always was granted). */
-  let writePolicy = $state<"allow" | "ask">("ask");
-  /** The skills list: the built-ins and the vault's own files (disabled ones included; a switch applies from the next turn). */
-  let skills = $state<SkillEntry[]>([]);
-  /** The name typed for a new skill. */
-  let newSkill = $state("");
-  /** The example block types (product-document blocks) Settings can install. */
-  let typeExamples = $state<TypeExample[]>([]);
-  let newRule = $state("");
-  let ruleError = $state<string | null>(null);
-  /** Notes marked one by one: the frontmatter flag is what NoteSummary.private carries, and the
-   *  list follows refreshNotes on its own — an unmark here needs no local bookkeeping */
-  const markedNotes = $derived(vault.notes.filter((n) => n.private).sort((a, b) => compareNames(a.id, b.id)));
-  /** There are unsaved changes: a stray click on the overlay should not evaporate a half-pasted key */
-  let dirty = $state(false);
-  /** Which fields the user changed since the dialog opened. The load on open fills every
-   *  field *not* in it: a keystroke or a click that lands before settingsGet answers keeps
-   *  that one field and the others still come from disk — otherwise the first save after
-   *  an app start would write the component's initial values (an empty key, the default
-   *  endpoint) over the file. */
-  let touched = new Set<string>();
-  /** The load in flight for this open: Save waits for it, so a click on Save before the
-   *  answer arrives cannot write the initial values of the fields it would have filled. */
-  let loading: Promise<void> | null = null;
-  function touch(field: string) {
-    touched.add(field);
-    dirty = true;
-  }
-  /** Whether the mouse was pressed on the overlay. A click's target is the common ancestor
-   *  of the mousedown and the mouseup, so dragging to select text in an input and releasing
-   *  outside the dialog lands the click on the overlay */
-  let pressedOverlay = false;
-  let nudge = $state(false);
-  let firstInput = $state<HTMLInputElement | null>(null);
-
-  $effect(() => {
-    // The shortcut recorder is component state, not markup: it is disarmed on close as
-    // well as on open, so neither its window listener nor its "press the keys" label
-    // outlives the dialog it was armed in
-    recording = false;
-    recordingError = null;
-    if (!open) return;
-    // The fallback for having stopped on a needsVault page last time and opening with no
-    // vault this time. untrack: this loading effect should only rerun with open — were tab
-    // or vault.root a dependency, switching pages or changing vaults with the dialog open
-    // would rerun it, resetting dirty and letting settingsGet overwrite the draft (a
-    // half-pasted key evaporating).
-    const root = untrack(() => vault.root);
-    if (untrack(() => TABS.find((tb) => tb.id === tab)?.needsVault) && !root) tab = "general";
-    saved = false;
-    dirty = false;
-    touched = new Set();
-    loading = api.settingsGet().then((s) => {
-      // Applied field by field: what the user already touched keeps the draft
-      const fill = (field: string, apply: () => void) => {
-        if (!touched.has(field)) apply();
-      };
-      fill("provider", () => (provider = s.provider));
-      fill("hostedModel", () => (hostedModel = s.hosted_model));
-      fill("baseUrl", () => (baseUrl = s.base_url));
-      fill("model", () => (model = s.model));
-      fill("apiKey", () => (apiKey = s.api_key));
-      envKeyPresent = s.env_key_present;
-      fill("language", () => (language = s.language));
-      fill("adblockEnabled", () => (adblockEnabled = s.adblock_enabled));
-      fill("webSearchEnabled", () => (webSearchEnabled = s.web_search_enabled));
-      fill("planConfirm", () => (planConfirm = s.plan_confirm));
-      fill("provenanceMarks", () => (provenanceMarks = s.provenance_marks));
-      fill("reasoningEffort", () => (reasoningEffort = s.reasoning_effort));
-      reasoningActive = s.reasoning_effort_active;
-      fill("openLinksIn", () => (openLinksIn = s.open_links_in));
-      fill("clickOpensLinks", () => (clickOpensLinks = s.click_opens_links));
-      fill("readingImagesEnabled", () => (readingImagesEnabled = s.reading_images_enabled));
-      fill("clipLocalizeImages", () => (clipLocalizeImages = s.clip_localize_images));
-      fill("formatAgentWrites", () => (formatAgentWrites = s.format_agent_writes));
-      fill("formatClips", () => (formatClips = s.format_clips));
-      fill("formatCjkSpacing", () => (formatCjkSpacing = s.format_cjk_spacing));
-      fill("formatPunctuation", () => (formatPunctuation = s.format_punctuation));
-      fill("updaterAutoCheck", () => (updaterAutoCheck = s.updater_auto_check));
-      fill("noteFontSize", () => (noteFontSize = s.note_font_size));
-      fill("readableLineWidth", () => (readableLineWidth = s.readable_line_width));
-      fill("translateTarget", () => {
-        if (s.translate_target === "" || (TARGET_TAGS as readonly string[]).includes(s.translate_target)) {
-          translateTarget = s.translate_target;
-          translateTargetCustom = "";
-        } else {
-          translateTarget = "custom";
-          translateTargetCustom = s.translate_target;
-        }
-      });
-      fill("translateModel", () => (translateModel = s.translate_model));
-      fill("translateAddendum", () => (translateAddendum = s.translate_addendum));
-      fill("ruleUrls", () => (ruleUrls = s.adblock_rule_urls.join("\n")));
-      fill("captureHotkey", () => (captureHotkey = s.capture_hotkey));
-      captureHotkeyError = s.capture_hotkey_error;
-      fill("captureTarget", () => (captureTarget = s.capture_target));
-      fill("capturePinnedPath", () => (capturePinnedPath = s.capture_pinned_path));
-      fill("capturePinnedHeading", () => (capturePinnedHeading = s.capture_pinned_heading));
-      fill("inboxVault", () => (inboxVault = s.inbox_vault ?? ""));
-      recentVaults = s.recent_vaults;
-      fill("trayResident", () => (trayResident = s.tray_resident));
-      trayError = s.tray_error;
-    });
-    // Opening it allows pasting straight away, and only then does Escape have a focus to land on
-    queueMicrotask(() => firstInput?.focus());
-    ruleError = null;
-    newRule = "";
-    if (root) {
-      api.privacyRules().then((r) => (rules = r)).catch(() => (rules = []));
-      void scripts.refresh();
-      api.vaultWritePolicyGet().then((p) => (writePolicy = p)).catch(() => (writePolicy = "ask"));
-      api.skillsList().then((s) => (skills = s)).catch(() => (skills = []));
-      api.typeExamplesList().then((s) => (typeExamples = s)).catch(() => (typeExamples = []));
-    }
-  });
-
-  /** The rule lines are local state fetched on open; a change made elsewhere while the dialog
-   *  is up (a folder marked from the tree, an external edit of .vemry/privacy) arrives as a new
-   *  privatePaths Set, which is the refetch signal. untrack keeps this independent of the open
-   *  effect's dirty/draft semantics. */
-  $effect(() => {
-    void vault.privatePaths;
-    if (!untrack(() => open && vault.root)) return;
-    api.privacyRules().then((r) => (rules = r)).catch(() => {});
-  });
-
-  /** Revoke "always allow for this vault": back to approving each write (a running session's grant is withdrawn with it). */
-  async function revokeWritePolicy() {
-    try {
-      await api.vaultWritePolicySet("ask");
-      writePolicy = "ask";
-      toast.push(t("settings.writePolicyRevoked"));
-    } catch (e) {
-      toast.push(String(e), "error");
-    }
-  }
-
-  /** Opening a skill file in the editor closes the dialog: the editor is behind it. */
-  async function openSkill(file: string) {
-    open = false;
-    await vault.openFile(`.vemry/skills/${file}`);
-  }
-  async function customizeSkill(name: string) {
-    open = false;
-    await scaffold(() => api.skillCustomize(name));
-  }
-  async function restoreSkill(name: string) {
-    try {
-      await api.skillRestore(name);
-      toast.push(t("settings.skillRestored", { name }));
-      skills = await api.skillsList();
-    } catch (e) {
-      toast.push(String(e), "error");
-    }
-  }
-  async function createSkill() {
-    const name = newSkill.trim();
-    if (!name) return;
-    newSkill = "";
-    open = false;
-    await scaffold(() => api.skillCreate(name));
-  }
-  async function installTypeExample(name: string) {
-    try {
-      const r = await api.typeInstallExample(name);
-      toast.push(t(r.created ? "settings.skillInstalled" : "settings.skillAlready", { path: r.path }));
-      typeExamples = await api.typeExamplesList();
-    } catch (e) {
-      toast.push(String(e), "error");
-    }
-  }
-  async function toggleSkill(name: string, enabled: boolean) {
-    try {
-      await api.skillSetEnabled(name, enabled);
-      skills = await api.skillsList();
-    } catch (e) {
-      toast.push(String(e), "error");
-    }
-  }
-
-  /** Every script operation has the same shape: call the api → refetch the list, with a failure going to a toast. */
-  async function withRefresh(action: () => Promise<void>) {
-    try {
-      await action();
-      await scripts.refresh();
-    } catch (e) {
-      toast.push(String(e), "error");
-    }
-  }
-  const toggleScript = (name: string, enabled: boolean) => withRefresh(() => api.scriptSetEnabled(name, enabled));
-  const revokeGrant = (name: string) => withRefresh(() => api.scriptGrantRevoke(name));
-  const reloadScripts = () => withRefresh(() => api.scriptsReload());
-
-  /** The triggers at a glance: how many commands / event subscriptions / scheduled tasks */
-  function scriptSummary(s: (typeof scripts.infos)[number]): string {
-    const parts: string[] = [];
-    if (s.commands.length) parts.push(t("settings.scriptCommands", { n: s.commands.length }));
-    if (s.event_triggers.length) parts.push(t("settings.scriptEvents", { list: [...new Set(s.event_triggers)].join(", ") }));
-    if (s.schedules.length) parts.push(t("settings.scriptSchedules", { list: s.schedules.join(" | ") }));
-    return parts.length ? parts.join(" · ") : t("settings.scriptNothing");
-  }
-
-  async function addRule() {
-    const line = newRule.trim();
-    if (!line) return;
-    ruleError = null;
-    try {
-      await api.privacyRuleAdd(line);
-      rules = await api.privacyRules();
-      newRule = "";
-    } catch (e) {
-      ruleError = String(e);
-    }
-  }
-
-  async function removeRule(line: string) {
-    ruleError = null;
-    try {
-      await api.privacyRuleRemove(line);
-      rules = await api.privacyRules();
-    } catch (e) {
-      ruleError = String(e);
-    }
-  }
-
-  /** Open a note from the marked list: the dialog is modal, so it closes first (with the same
-   *  unsaved-changes nudge as a click outside), then the note opens and the tree reveals it */
-  async function openMarked(id: string) {
-    if (dirty) {
-      nudge = true;
-      setTimeout(() => (nudge = false), 300);
-      return;
-    }
-    open = false;
-    await vault.openNote(id);
-    vault.revealInTree();
-  }
-
-  /** Only "pressed and released on the overlay" really counts as clicking outside; with
-   *  unsaved changes even that does not close it, so switching to the browser and back and
-   *  clicking once does not lose the content — the nudge says the dialog is deliberately
-   *  staying. Cancel and Escape are unambiguous intent and close as usual. */
-  function overlayClick() {
-    if (!pressedOverlay) return;
-    if (dirty) {
-      nudge = true;
-      setTimeout(() => (nudge = false), 300);
-      return;
-    }
-    open = false;
-  }
-
-  /** The shortcut recorder: the field takes the next combination pressed (a modifier plus a
-   *  key; Esc keeps the current one). The grammar and the "usable shortcut" rule live in
-   *  capture.ts; Rust registers it at save time and refuses one another app holds.
-   *
-   *  The keys are taken at the window, in the capture phase, for as long as the field is
-   *  armed — not by a handler on the field itself. A mouse click does not focus a button
-   *  on macOS WebKit, so a keydown handler there would never see the press: it would go
-   *  to whatever still had focus (the editor, on this tab) and the field would stay armed
-   *  for good. Capture phase, plus stopPropagation, also keeps the combination from
-   *  reaching the editor and the dialog's own Escape (which would close it). */
-  $effect(() => {
-    if (!recording) return;
-    window.addEventListener("keydown", recordHotkey, true);
-    return () => window.removeEventListener("keydown", recordHotkey, true);
-  });
-  function recordHotkey(e: KeyboardEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.key === "Escape") {
-      recording = false;
-      return;
-    }
-    if (isModifierKey(e)) return; // the key is still coming
-    const combo = comboFromEvent(e);
-    if (combo === null) {
-      recordingError = t("settings.capture.hotkeyNeedsModifier");
-      return;
-    }
-    captureHotkey = combo;
-    recording = false;
-    recordingError = null;
-    captureHotkeyError = null;
-    touch("captureHotkey");
-  }
-
-  async function save() {
-    await loading?.catch(() => undefined);
-    try {
-      await api.settingsSet({
-      language,
-      provider,
-      hosted_model: hostedModel,
-      base_url: baseUrl.trim(),
-      model: model.trim(),
-      api_key: apiKey.trim(),
-      adblock_enabled: adblockEnabled,
-      web_search_enabled: webSearchEnabled,
-      plan_confirm: planConfirm,
-      provenance_marks: provenanceMarks,
-      reasoning_effort: reasoningEffort,
-      open_links_in: openLinksIn,
-      click_opens_links: clickOpensLinks,
-      reading_images_enabled: readingImagesEnabled,
-      clip_localize_images: clipLocalizeImages,
-      format_agent_writes: formatAgentWrites,
-      format_clips: formatClips,
-      format_cjk_spacing: formatCjkSpacing,
-      format_punctuation: formatPunctuation,
-      updater_auto_check: updaterAutoCheck,
-      note_font_size: noteFontSize,
-      readable_line_width: readableLineWidth,
-      translate_target: translateTarget === "custom" ? translateTargetCustom.trim() : translateTarget,
-      translate_model: translateModel.trim(),
-      translate_addendum: translateAddendum.trim(),
-      adblock_rule_urls: ruleUrls.split("\n").map((u) => u.trim()).filter(Boolean),
-      capture_hotkey: captureHotkey,
-      capture_target: captureTarget,
-      capture_pinned_path: capturePinnedPath.trim(),
-      capture_pinned_heading: capturePinnedHeading.trim(),
-      inbox_vault: inboxVault,
-      tray_resident: trayResident,
-    });
-    } catch (e) {
-      // The expected refusals are a capture shortcut that does not parse or that another app
-      // holds, and a capture pin the open vault would not take: everything else in the update
-      // has landed on the Rust side, so what landed is read back and applied here as a success
-      // would (the language switch, the updater's checkbox, the prefs mirror) — and the dialog
-      // stays for another try. A write that failed outright reads back unchanged, and the
-      // toast carries its reason
-      toast.push(String(e), "error");
-      const s = await prefs.refresh();
-      if (s) {
-        setLanguage(s.language);
-        updater.autoCheck = s.updater_auto_check;
-        // The error is the shortcut's only when the shortcut sent did not become the stored one
-        // (a refused pin leaves it as it was, and the toast alone carries that refusal)
-        captureHotkeyError = s.capture_hotkey_error ?? (s.capture_hotkey !== captureHotkey.trim() ? String(e) : null);
-      } else {
-        captureHotkeyError = String(e);
-      }
-      return;
-    }
-    // The language takes effect at once (each window's frontend has its own $state; the Rust side already rebuilt the menu inside settings_set)
-    setLanguage(language);
-    updater.autoCheck = updaterAutoCheck; // the update dialog's checkbox mirrors the same setting
-    void prefs.refresh(); // the in-process mirror of the editor's click gestures: after a successful write it is read back from the single source of truth rather than copied field by field
-    saved = true;
-    dirty = false;
-    setTimeout(() => (open = false), 400);
-  }
-
-  /** Immediate semantics (as with the privacy rules): the rule sources are downloaded and recompiled without going through the save button. */
-  async function updateRules() {
-    updatingRules = true;
-    try {
-      // Unsaved changes to the rule sources reach disk first, so the update actually uses them
-      await api.settingsSet({ adblock_rule_urls: ruleUrls.split("\n").map((u) => u.trim()).filter(Boolean) });
-      const failures = await api.adblockUpdateRules();
-      // A partial download is a success (the sources are independent lists), but the
-      // sources that did not come through have to be named — silence would read as
-      // "everything is up to date"
-      toast.push(
-        failures.length ? t("settings.rulesPartial", { errors: failures.join("; ") }) : t("settings.rulesUpdated"),
-        failures.length ? "error" : undefined,
-      );
-    } catch (e) {
-      toast.push(String(e), "error");
-    } finally {
-      updatingRules = false;
-    }
-  }
-
-  /** The escape hatch for a network that cannot reach the subscription hosts: pick rule files downloaded by hand. */
-  async function importRules() {
-    let picked: string | string[] | null;
-    try {
-      picked = await openDialog({
-        multiple: true,
-        title: t("settings.importRulesTitle"),
-        filters: [{ name: t("settings.ruleFileFilter"), extensions: ["txt"] }],
-      });
-    } catch (e) {
-      toast.push(String(e), "error");
-      return;
-    }
-    const paths = picked == null ? [] : Array.isArray(picked) ? picked : [picked];
-    if (!paths.length) return;
-    updatingRules = true;
-    try {
-      const n = await api.adblockImportRules(paths);
-      toast.push(t("settings.rulesImported", { n: String(n) }));
-    } catch (e) {
-      toast.push(String(e), "error");
-    } finally {
-      updatingRules = false;
+      close();
+    } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      searchEl?.focus();
+      searchEl?.select();
     }
   }
 </script>
 
 <!-- Window level: after a click on the overlay the focus lands on body, and a keydown inside the dialog would no longer receive Escape -->
-<svelte:window onkeydown={(e) => open && e.key === "Escape" && (open = false)} />
+<svelte:window onkeydown={onWindowKey} />
 
-{#if open}
+{#if settingsUi.open}
   <div
     class="overlay"
     onmousedown={(e) => (pressedOverlay = e.target === e.currentTarget)}
-    onclick={overlayClick}
+    onclick={() => pressedOverlay && close()}
     role="presentation"
   >
-    <!-- A click inside the dialog needs no stopPropagation: pressedOverlay already ensures
-      only a click whose press landed on the overlay counts as "clicking outside" -->
-    <div class="dialog" class:nudge role="dialog" aria-label={t("settings.title")} tabindex="-1">
+    <div class="dialog" role="dialog" aria-label={t("settings.title")} tabindex="-1">
       <header>
         <h2>{t("settings.title")}</h2>
+        <button class="close" aria-label={t("common.close")} title={t("common.close")} onclick={close}>✕</button>
       </header>
       <div class="body">
         <nav class="side" aria-label={t("settings.categories")}>
-          {#each TABS as tb (tb.id)}
+          <label class="find" class:typed={!!query}>
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"
+              ><path d="M8.75 4a4.75 4.75 0 1 0 0 9.5a4.75 4.75 0 1 0 0-9.5M12.1 12.1l4.4 4.4" /></svg
+            >
+            <input bind:this={searchEl} bind:value={query} placeholder={t("settings.search")} aria-label={t("settings.search")} spellcheck="false" />
+          </label>
+          {#each PAGES as p (p.id)}
             <button
               class="side-item"
-              class:active={tab === tb.id}
-              disabled={tb.needsVault && !vault.root}
-              title={tb.needsVault && !vault.root ? t("settings.needsVault") : undefined}
-              aria-current={tab === tb.id ? "true" : undefined}
-              onclick={() => (tab = tb.id)}
-            >{t(`settings.tab.${tb.id}`)}</button>
+              class:active={!query && settingsUi.page === p.id}
+              disabled={!available(p)}
+              title={available(p) ? undefined : t("settings.needsVault")}
+              aria-current={!query && settingsUi.page === p.id ? "true" : undefined}
+              onclick={() => go(p.id)}
+            >{pageLabel(p.id)}</button>
           {/each}
         </nav>
-        <div class="panel">
-          {#if tab === "general"}
-            <label>
-              <span>{t("settings.language.label")}</span>
-              <select bind:value={language} onchange={() => touch("language")}>
-                <option value="auto">{t("settings.language.auto")}</option>
-                {#each LANGS as tag (tag)}
-                  <option value={tag}>{langName(tag)}</option>
-                {/each}
-              </select>
-              <small>{t("settings.language.hint")}</small>
-            </label>
-            <!-- The resident state is an application behaviour (what closing the window means), so it sits here and not under quick capture; the wording names the menu bar on macOS and the system tray elsewhere, and the icon's failure (a desktop without a tray) is shown in place, as the shortcut's is -->
-            <div class="field">
-              <label class="inline-toggle">
-                <input type="checkbox" bind:checked={trayResident} onchange={() => touch("trayResident")} />
-                <span>{t(isMac ? "settings.resident" : "settings.residentTray")}</span>
-              </label>
-              {#if trayResident && trayError}
-                <small class="err-text">{t("settings.residentFailed", { error: trayError })}</small>
-              {:else}
-                <small>{isMac ? t("settings.residentHint", { quit: k("Mod+Q") }) : t("settings.residentHintTray")}</small>
-              {/if}
-            </div>
-            <div class="field">
-              <span class="field-title">{t("settings.provider")}</span>
-              <!-- a two-state toggle: hosted (the account's models) or the user's own endpoint and key -->
-              <div class="segmented" role="radiogroup" aria-label={t("settings.provider")}>
-                <button
-                  role="radio"
-                  aria-checked={provider === "hosted"}
-                  class:active={provider === "hosted"}
-                  onclick={() => { provider = "hosted"; touch("provider"); }}
-                >{t("settings.providerHosted")}</button>
-                <button
-                  role="radio"
-                  aria-checked={provider === "custom"}
-                  class:active={provider === "custom"}
-                  onclick={() => { provider = "custom"; touch("provider"); }}
-                >{t("settings.providerCustom")}</button>
-              </div>
-              <small>{t("settings.providerHint")}</small>
-            </div>
-            {#if provider === "hosted"}
-              {@const catalogDefault = account.models.find((m) => m.default)?.id}
-              <label>
-                <span>{t("settings.hostedModel")}</span>
-                <select bind:value={hostedModel} onchange={() => touch("hostedModel")} disabled={!account.loggedIn}>
-                  <option value="">{catalogDefault ? t("settings.hostedModelDefault", { model: catalogDefault }) : t("settings.hostedModelDefaultSignedOut")}</option>
-                  {#each account.models as m (m.id)}
-                    <option value={m.id}>{m.id}</option>
-                  {/each}
-                </select>
-                {#if account.loggedIn}
-                  <small>{t("settings.hostedModelHint")}</small>
-                {:else}
-                  <small class="err-text">{t("settings.hostedSignedOut")} <button class="link" onclick={() => (tab = "account")}>{t("settings.tab.account")} →</button></small>
-                {/if}
-              </label>
+        <div class="panel" class:searching={!!query.trim()} bind:this={panelEl}>
+          {#if !form.s}
+            <!-- the first read is a local file: this shows for a frame at most -->
+          {:else if query.trim()}
+            {#if hits.length}
+              <p class="count">{tn("settings.searchCount", hits.length)}</p>
+              {#each hitPages as p (p.id)}
+                {@const Page = PAGE_COMPONENTS[p.id]}
+                <div class="result-page">
+                  <button class="where" onclick={() => go(p.id)}>{pageLabel(p.id)} ›</button>
+                  <Page />
+                </div>
+              {/each}
             {:else}
-            <label>
-              <span>{t("settings.endpoint")}</span>
-              <input
-                bind:this={firstInput}
-                bind:value={baseUrl}
-                oninput={() => touch("baseUrl")}
-                placeholder="https://open.bigmodel.cn/api/paas/v4"
-                spellcheck="false"
-                list="base-url-presets"
-              />
-              <datalist id="base-url-presets">
-                <option value="https://open.bigmodel.cn/api/paas/v4">{t("settings.endpointZhipu")}</option>
-                <option value="https://api.deepseek.com">{t("settings.endpointDeepseek")}</option>
-                <option value="http://localhost:11434/v1">{t("settings.endpointOllama")}</option>
-              </datalist>
-              <small>{t("settings.endpointHint")}</small>
-            </label>
-            <label>
-              <span>{t("settings.model")}</span>
-              <input
-                bind:value={model}
-                oninput={() => touch("model")}
-                placeholder="glm-4.7-flash"
-                spellcheck="false"
-                list="model-presets"
-              />
-              <datalist id="model-presets">
-                <option value="glm-4.7-flash">{t("settings.modelZhipuFlash")}</option>
-                <option value="glm-4.7">{t("settings.modelZhipu")}</option>
-                <option value="deepseek-flash">{t("settings.modelDeepseekFlash")}</option>
-                <option value="deepseek-v4-pro">{t("settings.modelDeepseekPro")}</option>
-              </datalist>
-              <small>{t("settings.modelHint")}</small>
-            </label>
-            <label>
-              <span>{t("settings.apiKey")}</span>
-              <input
-                bind:value={apiKey}
-                oninput={() => touch("apiKey")}
-                type="password"
-                placeholder={t("settings.apiKeyPlaceholder")}
-                spellcheck="false"
-              />
-              {#if envKeyPresent}
-                <small class="ok">{t("settings.apiKeyEnv")}</small>
-              {:else}
-                <small>{t("settings.apiKeyNote")}</small>
-              {/if}
-            </label>
+              <p class="count">{t("settings.searchEmpty", { q: query.trim() })}</p>
             {/if}
-            <!-- the vault's standing write grant belongs to neither provider: shown whichever one is selected -->
-            {#if vault.root && writePolicy === "allow"}
-              <div class="grant-row">
-                <button class="grant-badge" title={t("settings.revokeWritePolicyHint")} onclick={revokeWritePolicy}>
-                  {t("settings.revokeWritePolicy")}
-                </button>
-                <small>{t("settings.revokeWritePolicyNote")}</small>
-              </div>
-            {/if}
-            <label>
-              <span>{t("settings.fontSize")}</span>
-              <select bind:value={noteFontSize} onchange={() => touch("noteFontSize")}>
-                <option value={15}>{t("settings.fontSizeCompact")}</option>
-                <option value={16}>{t("settings.fontSizeDefault")}</option>
-                <option value={17}>17 px</option>
-                <option value={18}>{t("settings.fontSizeRoomy")}</option>
-              </select>
-              <small>{t("settings.fontSizeHint")}</small>
-            </label>
-            <div class="field">
-              <label class="inline-toggle">
-                <input type="checkbox" bind:checked={readableLineWidth} onchange={() => touch("readableLineWidth")} />
-                <span>{t("settings.readableLineWidth")}</span>
-              </label>
-              <small>
-                {t("settings.readableLineWidthHint")}
-              </small>
-            </div>
-          {:else if tab === "ai"}
-            <div class="field">
-              <label class="inline-toggle">
-                <input type="checkbox" bind:checked={webSearchEnabled} onchange={() => touch("webSearchEnabled")} />
-                <span>{t("settings.webSearch")}</span>
-              </label>
-              <small>
-                {t("settings.webSearchHint")}
-              </small>
-            </div>
-            <div class="field">
-              <label class="inline-toggle">
-                <input type="checkbox" bind:checked={planConfirm} onchange={() => touch("planConfirm")} />
-                <span>{t("settings.planConfirm")}</span>
-              </label>
-              <small>
-                {t("settings.planConfirmHint")}
-              </small>
-            </div>
-            <div class="field">
-              <label class="inline-toggle">
-                <input type="checkbox" bind:checked={provenanceMarks} onchange={() => touch("provenanceMarks")} />
-                <span>{t("settings.provenanceMarks")}</span>
-              </label>
-              <small>
-                {t("settings.provenanceMarksHint")}
-              </small>
-            </div>
-            <div class="field">
-              <label for="reasoning-effort">{t("settings.reasoningEffort")}</label>
-              <select id="reasoning-effort" bind:value={reasoningEffort} onchange={() => touch("reasoningEffort")}>
-                {#each EFFORT_OPTIONS as o (o.value)}
-                  {@const hint = t(`settings.effort.${o.value}Hint`)}
-                  <option value={o.value}
-                    >{t(`settings.effort.${o.value}`)}{hint
-                      ? `(${hint})`
-                      : o.isDefault
-                        ? t("settings.reasoningDefaultSuffix")
-                        : ""}</option
-                  >
-                {/each}
-              </select>
-              <small>
-                {t("settings.reasoningHint")}{#if !reasoningActive}{t("settings.reasoningInactive")}{/if}
-              </small>
-            </div>
-            <section class="privacy">
-              <h3>{t("settings.translate.section")}</h3>
-              <p class="note">{t("settings.translate.disclosure")}</p>
-              <label>
-                <span>{t("settings.translate.target")}</span>
-                <select bind:value={translateTarget} onchange={() => touch("translateTarget")}>
-                  <option value="">{t("settings.translate.targetAuto")}</option>
-                  {#each TARGET_TAGS as tag (tag)}
-                    <option value={tag}>{targetLabel(tag)}</option>
-                  {/each}
-                  <option value="custom">{t("settings.translate.targetCustom")}</option>
-                </select>
-                {#if translateTarget === "custom"}
-                  <input bind:value={translateTargetCustom} oninput={() => touch("translateTarget")} placeholder={t("settings.translate.targetCustomPlaceholder")} spellcheck="false" />
-                {/if}
-              </label>
-              <label>
-                <span>{t("settings.translate.model")}</span>
-                <input bind:value={translateModel} oninput={() => touch("translateModel")} placeholder={model || "glm-4.7-flash"} spellcheck="false" list="model-presets" />
-                <small>{t("settings.translate.modelHint")}</small>
-              </label>
-              <label>
-                <span>{t("settings.translate.addendum")}</span>
-                <input bind:value={translateAddendum} oninput={() => touch("translateAddendum")} spellcheck="false" />
-                <small>{t("settings.translate.addendumHint")}</small>
-              </label>
-            </section>
-          {:else if tab === "account"}
-            <AccountPanel />
-          {:else if tab === "updates"}
-            <section class="privacy">
-              <h3>{t("settings.appUpdates")}</h3>
-              <div class="update-row">
-                <small>{t("settings.currentVersion", { version: updater.current || "…" })}</small>
-                {#if updater.phase === "downloading"}
-                  <button class="btn small" disabled>
-                    {t("settings.downloading")}{updater.total ? ` ${Math.round((updater.progress / updater.total) * 100)}%` : ""}
-                  </button>
-                {:else if updater.phase === "available"}
-                  <!-- The dialog carries the install (its progress and the restart): this only brings it back -->
-                  <button class="btn small" onclick={() => updater.show()}>{t("settings.downloadInstall", { version: updater.version })}</button>
-                {:else if updater.phase === "ready"}
-                  <button class="btn small" onclick={() => updater.restart()}>{t("settings.restartToFinish")}</button>
-                {:else}
-                  <button class="btn small" disabled={updater.phase === "checking"} onclick={() => updater.check(true)}>
-                    {updater.phase === "checking" ? t("settings.checking") : t("cmd.check-updates.title")}
-                  </button>
-                {/if}
-              </div>
-              {#if updater.phase === "uptodate"}
-                <small class="ok">{t("settings.upToDate")}</small>
-              {:else if updater.phase === "available"}
-                <small class="ok">{t("settings.updateAvailable", { version: updater.version })}{updater.notes ? ` — ${updater.notes}` : ""}</small>
-              {:else if updater.phase === "ready"}
-                <small class="ok">{t("settings.installedRestart")}</small>
-              {:else if updater.phase === "error"}
-                <small class="err">{updater.error}</small>
-              {/if}
-              <label class="inline-toggle">
-                <input type="checkbox" bind:checked={updaterAutoCheck} onchange={() => touch("updaterAutoCheck")} />
-                <span>{t("settings.autoCheck")}</span>
-              </label>
-              <small>
-                {t("settings.autoCheckHint")}
-              </small>
-            </section>
-          {:else if tab === "browser"}
-            <section class="privacy">
-              <h3>{t("settings.tab.browser")}</h3>
-              <label class="inline-toggle">
-                <input type="checkbox" bind:checked={adblockEnabled} onchange={() => touch("adblockEnabled")} />
-                <span>{t("settings.adblock")}</span>
-              </label>
-              {#if browser.adblock?.state === "ready"}
-                <small class="ok">{t("settings.adblockActive", { n: browser.adblock.rules.toLocaleString(i18n.locale) })}</small>
-              {:else if browser.adblock?.state === "downloading"}
-                <small>{t("settings.adblockDownloading")}</small>
-              {:else if browser.adblock?.state === "compiling"}
-                <small>{t("settings.adblockCompiling")}</small>
-              {:else if browser.adblock?.state === "no_rules"}
-                <small>{t("settings.adblockNoRules")}</small>
-              {:else if browser.adblock?.state === "failed"}
-                <small class="err">{browser.adblock.error}</small>
-              {/if}
-              <label>
-                <span>{t("settings.openLinksIn")}</span>
-                <select bind:value={openLinksIn} onchange={() => touch("openLinksIn")}>
-                  <option value="reading">{t("settings.openLinksReading")}</option>
-                  <option value="internal">{t("settings.openLinksInternal")}</option>
-                  <option value="system">{t("settings.openLinksSystem")}</option>
-                </select>
-                <small>{t("settings.openLinksHint", { key: k("Mod+click") })}</small>
-              </label>
-              <div class="field">
-                <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={clickOpensLinks} onchange={() => touch("clickOpensLinks")} />
-                  <span>{t("settings.clickOpensLinks")}</span>
-                </label>
-                <small>
-                  {t("settings.clickOpensLinksHint", { modClick: k("Mod+click"), modEnter: k("Mod+Enter") })}
-                </small>
-              </div>
-              <div class="field">
-                <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={readingImagesEnabled} onchange={() => touch("readingImagesEnabled")} />
-                  <span>{t("settings.readingImages")}</span>
-                </label>
-                <small>
-                  {t("settings.readingImagesHint")}
-                </small>
-              </div>
-              <div class="field">
-                <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={clipLocalizeImages} onchange={() => touch("clipLocalizeImages")} />
-                  <span>{t("settings.clipLocalizeImages")}</span>
-                </label>
-                <small>
-                  {t("settings.clipLocalizeImagesHint")}
-                </small>
-              </div>
-              <h4>{t("settings.formatSection")}</h4>
-              <div class="field">
-                <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={formatAgentWrites} onchange={() => touch("formatAgentWrites")} />
-                  <span>{t("settings.formatAgentWrites")}</span>
-                </label>
-                <small>{t("settings.formatAgentWritesHint")}</small>
-              </div>
-              <div class="field">
-                <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={formatClips} onchange={() => touch("formatClips")} />
-                  <span>{t("settings.formatClips")}</span>
-                </label>
-                <small>{t("settings.formatClipsHint")}</small>
-              </div>
-              <div class="field">
-                <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={formatCjkSpacing} onchange={() => touch("formatCjkSpacing")} />
-                  <span>{t("settings.formatCjkSpacing")}</span>
-                </label>
-                <label class="inline-toggle">
-                  <input type="checkbox" bind:checked={formatPunctuation} onchange={() => touch("formatPunctuation")} />
-                  <span>{t("settings.formatPunctuation")}</span>
-                </label>
-                <small>{t("settings.formatOptInHint")}</small>
-              </div>
-              <label>
-                <span>{t("settings.ruleUrls")}</span>
-                <textarea rows="2" bind:value={ruleUrls} oninput={() => touch("ruleUrls")} spellcheck="false"></textarea>
-                <small>
-                  {t("settings.ruleUrlsHint")}
-                  <button class="btn small" disabled={updatingRules} onclick={updateRules}>
-                    {updatingRules ? t("settings.updatingRules") : t("settings.updateRules")}
-                  </button>
-                  <button class="btn small" disabled={updatingRules} onclick={importRules}>
-                    {t("settings.importRules")}
-                  </button>
-                </small>
-              </label>
-            </section>
-          {:else if tab === "capture"}
-            <section class="privacy">
-              <h3>{t("settings.tab.capture")}</h3>
-              <div class="field">
-                <span class="field-title">{t("settings.capture.hotkey")}</span>
-                <div class="hotkey-row">
-                  <!-- A button, not an input: the keys pressed are the value, and nothing may be typed into it.
-                       Focused by hand on click (a mouse click does not focus a button on macOS WebKit), so that
-                       clicking anywhere else — Cancel, another tab, a radio — blurs it and disarms the recorder.
-                       Already armed: a no-op, so Space's keyup activation cannot wipe the "needs a modifier" error. -->
-                  <button
-                    class="hotkey-field"
-                    class:recording
-                    class:bad={!!captureHotkeyError}
-                    aria-label={t("settings.capture.hotkey")}
-                    onclick={(e) => {
-                      if (recording) return;
-                      e.currentTarget.focus();
-                      recording = true;
-                      recordingError = null;
-                    }}
-                    onblur={() => (recording = false)}
-                  >
-                    {recording ? t("settings.capture.hotkeyRecording") : hotkeyLabel(captureHotkey)}
-                  </button>
-                  {#if captureHotkey !== CAPTURE_HOTKEY_DEFAULT}
-                    <button class="link" onclick={() => { captureHotkey = CAPTURE_HOTKEY_DEFAULT; captureHotkeyError = null; touch("captureHotkey"); }}>
-                      {t("settings.capture.hotkeyReset")}
-                    </button>
-                  {/if}
-                </div>
-                {#if recordingError}
-                  <small class="err-text">{recordingError}</small>
-                {:else if captureHotkeyError}
-                  <small class="err-text">{t("settings.capture.hotkeyFailed", { error: captureHotkeyError })}</small>
-                {:else}
-                  <small>{t("settings.capture.hotkeyHint")}</small>
-                {/if}
-              </div>
-              <div class="field">
-                <span class="field-title">{t("settings.capture.target")}</span>
-                <label class="inline-toggle">
-                  <input type="radio" name="capture-target" value="inbox" bind:group={captureTarget} onchange={() => touch("captureTarget")} />
-                  <span>{t("settings.capture.targetInbox")}</span>
-                </label>
-                <label class="inline-toggle">
-                  <input type="radio" name="capture-target" value="journal" bind:group={captureTarget} onchange={() => touch("captureTarget")} />
-                  <span>{t("settings.capture.targetJournal")}</span>
-                </label>
-                <label class="inline-toggle">
-                  <input type="radio" name="capture-target" value="pinned" bind:group={captureTarget} onchange={() => touch("captureTarget")} />
-                  <span>{t("settings.capture.targetPinned")}</span>
-                </label>
-                <small>{t("settings.capture.targetHint", { key: k("Mod+Enter") })}</small>
-              </div>
-              {#if captureTarget === "pinned" && !vault.root}
-                <small class="empty">{t("settings.capture.pinnedNeedsVault")}</small>
-              {:else if captureTarget === "pinned"}
-                <label>
-                  <span>{t("settings.capture.pinnedNote")}</span>
-                  <input
-                    bind:value={capturePinnedPath}
-                    oninput={() => touch("capturePinnedPath")}
-                    placeholder="notes/ideas.md"
-                    spellcheck="false"
-                    list="capture-pinned-notes"
-                  />
-                  <datalist id="capture-pinned-notes">
-                    {#each vault.notes as n (n.id)}
-                      <option value={n.id}>{n.title}</option>
-                    {/each}
-                  </datalist>
-                  <small>{t("settings.capture.pinnedNoteHint")}</small>
-                </label>
-                <label>
-                  <span>{t("settings.capture.pinnedHeading")}</span>
-                  <input bind:value={capturePinnedHeading} oninput={() => touch("capturePinnedHeading")} spellcheck="false" />
-                  <small>{t("settings.capture.pinnedHeadingHint")}</small>
-                </label>
-              {/if}
-              <h4>{t("settings.capture.phone")}</h4>
-              <small>{t("settings.capture.phoneHint")}</small>
-              {#if !account.loggedIn}
-                <small class="empty">{t("settings.capture.phoneSignIn")} <button class="link" onclick={() => (tab = "account")}>{t("settings.capture.phoneSignInGo")} →</button></small>
-              {:else}
-                {#if inboxLastLanded}
-                  <small>{lastLandedLine(inboxLastLanded)}</small>
-                {/if}
-                <!-- The pairing card's four states: folded (a button and a hint), a code on show with its countdown,
-                     just paired (a tick for three seconds), failed (the error and a retry) -->
-                <div class="field">
-                  {#if phoneJustPaired}
-                    <div class="pair-ok">
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3 3 7-7" /></svg>
-                      <span>{t("settings.capture.phonePairedAs", { name: doorName(phoneJustPaired) })}</span>
-                    </div>
-                  {:else if phonePair}
-                    <div class="pair-card">
-                      <!-- The QR code is our own SVG (inbox.rs renders it in currentColor); nothing user-written is in it -->
-                      <div class="qr" title={phonePair.url}>{@html phonePair.svg}</div>
-                      <div class="pair-steps">
-                        <b>{t("settings.capture.phoneScanTitle")}</b>
-                        <ol>
-                          <li>{t("settings.capture.phoneStep1")}</li>
-                          <li>{t("settings.capture.phoneStep2")}</li>
-                          <li>{t("settings.capture.phoneStep3")}</li>
-                        </ol>
-                        <small>{t("settings.capture.phoneCodeLeft", { time: phoneCodeLeft })}</small>
-                        <div class="hotkey-row">
-                          <button class="btn small" onclick={copyPairLink}>{phoneCopied ? t("settings.capture.phoneCopied") : t("settings.capture.phoneCopyLink")}</button>
-                          <button class="btn small" disabled={phonePairing} onclick={showPairCode}>{t("settings.capture.phoneNewCode")}</button>
-                        </div>
-                      </div>
-                    </div>
-                  {:else}
-                    <div class="hotkey-row">
-                      <button class="btn small" disabled={phonePairing} onclick={showPairCode}>{t("settings.capture.phoneShowCode")}</button>
-                      <small>{t("settings.capture.phoneCodeHint")}</small>
-                    </div>
-                  {/if}
-                  {#if phoneError}
-                    <small class="err-text">{phoneError} <button class="link" onclick={retryPhone}>{t("settings.capture.phoneRetry")}</button></small>
-                  {/if}
-                </div>
-                <label>
-                  <span>{t("settings.capture.phoneVault")}</span>
-                  <select bind:value={inboxVault} onchange={() => touch("inboxVault")}>
-                    <option value="">{t("settings.capture.phoneVaultOpen")}</option>
-                    {#each inboxVaultChoices as root (root)}
-                      <option value={root} title={root}>{vaultName(root)}</option>
-                    {/each}
-                  </select>
-                  <small>{t("settings.capture.phoneVaultHint")}</small>
-                </label>
-                <div class="field">
-                  <span class="field-title">{t("settings.capture.phoneDoors")}</span>
-                  {#if phoneDoors.length}
-                    <ul class="doors">
-                      {#each phoneDoors as d (d.id)}
-                        <li>
-                          <span class="door-name">{doorName(d)}{#if d.name}<span class="door-kind">{kindLabel(d)}</span>{/if}</span>
-                          <button class="link door-del" onclick={() => revokeDoor(d.id)}>{t("settings.capture.phoneRevoke")}</button>
-                          <small class="door-when">{doorWhen(d)}</small>
-                        </li>
-                      {/each}
-                    </ul>
-                  {:else}
-                    <small class="empty">{t("settings.capture.phoneNoDoors")}</small>
-                  {/if}
-                </div>
-              {/if}
-            </section>
-          {:else if tab === "vault"}
-            <section class="privacy">
-              <h3>{t("settings.privacyZones")}</h3>
-              <small>{t("settings.privacyZonesHint")}</small>
-              <h4>{t("settings.privacyRules")}</h4>
-              <small>
-                {t("settings.privacyRulesHint")} <code>secret/</code>{t("app.listSep")}<code>diary/**</code>{t("app.listSep")}<code>!diary/Public.md</code>
-              </small>
-              {#if rules.length}
-                <ul class="rules">
-                  <!-- A hand-written .vemry/privacy may hold duplicate lines or duplicate comments, so the text cannot be the key -->
-                  {#each rules as rule, i (i)}
-                    <li class:comment={rule.trim().startsWith("#")}>
-                      <span class="rule-text">{rule}</span>
-                      <button class="rule-del" title={t("settings.deleteRule")} onclick={() => removeRule(rule)}>✕</button>
-                    </li>
-                  {/each}
-                </ul>
-              {:else}
-                <small class="empty">{t("settings.noRules")}</small>
-              {/if}
-              <div class="rule-add">
-                <input
-                  bind:value={newRule}
-                  placeholder={t("settings.rulePlaceholder")}
-                  spellcheck="false"
-                  onkeydown={(e) => e.key === "Enter" && !isImeKeydown(e) && addRule()}
-                />
-                <button class="btn" onclick={addRule}>{t("settings.addRule")}</button>
-              </div>
-              {#if ruleError}<small class="err">{ruleError}</small>{/if}
-              <h4>{t("settings.privacyMarkedNotes")}</h4>
-              {#if markedNotes.length}
-                <ul class="rules marked">
-                  {#each markedNotes as n (n.id)}
-                    <li>
-                      <span class="lock"><PrivacyIcon size={12} /></span>
-                      <button class="rule-text note-open" title={t("settings.openNote")} onclick={() => void openMarked(n.id)}>{n.id}</button>
-                      <button class="rule-del" title={t("cmd.unmark-private.desc")} onclick={() => void vault.unmarkPrivate(n.id, "note")}>{t("settings.unmarkNote")}</button>
-                    </li>
-                  {/each}
-                </ul>
-              {:else}
-                <small class="empty">{t("settings.noMarkedNotes")}</small>
-              {/if}
-            </section>
-            <section class="scripts">
-              <h3>{t("settings.skills")}</h3>
-              <small>{t("settings.skillsHint")}</small>
-              <ul class="script-list">
-                {#each skills as s (s.name)}
-                  <li>
-                    <div class="script-row">
-                      <label class="script-toggle">
-                        <input type="checkbox" checked={!s.disabled} onchange={() => toggleSkill(s.name, s.disabled)} />
-                        <span class="script-name">{s.name}</span>
-                      </label>
-                      <span class="source-badge" class:custom={s.source !== "builtin"}>{skillSourceLabel(s)}</span>
-                      {#if s.outdated}
-                        <span class="source-badge outdated" title={t("settings.skillOutdatedHint")}>{t("settings.skillOutdated")}</span>
-                      {/if}
-                      {#if s.source === "builtin"}
-                        <button class="btn small" onclick={() => void customizeSkill(s.name)}>{t("settings.skillCustomize")}</button>
-                      {:else}
-                        <button class="btn small" onclick={() => void openSkill(s.file)}>{t("settings.edit")}</button>
-                        {#if s.source === "override"}
-                          <button class="btn small" onclick={() => void restoreSkill(s.name)}>{t("settings.skillRestore")}</button>
-                        {/if}
-                      {/if}
-                    </div>
-                    {#if skillDesc(s)}
-                      <small class="script-summary">{skillDesc(s)}</small>
-                    {/if}
-                  </li>
-                {/each}
-              </ul>
-              <div class="rule-add">
-                <input
-                  bind:value={newSkill}
-                  placeholder={t("settings.skillNewPlaceholder")}
-                  spellcheck="false"
-                  onkeydown={(e) => e.key === "Enter" && !isImeKeydown(e) && void createSkill()}
-                />
-                <button class="btn" onclick={() => void createSkill()}>{t("settings.skillNew")}</button>
-              </div>
-              {#if typeExamples.some((e) => !e.installed)}
-                <h4 class="examples-title">{t("settings.typeExamples")}</h4>
-                <small>{t("settings.typeExamplesHint")}</small>
-                <ul class="script-list">
-                  {#each typeExamples.filter((e) => !e.installed) as e (e.name)}
-                    <li>
-                      <div class="script-row">
-                        <span class="script-name">{e.name}</span>
-                        <button class="btn small" onclick={() => void installTypeExample(e.name)}>{t("settings.installSkill")}</button>
-                      </div>
-                      <small class="script-summary">{e.description}</small>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            </section>
-            <section class="scripts">
-              <h3>
-                {t("settings.userScripts")}
-                <button class="btn small" onclick={reloadScripts}>{t("settings.reloadScripts")}</button>
-              </h3>
-              <small>
-                {t("settings.userScriptsHint1")}<code>.vemry/scripts/*.js</code
-                >{t("settings.userScriptsHint2")}<code>vemry.*</code>{t("settings.userScriptsHint3")}
-              </small>
-              {#if scripts.infos.length}
-                <ul class="script-list">
-                  {#each scripts.infos as s (s.name)}
-                    <li>
-                      <div class="script-row">
-                        <label class="script-toggle">
-                          <input type="checkbox" checked={s.enabled} onchange={() => toggleScript(s.name, !s.enabled)} />
-                          <span class="script-name">{s.name}</span>
-                        </label>
-                        {#if s.write_grant}
-                          <button class="grant-badge" title={t("settings.revokeGrant")} onclick={() => revokeGrant(s.name)}>
-                            {t("settings.writable")}
-                          </button>
-                        {/if}
-                      </div>
-                      {#if s.enabled}
-                        <small class="script-summary">{scriptSummary(s)}</small>
-                      {/if}
-                      {#if s.last_error}
-                        <small class="err">{s.last_error}</small>
-                      {/if}
-                    </li>
-                  {/each}
-                </ul>
-              {:else}
-                <small class="empty">{t("settings.noScripts")}</small>
-              {/if}
-            </section>
+          {:else}
+            {@const Page = PAGE_COMPONENTS[settingsUi.page]}
+            <h3 class="page-title">{pageLabel(settingsUi.page)}</h3>
+            {#key settingsUi.page}
+              <Page />
+            {/key}
           {/if}
         </div>
       </div>
-      <footer>
-        <button class="btn" onclick={() => (open = false)}>{t("common.cancel")}</button>
-        <button class="btn primary" onclick={save}>{saved ? t("settings.saved") : t("settings.save")}</button>
-      </footer>
     </div>
   </div>
 {/if}
@@ -1337,17 +178,15 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--scrim, rgba(0, 0, 0, 0.3));
     display: grid;
     place-items: center;
     z-index: 150;
   }
-  /* The same skeleton as PermissionDialog: a fixed-height container with overflow:hidden,
-     so scrolling happens on the .panel layer alone (the header, the navigation and the
-     footer stay put). A fixed height rather than a max-height: the dialog's size does not
-     jump when the category page changes. */
+  /* A fixed height rather than a max-height: the dialog does not jump when the page
+     changes. overflow:hidden so the panel is the one scrolling surface. */
   .dialog {
-    width: min(640px, 92vw);
+    width: min(720px, 92vw);
     height: min(600px, 80vh);
     background: var(--bg-panel);
     border: 1px solid var(--border);
@@ -1359,8 +198,27 @@
   }
   header {
     flex-shrink: 0;
-    padding: 14px 20px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px 10px 20px;
     border-bottom: 1px solid var(--border);
+  }
+  h2 {
+    font-size: var(--fs-lg);
+    font-weight: 600;
+  }
+  .close {
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    color: var(--fg-muted);
+  }
+  .close:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
   }
   .body {
     flex: 1;
@@ -1368,7 +226,7 @@
     min-height: 0;
   }
   .side {
-    flex: 0 0 128px;
+    flex: 0 0 152px;
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -1376,12 +234,41 @@
     border-right: 1px solid var(--border);
     overflow-y: auto;
   }
+  .find {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg-muted);
+  }
+  .find:focus-within {
+    border-color: var(--accent);
+  }
+  .find svg {
+    flex: none;
+  }
+  .find input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    padding: 5px 0;
+    font-size: var(--fs-sm);
+    outline: none;
+  }
   .side-item {
     text-align: left;
     font-size: var(--fs-sm);
     color: var(--fg-muted);
-    padding: 6px 10px;
+    padding: 5px 10px;
     border-radius: var(--radius);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .side-item:hover:not(:disabled) {
     background: var(--bg-hover);
@@ -1398,457 +285,62 @@
     box-shadow: inset 2px 0 0 var(--accent);
   }
   .side-item:disabled {
-    opacity: 0.45;
+    color: var(--fg-faint);
     cursor: default;
   }
   .panel {
     flex: 1;
     min-width: 0;
     overflow-y: auto;
-    padding: 16px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+    padding: 14px 22px 24px;
   }
-  /* The first section of a page sits flush (the divider only means something between sections on one page) */
-  .panel > section:first-child {
-    border-top: none;
-    padding-top: 0;
+  .page-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 8px;
   }
-  /* The container grouping a switch with its explanation: the hint belongs to its own control and does not take .panel's large gap */
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+  .count {
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    margin-bottom: 6px;
   }
-  .field-title {
+  .result-page + .result-page {
+    margin-top: 18px;
+  }
+  .where {
     font-size: var(--fs-sm);
     font-weight: 600;
+    color: var(--fg);
+    padding: 0;
+    margin-bottom: 2px;
   }
-  /* the provider toggle: two states side by side, the chosen one filled */
-  .segmented {
-    display: inline-flex;
-    border: 1px solid var(--border);
+  .where:hover {
+    color: var(--accent);
+  }
+  /* The buttons the pages share */
+  .panel :global(.btn) {
+    font-size: var(--fs-sm);
+    padding: 5px 14px;
     border-radius: 6px;
-    overflow: hidden;
-    align-self: flex-start;
-  }
-  .segmented button {
-    font-size: var(--fs-sm);
-    padding: 6px 14px;
-    color: var(--fg-muted);
-  }
-  .segmented button + button {
-    border-left: 1px solid var(--border);
-  }
-  .segmented button.active {
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-weight: 600;
-  }
-  .err-text {
-    color: var(--danger);
-  }
-  /* The pairing card: the code at the left, the three steps and the countdown at the right */
-  .pair-card {
-    display: grid;
-    grid-template-columns: 148px 1fr;
-    gap: 16px;
-    align-items: start;
-    padding: 14px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-  }
-  .qr {
-    width: 148px;
-    height: 148px;
-    color: var(--fg);
-  }
-  .qr :global(svg) {
-    width: 100%;
-    height: 100%;
-    display: block;
-  }
-  .pair-steps {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-size: var(--fs-sm);
-  }
-  .pair-steps ol {
-    margin: 0;
-    padding-left: 1.3em;
-  }
-  .pair-steps li {
-    margin: 2px 0;
-  }
-  .pair-ok {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-radius: var(--radius);
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-size: var(--fs-sm);
-    font-weight: 600;
-  }
-  /* The paired phones: the phone's own name with its kind faint after it, when it paired and last
-     sent below, and unpair always in view — it is the action the list exists for */
-  .doors {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .doors li {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 0 12px;
-    align-items: center;
-    padding: 6px;
-    border-bottom: 1px solid var(--border);
-  }
-  .doors li:last-child {
-    border-bottom: 0;
-  }
-  /* Every cell is named: an item locked to a row alone is placed before the free ones and would take the first column */
-  .door-name {
-    grid-column: 1;
-    grid-row: 1;
-    font-size: var(--fs-sm);
-  }
-  .door-kind {
-    color: var(--fg-muted);
-    font-size: var(--fs-xs);
-    margin-left: 6px;
-  }
-  .door-when {
-    grid-column: 1;
-    grid-row: 2;
-    color: var(--fg-muted);
-    font-size: var(--fs-xs);
-  }
-  .door-del {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    justify-self: end;
-    color: var(--fg-muted);
-  }
-  .door-del:hover {
-    color: var(--danger);
-  }
-  /* The shortcut recorder: a field that reads like an input and takes a key combination instead of text */
-  .hotkey-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .hotkey-field {
-    min-width: 180px;
-    padding: 7px 10px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    background: var(--bg);
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    text-align: left;
-  }
-  .hotkey-field.recording {
-    border-color: var(--accent);
-    color: var(--fg-muted);
-    font-family: inherit;
-  }
-  .hotkey-field.bad {
-    border-color: var(--danger);
-  }
-  .link {
-    color: var(--accent);
-    font-size: var(--fs-xs);
-    padding: 0;
-  }
-  /* Clicking the overlay with unsaved changes: a nudge, saying the dialog is deliberately staying */
-  .dialog.nudge {
-    animation: nudge 0.28s ease-in-out;
-  }
-  @keyframes nudge {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(-5px); }
-    75% { transform: translateX(5px); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dialog.nudge {
-      animation: none;
-    }
-  }
-  h2 {
-    font-size: var(--fs-lg);
-    font-weight: 600;
-  }
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  label span {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-  }
-  input {
-    padding: 7px 10px;
-    font-size: var(--fs-sm);
-  }
-  small {
-    font-size: var(--fs-xs);
-    color: var(--fg-muted);
-  }
-  small.ok {
-    color: var(--accent);
-  }
-  .inline-toggle {
-    flex-direction: row !important;
-    align-items: center;
-    gap: 8px !important;
-    cursor: pointer;
-  }
-  .inline-toggle input {
-    padding: 0;
-  }
-  .inline-toggle span {
-    font-weight: 500;
-  }
-  select,
-  textarea {
-    padding: 7px 10px;
-    font-size: var(--fs-sm);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--fg);
-  }
-  textarea {
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    resize: vertical;
-  }
-  .privacy {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    border-top: 1px solid var(--border);
-    padding-top: 14px;
-  }
-  .privacy h3 {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-  }
-  .privacy h4 {
-    margin-top: 8px;
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    color: var(--fg-muted);
-  }
-  .privacy code {
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-  }
-  /* No inner scrolling of its own any more: .panel is the one scrolling surface, and a nested scrollbar only makes the wheel's target uncertain */
-  .rules {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .rules li {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 6px;
-    border-radius: 4px;
-  }
-  .rules li:hover {
-    background: var(--bg-hover);
-  }
-  .rules li.comment .rule-text {
-    color: var(--fg-muted);
-  }
-  .rule-text {
-    flex: 1;
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .rule-del {
-    color: var(--fg-muted);
-    font-size: var(--fs-xs);
-    padding: 2px 5px;
-    border-radius: 4px;
-    visibility: hidden;
-  }
-  .rules li:hover .rule-del {
-    visibility: visible;
-  }
-  .rule-del:hover {
-    color: var(--danger);
-    background: var(--bg-hover);
-  }
-  .rules .lock {
-    display: inline-flex;
-    flex-shrink: 0;
-    color: var(--accent);
-  }
-  .note-open {
-    text-align: left;
-  }
-  .note-open:hover {
-    color: var(--accent);
-  }
-  /* Unlike a rule's ✕, the unmark is always visible: it is the action this list exists for */
-  .rules.marked .rule-del {
-    visibility: visible;
-  }
-  .update-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .rule-add {
-    display: flex;
-    gap: 6px;
-  }
-  .rule-add input {
-    flex: 1;
-    font-family: var(--font-mono);
-  }
-  .privacy .empty {
-    color: var(--fg-muted);
-  }
-  .privacy .err {
-    color: var(--danger);
-  }
-  .scripts {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    border-top: 1px solid var(--border);
-    padding-top: 14px;
-  }
-  .scripts h3 {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .scripts code {
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-  }
-  .btn.small {
+  .panel :global(.btn.small) {
     font-size: var(--fs-xs);
     padding: 3px 10px;
   }
-  .script-list {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  .panel :global(.btn:disabled) {
+    opacity: 0.5;
+    cursor: default;
   }
-  .script-list li {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 4px 6px;
-    border-radius: 4px;
-  }
-  .script-list li:hover {
-    background: var(--bg-hover);
-  }
-  .script-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .script-toggle {
-    flex-direction: row !important;
-    align-items: center;
-    gap: 6px !important;
-    flex: 1;
-    cursor: pointer;
-  }
-  .script-toggle input {
-    padding: 0;
-  }
-  .script-name {
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm) !important;
-    font-weight: 500 !important;
-  }
-  .grant-badge {
-    font-size: var(--fs-xs);
+  .panel :global(.link) {
     color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 10px;
-    padding: 1px 8px;
-  }
-  .grant-badge:hover {
-    color: var(--danger);
-    border-color: var(--danger);
-  }
-  /* which layer a skill row is: quiet for a built-in, the accent for the user's own file */
-  .source-badge {
     font-size: var(--fs-xs);
-    color: var(--fg-muted);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1px 8px;
+    padding: 0;
     white-space: nowrap;
   }
-  .source-badge.custom {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  .source-badge.outdated {
-    color: var(--fg-muted);
-    border-style: dashed;
-  }
-  .grant-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .script-summary {
-    color: var(--fg-muted);
-  }
-  .scripts .empty {
-    color: var(--fg-muted);
-  }
-  .scripts .err {
-    color: var(--danger);
-    word-break: break-all;
-  }
-  footer {
-    flex-shrink: 0;
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 12px 20px;
-    border-top: 1px solid var(--border);
-  }
-  .btn {
+  .panel :global(input:not([type="checkbox"]):not([type="radio"])) {
+    padding: 5px 10px;
     font-size: var(--fs-sm);
-    padding: 6px 14px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-  }
-  .btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--bg);
   }
 </style>

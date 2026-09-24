@@ -42,7 +42,8 @@
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import ScriptGrantDialog from "$lib/components/ScriptGrantDialog.svelte";
   import UpdateDialog from "$lib/components/UpdateDialog.svelte";
-  import SettingsModal, { type SettingsTab } from "$lib/components/SettingsModal.svelte";
+  import SettingsModal from "$lib/components/SettingsModal.svelte";
+  import { openSettings, settingsUi } from "$lib/stores/settingsUi.svelte";
   import CommandPalette, { type PaletteMode } from "$lib/components/CommandPalette.svelte";
   import AgendaView from "$lib/components/views/AgendaView.svelte";
   import KanbanView from "$lib/components/views/KanbanView.svelte";
@@ -86,9 +87,8 @@
     });
   }
   // The clip destination's vault-switch cleanup and restore live inside the clipTarget store (persisted per vault)
-  let settingsOpen = $state(false);
-  /** Which category page the settings open on: the ordinary entry lands on "General", and the AI entry on "AI" */
-  let settingsTab = $state<SettingsTab>("general");
+  /** The settings dialog's open state lives in its store (every entry point opens it through openSettings) */
+  const settingsOpen = $derived(settingsUi.open);
 
   // ---- The sidebars: dragging a sash, double-clicking to reset, swapping sides (swapSides) ----
   // The sum of the three columns' minimum widths plus the activity bar (140+300+280+44=764) goes
@@ -1287,9 +1287,9 @@
       }
     },
   });
-  registerCommand({ id: "settings", group: "system", run: () => { settingsTab = "general"; settingsOpen = true; } });
-  registerCommand({ id: "settings-ai", group: "system", run: () => { settingsTab = "ai"; settingsOpen = true; } });
-  registerCommand({ id: "settings-account", group: "system", run: () => { settingsTab = "account"; settingsOpen = true; } });
+  registerCommand({ id: "settings", group: "system", run: () => openSettings("general") });
+  registerCommand({ id: "settings-ai", group: "system", run: () => openSettings("ai") });
+  registerCommand({ id: "settings-account", group: "system", run: () => openSettings("account") });
   // The whole flow (checking, the version found, download, restart) runs in the update dialog
   registerCommand({ id: "check-updates", group: "system", run: () => void updater.check(true) });
   registerCommand({
@@ -1595,7 +1595,7 @@
 <HistoryDialog />
 <ScriptGrantDialog />
 <UpdateDialog />
-<SettingsModal bind:open={settingsOpen} bind:tab={settingsTab} />
+<SettingsModal />
 
 <style>
   .welcome {
