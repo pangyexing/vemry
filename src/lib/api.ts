@@ -4,6 +4,8 @@ import { emit, emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 // ---- types mirrored from Rust ----
 
+import type { NoteScript } from "./notelang";
+
 export interface NoteSummary {
   id: string;
   title: string;
@@ -18,6 +20,11 @@ export interface NoteSummary {
   source: string | null;
   /** frontmatter `vemry.agent_session` — the chat session a note saved from the research panel came from (so it can be resumed) */
   agent_session?: string | null;
+  /** what the note reads as (vemry-core lang.rs, the mirror of notelang.ts noteLanguage):
+   *  its declared or detected language, null when unknown or too short to say */
+  lang: string | null;
+  /** its writing system, which sets the column width and the line-breaking rules */
+  script: NoteScript | null;
 }
 
 export interface GraphNode {

@@ -29,6 +29,10 @@ pub struct NoteSummary {
     /// research panel came out of, so opening the note can offer to resume it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<String>,
+    /// What the note reads as (`lang.rs`): its declared or detected language and writing
+    /// system, so the tree and the task views set a note's name and lines in its own faces.
+    pub lang: Option<String>,
+    pub script: Option<crate::lang::Script>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -173,7 +177,12 @@ impl BlockIndex {
                 .and_then(|v| v.as_str())
                 .map(String::from),
             agent_session: note.frontmatter.vemry.as_ref().and_then(|m| m.agent_session.clone()),
+            lang: None,
+            script: None,
         };
+        let declared = note.frontmatter.extra.get("lang").and_then(|v| v.as_str());
+        let nl = crate::lang::note_language(declared, &note.content);
+        let summary = NoteSummary { lang: nl.lang, script: nl.script, ..summary };
 
         self.by_name.entry(fold_name(note.id.stem())).or_default().insert(note.id.clone());
         for alias in &note.frontmatter.aliases {

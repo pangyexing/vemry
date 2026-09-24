@@ -15,6 +15,7 @@ pub mod format;
 pub mod history;
 pub mod index;
 pub mod insert;
+pub mod lang;
 pub mod locate;
 pub mod note;
 pub mod parser;

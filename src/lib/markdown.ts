@@ -792,3 +792,71 @@ function renderReadingInline(raw: string, base: string): string {
 export function renderReadingMarkdown(text: string, base: string): string {
   return renderBlocks(text, (line) => renderReadingInline(line, base));
 }
+
+/** The part of a still-streaming text that is safe to render: a tail whose inline syntax
+ *  has not closed yet is held back, so the reader never sees `[title](htt` flash as source
+ *  and then collapse into a link, or a run of `**` turn the rest of the line bold and back.
+ *  Only the last line is examined (an unclosed construct cannot span a newline in the
+ *  renderers here), and the held text appears as soon as it closes or the line ends.
+ *  A pipe table whose header row has arrived but whose separator row has not is completed
+ *  with a separator, so the table takes its shape at once instead of arriving as a
+ *  paragraph of pipes and then reflowing; a half-arrived table row is held back.
+ *  Shared by the chat's streaming answer and the translation view's streaming cells. */
+export function streamingTail(text: string): string {
+  const nl = text.lastIndexOf("\n");
+  const head = text.slice(0, nl + 1);
+  let last = text.slice(nl + 1);
+
+  // Inside an open fence everything is literal: nothing to hold back
+  const fences = (head.match(/^\s*(```|~~~)/gm) ?? []).length;
+  if (fences % 2 === 1) return text;
+
+  // A table row that has not reached its closing pipe yet
+  if (/^\s*\|/.test(last) && !/\|\s*$/.test(last.trimEnd().slice(1))) last = "";
+
+  let cut = last.length;
+  const hold = (i: number) => {
+    if (i >= 0 && i < cut) cut = i;
+  };
+  // Inline code first: an odd backtick opens a span nothing after it may be parsed in
+  const ticks = [...last.matchAll(/`+/g)];
+  if (ticks.length % 2 === 1) hold(ticks[ticks.length - 1].index!);
+  const scan = last.slice(0, cut);
+  // [[wikilink without its ]]
+  const wl = scan.lastIndexOf("[[");
+  if (wl >= 0 && scan.indexOf("]]", wl) < 0) hold(wl);
+  // [text](url without its ) — and a [ that has not reached its ] yet
+  for (const m of scan.matchAll(/(?<!\[)\[(?!\[)/g)) {
+    const rest = scan.slice(m.index!);
+    const close = /^\[[^\]]*\](\([^)]*(\))?)?/.exec(rest);
+    if (!close) hold(m.index!); // no ] yet
+    else if (close[1] !== undefined && close[2] === undefined) hold(m.index!); // ]( without )
+    else if (close[0].length === rest.length && close[1] === undefined) hold(m.index!); // ] is the last char: a ( may follow
+  }
+  // Paired emphasis markers: an odd count means the last one is still open
+  for (const mark of ["**", "__", "~~", "=="]) {
+    const at: number[] = [];
+    let i = scan.indexOf(mark);
+    while (i >= 0 && i < cut) {
+      at.push(i);
+      i = scan.indexOf(mark, i + mark.length);
+    }
+    if (at.length % 2 === 1) hold(at[at.length - 1]);
+  }
+  // Inline math: an odd count of unescaped single $ (a $$ pair is display math, left alone)
+  const dollars = [...scan.slice(0, cut).matchAll(/(?<![\\$])\$(?!\$)/g)];
+  if (dollars.length % 2 === 1) hold(dollars[dollars.length - 1].index!);
+
+  last = last.slice(0, cut);
+
+  // A header row with no separator under it yet: supply one so the table keeps its shape
+  const lines = head.split("\n");
+  lines.pop(); // the empty string after head's final newline
+  const prev = lines[lines.length - 1] ?? "";
+  const beforePrev = lines[lines.length - 2] ?? "";
+  if (last === "" && /^\s*\|.*\|\s*$/.test(prev) && !/^\s*\|/.test(beforePrev)) {
+    const cells = prev.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).length;
+    return `${head}|${" --- |".repeat(cells)}\n`;
+  }
+  return head + last;
+}

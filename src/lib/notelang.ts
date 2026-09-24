@@ -41,12 +41,13 @@ const LETTER = /\p{L}/u;
 
 // Characters written only in one of the two Chinese standards, among the most frequent
 // few hundred of each: which set a text draws from tells Traditional from Simplified.
-// Pairs are aligned (個/个 …) so neither side is favoured by list length.
+// Pairs are aligned (個/个 …) so neither side is favoured by list length. Mirrored in
+// crates/vemry-core/src/lang.rs, which gives the index the same verdict.
 const TRAD = new Set(
-  "們個這說時國會來對學為與後麼樣還開經從現關點動應將過發機長問頭實體當無兩見電認沒進給產業義讓總條話區種邊聽寫書幾讀變請師壓樂氣歲顯論選聯護聲導隊術劃錢廣報際覺轉鐵夠極質據戰識標響環線須難驗觀團費館飛東車馬門語樹萬與單買賣筆紅綠藍島鳥魚雲風處親愛歡記頁圖應們裡麼級歷務員層還網張為並嗎誰"
+  "們個這說時國會來對學為與後麼樣還開經從現關點動應將過發機長問頭實體當無兩見電認沒進給產業義讓總條話區種邊聽寫書幾讀變請師壓樂氣歲顯論選聯護聲導隊術劃錢廣報際覺轉鐵夠極質據戰識標響環線須難驗觀團費館飛東車馬門語樹萬單買賣筆紅綠藍島鳥魚雲風處親愛歡記頁圖裡級歷務員層網張並嗎誰"
 );
 const SIMP = new Set(
-  "们个这说时国会来对学为与后么样还开经从现关点动应将过发机长问头实体当无两见电认没进给产业义让总条话区种边听写书几读变请师压乐气岁显论选联护声导队术划钱广报际觉转铁够极质据战识标响环线须难验观团费馆飞东车马门语树万与单买卖笔红绿蓝岛鸟鱼云风处亲爱欢记页图应们里么级历务员层还网张为并吗谁"
+  "们个这说时国会来对学为与后么样还开经从现关点动应将过发机长问头实体当无两见电认没进给产业义让总条话区种边听写书几读变请师压乐气岁显论选联护声导队术划钱广报际觉转铁够极质据战识标响环线须难验观团费馆飞东车马门语树万单买卖笔红绿蓝岛鸟鱼云风处亲爱欢记页图里级历务员层网张并吗谁"
 );
 
 /** The frontmatter block's length, so detection reads the body only (its keys are Latin). */
@@ -103,9 +104,9 @@ export function noteLanguage(text: string): NoteLanguage {
   const total = cjk + rtl + latin + other;
   if (rtl >= total * 0.3) return { lang: arabic >= hebrew ? "ar" : "he", script: "rtl" };
   if (cjk >= total * 0.5) {
+    if (hangul >= han + kana) return { lang: "ko", script: "cjk" };
     // Japanese is never written without kana; a handful in a Chinese note are a quoted name
-    if (kana >= 20 || kana >= (han + kana) * 0.05) return { lang: "ja", script: "cjk" };
-    if (hangul >= han) return { lang: "ko", script: "cjk" };
+    if (kana >= 20 || (kana > 0 && kana >= (han + kana) * 0.05)) return { lang: "ja", script: "cjk" };
     if (trad + simp >= 5) return { lang: trad > simp ? "zh-Hant" : "zh-Hans", script: "cjk" };
     return { lang: null, script: "cjk" };
   }
