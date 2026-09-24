@@ -101,6 +101,13 @@ const key = (k: MessageKey | (() => MessageKey)): MessageKey => (typeof k === "f
 export const settingLabel = (s: SettingEntry): string => t(key(s.label));
 export const settingHint = (s: SettingEntry): string | undefined => (s.hint ? t(key(s.hint)) : undefined);
 
+/** What the command palette matches a setting by besides its title: the English label (so
+ *  English finds it in any language) and the keywords — not the hint, whose scattered
+ *  letters would let a short query match nearly every setting. */
+export function settingKeywords(s: SettingEntry): string {
+  return `${EN[key(s.label)] ?? ""} ${s.keywords ?? ""}`;
+}
+
 /** Matching reads NFKC lower case, the same fold as the command palette's. */
 const fold = (s: string) => s.normalize("NFKC").toLowerCase();
 const EN = en as Record<string, string>;

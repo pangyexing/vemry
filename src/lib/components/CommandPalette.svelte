@@ -675,7 +675,7 @@
     const close: FootKey = { keys: ESC, label: t("palette.foot.close") };
     switch (mode) {
       case "commands":
-        return [{ keys: "↑↓", label: t("palette.foot.select") }, { keys: ENTER, label: t("palette.foot.run") }, close];
+        return [{ keys: "↑↓", label: t("palette.foot.select") }, { keys: ENTER, label: t("palette.foot.run") }, close, { keys: "", label: t("palette.foot.typeSetting") }];
       case "new-note":
         return sel && sel.id !== "__create__"
           ? [{ keys: ENTER, label: t("palette.foot.open") }, close]

@@ -675,7 +675,9 @@ add("palette.", {
     "newNoteEmpty": ("Type a title — Enter creates the note", "输入标题，回车新建"),
     "lineN": ("line {n}", "第 {n} 行"),
     # The footer: what the keys do in the mode at hand
+    "settingsGroup": ("Settings", "设置"),
     "foot.select": ("select", "选择"),
+    "foot.typeSetting": ("type a setting's name to go to it", "输入设置名可直达"),
     "foot.run": ("run", "执行"),
     "foot.open": ("open", "打开"),
     "foot.openFile": ("open the file", "打开文件"),
