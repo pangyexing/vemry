@@ -130,8 +130,9 @@ const scrollingThumb = ViewPlugin.fromClass(
 // zero-width space and the BOM (invisible; a clip carries them in from the web, and a
 // red dot for each read as damage), the soft hyphen (a hyphenation hint the browser
 // honours at a line end), and the direction marks and isolates (invisible, and what
-// keeps a mixed right-to-left line in order).
-const SPECIAL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029\u202d\u202e\ufff9-\ufffc]/;
+// keeps a mixed right-to-left line in order). The g flag is required: the decorator
+// behind this throws on a pattern without it, and the whole editor fails to open.
+const SPECIAL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029\u202d\u202e\ufff9-\ufffc]/gu;
 
 /** A right-to-left letter: Hebrew, Arabic, Syriac, Thaana, N'Ko and their presentation forms. */
 const RTL_CHAR = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc]/;
