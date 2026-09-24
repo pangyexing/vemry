@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { getContext } from "svelte";
+  import type { SettingsUpdate } from "$lib/api";
   import { isImeKeydown } from "$lib/ime";
-  import type { RowContext } from "./context";
+  import { rowControl } from "./context";
+  import { form } from "./form.svelte";
 
   // A text setting: typed freely, written when the field loses the focus or on Enter
-  // (a textarea only on the focus leaving). While the field is not being edited it
-  // follows the stored value, so a change made elsewhere shows up here.
+  // (a textarea only on the focus leaving), and its row then says "Saved". While the
+  // field is not being edited it follows the stored value, so a change made elsewhere
+  // shows up here.
   let {
     value,
-    commit,
+    patch,
     placeholder = "",
     type = "text",
     list,
@@ -17,8 +19,8 @@
     width,
   }: {
     value: string;
-    /** Called with the typed text when it differs from the stored value. */
-    commit: (v: string) => void;
+    /** The write for the typed text, made when it differs from the stored value. */
+    patch: (v: string) => SettingsUpdate;
     placeholder?: string;
     type?: "text" | "password";
     list?: string;
@@ -29,32 +31,33 @@
     width?: string;
   } = $props();
 
-  const row = getContext<RowContext | undefined>("setting-row");
   let draft = $state("");
   let editing = $state(false);
   $effect(() => {
     if (!editing) draft = value;
   });
-  function done() {
+  function done(el: HTMLElement) {
     editing = false;
-    if (draft !== value) commit(draft);
+    if (draft === value) return;
+    const row = el.closest<HTMLElement>("[data-setting]")?.dataset.setting;
+    void form.set(patch(draft), row, true);
   }
 </script>
 
 {#if rows > 0}
   <textarea
-    id={row?.ctlId}
+    {@attach rowControl}
     class:mono
     {rows}
     {placeholder}
     spellcheck="false"
     bind:value={draft}
     onfocus={() => (editing = true)}
-    onblur={done}
+    onblur={(e) => done(e.currentTarget)}
   ></textarea>
 {:else}
   <input
-    id={row?.ctlId}
+    {@attach rowControl}
     class:mono
     {type}
     {list}
@@ -63,11 +66,11 @@
     style:width
     bind:value={draft}
     onfocus={() => (editing = true)}
-    onblur={done}
+    onblur={(e) => done(e.currentTarget)}
     onkeydown={(e) => {
       if (e.key === "Enter" && !isImeKeydown(e)) {
         e.preventDefault();
-        done();
+        done(e.currentTarget);
         editing = true;
       }
     }}

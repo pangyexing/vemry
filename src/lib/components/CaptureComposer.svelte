@@ -496,10 +496,10 @@
         <span class="arrow">→</span>{spotLabel(spot)}<span class="chev">▾</span>
       </button>
       <span class="keys">
-        <span><kbd>Enter</kbd> {t("capture.keyEnter")}</span>
+        <span><kbd>{k("Enter")}</kbd> {t("capture.keyEnter")}</span>
         <span><kbd>{k("Shift+Enter")}</kbd> {t("capture.keyNewline")}</span>
         <span><kbd>{k("Mod+Enter")}</kbd> {t("capture.keyPick")}</span>
-        <span><kbd>Esc</kbd> {t("capture.keyEsc")}</span>
+        <span><kbd>{k("Escape")}</kbd> {t("capture.keyEsc")}</span>
       </span>
     </div>
     {#if error}

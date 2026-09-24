@@ -136,7 +136,7 @@ export async function executeCommand(id: string) {
 /** One string as matching reads it: NFKC so a half-width kana, a full-width digit and a
  *  composed accent meet their canonical form, then lower case. Both the query and the key
  *  go through it, so the two are always compared in the same form. */
-function fold(s: string): string {
+export function fold(s: string): string {
   return s.normalize("NFKC").toLowerCase();
 }
 
@@ -270,34 +270,6 @@ export function markRuns(text: string, marks: readonly number[] | null | undefin
     else runs.push({ text: ch, hit });
   });
   return runs;
-}
-
-/** Rows another part of the app lists in the command palette after the commands, when
- *  a query matches them (the settings are the first such source): the title is what
- *  shows and matches, keywords only match (an English label, synonyms), tag sits at the
- *  row's end (the settings page an entry lives on). */
-export interface PaletteEntry {
-  id: string;
-  title: string;
-  hint?: string;
-  keywords?: string;
-  tag?: string;
-  run: () => void | Promise<void>;
-}
-export interface PaletteSource {
-  id: string;
-  /** The section header its rows sit under. */
-  label: () => string;
-  /** Read when the palette filters, so it may follow reactive state. */
-  entries: () => PaletteEntry[];
-}
-const paletteSourceMap = new Map<string, PaletteSource>();
-/** Register (or replace, by id) a source of extra palette rows. */
-export function registerPaletteSource(src: PaletteSource) {
-  paletteSourceMap.set(src.id, src);
-}
-export function paletteSources(): PaletteSource[] {
-  return [...paletteSourceMap.values()];
 }
 
 /** Filtering reordered by match quality — for the command palette alone: "the closest match comes first" is its sorting contract. */

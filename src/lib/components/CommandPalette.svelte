@@ -15,24 +15,25 @@
     groupLabel,
     groupOf,
     markRuns,
-    paletteSources,
     termPositions,
     type Command,
   } from "$lib/commands/registry";
   import { t } from "$lib/i18n/i18n.svelte";
   import { browser } from "$lib/stores/browser.svelte";
-  import { fetchHeadings, noteKey, noteMatches, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
-  import { typePath, vault } from "$lib/stores/vault.svelte";
+  import { fetchHeadings, noteKey, noteMatches, notesByRecency, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
+  import { parentOf, typePath, vault } from "$lib/stores/vault.svelte";
   import { scripts } from "$lib/stores/scripts.svelte";
   import { types } from "$lib/stores/types.svelte";
   import { scaffold } from "$lib/scaffold";
   import { toast } from "$lib/stores/toast.svelte";
   import { isImeKeydown } from "$lib/ime";
-  import { isMac, k } from "$lib/shortcut";
+  import { k } from "$lib/shortcut";
 
   export type PaletteMode = "commands" | "notes" | "new-note" | "pick-note" | "search" | "vaults" | "url" | "types";
 
   import { prettyUrl, webCandidates } from "$lib/urls";
+  import { pageLabel, searchSettings, settingAvailable, settingHint, settingLabel } from "$lib/settings";
+  import { openSettings } from "$lib/stores/settingsUi.svelte";
 
   interface Item {
     id: string;
@@ -90,7 +91,9 @@
 
   let query = $state("");
   let selected = $state(0);
-  let searchHits = $state<SearchHit[]>([]);
+  /** The hits with the query they answer: the rows are drawn from the pair, so a keystroke
+   *  does not re-mark the previous hits against text they were not found for. */
+  let searched = $state<{ q: string; hits: SearchHit[] }>({ q: "", hits: [] });
   /** The browsing history snapshot fetched once when url mode opens (bookmarks come from browser.bookmarks' permanent mirror). */
   let urlHistory = $state<HistoryEntryView[]>([]);
   let inputEl = $state<HTMLInputElement | null>(null);
@@ -162,7 +165,7 @@
       const carry = prevMode !== null && prevMode !== mode && FIND_MODES.includes(prevMode) && FIND_MODES.includes(mode);
       if (!carry) query = "";
       selected = 0;
-      searchHits = [];
+      searched = { q: "", hits: [] };
       pickStage = null;
       queueMicrotask(() => inputEl?.focus());
     }
@@ -251,46 +254,19 @@
   }
 
   $effect(() => {
-    if (mode === "search" && query.trim()) {
-      const q = query;
-      api.search(q, 30).then((hits) => {
-        if (q === query) searchHits = hits;
-      });
-    } else {
-      searchHits = [];
+    if (mode !== "search" || !query.trim()) {
+      searched = { q: "", hits: [] };
+      return;
     }
+    // A search reads the whole vault under its lock: one per pause in the typing, not per key
+    const q = query.trim();
+    const timer = setTimeout(() => {
+      void api.search(q, 30).then((hits) => {
+        if (q === query.trim()) searched = { q, hits };
+      });
+    }, 100);
+    return () => clearTimeout(timer);
   });
-
-  /** A note's folder ("" at the vault's root): what a note row says after its title. The
-   *  file name is the title, so the folder is the part of the path that tells two notes
-   *  of one name apart. */
-  function folderOf(path: string): string {
-    const slash = path.lastIndexOf("/");
-    return slash === -1 ? "" : path.slice(0, slash);
-  }
-
-  /** The notes as ⌘O lists them before anything is typed: the ones opened this session,
-   *  most recent first, then the open tabs, then the rest by modification time. In notes
-   *  mode the note on screen goes after the other recent ones (Enter then returns to the
-   *  previous note); when picking a target it stays first — it is the likeliest target. */
-  function notesByRecency(keepCurrentFirst: boolean): NoteSummary[] {
-    const seen = new Set<string>();
-    const out: NoteSummary[] = [];
-    const cur = vault.currentPath;
-    const push = (p: string | null) => {
-      const n = p ? vault.noteById.get(p) : undefined;
-      if (n && !seen.has(n.id)) {
-        seen.add(n.id);
-        out.push(n);
-      }
-    };
-    if (keepCurrentFirst) push(cur);
-    for (const p of vault.recentOpened) if (p !== cur) push(p);
-    for (const tab of vault.tabs) if (tab.path !== cur) push(tab.path);
-    push(cur);
-    const rest = vault.notes.filter((n) => !seen.has(n.id)).sort((a, b) => b.mtime_ms - a.mtime_ms);
-    return [...out, ...rest];
-  }
 
   /** The commands a query matches, ranked in three tiers: the title, then the English
    *  title and the id (so an English name finds a command in any interface language), then
@@ -354,9 +330,9 @@
         });
         return list;
       }
-      // A query flattens the list: the available matches, then the rows other parts of the
-      // app register (the settings), then the matches that cannot run now, under their own
-      // header and with the reason
+      // A query flattens the list: the available matches, then the settings it finds (by
+      // the dialog's own search, so both find a setting by the same words), then the
+      // matches that cannot run now, under their own header and with the reason
       const ranked = rankCommands(cmds, q);
       const flat = (r: (typeof ranked)[number]): Item => ({
         ...row(r.c, r.title),
@@ -364,27 +340,20 @@
         marks: r.titleHit ? fuzzyPositions(r.title, q) : null,
       });
       const list: Item[] = ranked.filter((r) => commandAvailable(r.c)).map(flat);
-      for (const src of paletteSources()) {
-        const hits = src
-          .entries()
-          .flatMap((e) => {
-            const s = fuzzyScoreText(e.title, q);
-            const k = s === null ? fuzzyScoreText(e.keywords ?? "", q) : null;
-            return s !== null ? [{ e, score: 10000 + s, hit: true }] : k !== null ? [{ e, score: k, hit: false }] : [];
-          })
-          .sort((a, b) => b.score - a.score);
-        hits.forEach(({ e, hit }, i) =>
+      searchSettings(q)
+        .filter((s) => settingAvailable(s, !!vault.root))
+        .forEach((s, i) => {
+          const title = settingLabel(s);
           list.push({
-            id: `${src.id}:${e.id}`,
-            title: e.title,
-            hint: e.hint,
-            key: e.tag,
-            marks: hit ? fuzzyPositions(e.title, q) : null,
-            groupLabel: i === 0 ? src.label() : undefined,
-            run: e.run,
-          }),
-        );
-      }
+            id: `setting:${s.id}`,
+            title,
+            hint: settingHint(s),
+            key: pageLabel(s.page),
+            marks: termPositions(title, q),
+            groupLabel: i === 0 ? t("palette.settingsGroup") : undefined,
+            run: () => openSettings(s.id),
+          });
+        });
       ranked
         .filter((r) => !commandAvailable(r.c))
         .forEach((r, i) => {
@@ -434,7 +403,7 @@
           id: n.id,
           title: n.title,
           marks: fuzzyPositions(n.title, q),
-          hint: folderOf(n.id),
+          hint: parentOf(n.id),
           groupLabel: i === 0 && create ? t("palette.similarNotes") : undefined,
           run: () => vault.openNote(n.id),
         }),
@@ -449,8 +418,8 @@
       const list: Item[] = notes.slice(0, 50).map((n) => ({
         id: n.id,
         title: n.title,
-        marks: q ? fuzzyPositions(n.title, q) : null,
-        hint: folderOf(n.id),
+        marks: fuzzyPositions(n.title, q),
+        hint: parentOf(n.id),
         pick: pick ? { path: n.id, title: n.title } : undefined,
         run: () => (pick ? pick(n.id) : vault.openNote(n.id)),
       }));
@@ -488,7 +457,7 @@
         return {
           id: x.file,
           title,
-          marks: q ? fuzzyPositions(title, q) : null,
+          marks: fuzzyPositions(title, q),
           hint: x.disabled ? t("palette.typeDisabled") : x.description || typePath(x.file),
           run: () => vault.openFile(typePath(x.file)),
           // The row's toggle (the button, or ⌘↩): the file's disabled line flips and types_changed
@@ -525,7 +494,7 @@
         return {
           id: p,
           title,
-          marks: q ? fuzzyPositions(title, q) : null,
+          marks: fuzzyPositions(title, q),
           hint: p === vault.root ? t("palette.currentVault", { path: p }) : p,
           run: () => {
             if (p !== vault.root) void vault.openVault(p);
@@ -549,19 +518,18 @@
       return list;
     }
     if (mode === "search") {
-      // A hit opens at its line, on the first query word found there; the words are drawn
+      // A hit opens where the index found it (its line and column); the words are drawn
       // in bold in the title and the snippet, and the folder tells two notes of one title apart
-      const q = query.trim();
-      const words = q.split(/\s+/).filter(Boolean);
-      return searchHits.map((h, i) => ({
+      const { q, hits } = searched;
+      return hits.map((h, i) => ({
         id: `${h.note}:${i}`,
         title: h.title,
         marks: termPositions(h.title, q),
-        hint: folderOf(h.note),
+        hint: parentOf(h.note),
         key: t("palette.lineN", { n: h.line }),
         detail: h.snippet,
         detailMarks: termPositions(h.snippet, q),
-        run: () => vault.openNoteAtLine(h.note, h.line, words),
+        run: () => vault.openNoteAtLine(h.note, h.line, h.col),
       }));
     }
     if (mode === "url") {
@@ -662,9 +630,9 @@
   // ---- The footer: the keys of the mode at hand, so nothing the keyboard can do is known
   // only to those who read the source. The placeholder says what to type; the footer says
   // what the keys do (some entries depend on the highlighted row) ----
-  const ENTER = isMac ? "↵" : "Enter";
-  const ESC = isMac ? "esc" : "Esc";
-  const MOD_ENTER = k(isMac ? "Mod+↵" : "Mod+Enter");
+  const ENTER = k("Enter");
+  const ESC = k("Escape");
+  const MOD_ENTER = k("Mod+Enter");
   interface FootKey {
     /** The keys; empty for a line of plain advice ("type a new name to create it"). */
     keys: string;

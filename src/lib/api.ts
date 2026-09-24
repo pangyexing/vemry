@@ -54,6 +54,8 @@ export interface SearchHit {
   title: string;
   snippet: string;
   line: number;
+  /** Where on the line the hit starts, in UTF-16 units. */
+  col: number;
   score: number;
 }
 

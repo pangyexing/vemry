@@ -29,6 +29,29 @@ export interface PickHeading {
   level: number;
 }
 
+/** The notes as ⌘O lists them before anything is typed: the ones opened this session,
+ *  most recent first, then the open tabs, then the rest by modification time. In notes
+ *  mode the note on screen goes after the other recent ones (Enter then returns to the
+ *  previous note); when picking a target it stays first — it is the likeliest target. */
+export function notesByRecency(keepCurrentFirst: boolean): NoteSummary[] {
+  const seen = new Set<string>();
+  const out: NoteSummary[] = [];
+  const cur = vault.currentPath;
+  const push = (p: string | null) => {
+    const n = p ? vault.noteById.get(p) : undefined;
+    if (n && !seen.has(n.id)) {
+      seen.add(n.id);
+      out.push(n);
+    }
+  };
+  if (keepCurrentFirst) push(cur);
+  for (const p of vault.recentOpened) if (p !== cur) push(p);
+  for (const tab of vault.tabs) if (tab.path !== cur) push(tab.path);
+  push(cur);
+  const rest = vault.notes.filter((n) => !seen.has(n.id)).sort((a, b) => b.mtime_ms - a.mtime_ms);
+  return [...out, ...rest];
+}
+
 /** The second stage's section list is another projection of query(); it opens no new read path. */
 export async function fetchHeadings(path: string): Promise<PickHeading[]> {
   const hits = await api.queryBlocks({ kind: "heading", note: path });

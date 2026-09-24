@@ -1202,8 +1202,8 @@ impl Vault {
                 let raw = self.read_note(&h.note).ok()?;
                 let blocks = parse_note(&raw).blocks;
                 let blanked = crate::privacy::blank_private_blocks(&raw, &blocks);
-                let (score, snippet, line) = crate::search::match_doc(&h.title, &blanked, &terms)?;
-                Some(SearchHit { note: h.note, title: h.title, snippet, line, score })
+                let (score, snippet, line, col) = crate::search::match_doc(&h.title, &blanked, &terms)?;
+                Some(SearchHit { note: h.note, title: h.title, snippet, line, col, score })
             })
             .collect();
         crate::search::sort_hits(&mut hits);

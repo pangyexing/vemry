@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { getContext, untrack } from "svelte";
+  import { untrack } from "svelte";
   import { api } from "$lib/api";
   import { compareNames, t } from "$lib/i18n/i18n.svelte";
   import { isImeKeydown } from "$lib/ime";
   import { settingsUi } from "$lib/stores/settingsUi.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import PrivacyIcon from "../PrivacyIcon.svelte";
-  import type { SearchContext } from "./context";
+  import { rowControl, settingsSearch } from "./context";
   import SettingRow from "./SettingRow.svelte";
   import SettingSection from "./SettingSection.svelte";
 
-  const search = getContext<SearchContext | undefined>("settings-search");
+  const search = settingsSearch();
 
   /** The raw lines of .vemry/privacy; adding and removing act on the file at once. */
   let rules = $state<string[]>([]);
@@ -75,7 +75,7 @@
     {/if}
     <div class="add">
       <input
-        id="setting-privacy-rules"
+        {@attach rowControl}
         class="mono"
         bind:value={newRule}
         placeholder={t("settings.rulePlaceholder")}
@@ -103,10 +103,6 @@
 </SettingSection>
 
 <style>
-  small {
-    font-size: var(--fs-xs);
-    color: var(--fg-muted);
-  }
   .examples {
     display: flex;
     gap: 2px;
@@ -169,13 +165,5 @@
   }
   .note-open:hover {
     color: var(--accent);
-  }
-  .add {
-    display: flex;
-    gap: 6px;
-    margin-top: 4px;
-  }
-  .add input {
-    flex: 1;
   }
 </style>

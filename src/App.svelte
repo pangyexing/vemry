@@ -5,7 +5,7 @@
   import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onCaptureAction, onInboxHomeFailed, onInboxItems, onInboxLanded, onMenuEvent, onQuitRequested, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
   import { hotkeyLabel } from "$lib/capture";
   import { runHostAction } from "$lib/host";
-  import { executeCommand, registerCommand, registerPaletteSource, syncScriptCommands, type Command } from "$lib/commands/registry";
+  import { executeCommand, registerCommand, syncScriptCommands, type Command } from "$lib/commands/registry";
   import { MEMORY_DRAFT_PROMPT, MEMORY_REVIEW_PROMPT } from "$lib/commands/memoryPrompts";
   import { vault, type MainView } from "$lib/stores/vault.svelte";
   import { untrack } from "svelte";
@@ -44,7 +44,6 @@
   import UpdateDialog from "$lib/components/UpdateDialog.svelte";
   import SettingsModal from "$lib/components/SettingsModal.svelte";
   import { openSettings, settingsUi } from "$lib/stores/settingsUi.svelte";
-  import { PAGES, pageLabel, SETTINGS, settingHint, settingKeywords, settingLabel } from "$lib/settings";
   import CommandPalette, { type PaletteMode } from "$lib/components/CommandPalette.svelte";
   import AgendaView from "$lib/components/views/AgendaView.svelte";
   import KanbanView from "$lib/components/views/KanbanView.svelte";
@@ -1325,21 +1324,6 @@
     },
   });
   registerCommand({ id: "settings", group: "system", run: () => openSettings("general") });
-  // Every setting is a palette row once there is a query ("font size" → the row itself):
-  // the same index the dialog's search reads, so the two find a setting by the same words
-  registerPaletteSource({
-    id: "settings",
-    label: () => t("palette.settingsGroup"),
-    entries: () =>
-      SETTINGS.filter((s) => vault.root || !PAGES.find((p) => p.id === s.page)?.needsVault).map((s) => ({
-        id: s.id,
-        title: settingLabel(s),
-        hint: settingHint(s),
-        keywords: settingKeywords(s),
-        tag: pageLabel(s.page),
-        run: () => openSettings(s.id),
-      })),
-  });
   registerCommand({ id: "settings-ai", group: "system", run: () => openSettings("ai") });
   registerCommand({ id: "settings-account", group: "system", run: () => openSettings("account") });
   // The whole flow (checking, the version found, download, restart) runs in the update dialog

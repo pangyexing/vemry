@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { getContext, setContext, type Snippet } from "svelte";
+  import type { Snippet } from "svelte";
   import { t } from "$lib/i18n/i18n.svelte";
   import { settingById, settingHint, settingLabel } from "$lib/settings";
-  import type { RowContext, SearchContext } from "./context";
+  import { openSettings } from "$lib/stores/settingsUi.svelte";
+  import { ctlIdOf, settingsSearch } from "./context";
   import { form } from "./form.svelte";
 
   // One setting: its label and one-line hint on the left, the control on the right (or,
@@ -18,38 +19,32 @@
     id: string;
     /** The control goes under the label, full width (text fields, lists, cards). */
     block?: boolean;
-    /** A hint that says something only this moment knows (a status, a failure); replaces the index's. */
+    /** A hint that says something only this moment knows (a status); replaces the index's. */
     hint?: string;
+    /** A failure the page knows of; a write refused from this row shows without it. */
     error?: string | null;
     children?: Snippet;
   } = $props();
 
   const entry = $derived(settingById(id));
-  const ctlId = $derived(`setting-${id.replace(/\./g, "-")}`);
-  setContext<RowContext>("setting-row", {
-    get id() {
-      return id;
-    },
-    get ctlId() {
-      return ctlId;
-    },
-  });
-  const search = getContext<SearchContext | undefined>("settings-search");
+  const ctlId = $derived(ctlIdOf(id));
+  const search = settingsSearch();
   const searching = $derived(!!search?.query);
   const shown = $derived(!searching || !!search?.matches(id));
   const text = $derived(hint ?? (entry ? settingHint(entry) : undefined));
+  const failure = $derived(error ?? form.errors[id] ?? null);
 </script>
 
 <div class="row" class:block data-setting={id} hidden={!shown}>
   <label class="label" id="{ctlId}-label" for={ctlId}>{entry ? settingLabel(entry) : id}</label>
-  {#if error}
-    <small class="hint err">{error}</small>
+  {#if failure}
+    <small class="hint err">{failure}</small>
   {:else if text || form.justSaved === id}
     <small class="hint">{text ?? ""}{#if form.justSaved === id}<span class="saved">{t("settings.saved")}</span>{/if}</small>
   {/if}
   <div class="control">
     {#if searching && entry?.jump}
-      <button class="go" onclick={() => search?.go(id)}>{t("settings.goTo")} ›</button>
+      <button class="go" onclick={() => openSettings(id)}>{t("settings.goTo")} ›</button>
     {:else}
       {@render children?.()}
     {/if}

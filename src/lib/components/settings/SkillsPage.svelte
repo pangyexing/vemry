@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { getContext } from "svelte";
   import { api, type SkillEntry, type TypeExample } from "$lib/api";
   import { t } from "$lib/i18n/i18n.svelte";
   import { isImeKeydown } from "$lib/ime";
@@ -9,12 +8,12 @@
   import { settingsUi } from "$lib/stores/settingsUi.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { vault } from "$lib/stores/vault.svelte";
-  import type { SearchContext } from "./context";
+  import { rowControl, settingsSearch } from "./context";
   import SettingRow from "./SettingRow.svelte";
   import SettingSection from "./SettingSection.svelte";
   import Switch from "./Switch.svelte";
 
-  const search = getContext<SearchContext | undefined>("settings-search");
+  const search = settingsSearch();
 
   /** The built-ins and the vault's own files (disabled ones included; a switch applies from the next turn). */
   let skills = $state<SkillEntry[]>([]);
@@ -120,7 +119,7 @@
     </ul>
     <div class="add">
       <input
-        id="setting-skills-skills"
+        {@attach rowControl}
         bind:value={newSkill}
         placeholder={t("settings.skillNewPlaceholder")}
         spellcheck="false"
@@ -174,10 +173,6 @@
 </SettingSection>
 
 <style>
-  small {
-    font-size: var(--fs-xs);
-    color: var(--fg-muted);
-  }
   small.err {
     color: var(--danger);
     word-break: break-all;
@@ -227,14 +222,6 @@
   }
   .badge.outdated {
     border-style: dashed;
-  }
-  .add {
-    display: flex;
-    gap: 6px;
-    margin-top: 6px;
-  }
-  .add input {
-    flex: 1;
   }
   .head-actions {
     display: flex;

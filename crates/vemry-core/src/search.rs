@@ -14,6 +14,9 @@ pub struct SearchHit {
     pub title: String,
     pub snippet: String,
     pub line: usize,
+    /// Where on `line` the hit starts, in UTF-16 units (the editor's offsets), so the
+    /// palette opens the note on the word rather than re-finding it itself.
+    pub col: usize,
     pub score: f32,
 }
 
@@ -124,15 +127,22 @@ impl SearchProvider for InMemorySearch {
         if terms.is_empty() {
             return vec![];
         }
-        let mut hits = Vec::new();
-        for (id, doc) in &self.docs {
-            if let Some((score, snippet, line)) = score_doc(&doc.title_lower, &doc.lower, doc.snippet_src(), &terms) {
-                hits.push(SearchHit { note: id.clone(), title: doc.title.clone(), snippet, line, score });
-            }
-        }
-        sort_hits(&mut hits);
-        hits.truncate(limit);
-        hits
+        // Scoring is all a match costs; the snippet, the line and the column are worked out
+        // only for the hits that survive the cut
+        let mut scored: Vec<(f32, &NoteId, &Doc)> = self
+            .docs
+            .iter()
+            .filter_map(|(id, doc)| score_doc(&doc.title_lower, &doc.lower, &terms).map(|score| (score, id, doc)))
+            .collect();
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.cmp(b.1)));
+        scored.truncate(limit);
+        scored
+            .into_iter()
+            .map(|(score, id, doc)| {
+                let (snippet, line, col) = locate(&doc.lower, doc.snippet_src(), &terms);
+                SearchHit { note: id.clone(), title: doc.title.clone(), snippet, line, col, score }
+            })
+            .collect()
     }
 }
 
@@ -142,12 +152,15 @@ pub fn query_terms(query: &str) -> Vec<String> {
 }
 
 /// Score one document against the terms the way `InMemorySearch` does —
-/// (score, snippet, line) when every term matches, else `None`. Exposed so
+/// (score, snippet, line, col) when every term matches, else `None`. Exposed so
 /// a caller can re-match a document over an altered text (the agent's
 /// search re-checks notes with private blocks against a blanked copy).
-pub fn match_doc(title: &str, content: &str, terms: &[String]) -> Option<(f32, String, usize)> {
+pub fn match_doc(title: &str, content: &str, terms: &[String]) -> Option<(f32, String, usize, usize)> {
     let norm = normalize(content);
-    score_doc(&fold(title), &norm.to_lowercase(), &norm, terms)
+    let lower = norm.to_lowercase();
+    let score = score_doc(&fold(title), &lower, terms)?;
+    let (snippet, line, col) = locate(&lower, &norm, terms);
+    Some((score, snippet, line, col))
 }
 
 /// Score order, ties by note id — the one ordering every search result uses.
@@ -155,23 +168,26 @@ pub fn sort_hits(hits: &mut [SearchHit]) {
     hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then(a.note.cmp(&b.note)));
 }
 
-fn score_doc(title_lower: &str, lower: &str, content: &str, terms: &[String]) -> Option<(f32, String, usize)> {
+/// The score when every term is in the title or the body, else `None`.
+fn score_doc(title_lower: &str, lower: &str, terms: &[String]) -> Option<f32> {
     let mut score = 0f32;
     for term in terms {
         let in_title = title_lower.contains(term.as_str());
-        let in_body = lower.contains(term.as_str());
-        if !in_title && !in_body {
+        let n = lower.matches(term.as_str()).count();
+        if !in_title && n == 0 {
             return None;
         }
         if in_title {
             score += 5.0;
         }
-        if in_body {
-            score += lower.matches(term.as_str()).count() as f32;
-        }
+        score += n as f32;
     }
-    let (snippet, line) = make_snippet(content, best_line_pos(lower, terms));
-    Some((score, snippet, line))
+    Some(score)
+}
+
+/// The snippet, the 1-based line and the column (UTF-16 units) a hit is shown and opened at.
+fn locate(lower: &str, content: &str, terms: &[String]) -> (String, usize, usize) {
+    make_snippet(content, best_line_pos(lower, terms))
 }
 
 /// Where the snippet (and the line a hit opens at) is taken from: the line holding the
@@ -179,6 +195,9 @@ fn score_doc(title_lower: &str, lower: &str, content: &str, terms: &[String]) ->
 /// the first occurrence of any term instead lands a query of several words on whichever
 /// line a short word happens to appear in first ("it" inside a frontmatter "title:").
 fn best_line_pos(lower: &str, terms: &[String]) -> usize {
+    if let [term] = terms {
+        return lower.find(term.as_str()).unwrap_or(0);
+    }
     let mut best: Option<(usize, usize)> = None; // (terms on the line, position of the first)
     let mut start = 0;
     for line in lower.split('\n') {
@@ -192,6 +211,10 @@ fn best_line_pos(lower: &str, terms: &[String]) -> usize {
         }
         if count > 0 && best.is_none_or(|(n, _)| count > n) {
             best = Some((count, start + first));
+            // Nothing later can hold more, and a tie keeps the earliest
+            if count == terms.len() {
+                break;
+            }
         }
         start += line.len() + 1;
     }
@@ -203,7 +226,7 @@ fn best_line_pos(lower: &str, terms: &[String]) -> usize {
 /// where a character changes length when folded (`İ` → `i̇`), so it is snapped back to
 /// a character boundary before slicing. Newlines survive both foldings, so the line
 /// number is the one the file has.
-fn make_snippet(content: &str, pos: usize) -> (String, usize) {
+fn make_snippet(content: &str, pos: usize) -> (String, usize, usize) {
     let mut pos = pos.min(content.len());
     while !content.is_char_boundary(pos) {
         pos -= 1;
@@ -218,7 +241,7 @@ fn make_snippet(content: &str, pos: usize) -> (String, usize) {
     } else {
         line.to_string()
     };
-    (snippet.trim().to_string(), line_no + 1)
+    (snippet.trim().to_string(), line_no + 1, content[line_start..pos].encode_utf16().count())
 }
 
 #[cfg(test)]
@@ -248,7 +271,11 @@ mod tests {
         let hits = s.search("nothing behind it", 10);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].line, 5);
+        assert_eq!(hits[0].col, "The claim has ".len());
         assert!(hits[0].snippet.starts_with("The claim"));
+        // the column counts UTF-16 units, as the editor does
+        s.index_note(&NoteId::new("n2"), "t", "中文 𠀀 target");
+        assert_eq!(s.search("target", 10)[0].col, 6);
     }
 
     /// Half-width kana and full-width digits are what an IME hands over; NFKC folds

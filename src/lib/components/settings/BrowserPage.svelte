@@ -6,6 +6,7 @@
   import { toast } from "$lib/stores/toast.svelte";
   import { form } from "./form.svelte";
   import SettingRow from "./SettingRow.svelte";
+  import SettingSwitch from "./SettingSwitch.svelte";
   import SettingSection from "./SettingSection.svelte";
   import SettingText from "./SettingText.svelte";
   import Switch from "./Switch.svelte";
@@ -80,7 +81,7 @@
       <Switch checked={s.adblock_enabled} onchange={(v) => void form.set({ adblock_enabled: v })} />
     </SettingRow>
     <SettingRow id="browser.ruleUrls" block>
-      <SettingText value={s.adblock_rule_urls.join("\n")} rows={2} mono commit={(v) => void form.set({ adblock_rule_urls: splitUrls(v) }, "browser.ruleUrls")} />
+      <SettingText value={s.adblock_rule_urls.join("\n")} rows={2} mono patch={(v) => ({ adblock_rule_urls: splitUrls(v) })} />
       <div class="actions">
         <button class="btn small" disabled={updatingRules} onclick={updateRules}>{updatingRules ? t("settings.updatingRules") : t("settings.updateRules")}</button>
         <button class="btn small" disabled={updatingRules} onclick={importRules}>{t("settings.importRules")}</button>
@@ -88,9 +89,7 @@
     </SettingRow>
   </SettingSection>
   <SettingSection title={t("settings.sec.clip")}>
-    <SettingRow id="browser.clipImages">
-      <Switch checked={s.clip_localize_images} onchange={(v) => void form.set({ clip_localize_images: v })} />
-    </SettingRow>
+    <SettingSwitch id="browser.clipImages" field="clip_localize_images" />
   </SettingSection>
 {/if}
 

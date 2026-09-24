@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { getContext } from "svelte";
   import { api, EFFORT_OPTIONS } from "$lib/api";
   import { t } from "$lib/i18n/i18n.svelte";
   import { account } from "$lib/stores/account.svelte";
@@ -7,20 +6,20 @@
   import { toast } from "$lib/stores/toast.svelte";
   import { targetLabel, TARGET_TAGS } from "$lib/stores/translate.svelte";
   import { vault } from "$lib/stores/vault.svelte";
-  import type { SearchContext } from "./context";
+  import { rowControl, settingsSearch } from "./context";
   import { form } from "./form.svelte";
   import SettingRow from "./SettingRow.svelte";
+  import SettingSwitch from "./SettingSwitch.svelte";
   import SettingSection from "./SettingSection.svelte";
   import SettingText from "./SettingText.svelte";
-  import Switch from "./Switch.svelte";
 
   const s = $derived(form.s);
-  const search = getContext<SearchContext | undefined>("settings-search");
+  const search = settingsSearch();
 
   /** This vault's standing write grant ("allow" = the permission dialog's "always allow in this vault"). */
   let writePolicy = $state<"allow" | "ask">("ask");
   $effect(() => {
-    if (!vault.root) return;
+    if (!vault.root || search?.query) return;
     api.vaultWritePolicyGet().then((p) => (writePolicy = p)).catch(() => (writePolicy = "ask"));
   });
   async function revokeWritePolicy() {
@@ -49,7 +48,7 @@
   <SettingSection title={t("settings.sec.model")}>
     <SettingRow id="ai.provider">
       <div class="segmented" role="radiogroup" aria-label={t("settings.provider")}>
-        <button id="setting-ai-provider" role="radio" aria-checked={s.provider === "hosted"} class:active={s.provider === "hosted"} onclick={() => void form.set({ provider: "hosted" })}
+        <button {@attach rowControl} role="radio" aria-checked={s.provider === "hosted"} class:active={s.provider === "hosted"} onclick={() => void form.set({ provider: "hosted" })}
           >{t("settings.providerHosted")}</button
         >
         <button role="radio" aria-checked={s.provider === "custom"} class:active={s.provider === "custom"} onclick={() => void form.set({ provider: "custom" })}
@@ -63,7 +62,7 @@
         {#if !account.loggedIn}
           <button class="link" onclick={() => (settingsUi.page = "account")}>{t("settings.signIn")} →</button>
         {/if}
-        <select id="setting-ai-model" value={s.hosted_model} disabled={!account.loggedIn} onchange={(e) => void form.set({ hosted_model: e.currentTarget.value })}>
+        <select {@attach rowControl} value={s.hosted_model} disabled={!account.loggedIn} onchange={(e) => void form.set({ hosted_model: e.currentTarget.value })}>
           <option value="">{catalogDefault ? t("settings.hostedModelDefault", { model: catalogDefault }) : t("settings.hostedModelDefaultSignedOut")}</option>
           {#each account.models as m (m.id)}
             <option value={m.id}>{m.id}</option>
@@ -72,17 +71,17 @@
       </SettingRow>
     {:else}
       <SettingRow id="ai.model" hint={t("settings.modelHint")}>
-        <SettingText value={s.model} list="model-presets" placeholder="glm-4.7-flash" width="220px" commit={(v) => void form.set({ model: v.trim() }, "ai.model")} />
+        <SettingText value={s.model} list="model-presets" placeholder="glm-4.7-flash" width="220px" patch={(v) => ({ model: v.trim() })} />
       </SettingRow>
       <SettingRow id="ai.endpoint" block>
-        <SettingText value={s.base_url} list="base-url-presets" placeholder="https://open.bigmodel.cn/api/paas/v4" commit={(v) => void form.set({ base_url: v.trim() }, "ai.endpoint")} />
+        <SettingText value={s.base_url} list="base-url-presets" placeholder="https://open.bigmodel.cn/api/paas/v4" patch={(v) => ({ base_url: v.trim() })} />
       </SettingRow>
       <SettingRow id="ai.apiKey" block hint={s.env_key_present ? t("settings.apiKeyEnv") : undefined}>
-        <SettingText value={s.api_key} type="password" placeholder={t("settings.apiKeyPlaceholder")} commit={(v) => void form.set({ api_key: v.trim() }, "ai.apiKey")} />
+        <SettingText value={s.api_key} type="password" placeholder={t("settings.apiKeyPlaceholder")} patch={(v) => ({ api_key: v.trim() })} />
       </SettingRow>
     {/if}
     <SettingRow id="ai.effort" hint={s.reasoning_effort_active ? undefined : t("settings.reasoningInactive")}>
-      <select id="setting-ai-effort" value={s.reasoning_effort} onchange={(e) => void form.set({ reasoning_effort: e.currentTarget.value })}>
+      <select {@attach rowControl} value={s.reasoning_effort} onchange={(e) => void form.set({ reasoning_effort: e.currentTarget.value })}>
         {#each EFFORT_OPTIONS as o (o.value)}
           <option value={o.value}>{effortLabel(o.value, !!o.isDefault)}</option>
         {/each}
@@ -90,32 +89,24 @@
     </SettingRow>
   </SettingSection>
   <SettingSection title={t("settings.sec.behaviour")}>
-    <SettingRow id="ai.webSearch">
-      <Switch checked={s.web_search_enabled} onchange={(v) => void form.set({ web_search_enabled: v })} />
-    </SettingRow>
-    <SettingRow id="ai.planConfirm">
-      <Switch checked={s.plan_confirm} onchange={(v) => void form.set({ plan_confirm: v })} />
-    </SettingRow>
-    <SettingRow id="ai.provenanceMarks">
-      <Switch checked={s.provenance_marks} onchange={(v) => void form.set({ provenance_marks: v })} />
-    </SettingRow>
-    <SettingRow id="ai.formatAgentWrites">
-      <Switch checked={s.format_agent_writes} onchange={(v) => void form.set({ format_agent_writes: v })} />
-    </SettingRow>
+    <SettingSwitch id="ai.webSearch" field="web_search_enabled" />
+    <SettingSwitch id="ai.planConfirm" field="plan_confirm" />
+    <SettingSwitch id="ai.provenanceMarks" field="provenance_marks" />
+    <SettingSwitch id="ai.formatAgentWrites" field="format_agent_writes" />
     <!-- The vault's standing grant belongs to neither provider; the row exists only while there is one to revoke -->
     {#if vault.root && writePolicy === "allow"}
       <SettingRow id="ai.writeGrant">
-        <button id="setting-ai-writeGrant" class="btn small" onclick={revokeWritePolicy}>{t("settings.revoke")}</button>
+        <button {@attach rowControl} class="btn small" onclick={revokeWritePolicy}>{t("settings.revoke")}</button>
       </SettingRow>
     {/if}
   </SettingSection>
   <SettingSection title={t("settings.translate.section")} note={search?.query ? undefined : t("settings.translate.disclosure")}>
     <SettingRow id="ai.translateTarget">
       {#if targetChoice === "custom"}
-        <SettingText value={customTarget ? s.translate_target : ""} placeholder={t("settings.translate.targetCustomPlaceholder")} width="120px" commit={(v) => void form.set({ translate_target: v.trim() }, "ai.translateTarget")} />
+        <SettingText value={customTarget ? s.translate_target : ""} placeholder={t("settings.translate.targetCustomPlaceholder")} width="120px" patch={(v) => ({ translate_target: v.trim() })} />
       {/if}
       <select
-        id="setting-ai-translateTarget"
+        {@attach rowControl}
         value={targetChoice}
         onchange={(e) => {
           const v = e.currentTarget.value;
@@ -131,10 +122,10 @@
       </select>
     </SettingRow>
     <SettingRow id="ai.translateModel">
-      <SettingText value={s.translate_model} list="model-presets" placeholder={s.active_model || "glm-4.7-flash"} width="220px" commit={(v) => void form.set({ translate_model: v.trim() }, "ai.translateModel")} />
+      <SettingText value={s.translate_model} list="model-presets" placeholder={s.active_model || "glm-4.7-flash"} width="220px" patch={(v) => ({ translate_model: v.trim() })} />
     </SettingRow>
     <SettingRow id="ai.translateAddendum" block>
-      <SettingText value={s.translate_addendum} commit={(v) => void form.set({ translate_addendum: v.trim() }, "ai.translateAddendum")} />
+      <SettingText value={s.translate_addendum} patch={(v) => ({ translate_addendum: v.trim() })} />
     </SettingRow>
   </SettingSection>
 

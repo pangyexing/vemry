@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext, onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { api, type CaptureTarget, type InboxDoor, type InboxLanding, type PairStart } from "$lib/api";
   import { comboFromEvent, hotkeyLabel, isModifierKey } from "$lib/capture";
   import { copyText } from "$lib/copytext";
@@ -10,14 +10,14 @@
   import { settingsUi } from "$lib/stores/settingsUi.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { vault, vaultName } from "$lib/stores/vault.svelte";
-  import type { SearchContext } from "./context";
+  import { rowControl, settingsSearch } from "./context";
   import { form } from "./form.svelte";
   import SettingRow from "./SettingRow.svelte";
   import SettingSection from "./SettingSection.svelte";
   import SettingText from "./SettingText.svelte";
 
   const s = $derived(form.s);
-  const search = getContext<SearchContext | undefined>("settings-search");
+  const search = settingsSearch();
   const searching = $derived(!!search?.query);
   let alive = true;
 
@@ -55,12 +55,10 @@
     recordingError = null;
     void setHotkey(combo);
   }
-  async function setHotkey(combo: string) {
-    await form.set({ capture_hotkey: combo });
-  }
+  const setHotkey = (combo: string) => form.set({ capture_hotkey: combo }, "capture.hotkey");
   const hotkeyError = $derived.by(() => {
     if (recordingError) return recordingError;
-    const e = form.errors.capture_hotkey ?? s?.capture_hotkey_error;
+    const e = form.errors["capture.hotkey"] ?? s?.capture_hotkey_error;
     return e ? t("settings.capture.hotkeyFailed", { error: e }) : null;
   });
 
@@ -76,7 +74,7 @@
   /** The code's remaining time, m:ss, ticking every second while a code is on show. */
   let phoneCodeLeft = $state("");
   let phoneCopied = $state(false);
-  let inboxLastLanded = $state<InboxLanding | null>(null);
+  const inboxLastLanded = $derived(s?.inbox_last_landed ?? null);
   let phoneWatch: ReturnType<typeof setInterval> | null = null;
   let phoneTick: ReturnType<typeof setInterval> | null = null;
   let phoneOkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -217,11 +215,11 @@
       ? t("settings.capture.phoneLastLandedIn", { ago: ago(l.at), vault: l.vault, target: l.target })
       : t("settings.capture.phoneLastLanded", { ago: ago(l.at), target: l.target });
   }
-  // The page opened (not a search's glance at it): the paired phones and the last landing are read once
+  // The page opened (not a search's glance at it), or the account signed in: the paired
+  // phones are read — once, not again for every setting written on the page
   $effect(() => {
-    if (searching) return;
-    void loadDoors();
-    inboxLastLanded = form.s?.inbox_last_landed ?? null;
+    if (searching || !account.loggedIn) return;
+    untrack(() => void loadDoors());
   });
   onDestroy(() => {
     alive = false;
@@ -242,7 +240,7 @@
            clicking anywhere else blurs it and disarms the recorder. Already armed: a no-op, so
            Space's keyup activation cannot wipe the "needs a modifier" error. -->
       <button
-        id="setting-capture-hotkey"
+        {@attach rowControl}
         class="hotkey-field"
         class:recording
         class:bad={!!hotkeyError}
@@ -257,8 +255,8 @@
         {recording ? t("settings.capture.hotkeyRecording") : hotkeyLabel(s.capture_hotkey)}
       </button>
     </SettingRow>
-    <SettingRow id="capture.target" hint={t("settings.capture.targetHint", { key: k("Mod+Enter") })}>
-      <select id="setting-capture-target" value={s.capture_target} onchange={(e) => void form.set({ capture_target: e.currentTarget.value as CaptureTarget })}>
+    <SettingRow id="capture.target">
+      <select {@attach rowControl} value={s.capture_target} onchange={(e) => void form.set({ capture_target: e.currentTarget.value as CaptureTarget })}>
         <option value="inbox">{t("settings.capture.targetInbox")}</option>
         <option value="journal">{t("settings.capture.targetJournal")}</option>
         <option value="pinned">{t("settings.capture.targetPinned")}</option>
@@ -268,16 +266,16 @@
       {#if !vault.root}
         <SettingRow id="capture.pinnedNote" hint={t("settings.capture.pinnedNeedsVault")}></SettingRow>
       {:else}
-        <SettingRow id="capture.pinnedNote" error={form.errors.capture_pinned_path ?? null}>
-          <SettingText value={s.capture_pinned_path} list="capture-pinned-notes" placeholder="notes/ideas.md" width="220px" commit={(v) => void form.set({ capture_pinned_path: v.trim() }, "capture.pinnedNote")} />
+        <SettingRow id="capture.pinnedNote">
+          <SettingText value={s.capture_pinned_path} list="capture-pinned-notes" placeholder="notes/ideas.md" width="220px" patch={(v) => ({ capture_pinned_path: v.trim() })} />
           <datalist id="capture-pinned-notes">
             {#each vault.notes as n (n.id)}
               <option value={n.id}>{n.title}</option>
             {/each}
           </datalist>
         </SettingRow>
-        <SettingRow id="capture.pinnedHeading" error={form.errors.capture_pinned_heading ?? null}>
-          <SettingText value={s.capture_pinned_heading} width="220px" commit={(v) => void form.set({ capture_pinned_heading: v.trim() }, "capture.pinnedHeading")} />
+        <SettingRow id="capture.pinnedHeading">
+          <SettingText value={s.capture_pinned_heading} width="220px" patch={(v) => ({ capture_pinned_heading: v.trim() })} />
         </SettingRow>
       {/if}
     {/if}
@@ -315,7 +313,7 @@
           </div>
         {:else}
           <div class="line">
-            <button id="setting-capture-phone" class="btn small" disabled={phonePairing} onclick={showPairCode}>{t("settings.capture.phoneShowCode")}</button>
+            <button {@attach rowControl} class="btn small" disabled={phonePairing} onclick={showPairCode}>{t("settings.capture.phoneShowCode")}</button>
             <small>{t("settings.capture.phoneCodeHint")}</small>
           </div>
         {/if}
@@ -339,7 +337,7 @@
     </SettingRow>
     {#if account.loggedIn}
       <SettingRow id="capture.phoneVault">
-        <select id="setting-capture-phoneVault" value={s.inbox_vault ?? ""} onchange={(e) => void form.set({ inbox_vault: e.currentTarget.value })}>
+        <select {@attach rowControl} value={s.inbox_vault ?? ""} onchange={(e) => void form.set({ inbox_vault: e.currentTarget.value })}>
           <option value="">{t("settings.capture.phoneVaultOpen")}</option>
           {#each inboxVaultChoices as root (root)}
             <option value={root} title={root}>{vaultName(root)}</option>
@@ -376,10 +374,6 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-  }
-  small {
-    font-size: var(--fs-xs);
-    color: var(--fg-muted);
   }
   .err-text {
     color: var(--danger);

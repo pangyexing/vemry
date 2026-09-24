@@ -333,11 +333,11 @@ class VaultStore {
     if (content && this.locateText) pos = this.locateText(content, pos) ?? pos;
     await this.revealInEditor(pos, flash);
   }
-  /** Open a note on a 1-based line — a full-text hit's — landing on the first of
-   *  `words` found on that line (the line's start when none is), with a flash. The
-   *  index counts lines in the text it read, which the buffer shares unless an edit is
-   *  still in flight; then the landing is off by that edit, never outside the note. */
-  async openNoteAtLine(note: string, line: number, words: string[] = []) {
+  /** Open a note on a 1-based line and a column in it — a full-text hit's, as the index
+   *  found it — with a flash. The index counts in the text it read, which the buffer
+   *  shares unless an edit is still in flight; then the landing is off by that edit, and
+   *  the column never runs past its line. */
+  async openNoteAtLine(note: string, line: number, col = 0) {
     await this.openNote(note);
     if (this.currentPath !== note) return;
     const text = this.currentContent;
@@ -348,9 +348,7 @@ class VaultStore {
       start = nl + 1;
     }
     const end = text.indexOf("\n", start);
-    const row = text.slice(start, end === -1 ? undefined : end).toLowerCase();
-    const col = words.map((w) => row.indexOf(w.toLowerCase())).find((i) => i >= 0) ?? 0;
-    await this.revealInEditor(start + col, true);
+    await this.revealInEditor(Math.min(start + col, end === -1 ? text.length : end), true);
   }
   /** Editor hook: where `text` sits in the open buffer, nearest to `near` (exact at
    *  `near` first); null when the buffer no longer holds it. */

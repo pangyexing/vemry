@@ -5,8 +5,9 @@
 // findable under one name and shown under another. The controls stay in the page
 // components; this holds no values and no behaviour.
 
-import en from "../../../locales/en.json";
-import { t, type MessageKey } from "$lib/i18n/i18n.svelte";
+import { fold } from "$lib/commands/registry";
+import { t, tEnglish, type MessageKey } from "$lib/i18n/i18n.svelte";
+import { k } from "$lib/shortcut";
 import { isMac } from "$lib/shortcut";
 
 export type SettingsPage = "general" | "editing" | "ai" | "account" | "browser" | "capture" | "privacy" | "skills";
@@ -25,12 +26,19 @@ export const PAGES: { id: SettingsPage; needsVault?: boolean }[] = [
 
 export const pageLabel = (p: SettingsPage): string => t(`settings.tab.${p}` as MessageKey);
 
+const NEEDS_VAULT = new Set(PAGES.filter((p) => p.needsVault).map((p) => p.id));
+/** Whether a page can be shown: the vault's own pages need an open vault. */
+export const pageAvailable = (p: SettingsPage, hasVault: boolean): boolean => hasVault || !NEEDS_VAULT.has(p);
+export const settingAvailable = (s: SettingEntry, hasVault: boolean): boolean => pageAvailable(s.page, hasVault);
+
 export interface SettingEntry {
   id: string;
   page: SettingsPage;
   /** A function where the wording follows the platform (the menu bar vs the system tray). */
   label: MessageKey | (() => MessageKey);
   hint?: MessageKey | (() => MessageKey);
+  /** The hint's placeholders (a shortcut drawn for this platform). */
+  hintParams?: () => Record<string, string>;
   /** Extra words a search should find it by, in any language (space-separated). */
   keywords?: string;
   /** A list or a card rather than one control: in search results it is a row that jumps to
@@ -43,14 +51,14 @@ const residentHint = (): MessageKey => (isMac ? "settings.residentHint" : "setti
 
 export const SETTINGS: SettingEntry[] = [
   { id: "general.language", page: "general", label: "settings.language.label", hint: "settings.language.hint", keywords: "语言 language 中文 English" },
-  { id: "general.resident", page: "general", label: residentLabel, hint: residentHint, keywords: "tray menu bar 托盘 菜单栏 后台" },
+  { id: "general.resident", page: "general", label: residentLabel, hint: residentHint, hintParams: () => ({ quit: k("Mod+Q") }), keywords: "tray menu bar 托盘 菜单栏 后台" },
   { id: "general.version", page: "general", label: "settings.version", keywords: "update 更新 升级 version" },
   { id: "general.autoCheck", page: "general", label: "settings.autoCheck", hint: "settings.autoCheckHint", keywords: "update 更新" },
 
   { id: "editing.fontSize", page: "editing", label: "settings.fontSize", hint: "settings.fontSizeHint", keywords: "字号 字体 font size 大小" },
   { id: "editing.lineWidth", page: "editing", label: "settings.readableLineWidth", hint: "settings.readableLineWidthHint", keywords: "行宽 宽度 width" },
-  { id: "editing.clickOpensLinks", page: "editing", label: "settings.clickOpensLinks", hint: "settings.clickOpensLinksHint", keywords: "链接 link click" },
-  { id: "editing.openLinksIn", page: "editing", label: "settings.openLinksIn", hint: "settings.openLinksHint", keywords: "链接 link reader browser 浏览器" },
+  { id: "editing.clickOpensLinks", page: "editing", label: "settings.clickOpensLinks", hint: "settings.clickOpensLinksHint", hintParams: () => ({ modClick: k("Mod+click") }), keywords: "链接 link click" },
+  { id: "editing.openLinksIn", page: "editing", label: "settings.openLinksIn", hint: "settings.openLinksHint", hintParams: () => ({ key: k("Mod+click") }), keywords: "链接 link reader browser 浏览器" },
   { id: "editing.readingImages", page: "editing", label: "settings.readingImages", hint: "settings.readingImagesHint", keywords: "图片 image reader" },
   { id: "editing.formatClips", page: "editing", label: "settings.formatClips", hint: "settings.formatClipsHint", keywords: "格式化 format paste 粘贴" },
   { id: "editing.cjkSpacing", page: "editing", label: "settings.formatCjkSpacing", hint: "settings.formatCjkSpacingHint", keywords: "空格 space 格式化 format" },
@@ -77,7 +85,7 @@ export const SETTINGS: SettingEntry[] = [
   { id: "browser.clipImages", page: "browser", label: "settings.clipLocalizeImages", hint: "settings.clipLocalizeImagesHint", keywords: "图片 image 剪藏 clip" },
 
   { id: "capture.hotkey", page: "capture", label: "settings.capture.hotkey", hint: "settings.capture.hotkeyHint", keywords: "速记 capture 快捷键 shortcut hotkey" },
-  { id: "capture.target", page: "capture", label: "settings.capture.target", hint: "settings.capture.targetHint", keywords: "速记 capture inbox 日志 journal" },
+  { id: "capture.target", page: "capture", label: "settings.capture.target", hint: "settings.capture.targetHint", hintParams: () => ({ key: k("Mod+Enter") }), keywords: "速记 capture inbox 日志 journal" },
   { id: "capture.pinnedNote", page: "capture", label: "settings.capture.pinnedNote", hint: "settings.capture.pinnedNoteHint", keywords: "速记 capture 钉 pin" },
   { id: "capture.pinnedHeading", page: "capture", label: "settings.capture.pinnedHeading", hint: "settings.capture.pinnedHeadingHint", keywords: "速记 capture 小节 section" },
   { id: "capture.phone", page: "capture", label: "settings.capture.phone", hint: "settings.capture.phoneHint", keywords: "手机 phone 配对 pair 二维码 qr", jump: true },
@@ -99,31 +107,21 @@ export function settingById(id: string): SettingEntry | undefined {
 
 const key = (k: MessageKey | (() => MessageKey)): MessageKey => (typeof k === "function" ? k() : k);
 export const settingLabel = (s: SettingEntry): string => t(key(s.label));
-export const settingHint = (s: SettingEntry): string | undefined => (s.hint ? t(key(s.hint)) : undefined);
-
-/** What the command palette matches a setting by besides its title: the English label (so
- *  English finds it in any language) and the keywords — not the hint, whose scattered
- *  letters would let a short query match nearly every setting. */
-export function settingKeywords(s: SettingEntry): string {
-  return `${EN[key(s.label)] ?? ""} ${s.keywords ?? ""}`;
-}
-
-/** Matching reads NFKC lower case, the same fold as the command palette's. */
-const fold = (s: string) => s.normalize("NFKC").toLowerCase();
-const EN = en as Record<string, string>;
+export const settingHint = (s: SettingEntry): string | undefined => (s.hint ? t(key(s.hint), s.hintParams?.()) : undefined);
 
 /** Everything a setting can be found by: its words in the interface language and in
  *  English (typing English finds a setting in any language), the page's name, and the
- *  keywords. */
+ *  keywords. The palette's command matching folds the same way. */
 function haystack(s: SettingEntry): string {
-  const l = key(s.label);
-  const h = s.hint ? key(s.hint) : undefined;
-  return fold([settingLabel(s), settingHint(s) ?? "", EN[l] ?? "", h ? EN[h] ?? "" : "", pageLabel(s.page), s.keywords ?? ""].join(" "));
+  return fold(
+    [settingLabel(s), settingHint(s) ?? "", tEnglish(key(s.label)), s.hint ? tEnglish(key(s.hint)) : "", pageLabel(s.page), s.keywords ?? ""].join(" "),
+  );
 }
 
-/** The settings a query finds: every whitespace-separated term appears somewhere in the
- *  haystack (substring, not subsequence — a hint is a sentence, and scattered letters
- *  across it would match nearly anything). A label hit ranks before a hint-only one. */
+/** The settings a query finds — the one matcher behind the dialog's search and the
+ *  command palette's "Settings" rows: every whitespace-separated term appears somewhere
+ *  in the haystack (substring, not subsequence — a hint is a sentence, and scattered
+ *  letters across it would match nearly anything). A label hit ranks before a hint-only one. */
 export function searchSettings(query: string): SettingEntry[] {
   const terms = fold(query).split(/\s+/).filter(Boolean);
   if (!terms.length) return [];
@@ -131,7 +129,7 @@ export function searchSettings(query: string): SettingEntry[] {
   SETTINGS.forEach((s, i) => {
     const hay = haystack(s);
     if (!terms.every((term) => hay.includes(term))) return;
-    const label = fold(settingLabel(s) + " " + (EN[key(s.label)] ?? ""));
+    const label = fold(`${settingLabel(s)} ${tEnglish(key(s.label))}`);
     hits.push({ s, rank: (terms.every((term) => label.includes(term)) ? 0 : 1000) + i });
   });
   return hits.sort((a, b) => a.rank - b.rank).map((h) => h.s);

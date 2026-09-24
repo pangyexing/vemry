@@ -11,7 +11,7 @@ export const isMac = /Mac/.test(navigator.platform || navigator.userAgent);
 // bindings use it on every platform.
 // Super is the literal ⌘/Win key of a recorded global shortcut (capture.ts), as
 // distinct from Mod, which means "the platform's command key".
-const MAC: Record<string, string> = { Mod: "⌘", Shift: "⇧", Alt: "⌥", Ctrl: "⌃", Super: "⌘", Backspace: "⌫" };
+const MAC: Record<string, string> = { Mod: "⌘", Shift: "⇧", Alt: "⌥", Ctrl: "⌃", Super: "⌘", Backspace: "⌫", Enter: "↵", Escape: "esc" };
 function pc(token: string): string | undefined {
   switch (token) {
     case "Mod":
@@ -25,12 +25,14 @@ function pc(token: string): string | undefined {
       return t("key.backspace");
     case "Super":
       return t("key.super");
+    case "Escape":
+      return "Esc";
     default:
       return undefined;
   }
 }
 
-/** k("Mod+Shift+F") → mac "⌘⇧F" / win&linux "Ctrl+Shift+F"; an unmapped token (a letter, ←, ., Enter, click) passes through unchanged */
+/** k("Mod+Shift+F") → mac "⌘⇧F" / win&linux "Ctrl+Shift+F"; an unmapped token (a letter, ←, ., click) passes through unchanged */
 export function k(combo: string): string {
   return combo
     .split("+")

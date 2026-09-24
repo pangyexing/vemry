@@ -1,7 +1,7 @@
 <script lang="ts">
   import { setContext, tick } from "svelte";
   import { t, tn } from "$lib/i18n/i18n.svelte";
-  import { PAGES, pageLabel, searchSettings, settingById, type SettingsPage } from "$lib/settings";
+  import { PAGES, pageAvailable, pageLabel, searchSettings, settingAvailable, type SettingsPage } from "$lib/settings";
   import { settingsUi } from "$lib/stores/settingsUi.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import type { SearchContext } from "./settings/context";
@@ -30,26 +30,18 @@
   } as const;
 
   let query = $state("");
+  const q = $derived(query.trim());
   let searchEl = $state<HTMLInputElement | null>(null);
   let panelEl = $state<HTMLDivElement | null>(null);
-  const available = (p: { needsVault?: boolean }) => !p.needsVault || !!vault.root;
-  const hits = $derived(query.trim() ? searchSettings(query).filter((s) => available(PAGES.find((p) => p.id === s.page)!)) : []);
+  const hits = $derived(q ? searchSettings(q).filter((s) => settingAvailable(s, !!vault.root)) : []);
   const hitIds = $derived(new Set(hits.map((h) => h.id)));
   const hitPages = $derived(PAGES.filter((p) => hits.some((h) => h.page === p.id)));
 
   setContext<SearchContext>("settings-search", {
     get query() {
-      return query.trim();
+      return q;
     },
     matches: (id) => hitIds.has(id),
-    go: (id) => {
-      query = "";
-      const entry = settingById(id);
-      if (entry) {
-        settingsUi.page = entry.page;
-        settingsUi.focus = id;
-      }
-    },
   });
 
   // Each opening reads the settings afresh and puts the cursor in the search field
@@ -57,15 +49,17 @@
     if (!settingsUi.open) return;
     query = "";
     void form.load();
-    if (!available(PAGES.find((p) => p.id === settingsUi.page)!)) settingsUi.page = "general";
+    if (!pageAvailable(settingsUi.page, !!vault.root)) settingsUi.page = "general";
     queueMicrotask(() => searchEl?.focus());
   });
 
-  // The setting an entry point asked for: scrolled to the middle and flashed once the page
-  // (and the settings it needs) has rendered
+  // The setting an entry point (or a search result's "go there") asked for: the search
+  // gives way to its page, and the row is scrolled to the middle and flashed once that
+  // page (and the settings it needs) has rendered
   $effect(() => {
     const id = settingsUi.focus;
     if (!id || !settingsUi.open || !form.s) return;
+    query = "";
     void settingsUi.page;
     void tick().then(() => {
       const row = panelEl?.querySelector<HTMLElement>(`[data-setting="${id}"]`);
@@ -138,17 +132,17 @@
             <button
               class="side-item"
               class:active={!query && settingsUi.page === p.id}
-              disabled={!available(p)}
-              title={available(p) ? undefined : t("settings.needsVault")}
+              disabled={!pageAvailable(p.id, !!vault.root)}
+              title={pageAvailable(p.id, !!vault.root) ? undefined : t("settings.needsVault")}
               aria-current={!query && settingsUi.page === p.id ? "true" : undefined}
               onclick={() => go(p.id)}
             >{pageLabel(p.id)}</button>
           {/each}
         </nav>
-        <div class="panel" class:searching={!!query.trim()} bind:this={panelEl}>
+        <div class="panel" bind:this={panelEl}>
           {#if !form.s}
             <!-- the first read is a local file: this shows for a frame at most -->
-          {:else if query.trim()}
+          {:else if q}
             {#if hits.length}
               <p class="count">{tn("settings.searchCount", hits.length)}</p>
               {#each hitPages as p (p.id)}
@@ -159,7 +153,7 @@
                 </div>
               {/each}
             {:else}
-              <p class="count">{t("settings.searchEmpty", { q: query.trim() })}</p>
+              <p class="count">{t("settings.searchEmpty", { q })}</p>
             {/if}
           {:else}
             {@const Page = PAGE_COMPONENTS[settingsUi.page]}
@@ -178,7 +172,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: var(--scrim, rgba(0, 0, 0, 0.3));
+    background: var(--scrim);
     display: grid;
     place-items: center;
     z-index: 150;
@@ -339,8 +333,17 @@
     padding: 0;
     white-space: nowrap;
   }
-  .panel :global(input:not([type="checkbox"]):not([type="radio"])) {
-    padding: 5px 10px;
-    font-size: var(--fs-sm);
+  /* The small print and the "type a name, then add" line the list pages share */
+  .panel :global(small) {
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+  }
+  .panel :global(.add) {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .panel :global(.add input) {
+    flex: 1;
   }
 </style>

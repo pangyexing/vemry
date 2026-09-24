@@ -8,14 +8,12 @@ import { prefs } from "$lib/stores/prefs.svelte";
 import { toast } from "$lib/stores/toast.svelte";
 import { updater } from "$lib/stores/updater.svelte";
 
-type Field = keyof SettingsUpdate;
-
 class SettingsForm {
   /** The settings as last read back; null until the dialog's first read. */
   s = $state<SettingsView | null>(null);
-  /** A write the backend refused, under the field it belongs to (the row shows it). */
-  errors = $state<Partial<Record<Field, string>>>({});
-  /** The setting row whose text field just landed: its hint line says "Saved" for a moment. */
+  /** A write the backend refused, under the setting row it was made from. */
+  errors = $state<Record<string, string>>({});
+  /** The row whose text field just landed: its hint line says "Saved" for a moment. */
   justSaved = $state<string | null>(null);
   #savedTimer: ReturnType<typeof setTimeout> | null = null;
   /** Writes in flight: a read-back only applies when no newer write started after it, so a
@@ -34,22 +32,24 @@ class SettingsForm {
     if (s) this.s = s;
   }
 
-  /** Write one change. The view updates at once; the read-back afterwards brings the
-   *  derived fields (the active model, web search availability, the tray and shortcut
-   *  errors) and feeds the in-process mirror the editor reads synchronously. */
-  set(patch: SettingsUpdate, savedRow?: string): Promise<boolean> {
-    const p = this.#write(patch, savedRow);
-    this.#last = Promise.all([this.#last, p]);
+  /** Write one change made on the row `row`. The view updates at once; the read-back
+   *  afterwards brings the derived fields (the active model, web search availability,
+   *  the tray and shortcut errors) and feeds the in-process mirror the editor reads
+   *  synchronously. A refusal is shown under the row; `saved` marks a text field's row
+   *  as saved when the write lands. */
+  set(patch: SettingsUpdate, row?: string, saved = false): Promise<boolean> {
+    const p = this.#write(patch, row, saved);
+    this.#last = this.#last.then(() => p);
     return p;
   }
 
-  async #write(patch: SettingsUpdate, savedRow?: string): Promise<boolean> {
+  async #write(patch: SettingsUpdate, row: string | undefined, saved: boolean): Promise<boolean> {
     const seq = ++this.#seq;
     if (this.s) this.s = { ...this.s, ...(patch as Partial<SettingsView>) };
-    const fields = Object.keys(patch) as Field[];
-    const errors = { ...this.errors };
-    for (const f of fields) delete errors[f];
-    this.errors = errors;
+    if (row && this.errors[row]) {
+      const { [row]: _, ...rest } = this.errors;
+      this.errors = rest;
+    }
     let failed: string | null = null;
     try {
       await api.settingsSet(patch);
@@ -63,16 +63,12 @@ class SettingsForm {
       if ("updater_auto_check" in patch) updater.autoCheck = s.updater_auto_check;
     }
     if (failed) {
-      // The refusals the backend names (a shortcut another app holds, a pin the vault
-      // would not take) land after the rest of the update, so the message belongs to the
-      // field that did not take; anything else is a toast
-      const field = fields.find((f) => f === "capture_hotkey" || f === "capture_pinned_path" || f === "capture_pinned_heading") ?? fields[0];
-      if (field && fields.length === 1) this.errors = { ...this.errors, [field]: failed };
+      if (row) this.errors = { ...this.errors, [row]: failed };
       else toast.push(failed, "error");
       return false;
     }
-    if (savedRow) {
-      this.justSaved = savedRow;
+    if (row && saved) {
+      this.justSaved = row;
       if (this.#savedTimer) clearTimeout(this.#savedTimer);
       this.#savedTimer = setTimeout(() => (this.justSaved = null), 1500);
     }
