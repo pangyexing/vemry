@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { t, tn } from "$lib/i18n/i18n.svelte";
+  import { t, tn, type MessageKey } from "$lib/i18n/i18n.svelte";
   import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
   import { extractOutline } from "$lib/outline";
   import { api, emitBrowserbarResult, onAgentWindowAction, onAgentWindowClosed, onBrowserEvent, onBrowserbarAction, onCaptureAction, onInboxHomeFailed, onInboxItems, onInboxLanded, onMenuEvent, onQuitRequested, onReadingEvent, onScriptEvent, type BrowserbarResult, type ScriptInfo } from "$lib/api";
   import { hotkeyLabel } from "$lib/capture";
   import { runHostAction } from "$lib/host";
-  import { executeCommand, registerCommand, syncScriptCommands } from "$lib/commands/registry";
+  import { executeCommand, registerCommand, syncScriptCommands, type Command } from "$lib/commands/registry";
   import { MEMORY_DRAFT_PROMPT, MEMORY_REVIEW_PROMPT } from "$lib/commands/memoryPrompts";
   import { vault, type MainView } from "$lib/stores/vault.svelte";
   import { untrack } from "svelte";
@@ -531,6 +531,19 @@
   }
 
   // ---- everything is a command ----
+  // When a command can do anything (the palette's `when`, with the reason it shows): the
+  // conditions most of them wait on. Each reads a store the command itself reads, so the
+  // palette and the run agree on what "possible" means
+  type Gate = Pick<Command, "when" | "whyNot">;
+  const gate = (when: () => boolean, whyNot: MessageKey | (() => MessageKey)): Gate => ({ when, whyNot });
+  const needsVault = gate(() => !!vault.root, "palette.why.vault");
+  const needsPage = gate(() => browser.current != null, "palette.why.page");
+  /** A note on screen in the editor, the one insertion and block commands act on. */
+  const needsNote = gate(() => vault.canInsertIntoVisibleNote, "palette.why.note");
+  /** Any document open (a note, an image, a PDF). */
+  const needsDoc = gate(() => vault.currentPath != null, "palette.why.note");
+  const needsPendingHere = gate(() => vault.pendingCount > 0, "palette.why.pendingHere");
+  const needsPendingVault = gate(() => vault.pendingVault.blocks > 0, "palette.why.pending");
   registerCommand({ id: "open-vault", group: "vault", run: pickVault });
   registerCommand({
     id: "create-vault", group: "vault",
@@ -541,15 +554,15 @@
     run: () => { paletteMode = "vaults"; },
   });
   registerCommand({
-    id: "new-note", hotkey: k("Mod+N"), group: "note",
+    id: "new-note", hotkey: k("Mod+N"), group: "note", ...needsVault,
+    run: () => { paletteMode = "new-note"; },
+  });
+  registerCommand({
+    id: "open-note", hotkey: k("Mod+O"), group: "nav", ...needsVault,
     run: () => { paletteMode = "notes"; },
   });
   registerCommand({
-    id: "open-note", hotkey: k("Mod+O"), group: "nav",
-    run: () => { paletteMode = "notes"; },
-  });
-  registerCommand({
-    id: "search", hotkey: k("Mod+Shift+F"), group: "nav",
+    id: "search", hotkey: k("Mod+Shift+F"), group: "nav", ...needsVault,
     run: () => { paletteMode = "search"; },
   });
   registerCommand({
@@ -587,30 +600,33 @@
   }
   registerCommand({
     id: "nav-back", hotkey: k("Mod+Alt+←"), group: "nav",
+    ...gate(() => vault.canGoBack || vault.mainView === "reading" || vault.mainView === "translate", "palette.why.back"),
     run: navBack,
   });
   registerCommand({
     id: "nav-forward", hotkey: k("Mod+Alt+→"), group: "nav",
+    ...gate(() => vault.canGoForward || (vault.mainView === "reading" && reading.canGoForward), "palette.why.forward"),
     run: navForward,
   });
   registerCommand({
     id: "undo-file-op", descriptionParams: { key: k("Mod+Z") }, group: "note",
+    ...gate(() => vault.undoOps.length > 0, "palette.why.undo"),
         run: () => vault.undoFileOp(),
   });
   registerCommand({
-    id: "toggle-left", hotkey: k("Mod+B"), group: "view",
+    id: "toggle-left", hotkey: k("Mod+B"), group: "view", ...needsVault,
     run: () => { vault.leftOpen = !vault.leftOpen; },
   });
   registerCommand({
-    id: "toggle-right", hotkey: k("Mod+."), group: "view",
+    id: "toggle-right", hotkey: k("Mod+."), group: "view", ...needsVault,
     run: () => { vault.rightOpen = !vault.rightOpen; },
   });
   registerCommand({
-    id: "toggle-sidebar-side", group: "view",
+    id: "toggle-sidebar-side", group: "view", ...needsVault,
         run: () => { vault.swapSides = !vault.swapSides; },
   });
   registerCommand({
-    id: "show-agent", group: "research",
+    id: "show-agent", group: "research", ...needsVault,
     run: () => { vault.rightOpen = true; vault.rightTab = "agent"; },
   });
   registerCommand({
@@ -621,7 +637,7 @@
     // another window, not a second conversation.
     // The giving-way invariant: while that window is open the panel shows only a placeholder
     // (AgentPanel), so exactly one composer is ever visible.
-    id: "focus-agent", descriptionParams: { key: k("Mod+J") }, hotkey: k("Mod+J"), group: "research",
+    id: "focus-agent", descriptionParams: { key: k("Mod+J") }, hotkey: k("Mod+J"), group: "research", ...needsVault,
         run: () => {
       if (!vault.root) return;
       const panelVisible = !agent.windowOpen && vault.rightOpen && vault.rightTab === "agent";
@@ -633,7 +649,7 @@
   registerCommand({
     // The whole note through the Markdown formatter, at the user's explicit request (never on
     // autosave); one undo step puts it back
-    id: "format-note", group: "note", descriptionParams: { key: k("Mod+Z") },
+    id: "format-note", group: "note", descriptionParams: { key: k("Mod+Z") }, ...needsNote,
     run: async () => {
       if (!vault.formatDoc || !vault.canInsertIntoVisibleNote) return;
       try {
@@ -646,7 +662,7 @@
   });
   registerCommand({
     // Plain-text paste: the clipboard's text as is, past the rich-text conversion
-    id: "paste-plain-text", group: "note", hotkey: k("Shift+Mod+V"),
+    id: "paste-plain-text", group: "note", hotkey: k("Shift+Mod+V"), ...needsNote,
     run: async () => {
       if (!vault.canInsertIntoVisibleNote) return;
       const text = await api.clipboardReadText().catch(() => null);
@@ -655,7 +671,7 @@
   });
   registerCommand({
     // Today's journal note (journal/YYYY-MM-DD.md): where the daily start and close land; created on first use
-    id: "open-journal-today", group: "note",
+    id: "open-journal-today", group: "note", ...needsVault,
     run: async () => {
       if (!vault.root) return;
       const path = journalToday();
@@ -674,6 +690,7 @@
     // The session keeps its findings in the open note (the follow chip appears in the composer);
     // with no note open there is nothing to follow
     id: "agent-follow-current", group: "research",
+    ...gate(() => !!vault.root && vault.currentIsNote, "palette.why.note"),
     run: () => {
       const path = vault.currentPath;
       if (!vault.root || !path) return;
@@ -686,6 +703,7 @@
     // sends, so the audit records it as a selection, body dropped). The panel is shown so the
     // answer is visible; with the detached window open the answer lands there
     id: "explain-selection", group: "research",
+    ...gate(() => !!vault.root && !!vault.editorSelection?.text.trim(), "palette.why.selection"),
     run: () => {
       if (!vault.root) return;
       const sel = vault.editorSelection;
@@ -704,7 +722,7 @@
     // command): the native file dialog → import into the current note's attachment bucket →
     // chips. When no conversation surface is mounted (the panel is collapsed and no window is
     // open) it is summoned first.
-    id: "agent-attach-files", group: "research",
+    id: "agent-attach-files", group: "research", ...needsVault,
     run: () => {
       if (!vault.root) return;
       const c = agent.composer;
@@ -714,7 +732,7 @@
   });
   registerCommand({
     // Named after the sidebar's "Outline" tab (the panel holds the outline plus the collapsed backlinks and outgoing-links sections)
-    id: "show-outline", group: "view",
+    id: "show-outline", group: "view", ...needsVault,
     run: () => { vault.rightOpen = true; vault.rightTab = "outline"; },
   });
   registerCommand({
@@ -754,21 +772,21 @@
     },
   });
   registerCommand({
-    id: "browser-close-tab", group: "research",
+    id: "browser-close-tab", group: "research", ...needsPage,
     run: async () => {
       if (!browser.current) return;
       try { await api.browserCloseTab(); } catch (e) { toast.push(String(e), "error"); }
     },
   });
   registerCommand({
-    id: "browser-reload", hotkey: k("Mod+R"), group: "research",
+    id: "browser-reload", hotkey: k("Mod+R"), group: "research", ...needsPage,
     run: async () => {
       if (!browser.current) return;
       try { await api.browserReload(); } catch (e) { toast.push(String(e), "error"); }
     },
   });
   registerCommand({
-    id: "browser-toggle-dock", group: "research",
+    id: "browser-toggle-dock", group: "research", ...needsPage,
     run: async () => {
       try { await api.browserSetDocked(browser.shape !== "docked"); } catch (e) { toast.push(String(e), "error"); }
     },
@@ -777,7 +795,7 @@
     // "Everything is a command": the keyboard path beside the ☆ buttons (on the page card and the
     // toolbar), on the same bookmark_toggle semantics as both of them (the state is mirrored
     // through the bookmarks_changed broadcast)
-    id: "bookmark-toggle", descriptionParams: { key: k("Mod+L") }, group: "research",
+    id: "bookmark-toggle", descriptionParams: { key: k("Mod+L") }, group: "research", ...needsPage,
     run: async () => {
       const cur = browser.current;
       if (!cur) {
@@ -899,13 +917,13 @@
     }
   }
   registerCommand({
-    id: "clip-selection", group: "clip",
+    id: "clip-selection", group: "clip", ...needsPage,
     run: async () => {
       await clipSelectionFlow();
     },
   });
   registerCommand({
-    id: "clip-selection-to-clips", group: "clip",
+    id: "clip-selection-to-clips", group: "clip", ...needsPage,
     run: async () => {
       try {
         const res = await api.clipSelection(true);
@@ -917,7 +935,7 @@
     },
   });
   registerCommand({
-    id: "clip-selection-to-note", group: "clip",
+    id: "clip-selection-to-note", group: "clip", ...needsPage,
     run: async () => {
       try {
         const res = await api.clipSelection(false);
@@ -927,23 +945,23 @@
     },
   });
   registerCommand({
-    id: "clip-page", hotkey: k("Mod+Shift+S"), group: "clip",
+    id: "clip-page", hotkey: k("Mod+Shift+S"), group: "clip", ...needsPage,
     run: async () => {
       await clipPageFlow();
     },
   });
   registerCommand({
-    id: "clip-link", group: "clip",
+    id: "clip-link", group: "clip", ...needsPage,
     run: async () => {
       await clipLinkFlow();
     },
   });
   registerCommand({
-    id: "reload-scripts", group: "system",
+    id: "reload-scripts", group: "system", ...needsVault,
     run: async () => { try { await api.scriptsReload(); } catch (e) { toast.push(String(e), "error"); } },
   });
   registerCommand({
-    id: "init-memory", group: "research",
+    id: "init-memory", group: "research", ...needsVault,
     run: async () => {
       if (agent.running) { toast.push(t("app.agentBusy")); return; }
       const exists = vault.notes.some((n) => n.id === "VEMRY.md");
@@ -979,17 +997,17 @@
     },
   });
   registerCommand({
-    id: "open-memory", group: "research",
+    id: "open-memory", group: "research", ...needsVault,
     run: () => vault.openNote("VEMRY.md"),
   });
-  registerCommand({ id: "block-type", group: "note", run: () => { paletteMode = "types"; } });
+  registerCommand({ id: "block-type", group: "note", ...needsVault, run: () => { paletteMode = "types"; } });
   registerCommand({
-    id: "reveal-in-tree", group: "nav",
+    id: "reveal-in-tree", group: "nav", ...needsDoc,
     run: () => vault.revealInTree(),
   });
   for (const [id, embed] of [["copy-block-link", false], ["copy-block-embed", true]] as const) {
     registerCommand({
-      id, group: "note",
+      id, group: "note", ...needsNote,
       run: () => {
         if (!vault.copyBlockRef?.(embed)) toast.push(t("block.noBlockHere"), "error");
       },
@@ -1004,7 +1022,7 @@
     ["block-delete", "delete", undefined],
   ] as const) {
     registerCommand({
-      id, group: "note", hotkey,
+      id, group: "note", hotkey, ...needsNote,
       run: () => {
         if (!vault.blockCommand?.(op)) toast.push(t("block.noBlockHere"), "error");
       },
@@ -1012,7 +1030,7 @@
   }
   // Provenance review (the ledger is post-write review; the permission gate is pre-write consent)
   registerCommand({
-    id: "toggle-provenance", group: "note",
+    id: "toggle-provenance", group: "note", ...needsVault,
     run: () => {
       vault.provenanceOverlay = !vault.provenanceOverlay;
       toast.push(t(vault.provenanceOverlay ? "prov.overlayOn" : "prov.overlayOff"));
@@ -1021,13 +1039,13 @@
   // The run under the cursor is accepted or put back and the review steps on (the same
   // act as the run's ✓ / ✕ and ⌘Y / ⌘⇧Y in the editor)
   registerCommand({
-    id: "provenance-accept", group: "note",
+    id: "provenance-accept", group: "note", ...needsPendingHere,
     run: () => {
       if (!vault.reviewRun?.("accept")) toast.push(t("prov.noPendingHere"), "error");
     },
   });
   registerCommand({
-    id: "provenance-accept-all", group: "note",
+    id: "provenance-accept-all", group: "note", ...needsPendingHere,
     run: () => {
       if (!vault.pendingCount) {
         toast.push(t("prov.noPending"), "error");
@@ -1038,6 +1056,7 @@
   });
   registerCommand({
     id: "clip-localize-images", group: "note",
+    ...gate(() => !!vault.currentPath && !!vault.noteById.get(vault.currentPath)?.source, "palette.why.clip"),
     run: async () => {
       const path = vault.currentPath;
       const source = path ? (vault.notes.find((n) => n.id === path)?.source ?? null) : null;
@@ -1058,7 +1077,7 @@
     },
   });
   registerCommand({
-    id: "provenance-accept-vault", group: "note",
+    id: "provenance-accept-vault", group: "note", ...needsPendingVault,
     run: () => {
       if (!vault.pendingVault.blocks) {
         toast.push(t("prov.noPendingVault"), "error");
@@ -1068,13 +1087,13 @@
     },
   });
   registerCommand({
-    id: "provenance-reject", group: "note",
+    id: "provenance-reject", group: "note", ...needsPendingHere,
     run: () => {
       if (!vault.reviewRun?.("reject")) toast.push(t("prov.noPendingHere"), "error");
     },
   });
   registerCommand({
-    id: "provenance-reject-all", group: "note",
+    id: "provenance-reject-all", group: "note", ...needsPendingHere,
     run: () => {
       if (!vault.pendingCount) {
         toast.push(t("prov.noPending"), "error");
@@ -1086,27 +1105,27 @@
   // The review's steps cross notes: at the open note's last run the next note with
   // unreviewed blocks opens on its first (the previous one on its last)
   registerCommand({
-    id: "provenance-next-pending", group: "note",
+    id: "provenance-next-pending", group: "note", ...needsPendingVault,
     run: async () => {
       if (!(await vault.reviewStep("next"))) toast.push(t("prov.noPendingVault"), "error");
     },
   });
   registerCommand({
-    id: "provenance-prev-pending", group: "note",
+    id: "provenance-prev-pending", group: "note", ...needsPendingVault,
     run: async () => {
       if (!(await vault.reviewStep("prev"))) toast.push(t("prov.noPendingVault"), "error");
     },
   });
-  registerCommand({ id: "provenance-review-start", group: "note", run: () => void vault.reviewStart(null) });
+  registerCommand({ id: "provenance-review-start", group: "note", ...needsPendingVault, run: () => void vault.reviewStart(null) });
   registerCommand({
-    id: "note-history", group: "note",
+    id: "note-history", group: "note", ...gate(() => vault.currentIsNote, "palette.why.note"),
     run: () => {
       if (vault.currentPath?.endsWith(".md")) history.open(vault.currentPath);
       else toast.push(t("history.notANote"));
     },
   });
   registerCommand({
-    id: "delete-current-note", group: "note",
+    id: "delete-current-note", group: "note", ...needsDoc,
     run: async () => {
       if (vault.currentPath) {
         try { await vault.deletePath(vault.currentPath); } catch (e) { vault.error = String(e); }
@@ -1115,6 +1134,10 @@
   });
   registerCommand({
     id: "mark-private", group: "note",
+    ...gate(
+      () => vault.currentPath != null && vault.privacyStatus(vault.currentPath).kind === "none",
+      () => (vault.currentPath == null ? "palette.why.note" : "palette.why.alreadyPrivate"),
+    ),
     run: async () => {
       const path = vault.currentPath;
       if (path) await vault.markPrivate(path, path.endsWith(".md") ? "note" : "file");
@@ -1122,11 +1145,16 @@
   });
   registerCommand({
     id: "unmark-private", group: "note",
+    // An inherited path stays available: the run explains which zone covers it
+    ...gate(
+      () => vault.currentPath != null && vault.privacyStatus(vault.currentPath).kind !== "none",
+      () => (vault.currentPath == null ? "palette.why.note" : "palette.why.notPrivate"),
+    ),
     run: async () => {
       const path = vault.currentPath;
       if (!path) return;
-      // The registry has no enable predicate: an inherited path explains itself here instead
-      // of a silent no-op (Rust removes only the exact rule line)
+      // An inherited path passes the gate and explains itself here instead of a silent
+      // no-op (Rust removes only the exact rule line)
       const st = vault.privacyStatus(path);
       if (st.kind === "inherited") {
         toast.push(t("fileTree.privacyCovered", { zone: `${st.zone}/` }));
@@ -1139,40 +1167,41 @@
   // opened into the tab system through openView (the preview-slot semantics, promoted by a double
   // click or an edit, as a document is). Escape closes a view's tab.
   registerCommand({
-    id: "view-agenda", group: "view",
+    id: "view-agenda", group: "view", ...needsVault,
     run: () => void vault.openView("agenda"),
   });
   registerCommand({
-    id: "view-kanban", group: "view",
+    id: "view-kanban", group: "view", ...needsVault,
     run: () => void vault.openView("kanban"),
   });
   registerCommand({
-    id: "view-timeline", group: "view",
+    id: "view-timeline", group: "view", ...needsVault,
     run: () => void vault.openView("timeline"),
   });
   registerCommand({
-    id: "view-claims", group: "view",
+    id: "view-claims", group: "view", ...needsVault,
     run: () => void vault.openView("claims"),
   });
   registerCommand({
-    id: "view-evidence", group: "view",
+    id: "view-evidence", group: "view", ...needsVault,
     run: () => void vault.openView("evidence"),
   });
   registerCommand({
-    id: "view-graph", group: "view",
+    id: "view-graph", group: "view", ...needsVault,
     run: () => void vault.openView("graph"),
   });
   registerCommand({
     // The same data no longer has three names: the sidebar tab "Research" is the panel, and this is "Session replay"
-    id: "view-sessions", group: "view",
+    id: "view-sessions", group: "view", ...needsVault,
     run: () => void vault.openView("sessions"),
   });
   registerCommand({
-    id: "view-review", group: "view",
+    id: "view-review", group: "view", ...needsVault,
     run: () => void vault.openView("review"),
   });
   registerCommand({
     id: "view-reading", group: "view",
+    ...gate(() => !!(reading.current || reading.loading || reading.error), "palette.why.reader"),
     run: () => {
       if (reading.current || reading.loading || reading.error) vault.enterReading();
       else toast.push(t("app.noReaderPageYet"));
@@ -1199,7 +1228,11 @@
    *  page, else the open note — as an overlay over the current view; the same key leaves it.
    *  The buffer is flushed first so the note read from disk is current. */
   registerCommand({
-    id: "translate-toggle", hotkey: k("Mod+Shift+T"), descriptionParams: { key: k("Mod+Shift+T") }, group: "view",
+    id: "translate-toggle", hotkey: k("Mod+Shift+T"), group: "view",
+    ...gate(
+      () => vault.mainView === "translate" || (!!vault.root && (vault.currentPath != null || (vault.mainView === "reading" && !!reading.current))),
+      "palette.why.note",
+    ),
     run: async () => {
       if (vault.mainView === "translate") { vault.exitTranslate(); return; }
       if (!vault.root) return;
@@ -1221,7 +1254,7 @@
   });
   /** The browser's current page: a translation pane opens inside the tab (or closes when it is open). */
   registerCommand({
-    id: "translate-browser-page", group: "research",
+    id: "translate-browser-page", group: "research", ...needsPage,
     run: async () => {
       if (!browser.current) return;
       try {
@@ -1234,7 +1267,8 @@
   // The editor's tabs. On mac ⌘W is dispatched back to close-tab by the native menu's accelerator
   // (menu.rs's close_focused_window), and off mac it goes through App's keydown; with no tab it is a no-op
   registerCommand({
-    id: "close-tab", descriptionParams: { key: k("Mod+W") }, group: "view",
+    id: "close-tab", hotkey: k("Mod+W"), group: "view",
+    ...gate(() => vault.activeTabId != null || vault.mainView === "translate", "palette.why.tabs"),
     run: async () => {
       // Under the translation overlay ⌘W closes the overlay, not the note it is a view of
       if (vault.mainView === "translate") { vault.exitTranslate(); return; }
@@ -1242,18 +1276,20 @@
     },
   });
   registerCommand({
-    id: "next-tab", descriptionParams: { key: `${k("Mod+Shift+]")} / ${k("Ctrl+Tab")}` }, group: "view",
+    id: "next-tab", hotkey: k("Mod+Shift+]"), descriptionParams: { key: k("Ctrl+Tab") }, group: "view",
+    ...gate(() => vault.tabs.length > 1, "palette.why.oneTab"),
     run: () => void vault.cycleTab(1),
   });
   registerCommand({
-    id: "prev-tab", descriptionParams: { key: `${k("Mod+Shift+[")} / ${k("Ctrl+Shift+Tab")}` }, group: "view",
+    id: "prev-tab", hotkey: k("Mod+Shift+["), descriptionParams: { key: k("Ctrl+Shift+Tab") }, group: "view",
+    ...gate(() => vault.tabs.length > 1, "palette.why.oneTab"),
     run: () => void vault.cycleTab(-1),
   });
   registerCommand({
     // A one-off explicit migration (⚠ never run automatically): an old bucket is shared by stem
     // and its ownership cannot be decided, while a new one is unique to a note's full path. A
     // dry run's report → a confirmation → the real run; mixed buckets and orphans stay put
-    id: "migrate-attachments",     group: "system",
+    id: "migrate-attachments", group: "system", ...needsVault,
     run: async () => {
       await vault.flushEditor?.();
       try {
@@ -1296,7 +1332,7 @@
     // The old "clear the AI conversation" only cleared the timeline and not the model context —
     // the meaning is now a new session: the UI and Rust's history change gear together, and the
     // old conversation stays in the session list
-    id: "clear-agent", group: "research",
+    id: "clear-agent", group: "research", ...needsVault,
         // While the conversation is in the detached window it runs there (its timeline has to be cleared in step)
     run: () => void (agent.windowOpen ? api.agentWindowToAgent({ kind: "new-session" }) : agent.newSession()),
   });
@@ -1350,7 +1386,7 @@
     else if (!isMac && key === "o") { e.preventDefault(); paletteMode = "notes"; }
     else if (!isMac && key === "f" && e.shiftKey) { e.preventDefault(); paletteMode = "search"; }
     else if (!isMac && key === "s" && e.shiftKey) { e.preventDefault(); void executeCommand("clip-page"); }
-    else if (!isMac && key === "n") { e.preventDefault(); paletteMode = "notes"; }
+    else if (!isMac && key === "n") { e.preventDefault(); paletteMode = "new-note"; }
     else if (key === "b") { e.preventDefault(); vault.leftOpen = !vault.leftOpen; }
     else if (key === ".") { e.preventDefault(); vault.rightOpen = !vault.rightOpen; }
     else if (key === "j" && !e.shiftKey && !e.altKey) { e.preventDefault(); void executeCommand("focus-agent"); }

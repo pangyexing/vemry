@@ -333,6 +333,25 @@ class VaultStore {
     if (content && this.locateText) pos = this.locateText(content, pos) ?? pos;
     await this.revealInEditor(pos, flash);
   }
+  /** Open a note on a 1-based line — a full-text hit's — landing on the first of
+   *  `words` found on that line (the line's start when none is), with a flash. The
+   *  index counts lines in the text it read, which the buffer shares unless an edit is
+   *  still in flight; then the landing is off by that edit, never outside the note. */
+  async openNoteAtLine(note: string, line: number, words: string[] = []) {
+    await this.openNote(note);
+    if (this.currentPath !== note) return;
+    const text = this.currentContent;
+    let start = 0;
+    for (let i = 1; i < line; i++) {
+      const nl = text.indexOf("\n", start);
+      if (nl === -1) break;
+      start = nl + 1;
+    }
+    const end = text.indexOf("\n", start);
+    const row = text.slice(start, end === -1 ? undefined : end).toLowerCase();
+    const col = words.map((w) => row.indexOf(w.toLowerCase())).find((i) => i >= 0) ?? 0;
+    await this.revealInEditor(start + col, true);
+  }
   /** Editor hook: where `text` sits in the open buffer, nearest to `near` (exact at
    *  `near` first); null when the buffer no longer holds it. */
   locateText: ((text: string, near: number) => number | null) | null = null;
@@ -548,6 +567,10 @@ class VaultStore {
   //      projection) ----
   navStack = $state<string[]>([]);
   navIndex = $state(-1);
+  /** The documents landed on this session, most recent first and without repeats — what
+   *  ⌘O lists before anything is typed. Unlike navStack it is never truncated by going
+   *  back, so it answers "what did I just have open" rather than "where does back go". */
+  recentOpened = $state<string[]>([]);
 
   private unlistenVault: UnlistenFn | null = null;
 
@@ -573,6 +596,7 @@ class VaultStore {
     // view lands back in the editor
     this.mainView = "editor";
     if (record) this.recordVisit(path);
+    if (this.recentOpened[0] !== path) this.recentOpened = [path, ...this.recentOpened.filter((p) => p !== path)].slice(0, 50);
   }
 
   async goBack() {
@@ -715,6 +739,7 @@ class VaultStore {
       this.mainView = "editor";
       this.navStack = [];
       this.navIndex = -1;
+      this.recentOpened = [];
       // The relative paths in the undo stack belong to the old vault
       this.undoOps = [];
       // A conversation does not cross vaults: once Rust has switched, its history is void, and the frontend's timeline is cleared with it
@@ -958,9 +983,9 @@ class VaultStore {
     if (record) this.recordOp({ kind: "rename", from, to: rel });
     await this.refreshNotes();
     // The old path is rewritten in place in the history (it is not a new visit)
-    this.navStack = this.navStack.map((p) =>
-      p === from ? rel : p.startsWith(from + "/") ? rel + p.slice(from.length) : p,
-    );
+    const moved = (p: string) => (p === from ? rel : p.startsWith(from + "/") ? rel + p.slice(from.length) : p);
+    this.navStack = this.navStack.map(moved);
+    this.recentOpened = this.recentOpened.map(moved);
     // The expanded set's keys follow the rename too, so the collapsed state is not lost to one
     for (const p of Object.keys(this.expanded)) {
       if (p === from || p.startsWith(from + "/")) {

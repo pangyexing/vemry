@@ -1,6 +1,24 @@
 <script lang="ts">
-  import { api, type HistoryEntryView, type SearchHit } from "$lib/api";
-  import { allCommands, commandDescription, commandHotkey, commandTitle, executeCommand, fuzzyFilter, groupLabel, groupOf, type Command } from "$lib/commands/registry";
+  import { api, type HistoryEntryView, type NoteSummary, type SearchHit } from "$lib/api";
+  import {
+    allCommands,
+    commandAvailable,
+    commandDescription,
+    commandEnglishTitle,
+    commandHotkey,
+    commandTitle,
+    commandWhyNot,
+    executeCommand,
+    fuzzyFilter,
+    fuzzyPositions,
+    fuzzyScoreText,
+    groupLabel,
+    groupOf,
+    markRuns,
+    paletteSources,
+    termPositions,
+    type Command,
+  } from "$lib/commands/registry";
   import { t } from "$lib/i18n/i18n.svelte";
   import { browser } from "$lib/stores/browser.svelte";
   import { fetchHeadings, noteKey, noteMatches, resolveOrCreateNote, type PickHeading } from "$lib/pickNote";
@@ -10,16 +28,16 @@
   import { scaffold } from "$lib/scaffold";
   import { toast } from "$lib/stores/toast.svelte";
   import { isImeKeydown } from "$lib/ime";
-  import { k } from "$lib/shortcut";
+  import { isMac, k } from "$lib/shortcut";
 
-  export type PaletteMode = "commands" | "notes" | "pick-note" | "search" | "vaults" | "url" | "types";
+  export type PaletteMode = "commands" | "notes" | "new-note" | "pick-note" | "search" | "vaults" | "url" | "types";
 
   import { prettyUrl, webCandidates } from "$lib/urls";
 
   interface Item {
     id: string;
     title: string;
-    /** Inline after the title, in muted text: a description, a path, an address. It fills
+    /** Inline after the title, in muted text: a description, a folder, an address. It fills
      *  the rest of the row and is truncated to it; the row's tooltip carries it in full. */
     hint?: string;
     /** A second line under the title. Only search's snippet uses it: the text is the reason
@@ -31,13 +49,27 @@
      *  description), and they answer different questions — "what does this do" and "how do I
      *  press it next time without opening the palette". */
     key?: string;
-    /** Command mode with an empty query: this item is the first of its group, and the group header is rendered before it. */
+    /** This item is the first of a section, and the section header is rendered before it. */
     groupLabel?: string;
+    /** A flat list's row (the recent commands, a query's matches) carries its command group
+     *  as a muted word before the title; a grouped list has the header instead. */
+    group?: string;
+    /** The characters of the title (code-point indices) the query matched, drawn in bold. */
+    marks?: number[] | null;
+    /** The same for the detail line: a full-text hit's words in its snippet. */
+    detailMarks?: number[] | null;
+    /** The row cannot run now: its title turns muted, the hint says why, and Enter or a
+     *  click does nothing. */
+    off?: boolean;
+    /** A command row: its id, recorded among the recent commands when it runs. */
+    cmd?: string;
     /** The note row of pick-note's first stage: Tab enters the section selection from it. */
     pick?: { path: string; title: string };
     /** A bookmark or history row in url mode: return opens that address (a special case in submit, not going through run). */
     url?: string;
-    /** A secondary action at the end of the row (a drill-style button that does not close the palette): unbookmark or delete from the history. */
+    /** A secondary action at the end of the row that does not close the palette (unbookmark,
+     *  delete from the history, disable a block type); ⌘↵ runs it, or ⌘⌫ in url mode, whose
+     *  ⌘↵ is the new-tab modifier. */
     action?: { label: string; run: () => void };
     /** Absent = this row has no "return runs it here" action (in url mode both opening and
      *  selecting live in submit's url special case, which has to check docked and the
@@ -67,15 +99,47 @@
   let pickStage = $state<{ path: string; title: string } | null>(null);
   let pickHeadings = $state<PickHeading[]>([]);
 
-  const placeholders: Record<PaletteMode, string> = {
+  // ---- The recent commands: the ones run from the palette, most recent first. Only the
+  // palette's own runs count — a command reached by its key or from the menu already has
+  // a faster way in, and the list is for what the user comes here to find. Per app, not
+  // per vault: the commands are the app's (a script command of another vault simply does
+  // not resolve and is skipped) ----
+  const RECENT_KEY = "vemry-palette-recent";
+  const RECENT_SHOWN = 5;
+  function loadRecent(): string[] {
+    try {
+      const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  let recentIds = $state<string[]>(loadRecent());
+  function noteUse(id: string) {
+    recentIds = [id, ...recentIds.filter((x) => x !== id)].slice(0, 12);
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify(recentIds));
+    } catch {
+      /* storage unavailable: the list lives for this session */
+    }
+  }
+  /** A recently run command ranks a little higher among matches of the same kind — never
+   *  above a better kind of match (the tiers are 10000 apart). */
+  function recentBoost(id: string): number {
+    const r = recentIds.indexOf(id);
+    return r < 0 ? 0 : Math.max(0, 8 - r);
+  }
+
+  const placeholders: Record<PaletteMode, string> = $derived({
     commands: t("palette.commands"),
     notes: t("palette.notes"),
+    "new-note": t("palette.newNote"),
     "pick-note": t("palette.pickNote"),
     search: t("palette.search"),
     vaults: t("palette.vaults"),
-    url: t("palette.url", { key: k("Mod+Enter") }),
+    url: t("palette.url"),
     types: t("palette.types"),
-  };
+  });
   const placeholder = $derived(
     mode === "pick-note" && pickStage
       ? t("palette.pickHeading", { title: pickStage.title })
@@ -161,6 +225,15 @@
     }
   });
 
+  /** A keystroke puts the highlight back on the first row: the list has just been
+   *  re-ranked, and what was under the highlight is some other row now. The one exception
+   *  is the `#` that takes pick-note into its second stage — the effect above reads the row
+   *  the user had highlighted. */
+  function oninput() {
+    if (mode === "pick-note" && !pickStage && query.includes("#")) return;
+    selected = 0;
+  }
+
   function exitPickStage() {
     pickStage = null;
     query = "";
@@ -188,6 +261,62 @@
     }
   });
 
+  /** A note's folder ("" at the vault's root): what a note row says after its title. The
+   *  file name is the title, so the folder is the part of the path that tells two notes
+   *  of one name apart. */
+  function folderOf(path: string): string {
+    const slash = path.lastIndexOf("/");
+    return slash === -1 ? "" : path.slice(0, slash);
+  }
+
+  /** The notes as ⌘O lists them before anything is typed: the ones opened this session,
+   *  most recent first, then the open tabs, then the rest by modification time. In notes
+   *  mode the note on screen goes after the other recent ones (Enter then returns to the
+   *  previous note); when picking a target it stays first — it is the likeliest target. */
+  function notesByRecency(keepCurrentFirst: boolean): NoteSummary[] {
+    const seen = new Set<string>();
+    const out: NoteSummary[] = [];
+    const cur = vault.currentPath;
+    const push = (p: string | null) => {
+      const n = p ? vault.noteById.get(p) : undefined;
+      if (n && !seen.has(n.id)) {
+        seen.add(n.id);
+        out.push(n);
+      }
+    };
+    if (keepCurrentFirst) push(cur);
+    for (const p of vault.recentOpened) if (p !== cur) push(p);
+    for (const tab of vault.tabs) if (tab.path !== cur) push(tab.path);
+    push(cur);
+    const rest = vault.notes.filter((n) => !seen.has(n.id)).sort((a, b) => b.mtime_ms - a.mtime_ms);
+    return [...out, ...rest];
+  }
+
+  /** The commands a query matches, ranked in three tiers: the title, then the English
+   *  title and the id (so an English name finds a command in any interface language), then
+   *  the description alone. A title match always outranks a description that happens to
+   *  contain the word. Within a tier the match quality decides, nudged by recent use. */
+  function rankCommands(cmds: Command[], q: string): { c: Command; title: string; titleHit: boolean }[] {
+    const scored: { c: Command; title: string; titleHit: boolean; score: number }[] = [];
+    for (const c of cmds) {
+      const title = commandTitle(c);
+      let tier = 3;
+      let s = fuzzyScoreText(title, q);
+      if (s === null) {
+        tier = 2;
+        const en = commandEnglishTitle(c);
+        s = fuzzyScoreText(`${en === title ? "" : en} ${c.id}`, q);
+      }
+      if (s === null) {
+        tier = 1;
+        s = fuzzyScoreText(commandDescription(c) ?? "", q);
+      }
+      if (s === null) continue;
+      scored.push({ c, title, titleHit: tier === 3, score: tier * 10000 + s + recentBoost(c.id) });
+    }
+    return scored.sort((a, b) => b.score - a.score);
+  }
+
   let items = $derived.by((): Item[] => {
     if (mode === "commands") {
       // The registry itself is a plain Map and is not reactive; what a script hot reload changes
@@ -195,26 +324,80 @@
       // removed script commands immediately
       void scripts.infos;
       // The command that opens the palette is left out: in the one place it would be visible it is a no-op
-      const cmds = fuzzyFilter(
-        allCommands().filter((c) => c.id !== "command-palette"),
-        query,
-        (c: Command) => `${commandTitle(c)} ${commandDescription(c) ?? ""} ${c.id}`,
-      );
-      // An empty query keeps the registry's group order and marks the group headers; with a query it flattens by fuzzy score and does not group
-      const grouped = !query.trim();
-      return cmds.map((c, i) => {
-        const g = groupOf(c);
-        // Already sorted by group order, so differing from the previous one makes it a group header
-        const group = grouped && (i === 0 || g !== groupOf(cmds[i - 1])) ? groupLabel(g) : undefined;
-        return {
-          id: c.id,
-          title: commandTitle(c),
-          hint: commandDescription(c),
-          key: commandHotkey(c),
-          groupLabel: group,
-          run: () => c.run(),
-        };
+      const cmds = allCommands().filter((c) => c.id !== "command-palette");
+      const row = (c: Command, title = commandTitle(c)): Item => ({
+        id: c.id,
+        cmd: c.id,
+        title,
+        hint: commandDescription(c),
+        key: commandHotkey(c),
+        run: () => c.run(),
       });
+      const q = query.trim();
+      if (!q) {
+        // An empty query: the recent commands, then every available one in the registry's
+        // group order under group headers. What cannot run now is left out altogether — a
+        // query still finds it, with the reason
+        const avail = cmds.filter(commandAvailable);
+        const byId = new Map(avail.map((c) => [c.id, c]));
+        const recent = recentIds.flatMap((id) => byId.get(id) ?? []).slice(0, RECENT_SHOWN);
+        const list: Item[] = recent.map((c, i) => ({
+          ...row(c),
+          id: `recent:${c.id}`,
+          group: groupLabel(groupOf(c)),
+          groupLabel: i === 0 ? t("palette.recentlyUsed") : undefined,
+        }));
+        avail.forEach((c, i) => {
+          // Already sorted by group order, so differing from the previous one makes it a group header
+          const g = groupOf(c);
+          list.push({ ...row(c), groupLabel: i === 0 || g !== groupOf(avail[i - 1]) ? groupLabel(g) : undefined });
+        });
+        return list;
+      }
+      // A query flattens the list: the available matches, then the rows other parts of the
+      // app register (the settings), then the matches that cannot run now, under their own
+      // header and with the reason
+      const ranked = rankCommands(cmds, q);
+      const flat = (r: (typeof ranked)[number]): Item => ({
+        ...row(r.c, r.title),
+        group: groupLabel(groupOf(r.c)),
+        marks: r.titleHit ? fuzzyPositions(r.title, q) : null,
+      });
+      const list: Item[] = ranked.filter((r) => commandAvailable(r.c)).map(flat);
+      for (const src of paletteSources()) {
+        const hits = src
+          .entries()
+          .flatMap((e) => {
+            const s = fuzzyScoreText(e.title, q);
+            const k = s === null ? fuzzyScoreText(e.keywords ?? "", q) : null;
+            return s !== null ? [{ e, score: 10000 + s, hit: true }] : k !== null ? [{ e, score: k, hit: false }] : [];
+          })
+          .sort((a, b) => b.score - a.score);
+        hits.forEach(({ e, hit }, i) =>
+          list.push({
+            id: `${src.id}:${e.id}`,
+            title: e.title,
+            hint: e.hint,
+            key: e.tag,
+            marks: hit ? fuzzyPositions(e.title, q) : null,
+            groupLabel: i === 0 ? src.label() : undefined,
+            run: e.run,
+          }),
+        );
+      }
+      ranked
+        .filter((r) => !commandAvailable(r.c))
+        .forEach((r, i) => {
+          const it = flat(r);
+          list.push({
+            ...it,
+            off: true,
+            hint: commandWhyNot(r.c) ?? it.hint,
+            groupLabel: i === 0 ? t("palette.unavailable") : undefined,
+            run: undefined,
+          });
+        });
+      return list;
     }
     if (mode === "pick-note" && pickStage) {
       // The second stage: that note's section list, with "the end of the note" fixed as the first item (Enter reaches it with no friction)
@@ -224,19 +407,50 @@
         ...fuzzyFilter(pickHeadings, query, (h) => h.text).map((h, i) => ({
           id: `${i}:${h.text}`,
           title: `${"#".repeat(h.level)} ${h.text}`,
+          marks: fuzzyPositions(`${"#".repeat(h.level)} ${h.text}`, query),
           hint: t("palette.appendToSection"),
           run: () => onPickNote?.(stage.path, h.text),
         })),
       ];
     }
+    if (mode === "new-note") {
+      // ⌘N: the note to create comes first and is highlighted, so a title and Enter create
+      // it; the notes it resembles follow, one ↓ away — there to stop a duplicate, never in
+      // the way of the new one
+      const q = query.trim();
+      if (!q) return [];
+      const { notes, create } = noteMatches(query);
+      const list: Item[] = [];
+      if (create) {
+        list.push({
+          id: "__create__",
+          title: t("palette.createNamed", { title: create }),
+          hint: t("palette.createAndOpen"),
+          run: () => vault.createAndOpen(create).catch((e) => toast.push(String(e), "error")),
+        });
+      }
+      notes.slice(0, 20).forEach((n, i) =>
+        list.push({
+          id: n.id,
+          title: n.title,
+          marks: fuzzyPositions(n.title, q),
+          hint: folderOf(n.id),
+          groupLabel: i === 0 && create ? t("palette.similarNotes") : undefined,
+          run: () => vault.openNote(n.id),
+        }),
+      );
+      return list;
+    }
     if (mode === "notes" || mode === "pick-note") {
       // pick-note and notes share the filtering and the create row; only "what happens after choosing" differs
       const pick = mode === "pick-note" ? onPickNote : undefined;
-      const { notes, create: title } = noteMatches(query);
+      const q = query.trim();
+      const { notes, create: title } = q ? noteMatches(query) : { notes: notesByRecency(!!pick), create: null };
       const list: Item[] = notes.slice(0, 50).map((n) => ({
         id: n.id,
         title: n.title,
-        hint: n.id,
+        marks: q ? fuzzyPositions(n.title, q) : null,
+        hint: folderOf(n.id),
         pick: pick ? { path: n.id, title: n.title } : undefined,
         run: () => (pick ? pick(n.id) : vault.openNote(n.id)),
       }));
@@ -269,18 +483,22 @@
       // and while there is no `book` the example is offered under that name
       const q = query.trim();
       const has = (name: string) => types.list.some((x) => x.name.toLowerCase() === name.toLowerCase());
-      const list: Item[] = fuzzyFilter(types.list, query, (x) => `${x.name} ${x.description}`).map((x) => ({
-        id: x.file,
-        title: x.icon ? `${x.icon} ${x.name}` : x.name,
-        hint: x.disabled ? t("palette.typeDisabled") : x.description || typePath(x.file),
-        run: () => vault.openFile(typePath(x.file)),
-        // The row's toggle (the button, or ⌘↩): the file's disabled line flips and types_changed
-        // redraws the row, the palette staying open like url mode's unbookmark
-        action: {
-          label: t(x.disabled ? "palette.typeEnable" : "palette.typeDisable"),
-          run: () => void api.typeSetDisabled(x.file, !x.disabled).catch((e) => toast.push(String(e), "error")),
-        },
-      }));
+      const list: Item[] = fuzzyFilter(types.list, query, (x) => `${x.name} ${x.description}`).map((x) => {
+        const title = x.icon ? `${x.icon} ${x.name}` : x.name;
+        return {
+          id: x.file,
+          title,
+          marks: q ? fuzzyPositions(title, q) : null,
+          hint: x.disabled ? t("palette.typeDisabled") : x.description || typePath(x.file),
+          run: () => vault.openFile(typePath(x.file)),
+          // The row's toggle (the button, or ⌘↩): the file's disabled line flips and types_changed
+          // redraws the row, the palette staying open like url mode's unbookmark
+          action: {
+            label: t(x.disabled ? "palette.typeEnable" : "palette.typeDisable"),
+            run: () => void api.typeSetDisabled(x.file, !x.disabled).catch((e) => toast.push(String(e), "error")),
+          },
+        };
+      });
       if (!has("book") && fuzzyFilter(["book"], query, (s) => s).length > 0) {
         list.push({
           id: "__example__",
@@ -300,15 +518,20 @@
       return list;
     }
     if (mode === "vaults") {
+      const q = query.trim();
       const vaults = fuzzyFilter(vault.recent, query, (p) => p);
-      const list: Item[] = vaults.map((p) => ({
-        id: p,
-        title: p.split("/").pop() ?? p,
-        hint: p === vault.root ? t("palette.currentVault", { path: p }) : p,
-        run: () => {
-          if (p !== vault.root) void vault.openVault(p);
-        },
-      }));
+      const list: Item[] = vaults.map((p) => {
+        const title = p.split("/").pop() ?? p;
+        return {
+          id: p,
+          title,
+          marks: q ? fuzzyPositions(title, q) : null,
+          hint: p === vault.root ? t("palette.currentVault", { path: p }) : p,
+          run: () => {
+            if (p !== vault.root) void vault.openVault(p);
+          },
+        };
+      });
       list.push(
         {
           id: "__pick__",
@@ -326,11 +549,19 @@
       return list;
     }
     if (mode === "search") {
+      // A hit opens at its line, on the first query word found there; the words are drawn
+      // in bold in the title and the snippet, and the folder tells two notes of one title apart
+      const q = query.trim();
+      const words = q.split(/\s+/).filter(Boolean);
       return searchHits.map((h, i) => ({
         id: `${h.note}:${i}`,
         title: h.title,
+        marks: termPositions(h.title, q),
+        hint: folderOf(h.note),
+        key: t("palette.lineN", { n: h.line }),
         detail: h.snippet,
-        run: () => vault.openNote(h.note),
+        detailMarks: termPositions(h.snippet, q),
+        run: () => vault.openNoteAtLine(h.note, h.line, words),
       }));
     }
     if (mode === "url") {
@@ -399,9 +630,11 @@
         { id: "__open__", title: t("palette.openUrl", { url: q }), hint: t("palette.builtInBrowser"), url: q },
       ];
       for (const c of fuzzyFilter(urlCandidates, q, (c) => c.key).slice(0, 30)) {
+        const title = c.starred ? `★ ${c.title || c.pretty}` : c.title || c.pretty;
         list.push({
           id: `${c.starred ? "bm" : "h"}:${c.url}`,
-          title: c.starred ? `★ ${c.title || c.pretty}` : c.title || c.pretty,
+          title,
+          marks: fuzzyPositions(title, q),
           hint: c.title ? c.pretty : undefined,
           url: c.url,
           action: c.starred ? unstar(c.url) : removeHistory(c.url),
@@ -424,6 +657,52 @@
     void selected;
     void items;
     listEl?.querySelector("li.selected")?.scrollIntoView({ block: "nearest" });
+  });
+
+  // ---- The footer: the keys of the mode at hand, so nothing the keyboard can do is known
+  // only to those who read the source. The placeholder says what to type; the footer says
+  // what the keys do (some entries depend on the highlighted row) ----
+  const ENTER = isMac ? "↵" : "Enter";
+  const ESC = isMac ? "esc" : "Esc";
+  const MOD_ENTER = k(isMac ? "Mod+↵" : "Mod+Enter");
+  interface FootKey {
+    /** The keys; empty for a line of plain advice ("type a new name to create it"). */
+    keys: string;
+    label: string;
+  }
+  const foot = $derived.by((): FootKey[] => {
+    const sel = items[selected];
+    const close: FootKey = { keys: ESC, label: t("palette.foot.close") };
+    switch (mode) {
+      case "commands":
+        return [{ keys: "↑↓", label: t("palette.foot.select") }, { keys: ENTER, label: t("palette.foot.run") }, close];
+      case "new-note":
+        return sel && sel.id !== "__create__"
+          ? [{ keys: ENTER, label: t("palette.foot.open") }, close]
+          : [{ keys: ENTER, label: t("palette.foot.create") }, { keys: "↓", label: t("palette.foot.openExisting") }, close];
+      case "notes":
+        return [{ keys: ENTER, label: t(sel?.id === "__create__" ? "palette.foot.create" : "palette.foot.open") }, { keys: "", label: t("palette.foot.typeNewToCreate") }, close];
+      case "pick-note":
+        return pickStage
+          ? [{ keys: ENTER, label: t(sel?.id === "__whole__" ? "palette.foot.wholeNote" : "palette.foot.appendSection") }, { keys: ESC, label: t("palette.foot.back") }]
+          : [{ keys: ENTER, label: t("palette.foot.wholeNote") }, { keys: "Tab / #", label: t("palette.foot.pickSection") }, close];
+      case "search":
+        return [{ keys: ENTER, label: t("palette.foot.openAtLine") }, close];
+      case "url": {
+        const keys: FootKey[] = [{ keys: ENTER, label: t("palette.foot.open") }, { keys: MOD_ENTER, label: t("palette.foot.newTab") }];
+        if (sel?.action) keys.push({ keys: k("Mod+Backspace"), label: sel.action.label });
+        return [...keys, close];
+      }
+      case "types": {
+        const keys: FootKey[] = [{ keys: ENTER, label: t("palette.foot.openFile") }];
+        if (sel?.action) keys.push({ keys: MOD_ENTER, label: sel.action.label });
+        return [...keys, { keys: "", label: t("palette.foot.typeNewToCreate") }, close];
+      }
+      case "vaults":
+        return [{ keys: ENTER, label: t("palette.foot.switch") }, close];
+      default:
+        return [];
+    }
   });
 
   function close() {
@@ -464,7 +743,8 @@
       item.action.run();
       return;
     }
-    if (item?.run) {
+    if (item?.run && !item.off) {
+      if (item.cmd) noteUse(item.cmd);
       close();
       await item.run();
     }
@@ -482,6 +762,14 @@
     if (mod && isFind && e.key.toLowerCase() === "f" && e.shiftKey) {
       e.preventDefault();
       mode = "search";
+      return;
+    }
+    // url mode's secondary action (unbookmark, delete from the history) on ⌘⌫, since its ⌘↩
+    // is the new-tab modifier; on a row without one ⌘⌫ stays the input's own "delete to the
+    // start of the line"
+    if (mod && e.key === "Backspace" && mode === "url" && items[selected]?.action) {
+      e.preventDefault();
+      items[selected].action?.run();
       return;
     }
     if (e.key === "Escape") {
@@ -512,7 +800,23 @@
       void submit(e.metaKey || e.ctrlKey);
     }
   }
+
+  const LIST_ID = "palette-list";
+  const optionId = (i: number) => `palette-opt-${i}`;
+  const emptyText = $derived(
+    query
+      ? t("palette.noMatch")
+      : mode === "url"
+        ? t("palette.noBookmarksOrHistory")
+        : mode === "new-note"
+          ? t("palette.newNoteEmpty")
+          : t("palette.typeToFilter"),
+  );
 </script>
+
+{#snippet marked(text: string, marks: readonly number[] | null | undefined)}
+  {#each markRuns(text, marks) as run, i (i)}{#if run.hit}<b>{run.text}</b>{:else}{run.text}{/if}{/each}
+{/snippet}
 
 {#if mode}
   <div class="overlay" onclick={close} role="presentation">
@@ -540,27 +844,37 @@
         bind:value={query}
         {placeholder}
         {onkeydown}
+        {oninput}
         spellcheck="false"
+        role="combobox"
+        aria-expanded="true"
+        aria-controls={LIST_ID}
+        aria-autocomplete="list"
+        aria-activedescendant={items.length ? optionId(selected) : undefined}
       />
-      <ul bind:this={listEl}>
+      <ul bind:this={listEl} id={LIST_ID} role="listbox" aria-label={placeholder}>
         {#each items as item, i (item.id)}
           {#if item.groupLabel}
-            <li class="group-head" aria-hidden="true">{item.groupLabel}</li>
+            <li class="group-head" role="presentation">{item.groupLabel}</li>
           {/if}
-          <li class:selected={i === selected}>
+          <li class:selected={i === selected} class:off={item.off} id={optionId(i)} role="option" aria-selected={i === selected} aria-disabled={item.off || undefined}>
             <button
               class="main"
               tabindex="-1"
               title={item.hint}
-              onclick={() => void submit()}
+              onclick={() => {
+                selected = i;
+                void submit();
+              }}
               onmouseenter={() => (selected = i)}
             >
               <span class="line">
-                <span class="title">{item.title}</span>
+                {#if item.group}<span class="grp">{item.group}</span>{/if}
+                <span class="title">{@render marked(item.title, item.marks)}</span>
                 {#if item.hint}<span class="hint">{item.hint}</span>{/if}
                 {#if item.key}<kbd class="key">{item.key}</kbd>{/if}
               </span>
-              {#if item.detail}<span class="detail">{item.detail}</span>{/if}
+              {#if item.detail}<span class="detail">{@render marked(item.detail, item.detailMarks)}</span>{/if}
             </button>
             {#if item.pick}
               {@const p = item.pick}
@@ -584,16 +898,19 @@
             {/if}
           </li>
         {:else}
-          <li class="empty">
-            {query ? t("palette.noMatch") : mode === "url" ? t("palette.noBookmarksOrHistory") : t("palette.typeToFilter")}
-          </li>
+          <li class="empty" role="presentation">{emptyText}</li>
         {/each}
       </ul>
-      {#if mode === "url" && urlHistory.length > 0}
+      {#if foot.length || (mode === "url" && urlHistory.length > 0)}
         <div class="foot">
-          <button class="foot-act" title={t("palette.clearHistoryHint")} onclick={clearHistory}>
-            {t("cmd.clear-browser-history.title")}
-          </button>
+          {#each foot as f, i (i)}
+            <span class="foot-key">{#if f.keys}<kbd>{f.keys}</kbd>{/if}{f.label}</span>
+          {/each}
+          {#if mode === "url" && urlHistory.length > 0}
+            <button class="foot-act" title={t("palette.clearHistoryHint")} onclick={clearHistory}>
+              {t("cmd.clear-browser-history.title")}
+            </button>
+          {/if}
         </div>
       {/if}
     </div>
@@ -604,7 +921,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.25);
+    background: var(--scrim);
     display: flex;
     justify-content: center;
     padding-top: 12vh;
@@ -679,6 +996,11 @@
   li.selected {
     background: var(--accent-soft);
   }
+  /* A row that cannot run now: its title in the secondary ink (never faded by opacity —
+     the reason beside it has to stay readable), the hint saying why */
+  li.off .title {
+    color: var(--fg-muted);
+  }
   li button.main {
     display: flex;
     flex-direction: column;
@@ -722,6 +1044,20 @@
     width: 100%;
     min-width: 0;
   }
+  /* A flat list's group word before the title: the header's job, done in the row */
+  .grp {
+    flex: none;
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    white-space: nowrap;
+  }
+  /* The matched characters: bold in the row's own ink, no colour — the accent is for what
+     can be clicked and where you are */
+  .title b,
+  .detail b {
+    font-weight: 600;
+    color: var(--fg);
+  }
   .title {
     font-size: var(--fs-md);
     /* Truncated to one line: a long title (from the history or the notes) wrapping would make the row heights uneven and fit far fewer on a screen */
@@ -747,12 +1083,29 @@
     color: var(--fg-muted);
     white-space: nowrap;
   }
+  /* The keys of the mode at hand on the left, the mode's own action (url mode's "clear the
+     browsing history") pushed to the right */
   .foot {
     flex: none;
     display: flex;
-    justify-content: flex-end;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 16px;
     border-top: 1px solid var(--border);
-    padding: 4px 8px;
+    padding: 5px 14px;
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .foot-key kbd {
+    font-family: inherit;
+    color: var(--fg);
+    margin-right: 5px;
+  }
+  .foot-act {
+    margin-left: auto;
+    margin-right: -8px;
   }
   .foot-act {
     padding: 3px 8px;

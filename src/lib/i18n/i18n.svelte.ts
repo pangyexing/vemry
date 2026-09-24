@@ -156,6 +156,13 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
   });
 }
 
+/** A message as the English catalog has it, whatever the interface language — a second
+ *  key the command palette matches on, so a command's English name finds it in any
+ *  interface. No placeholders are filled. */
+export function tEnglish(key: MessageKey): string {
+  return EN[key] ?? key;
+}
+
 /** Whether a key built at runtime (`skill.<name>.title`) is in the catalog — the guard that
  *  lets such a key be passed to `t` without a cast that would hide a missing entry. */
 export function hasKey(key: string): key is MessageKey {

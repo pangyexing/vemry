@@ -4,7 +4,7 @@
 // entry point.
 
 import type { ScriptInfo } from "$lib/api";
-import { i18n, t, type MessageKey } from "$lib/i18n/i18n.svelte";
+import { i18n, t, tEnglish, type MessageKey } from "$lib/i18n/i18n.svelte";
 
 /** The command palette's groups and their order: with an empty query it is shown in
  *  sections by group (with a query it flattens by fuzzy score, and the group takes no
@@ -32,6 +32,16 @@ export interface Command {
   hotkey?: string | (() => string);
   /** Defaults to "system". */
   group?: CommandGroup;
+  /** Whether running it now can do anything; absent = always. It reads state the stores
+   *  already hold and never calls IPC, since the palette asks every row on every open.
+   *  The palette leaves an unavailable command out of its empty list and, when a query
+   *  matches one, lists it last with `whyNot` and does not run it. executeCommand does
+   *  not consult it: a menu item, a key or a script still reaches the command, whose own
+   *  feedback (a toast, a no-op) stays as it was. */
+  when?: () => boolean;
+  /** Why it is unavailable, shown beside the row: a catalog key, or a function choosing
+   *  one when the reason depends on the state (no file open, or a file already private). */
+  whyNot?: MessageKey | (() => MessageKey);
   run: () => void | Promise<void>;
 }
 
@@ -39,6 +49,28 @@ export interface Command {
  *  themselves when the language changes — no re-registration. */
 export function commandTitle(c: Command): string {
   return c.title ?? t(`cmd.${c.id}.title` as MessageKey);
+}
+
+/** The title in English, whatever the interface language (a script command's own title
+ *  as written): the palette's second match key. */
+export function commandEnglishTitle(c: Command): string {
+  return c.title ?? tEnglish(`cmd.${c.id}.title` as MessageKey);
+}
+
+/** A command's `when`, defaulting to available. A predicate that throws (a store not
+ *  set up yet) counts as available: hiding a command is worse than a no-op run. */
+export function commandAvailable(c: Command): boolean {
+  try {
+    return c.when?.() ?? true;
+  } catch {
+    return true;
+  }
+}
+
+/** The reason an unavailable command gives, in the interface language. */
+export function commandWhyNot(c: Command): string | undefined {
+  const key = typeof c.whyNot === "function" ? c.whyNot() : c.whyNot;
+  return key ? t(key) : undefined;
 }
 
 export function commandHotkey(c: Command): string | undefined {
@@ -108,21 +140,164 @@ function fold(s: string): string {
   return s.normalize("NFKC").toLowerCase();
 }
 
+/** A word starts after nothing, a space or a punctuation mark or symbol (`-`, `/`, `·`,
+ *  a full-width comma). Han and kana carry no such boundary; there every character is
+ *  equal and the bonuses below simply never apply. */
+const BOUNDARY = /[\s\p{P}\p{S}]/u;
+function startsWord(prev: string | undefined): boolean {
+  return prev === undefined || BOUNDARY.test(prev);
+}
+
 /** Match score for one already-folded key against an already-folded, non-empty
- *  query: every query character must appear in order, substring matches rank first.
- *  null = no match. The one definition of a match, shared by both entry points.
+ *  query: every query character must appear in order. null = no match. The one
+ *  definition of a match, shared by every entry point.
+ *  A substring ranks above any scattered match, earlier above later, and an
+ *  occurrence that starts a word beats an earlier one inside a word ("note" in
+ *  "Denote notes" is the second). A scattered match earns a little for each
+ *  character landing on a word start and for each pair that stays adjacent. The
+ *  verdict — match or not — is the plain in-order test, so fuzzyKeep's filtering
+ *  never depends on the bonuses.
  *  The query is walked by code point, not by UTF-16 unit, so an astral character
  *  (an extension-B ideograph, an emoji) is one character to match rather than a
  *  surrogate pair that can only ever half-match. */
 function fuzzyScore(key: string, chars: string[]): number | null {
   const q = chars.join("");
-  if (key.includes(q)) return 1000 - key.indexOf(q) - key.length * 0.01;
-  let i = 0;
-  for (const ch of key) {
-    if (ch === chars[i]) i++;
-    if (i === chars.length) break;
+  const at = key.indexOf(q);
+  if (at !== -1) {
+    for (let s = at; s !== -1; s = key.indexOf(q, s + 1)) {
+      if (startsWord(key[s - 1])) return 1030 - s - key.length * 0.01;
+    }
+    return 1000 - at - key.length * 0.01;
   }
-  return i === chars.length ? 100 - key.length * 0.01 : null;
+  let i = 0;
+  let bonus = 0;
+  let prev: string | undefined;
+  let last = -2;
+  let pos = 0;
+  for (const ch of key) {
+    if (ch === chars[i]) {
+      if (startsWord(prev)) bonus += 4;
+      if (last === pos - 1) bonus += 2;
+      last = pos;
+      i++;
+      if (i === chars.length) break;
+    }
+    prev = ch;
+    pos++;
+  }
+  return i === chars.length ? 100 + Math.min(bonus, 800) - key.length * 0.01 : null;
+}
+
+/** The score of `text` against `query`, both folded here; null = no match (an empty
+ *  query matches nothing). For a caller ranking by its own rules — the palette's
+ *  title-before-description tiers. */
+export function fuzzyScoreText(text: string, query: string): number | null {
+  const chars = Array.from(fold(query.trim()));
+  return chars.length ? fuzzyScore(fold(text), chars) : null;
+}
+
+/** Each code point of `text` folded on its own, with the index of the code point it
+ *  came from — the map from a match in folded text back to what is on screen. Folding
+ *  per character can differ from folding the whole string (a combining accent composes
+ *  only in context), which costs at most a missed highlight, never a wrong row. */
+function foldedChars(text: string): { c: string; at: number }[] {
+  const out: { c: string; at: number }[] = [];
+  Array.from(text).forEach((ch, at) => {
+    for (const c of fold(ch)) out.push({ c, at });
+  });
+  return out;
+}
+
+/** Which characters of `text` (code-point indices) a query matched, for drawing them
+ *  in bold: the same preference as the score — a substring starting a word, else the
+ *  first substring, else the in-order characters. null = no match. */
+export function fuzzyPositions(text: string, query: string): number[] | null {
+  const chars = Array.from(fold(query.trim()));
+  if (!chars.length) return null;
+  const f = foldedChars(text);
+  const hits = (start: number) => chars.every((c, j) => f[start + j]?.c === c);
+  let first = -1;
+  for (let s = 0; s + chars.length <= f.length; s++) {
+    if (!hits(s)) continue;
+    if (first === -1) first = s;
+    if (s === 0 || BOUNDARY.test(f[s - 1].c)) {
+      first = s;
+      break;
+    }
+  }
+  const spans: number[] = [];
+  if (first !== -1) {
+    for (let j = 0; j < chars.length; j++) spans.push(f[first + j].at);
+  } else {
+    let i = 0;
+    for (const x of f) {
+      if (x.c === chars[i]) {
+        spans.push(x.at);
+        if (++i === chars.length) break;
+      }
+    }
+    if (i < chars.length) return null;
+  }
+  return [...new Set(spans)];
+}
+
+/** Every occurrence of each whitespace-separated term of `query` in `text`, as
+ *  code-point indices — a full-text hit's words, drawn in bold in its title and
+ *  snippet (where the words need not be in order, unlike a fuzzy match). */
+export function termPositions(text: string, query: string): number[] {
+  const f = foldedChars(text);
+  const marks = new Set<number>();
+  for (const term of fold(query).split(/\s+/).filter(Boolean)) {
+    const tc = Array.from(term);
+    for (let s = 0; s + tc.length <= f.length; s++) {
+      if (tc.every((c, j) => f[s + j].c === c)) for (let j = 0; j < tc.length; j++) marks.add(f[s + j].at);
+    }
+  }
+  return [...marks].sort((a, b) => a - b);
+}
+
+/** `text` cut into runs by whether each code point is in `marks` — what a template
+ *  walks to draw the matched characters in bold. */
+export function markRuns(text: string, marks: readonly number[] | null | undefined): { text: string; hit: boolean }[] {
+  const chars = Array.from(text);
+  if (!marks?.length) return [{ text, hit: false }];
+  const set = new Set(marks);
+  const runs: { text: string; hit: boolean }[] = [];
+  chars.forEach((ch, i) => {
+    const hit = set.has(i);
+    const last = runs[runs.length - 1];
+    if (last && last.hit === hit) last.text += ch;
+    else runs.push({ text: ch, hit });
+  });
+  return runs;
+}
+
+/** Rows another part of the app lists in the command palette after the commands, when
+ *  a query matches them (the settings are the first such source): the title is what
+ *  shows and matches, keywords only match (an English label, synonyms), tag sits at the
+ *  row's end (the settings page an entry lives on). */
+export interface PaletteEntry {
+  id: string;
+  title: string;
+  hint?: string;
+  keywords?: string;
+  tag?: string;
+  run: () => void | Promise<void>;
+}
+export interface PaletteSource {
+  id: string;
+  /** The section header its rows sit under. */
+  label: () => string;
+  /** Read when the palette filters, so it may follow reactive state. */
+  entries: () => PaletteEntry[];
+}
+const paletteSourceMap = new Map<string, PaletteSource>();
+/** Register (or replace, by id) a source of extra palette rows. */
+export function registerPaletteSource(src: PaletteSource) {
+  paletteSourceMap.set(src.id, src);
+}
+export function paletteSources(): PaletteSource[] {
+  return [...paletteSourceMap.values()];
 }
 
 /** Filtering reordered by match quality — for the command palette alone: "the closest match comes first" is its sorting contract. */

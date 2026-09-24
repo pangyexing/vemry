@@ -73,7 +73,7 @@ add("view.", {
 CMD = {
     "open-vault": (
         ("Open vault…", "打开知识库…"),
-        ("Pick a folder to use as a vault", "选择一个文件夹作为 vault"),
+        ("Pick a folder to use as a vault", "选择一个文件夹作为知识库"),
     ),
     "create-vault": (
         ("New vault…", "新建知识库…"),
@@ -82,7 +82,7 @@ CMD = {
     ),
     "switch-vault": (
         ("Switch vault…", "切换知识库…"),
-        ("Switch between recently opened vaults", "在最近打开的仓库间切换"),
+        ("Switch between recently opened vaults", "在最近打开的知识库间切换"),
     ),
     "new-note": (("New note", "新建笔记"), None),
     "open-note": (("Open note…", "打开笔记…"), None),
@@ -150,7 +150,7 @@ CMD = {
         ("Attach files to AI context", "附加文件到 AI 上下文"),
         ("Import images, PDFs or text files into the vault as context for your next "
          "message (images need a multimodal model)",
-         "选图片/PDF/文本文件导入 vault，作为下一条消息的上下文（图片需多模态模型）"),
+         "选图片/PDF/文本文件导入知识库，作为下一条消息的上下文（图片需多模态模型）"),
     ),
     "show-outline": (
         ("Outline", "大纲面板"),
@@ -191,29 +191,29 @@ CMD = {
          "内置浏览器当前页存入收藏（{key} 列表可达）"),
     ),
     "clip-selection": (
-        ("Clip selection → current or target note", "剪藏：选中文字 → 当前/目标笔记"),
+        ("Clip selection → current or target note", "剪藏选中文字 → 当前/目标笔记"),
         ("Turn the browser selection into a quote block: straight into a pinned target "
          "note, otherwise at the cursor, or into clips/ when no note editor is open",
          "浏览器选区变引用块；钉了目标笔记直达，否则插入光标处、无笔记编辑器时落 clips/"),
     ),
     "clip-selection-to-clips": (
-        ("Clip selection → clips/", "剪藏：选中文字 → clips/"),
+        ("Clip selection → clips/", "剪藏选中文字 → clips/"),
         ("Save the browser selection as its own excerpt note", "浏览器选区存为独立摘录笔记"),
     ),
     "clip-selection-to-note": (
-        ("Clip selection → pick a note…", "剪藏：选中文字 → 指定笔记…"),
+        ("Clip selection → pick a note…", "剪藏选中文字 → 指定笔记…"),
         ("Turn the browser selection into a quote block and append it to a note you pick "
          "(type a new name to create one)",
          "浏览器选区变引用块，选一篇笔记追加（输入新名字可创建）"),
     ),
     "clip-page": (
-        ("Clip page → clips/", "剪藏：整页 → clips/"),
+        ("Clip page → clips/", "剪藏整页 → clips/"),
         ("Extract the article, convert it to Markdown, save it in clips/ (the domain goes "
          "in the frontmatter)",
-         "Readability 抽正文转 markdown，落 clips/（域名记在 frontmatter）"),
+         "抽出正文转成 Markdown，存进 clips/（域名记在 frontmatter）"),
     ),
     "clip-link": (
-        ("Clip link → current note", "剪藏：链接 → 当前笔记"),
+        ("Clip link → current note", "剪藏链接 → 当前笔记"),
         ("Insert the current page as a [title](url) reference; goes to inbox when no note "
          "editor is visible",
          "当前页作为 [标题](url) 参考条目插入；无可见笔记编辑器时进 inbox"),
@@ -224,13 +224,13 @@ CMD = {
     ),
     "init-memory": (
         ("Initialize VEMRY.md", "初始化 VEMRY.md"),
-        ("The agent surveys your vault and drafts the memory file (reviews an existing "
+        ("The AI surveys your vault and drafts the vault memory (reviews an existing "
          "one); the write comes back as a diff to approve",
-         "agent 调研 vault 后起草记忆文件（已存在则审阅改进）；写入出 diff 待确认"),
+         "AI 调研知识库后起草记忆文件（已存在则审阅改进）；写入出 diff 待确认"),
     ),
     "open-memory": (
         ("Open VEMRY.md", "打开 VEMRY.md"),
-        ("Edit the agent's vault-level instructions", "编辑 agent 的 vault 级指令"),
+        ("Edit the vault memory the AI reads first", "编辑 AI 每轮先读的记忆文件"),
     ),
     "block-type": (
         ("Block type…", "块类型…"),
@@ -278,12 +278,12 @@ CMD = {
         ("Mark every unreviewed AI block of the current note as reviewed", "把当前笔记所有未审阅的 AI 块标为已审阅"),
     ),
     "clip-localize-images": (
-        ("Save this clip's remote images into the vault", "把这篇剪藏的远程图片存进库"),
+        ("Save this clip's remote images into the vault", "把这篇剪藏的远程图片存进知识库"),
         ("Download the images a clipped note still loads from the web into clips/assets and point the note at them — for clips made before localisation, or whose images did not load", "把剪藏笔记里仍从网上加载的图片下载到 clips/assets 并改写引用——适合本地化之前的旧剪藏，或图片加载失败的情况"),
     ),
     "provenance-accept-vault": (
         ("Mark all AI blocks in the vault as reviewed", "全库 AI 块全部标为已审阅"),
-        ("Mark every unreviewed AI block in every note as reviewed — after an agent run that wrote many notes", "把每篇笔记里所有未审阅的 AI 块标为已审阅——适合 agent 一次写了很多篇之后"),
+        ("Mark every unreviewed AI block in every note as reviewed — after the AI wrote many notes at once", "把每篇笔记里所有未审阅的 AI 块标为已审阅——适合 AI 一次写了很多篇之后"),
     ),
     "provenance-reject": (
         ("Revert AI change", "撤回 AI 修改"),
@@ -325,44 +325,44 @@ CMD = {
         ("Visible to the AI again", "重新对 AI 可见"),
     ),
     "view-agenda": (
-        ("View: Agenda", "视图：Agenda（任务日程）"),
+        ("Agenda", "Agenda（任务日程）"),
         ("Every task in the vault, projected by due date", "全库任务按到期时间投影"),
     ),
     "view-kanban": (
-        ("View: Board", "视图：看板"),
+        ("Board", "看板"),
         ("Every task in overdue / today / scheduled / unscheduled / done columns; drag a "
          "card to reschedule",
          "全库任务按过期/今天/已排期/未排期/已完成分列，拖卡片改期"),
     ),
     "view-timeline": (
-        ("View: Timeline", "视图：时间线"),
+        ("Timeline", "时间线"),
         ("Notes as a river, by created or modified time", "笔记按创建/修改时间排成河流"),
     ),
     "view-claims": (
-        ("View: Claims", "视图：断言"),
+        ("Claims", "断言"),
         ("Every claim in the vault and the evidence supporting it", "全库 claim 与支撑它的证据"),
     ),
     "view-evidence": (
-        ("View: Evidence", "视图：证据"),
+        ("Evidence", "证据"),
         ("Every piece of evidence and what it supports", "全库 evidence 及其支撑关系"),
     ),
     "view-graph": (
-        ("View: Graph", "视图：图谱"),
+        ("Graph", "图谱"),
         ("A force-directed graph of the links between notes", "笔记链接关系的力导向图"),
     ),
     "view-sessions": (
-        ("View: Session replay", "视图：会话回放"),
+        ("Session replay", "会话回放"),
         ("Replay an AI session step by step — reads, writes, permission decisions and "
          "privacy filtering, all on the record",
          "逐条回放 AI 会话的读写、权限决定与隐私过滤——都有账可查"),
     ),
     "view-review": (
-        ("View: Review", "视图：复习"),
+        ("Review", "复习"),
         ("The flashcards due today, one at a time; a grade is written back onto the card's line",
          "今天到期的卡片逐张复习；评分写回卡片所在行"),
     ),
     "view-reading": (
-        ("View: Reader", "视图：阅读投影"),
+        ("Reader", "阅读投影"),
         ("Return to the most recently opened web page", "回到最近打开的网页阅读投影"),
     ),
     "translate-browser-page": (
@@ -371,21 +371,20 @@ CMD = {
     ),
     "translate-toggle": (
         ("Translate side by side", "对照翻译"),
-        ("Read the open note beside its translation, one row per block; press again to leave ({key})",
-         "把当前笔记与译文按段并排对照阅读；再按一次离开（{key}）"),
+        ("Read the open note beside its translation, one row per block; the same key leaves it",
+         "把当前笔记与译文按段并排对照阅读；再按一次离开"),
     ),
     "close-tab": (
         ("Close tab", "关闭标签页"),
-        ("Close the current tab — a document or a projection ({key})",
-         "关闭当前标签页——文档或投影视图（{key}）"),
+        ("Closes the current document or projection", "关闭当前的文档或投影视图"),
     ),
     "next-tab": (
         ("Next tab", "下一个标签页"),
-        ("Cycle forward ({key})", "顺序循环切换（{key}）"),
+        ("{key} works too", "也可以按 {key}"),
     ),
     "prev-tab": (
         ("Previous tab", "上一个标签页"),
-        ("Cycle back ({key})", "顺序循环切换（{key}）"),
+        ("{key} works too", "也可以按 {key}"),
     ),
     "migrate-attachments": (
         ("Migrate attachment folders (bucket by full note path)", "迁移附件目录（按笔记完整路径分桶）"),
@@ -395,11 +394,11 @@ CMD = {
     ),
     "settings": (
         ("Settings", "设置"),
-        ("Model / API key / endpoint", "模型 / API key / 端点"),
+        ("Every setting: language, editing and reading, AI, quick capture…", "语言、编辑与阅读、AI、速记等全部设置"),
     ),
     "settings-ai": (
         ("AI settings", "AI 设置"),
-        ("Model / API key / endpoint / thinking depth", "模型 / API key / 端点 / 思考深度"),
+        ("Model, key, thinking depth, web search and translation", "模型、key、思考深度、联网搜索与翻译"),
     ),
     "settings-account": (
         ("Account", "账户"),
@@ -407,8 +406,7 @@ CMD = {
     ),
     "check-updates": (
         ("Check for updates", "检查更新"),
-        ("Ask GitHub Releases for a newer version and offer to install it",
-         "向 GitHub Releases 查询新版本，有则提示安装"),
+        ("Look for a newer version and offer to install it", "查询新版本，有则提示安装"),
     ),
     "clear-agent": (
         ("New AI session", "新建 AI 会话"),
@@ -530,16 +528,14 @@ add("palette.", {
     "modeWeb": ("Web address", "网址"),
     "commands": ("Run a command…", "执行命令…"),
     "notes": ("Open a note…", "打开笔记…"),
-    "pickNote": ("Pick a target note… (type a new name to create it; Tab or # for a section)",
-                 "选择目标笔记…（输入新名字可创建；Tab 或 # 选小节）"),
+    "newNote": ("Title of the new note…", "新笔记的标题…"),
+    "pickNote": ("Pick a target note…", "选择目标笔记…"),
     "search": ("Search all notes…", "全文搜索…"),
     "vaults": ("Switch vault…", "切换知识库…"),
-    "url": ("Type a URL, or search bookmarks and history… ({key} for a new window)",
-            "输入网址，或搜索收藏与历史…（{key} 新窗口）"),
-    "pickHeading": ("Pick a section of “{title}”… (Enter to confirm, Esc to go back)",
-                    "选择「{title}」的小节…（Enter 确认，Esc 返回）"),
+    "url": ("Type a URL, or search bookmarks and history…", "输入网址，或搜索收藏与历史…"),
+    "pickHeading": ("Which section of “{title}”…", "「{title}」的哪个小节…"),
     "wholeNote": ("End of note", "整篇末尾"),
-    "types": ("Open a block type… (type a new name to create it)", "打开块类型…（输入新名字可创建）"),
+    "types": ("Open a block type…", "打开块类型…"),
     "createType": ("Create block type “{name}”", "创建块类型「{name}」"),
     "createTypeHint": ("A skeleton with status and due fields, opened for editing", "按骨架（status/due 字段）新建并打开"),
     "typeExample": ("The example: a bullet with author, status and rating fields", "示例：带 author/status/rating 字段的列表项"),
@@ -658,7 +654,7 @@ add("palette.", {
     "createAndPick": ("Create and select", "创建并选定"),
     "createAndOpen": ("Create and open", "创建并打开"),
     "currentVault": ("{path} · current", "{path} · 当前"),
-    "openOtherVault": ("Open another vault…", "打开其他仓库…"),
+    "openOtherVault": ("Open another vault…", "打开其他知识库…"),
     "pickFolder": ("Pick a folder", "选择文件夹"),
     "pickLocation": ("Pick a location", "选择位置"),
     "unstar": ("Remove bookmark", "取消收藏"),
@@ -673,6 +669,43 @@ add("palette.", {
                              "暂无收藏与历史，输入网址开始浏览"),
     "typeToFilter": ("Type to filter", "输入以过滤"),
     "clearHistoryHint": ("Clears the recent list; bookmarks are untouched", "最近列表清空，收藏不受影响"),
+    "recentlyUsed": ("Recently used", "最近使用"),
+    "unavailable": ("Not available right now", "现在用不了"),
+    "similarNotes": ("Existing notes like it", "已有的相近笔记"),
+    "newNoteEmpty": ("Type a title — Enter creates the note", "输入标题，回车新建"),
+    "lineN": ("line {n}", "第 {n} 行"),
+    # The footer: what the keys do in the mode at hand
+    "foot.select": ("select", "选择"),
+    "foot.run": ("run", "执行"),
+    "foot.open": ("open", "打开"),
+    "foot.openFile": ("open the file", "打开文件"),
+    "foot.openAtLine": ("open at this line", "打开并停在这一行"),
+    "foot.openExisting": ("open an existing one", "打开已有的"),
+    "foot.create": ("create", "新建"),
+    "foot.close": ("close", "关闭"),
+    "foot.back": ("back", "返回"),
+    "foot.switch": ("switch", "切换"),
+    "foot.newTab": ("new tab", "新标签页"),
+    "foot.wholeNote": ("end of the note", "整篇末尾"),
+    "foot.appendSection": ("end of the section", "插到小节末尾"),
+    "foot.pickSection": ("pick a section", "选小节"),
+    "foot.typeNewToCreate": ("Type a new name to create one", "输入新名字可新建"),
+    # Why a command cannot run now (shown beside it when a query finds it)
+    "why.vault": ("Open a vault first", "需要先打开一个知识库"),
+    "why.page": ("Open a web page first", "需要先打开一个网页"),
+    "why.note": ("Open a note first", "需要先打开一篇笔记"),
+    "why.selection": ("Select some text first", "需要先选中一段文字"),
+    "why.pending": ("No unreviewed AI changes", "没有未审阅的 AI 修改"),
+    "why.pendingHere": ("No unreviewed AI changes in this note", "这篇笔记没有未审阅的 AI 修改"),
+    "why.tabs": ("No tab is open", "没有打开的标签页"),
+    "why.oneTab": ("Only one tab is open", "只开着一个标签页"),
+    "why.clip": ("This note is not a clip", "这篇笔记不是剪藏"),
+    "why.reader": ("Reader has not opened a page yet", "阅读投影还没打开过网页"),
+    "why.alreadyPrivate": ("It is already private", "它已经是隐私的"),
+    "why.notPrivate": ("It is not marked private", "它没有标记为隐私"),
+    "why.undo": ("Nothing to undo", "没有可撤销的文件操作"),
+    "why.back": ("Nothing to go back to", "没有可后退的地方"),
+    "why.forward": ("Nothing to go forward to", "没有可前进的地方"),
 })
 
 # ---------------------------------------------------------------- permission gate
