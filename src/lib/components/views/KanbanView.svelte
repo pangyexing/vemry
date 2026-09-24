@@ -777,6 +777,12 @@
                       keeps its shape. The tip reads the whole line -->
                     {#if pend || !isClosed(card.state) || stayed}
                     <div class="card-meta" use:cliptip={{}}>
+                      {#if w && !pend}
+                        <!-- The main date again, drawn only on a card too narrow for it at the
+                          title's line end (.alt-when's container query): there it would leave
+                          room for no word beside it and push the title down a line -->
+                        <span class="alt-when">{@render dateChip(card, w.field, t("task.editDateWith", { field: dateFieldLabel(w.field), date: card[w.field] ?? "" }), w.text, w.overdue ? "mi date late" : "mi date", w.field === "start")}<span class="sep">{" · "}</span></span>
+                      {/if}
                       {#each metaDates(card, w?.field, pendField) as f (f)}
                         {@render dateChip(card, f, t("task.editDateWith", { field: dateFieldLabel(f), date: card[f] ?? "" }), nearDate(card[f] ?? ""), "mi date", true)}<span class="sep">{" · "}</span>
                       {/each}
@@ -1158,8 +1164,27 @@
     -webkit-line-clamp: 1;
     line-clamp: 1;
   }
+  /* The card body is a size container: the main date's place depends on the card's own
+     width, not the window's (the same window can hold wide and narrow columns) */
   .card-body {
     min-width: 0;
+    container-type: inline-size;
+  }
+  /* On a narrow card (a 176px column, the default window's: a 106px body) a date at the
+     title's line end leaves some 40px beside it, often no word fits, and the title starts
+     on the second line under a line holding only the date. There the main date leads the
+     meta line instead, and the title has its first line back. From a 210px column (a
+     140px body) a word fits beside the date, and it stays at the line end */
+  .alt-when {
+    display: none;
+  }
+  @container (max-width: 120px) {
+    .flow > .when {
+      display: none;
+    }
+    .alt-when {
+      display: inline;
+    }
   }
   /* 3px of padding pulled back by a negative side margin: a 21px hit area centred on the
      title's first line, the text's position unchanged */
@@ -1275,7 +1300,8 @@
     height: 0.95em;
     margin-right: 0;
   }
-  .mi.pri.urgent {
+  .mi.pri.urgent,
+  .mi.date.late {
     color: var(--kb-late);
   }
   /* A state field's value with its glyph (chips.ts, which colours itself) */
