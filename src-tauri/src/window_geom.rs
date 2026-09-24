@@ -177,9 +177,29 @@ fn main_geometry(app: &AppHandle) -> (Option<WindowGeom>, bool) {
 /// The visible area of the display the pointer is on (where the reader is looking when
 /// they launch the app), else the primary display's.
 fn area_at_pointer(app: &AppHandle) -> Option<Area> {
-    let at_pointer = app.cursor_position().ok().and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten());
-    let m = at_pointer.or_else(|| app.primary_monitor().ok().flatten())?;
+    let primary = app.primary_monitor().ok().flatten();
+    let under = app.cursor_position().ok().and_then(|p| {
+        // Where the pointer and the monitors share one pixel space, the lookup answers
+        // directly. On a Mac with displays of different scales it does not: the pointer
+        // comes back as its logical point times the primary display's scale, while each
+        // display's position is in its own pixels (measured: pointer x 3767 on a 1x
+        // external display at x 1470, beside a 2x built-in one). There both are brought
+        // to logical points and compared
+        app.monitor_from_point(p.x, p.y).ok().flatten().or_else(|| {
+            let scale = primary.as_ref()?.scale_factor();
+            let point = (p.x / scale, p.y / scale);
+            app.available_monitors().ok()?.into_iter().find(|m| holds(&bounds_of(m), point))
+        })
+    });
+    let m = under.or(primary)?;
     Some(area_of(&m))
+}
+
+/// A display's whole bounds in logical points.
+fn bounds_of(m: &tauri::Monitor) -> Area {
+    let pos = m.position().to_logical::<f64>(m.scale_factor());
+    let size = m.size().to_logical::<f64>(m.scale_factor());
+    Area { x: pos.x, y: pos.y, w: size.width, h: size.height }
 }
 
 /// Note the main window's geometry after a move or a resize (in memory). Minimised,
