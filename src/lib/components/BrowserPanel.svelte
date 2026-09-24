@@ -956,7 +956,7 @@
   }
   .nt-head {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 10px 8px 4px;
   }
   .nt-row {
@@ -999,7 +999,7 @@
     color: var(--fg-muted);
   }
   .nt-empty {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-sm);
     padding: 12px 8px;
   }
@@ -1008,7 +1008,7 @@
     flex-direction: column;
     align-items: center;
     gap: 4px;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 24px;
     text-align: center;
     max-width: 80%;
@@ -1082,7 +1082,7 @@
   }
   .pick-h {
     flex: none;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: 11px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1108,7 +1108,7 @@
     background: var(--bg-active);
   }
   .pick-empty {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: 12px;
     padding: 8px;
   }
@@ -1116,10 +1116,11 @@
     color: var(--accent);
     border-color: var(--accent);
   }
+  /* The translation's progress count beside its button: the button's own ink at 11px (a
+     count is a badge), not faded with opacity */
   .tr-count {
     margin-left: 4px;
-    font-size: 10px;
-    opacity: 0.8;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
   }
 </style>

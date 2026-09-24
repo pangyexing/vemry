@@ -120,7 +120,7 @@
   }
   .menu-title {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 4px 10px 2px;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -991,10 +991,17 @@
     font-weight: 500;
   }
   /* Inside a zone (a folder above carries the badge) the name is quieted rather than badged
-     again: the secondary ink, which stays readable (≥ 4.5:1 on the panel, hover and active
+     again: the secondary ink, which stays readable (≥ 4.5:1 on the panel and hover
      grounds), where fading it with opacity fell to 2.2:1 */
   .row.inherited {
     color: var(--fg-muted);
+  }
+  /* On the current row's ground the secondary ink falls just under 4.5:1 in the dark theme
+     (measured 4.48), so there it steps a third of the way toward the body ink: still a
+     step back from the name, and readable */
+  .file-row.active .ext,
+  .file-row.active.inherited {
+    color: color-mix(in srgb, var(--fg-muted) 70%, var(--fg));
   }
   /* The indent guides: 16px per level, with the vertical line falling in the centre of the level above's arrow slot */
   .guide {

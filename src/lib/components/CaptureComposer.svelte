@@ -575,7 +575,7 @@
     line-height: 1.6;
   }
   textarea::placeholder {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .shots {
     display: flex;
@@ -602,7 +602,7 @@
   .shot-name {
     display: block;
     padding: 4px;
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1.25;
     color: var(--fg-muted);
     overflow: hidden;
@@ -675,7 +675,7 @@
     background: var(--bg-panel);
   }
   .hint {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .error {
     color: var(--danger);
@@ -730,7 +730,7 @@
     text-overflow: ellipsis;
   }
   .row-hint {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-xs);
     white-space: nowrap;
     overflow: hidden;
@@ -747,7 +747,7 @@
   }
   .pick .empty {
     padding: 8px 16px;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-sm);
   }
 </style>

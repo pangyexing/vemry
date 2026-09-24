@@ -186,7 +186,7 @@
   .ns-empty {
     padding: 5px 8px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   /* The stem is what tells the notes apart, so the folder gives way first: it only
      takes what the stem leaves, and is ellipsized there */
@@ -202,7 +202,7 @@
     flex: 1 1 0;
     min-width: 0;
     font-size: 11px;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

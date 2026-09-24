@@ -1475,7 +1475,7 @@
     height: 100%;
     display: grid;
     place-items: center;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-sm);
   }
 </style>
