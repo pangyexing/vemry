@@ -1372,7 +1372,6 @@ add("agentPanel.", {
     "sources": ("Sources · {n}", "来源 · {n}"),
     "sourcesHint": ("Every web source this session cited, with whether a search confirmed it", "本会话引用过的全部网络来源,及是否经搜索核实"),
     "noSources": ("No web sources in this session yet", "本会话还没有网络来源"),
-    "sourceVerified": ("verified", "已核实"),
     "copyLink": ("Copy link", "复制链接"),
     "linkCopied": ("Link copied", "已复制链接"),
     "closeSources": ("Close the source list", "关闭来源列表"),
@@ -1411,6 +1410,7 @@ add("hover.", {
 
 add("chat.", {
     "thisNote": ("this note", "本笔记"),
+    "citedNotes": ("Cited notes", "引用的笔记"),
     "citationsMaterialized": ("Wrote {n} block ids into the cited notes", "已为引用的 {n} 个块写入 id"),
     "citationsDropped": ("{n} citations could not be pinned to a block and point to the note instead", "{n} 条引用无法定位到块，改为指向笔记"),
     "planApproved": ("Approved ✓", "已确认 ✓"),
@@ -1626,10 +1626,12 @@ add("chat.", {
     "expandThinking": ("Click to expand the full reasoning (selectable)", "点击展开完整思考(可选中复制)"),
     "thinking": ("Thinking", "思考中"),
     "thinkingCount": ("Thinking · {n} chars", "思考中 · {n} 字"),
+    "thoughtChars": ("Thought for {n} chars", "思考了 {n} 字"),
     "usageLastTurn": ("Last turn: {calls} model calls · context {prompt} tokens · cache hits {cache} · output {completion} tokens",
                       "上一轮:{calls} 次调用 · 上下文 {prompt} tokens · 缓存命中 {cache} · 输出 {completion} tokens"),
     "stop": ("Stop", "停止"),
     "backToBottom": ("↓ Back to the bottom", "↓ 回到底部"),
+    "newContent": ("↓ New content", "↓ 新内容"),
     "stopHint": ("Stop this turn", "停止本轮"),
     "statusWaitingPlan": ("Waiting for your decision on the plan", "等待你确认计划"),
     "statusWaitingRead": ("Waiting for you to pick the pages to read", "等待你选择要读的网页"),

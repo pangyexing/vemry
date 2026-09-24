@@ -13,6 +13,7 @@
   import { isAgentWindow } from "$lib/window";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { displayTitle, editableTitle, renameKeydown } from "$lib/views/session";
+  import { cliptip } from "$lib/cliptip";
   import AgentChat from "./AgentChat.svelte";
   import SourcesPanel from "./SourcesPanel.svelte";
 
@@ -196,7 +197,7 @@
         <button class="sess-main" onclick={() => pickSession(s)} oncontextmenu={(e) => sessionMenu(e, s)}>
           {#if s.id === agent.sessionId}<span class="sess-check">✓</span>{/if}
           {#if s.forked}<span class="sess-fork" title={t("sessionsView.forked")}>⑂</span>{/if}
-          <span class="sess-t">{displayTitle(s)}</span>
+          <span class="sess-t" use:cliptip={displayTitle(s)}>{displayTitle(s)}</span>
           <!-- What the session produced (the note it wrote or follows) is a better handle than how many questions it took -->
           {#if s.note}<span class="sess-note" title={s.note}>→ {baseOf(s.note).replace(/\.md$/, "")}</span>{/if}
           <span class="sess-m">{relTime(s.last_ts)}</span>
@@ -246,9 +247,12 @@
     background: var(--bg-hover);
   }
   /* ---- the session bar: the conversation's gear lever ---- */
+  /* The session bar keeps the panel's ground (in the detached window too), above the
+     timeline's page */
   .sesswrap {
     position: relative;
     flex-shrink: 0;
+    background: var(--bg-panel);
   }
   .sessbar {
     display: flex;
@@ -272,8 +276,9 @@
   .sess-cur:hover:not(:disabled) {
     background: var(--bg-hover);
   }
+  /* Disabled in the secondary ink rather than by opacity, which would fade the title's words */
   .sess-cur:disabled {
-    opacity: 0.6;
+    color: var(--fg-muted);
     cursor: default;
   }
   .sess-title {
@@ -319,7 +324,7 @@
     background: var(--bg-hover);
   }
   .sess-new:disabled {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     border-color: var(--border);
     cursor: default;
   }
@@ -346,9 +351,17 @@
     flex-direction: column;
     gap: 1px;
   }
+  /* In the dark a shadow does not show, and the list sat on the timeline's own ground: it
+     takes the ground one step up, with the heavier stroke, to read as lifted */
+  @media (prefers-color-scheme: dark) {
+    .sess-pop {
+      background: var(--bg-panel);
+      border-color: var(--border-strong);
+    }
+  }
   .sess-empty {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 10px 8px;
   }
   .sess-row {
@@ -408,15 +421,15 @@
   }
   .sess-m {
     flex-shrink: 0;
-    font-size: 10px;
-    font-family: var(--font-mono);
-    color: var(--fg-faint);
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+    color: var(--fg-muted);
   }
   .sess-note {
     flex-shrink: 1;
     min-width: 0;
     max-width: 40%;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -445,16 +458,16 @@
   .sess-legacy-toggle {
     text-align: left;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 6px 8px;
     border-top: 1px solid var(--border);
     margin-top: 3px;
     border-radius: 0;
   }
   .sess-legacy-toggle:hover {
-    color: var(--fg-muted);
+    color: var(--fg);
   }
-  .sess-row.legacy {
-    opacity: 0.65;
+  .sess-row.legacy .sess-t {
+    color: var(--fg-muted);
   }
 </style>

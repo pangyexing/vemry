@@ -2104,7 +2104,59 @@ button:focus-visible,
   }
 }
 
-/* ---- Block citation chips in rendered Markdown (the chat and the replay view) ---- */
+/* ---- Citations in rendered Markdown (the chat and the replay view). A web citation
+   (.md-cite, its source's number) and a block citation (.md-notecite, ¶ and its number)
+   are one superscript: at 0.75em of the body (12px at 16px), raised by position rather
+   than vertical-align so it never pushes its line away from the next. Accent, as
+   everything clickable is; the underline comes on hover, since a two-character mark with
+   a line under it reads as a smudge ---- */
+.md-cite {
+  position: relative;
+  top: -0.45em;
+  font-size: 0.75em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  margin: 0 1px;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+}
+.md-cite:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+/* The list that closes an answer citing notes: each cited note by name, with its markers
+   after it. Secondary to the answer, so a step smaller, and in list form without bullets */
+.md-citednotes {
+  margin-top: 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+.md-citednotes-head {
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+  margin-bottom: 2px;
+}
+.md-body .md-citednotes ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.md-body .md-citednotes li {
+  margin: 0;
+}
+/* In the list the markers sit on the line, after the name they belong to */
+.md-citednotes .md-cite {
+  top: 0;
+  font-size: var(--fs-xs);
+  margin-left: 6px;
+}
+
+/* A block citation an embedded note wrote (renderNoteMarkdown): a chip with a ¶ / › glyph
+   and the note's name. In an answer the same citation is a numbered marker (above) */
 .md-blockref {
   display: inline-flex;
   align-items: baseline;
@@ -2127,7 +2179,7 @@ button:focus-visible,
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .md-blockref-glyph {
-  opacity: 0.7;
+  flex-shrink: 0;
 }
 
 /* ---- Block provenance (provenance.ts): the amber bar of an AI block awaiting review, and
@@ -2702,6 +2754,55 @@ button:focus-visible,
 .md-tablewrap {
   overflow-x: auto;
 }
+/* A table wider than its column keeps its sideways scroll (collapsing would set CJK cells a
+   character to a line) and shows it: a scrollbar that stays drawn, in the ink of a mark
+   (the system's overlay bar only appears while scrolling, and its track was 1.14:1), and a
+   fade at the edge that has more table behind it (tablefade.ts sets fade-start / fade-end
+   from the scroll position). The fade is a mask on the wrapper, which does not scroll, so
+   it stays at the edge; its second layer keeps the scrollbar's strip whole */
+.md-tablewrap::-webkit-scrollbar {
+  height: 8px;
+}
+.md-tablewrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+.md-tablewrap::-webkit-scrollbar-thumb {
+  background: var(--fg-faint);
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+.md-tablewrap.fade-start {
+  --fade-start: 32px;
+}
+.md-tablewrap.fade-end {
+  --fade-end: 32px;
+}
+.md-tablewrap.fade-start,
+.md-tablewrap.fade-end {
+  -webkit-mask-image:
+    linear-gradient(to right, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent),
+    linear-gradient(#000, #000);
+  -webkit-mask-size: 100% calc(100% - 8px), 100% 8px;
+  -webkit-mask-position: top, bottom;
+  -webkit-mask-repeat: no-repeat;
+  mask-image:
+    linear-gradient(to right, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent),
+    linear-gradient(#000, #000);
+  mask-size: 100% calc(100% - 8px), 100% 8px;
+  mask-position: top, bottom;
+  mask-repeat: no-repeat;
+}
+/* Right to left, the table starts at the right edge */
+.md-tablewrap:dir(rtl).fade-start,
+.md-tablewrap:dir(rtl).fade-end {
+  -webkit-mask-image:
+    linear-gradient(to left, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent),
+    linear-gradient(#000, #000);
+  mask-image:
+    linear-gradient(to left, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent),
+    linear-gradient(#000, #000);
+}
 .md-tablewrap table {
   border-collapse: separate;
   border-spacing: 0;
@@ -2719,11 +2820,12 @@ button:focus-visible,
   vertical-align: top;
   overflow-wrap: anywhere;
 }
+/* A header is content: the body ink, set apart by its weight and its ground */
 .md-tablewrap th {
   background: var(--bg-panel);
   font-size: 0.92em;
   font-weight: 600;
-  color: var(--fg-muted);
+  color: var(--fg);
   border-bottom: 1px solid var(--border);
 }
 .md-tablewrap th:first-child {
@@ -2877,9 +2979,8 @@ button:focus-visible,
   flex-shrink: 0;
   padding: 6px 10px 5px;
   border-bottom: 1px solid var(--border);
-  font-size: 10px;
-  color: var(--fg-faint);
-  letter-spacing: 0.04em;
+  font-size: 11px;
+  color: var(--fg-muted);
   -webkit-user-select: none;
   user-select: none;
   min-width: 0;
@@ -2892,7 +2993,6 @@ button:focus-visible,
 .at-keys {
   flex-shrink: 0;
   font-family: var(--font-mono);
-  letter-spacing: 0;
 }
 .at-list {
   overflow-y: auto;
@@ -2904,7 +3004,7 @@ button:focus-visible,
 }
 .at-empty {
   font-size: var(--fs-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   padding: 8px;
 }
 .at-row {
@@ -2945,8 +3045,8 @@ button:focus-visible,
 .at-sub {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
-  color: var(--fg-faint);
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2957,6 +3057,6 @@ button:focus-visible,
 .at-sub.tag {
   flex: none;
   margin-left: auto;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--accent);
 }

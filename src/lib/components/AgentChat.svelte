@@ -33,15 +33,20 @@
   import { t, i18n } from "$lib/i18n/i18n.svelte";
   import { PLAN_GLYPH, toolLabel } from "$lib/views/session";
   import {
+    citedNotesHtml,
     domainOf,
     extractCitations,
     handleCodeCopyClick,
     plainText,
     renderAssistantMarkdownBlocks,
     stableBlockPrefix,
+    streamingTail,
     TASK_PREFIX_RE,
     type Citation,
   } from "$lib/markdown";
+  import { langAttrs, noteLanguage } from "$lib/notelang";
+  import { cliptip } from "$lib/cliptip";
+  import { tableFades } from "$lib/tablefade";
   import { localDate } from "$lib/views/tasks";
   import { isImeKeydown } from "$lib/ime";
   import { isFileLikePaste } from "$lib/editor/setup";
@@ -133,8 +138,21 @@
   let expandedSources = $state<Record<number, boolean>>({});
   /** The uncited search hits of a source card, shown on demand (keyed by timeline index like expandedSources). */
   let expandedHits = $state<Record<number, boolean>>({});
-  /** Whether the user is stuck to the bottom of the timeline — only then does it follow the streaming output, so reading back is not yanked away. */
+  /** How the timeline follows what arrives. "answer": to the bottom, until the answer being
+   *  written has its start at the top of the viewport — there it stops, so the text the
+   *  reader came for is never pushed out by what arrives under it; "tail": to the bottom,
+   *  unconditionally (the reader asked for the end: the ↓ button, or scrolling down to it);
+   *  "off": never moves. A send and a session change start "answer"; the reader's own
+   *  scrolling picks "tail" at the bottom and "off" anywhere else. */
+  let follow = $state<"answer" | "tail" | "off">("answer");
+  /** The viewport sits at the end of the timeline (the ↓ button is shown otherwise). */
   let atBottom = $state(true);
+  /** Where the last programmatic scroll put the timeline: the scroll event it causes is
+   *  told apart from the reader's own by it, so following never reads as the reader
+   *  scrolling away, and never closes the hover card or the selection popover. */
+  let expectTop = -1;
+  /** The reasoning folded above an answer, opened by hand (keyed by timeline index). */
+  let expandedThoughts = $state<Record<number, boolean>>({});
   /** Whether the plan card (the task list the assistant recites) is expanded. */
   let planOpen = $state(false);
   /** Whether the thinking stream is expanded into fully selectable text (a narrow, bottom-aligned strip by default). */
@@ -240,6 +258,8 @@
   $effect(() => {
     if (agent.viewEpoch === seenEpoch) return;
     seenEpoch = agent.viewEpoch;
+    // A new, empty session shows the next hint; switching to a session with a history keeps it
+    if (!untrack(() => agent.timeline.length)) phIdx = (phIdx + 1) % PH_HINTS.length;
     citeGuards.clear();
     citeCache.clear();
     hover = null;
@@ -257,8 +277,26 @@
    *  or a paragraph, and a citation across the boundary could not be rendered anyway). */
   const blockCache = new Map<
     number,
-    { text: string; blocks: string[]; cites: Citation[]; citeZone: boolean }
+    { text: string; blocks: string[]; cites: Citation[]; citeZone: boolean; notes: string[] }
   >();
+  /** Each answer's language and writing system (the lang / data-script it is stamped with).
+   *  Read once, as soon as there is enough text to tell (noteLanguage's 300 letters — the
+   *  first few lines of a streaming answer), and never again: a verdict taken when the
+   *  answer finishes would rewrap, in a wide window, a column the reader is halfway
+   *  through. A finished answer too short to tell follows the interface. */
+  const langCache = new Map<number, ReturnType<typeof langAttrs>>();
+  function answerLang(i: number, text: string, streaming: boolean): ReturnType<typeof langAttrs> {
+    const known = langCache.get(i);
+    if (known) return known;
+    const attrs = langAttrs(noteLanguage(text));
+    if (attrs["data-script"] || !streaming) langCache.set(i, attrs);
+    return attrs;
+  }
+  /** The render caches are keyed by timeline index: anything that rewrites the timeline drops them. */
+  function clearRenderCaches() {
+    blockCache.clear();
+    langCache.clear();
+  }
 
   /** Merging citations (deduplicated by URL, keeping the first non-empty title — the same rule as extractCitations'). */
   function mergeCites(into: Citation[], add: Citation[]) {
@@ -269,10 +307,12 @@
     }
   }
 
-  function assistantBlocks(i: number, text: string): string[] {
+  /** `streaming`: the answer is still arriving — its unclosed tail is held back
+   *  (streamingTail), and the cited-notes list waits for the last word. */
+  function assistantBlocks(i: number, text: string, streaming: boolean): string[] {
     let cached = blockCache.get(i);
     if (!cached || !text.startsWith(cached.text)) {
-      cached = { text: "", blocks: [], cites: [], citeZone: false };
+      cached = { text: "", blocks: [], cites: [], citeZone: false, notes: [] };
       blockCache.set(i, cached);
     }
     let tail = text.slice(cached.text.length);
@@ -284,17 +324,24 @@
       // The block-level state (citeZone) travels across calls: a "## References" heading is often
       // frozen into the prefix while the list falls in the tail, and without carrying the state
       // the tail would merge a deliberate bibliography into a string of markers
-      const st = { citeZone: cached.citeZone };
+      const st = { citeZone: cached.citeZone, notes: cached.notes };
       cached.blocks.push(...renderAssistantMarkdownBlocks(grown, numberOf, st));
       cached.citeZone = st.citeZone;
       cached.text += grown;
       tail = tail.slice(cut);
     }
-    if (!tail) return [...cached.blocks];
-    const cites = cached.cites.map((c) => ({ ...c })); // the tail is not frozen, so the cache is not polluted
-    mergeCites(cites, extractCitations(tail));
-    const numberOf = new Map(cites.map((c, n) => [c.url, n + 1] as const));
-    return [...cached.blocks, ...renderAssistantMarkdownBlocks(tail, numberOf, { citeZone: cached.citeZone })];
+    // The tail is not frozen, so it renders against copies and the cache is not polluted
+    const notes = [...cached.notes];
+    const out = [...cached.blocks];
+    const shown = streaming ? streamingTail(tail) : tail;
+    if (shown) {
+      const cites = cached.cites.map((c) => ({ ...c }));
+      mergeCites(cites, extractCitations(shown));
+      const numberOf = new Map(cites.map((c, n) => [c.url, n + 1] as const));
+      out.push(...renderAssistantMarkdownBlocks(shown, numberOf, { citeZone: cached.citeZone, notes }));
+    }
+    if (!streaming && notes.length) out.push(citedNotesHtml(notes));
+    return out;
   }
 
   /** A timeline render row: a run of ≥3 tool calls is merged into one summary (interleaved calls
@@ -713,8 +760,9 @@
     expandedSources = {};
     expandedHits = {};
     expandedPlans = {};
-    blockCache.clear();
-    atBottom = true;
+    expandedThoughts = {};
+    clearRenderCaches();
+    follow = "answer"; // a session opens on its latest answer, read from its start
   }
 
   // ---- Getting an answer back into a note (the last metre of the research loop) ----
@@ -881,12 +929,12 @@
   // ---- Retry / edit and resend / fork / continue ----
 
   function doRetry() {
-    blockCache.clear();
+    clearRenderCaches();
     run(agent.retry().then(() => vault.refreshNotes()));
   }
 
   async function editLast() {
-    blockCache.clear();
+    clearRenderCaches();
     try {
       const restored = await agent.editResend();
       if (restored != null) {
@@ -910,7 +958,7 @@
   }
 
   async function forkAt(i: number) {
-    blockCache.clear();
+    clearRenderCaches();
     const item = agent.timeline[i];
     const text = item.kind === "user" ? item.text : "";
     try {
@@ -1078,27 +1126,39 @@
     return text == null ? null : plainText(text).slice(0, 300);
   }
 
+  /** A block citation in the rendered answer: the numbered marker, and the chip form
+   *  (an alias the model wrote) — both carry the fragment. */
+  const CITE_SEL = "a[data-frag]";
   function onTimelineOver(e: MouseEvent) {
     if (!(e.target instanceof Element)) return;
-    const el = e.target.closest<HTMLElement>("a.md-blockref");
+    const el = e.target.closest<HTMLElement>(CITE_SEL);
     if (!el) return;
     if (hoverTimer) clearTimeout(hoverTimer);
     const target = el.dataset.wiki ?? "";
     hoverTimer = setTimeout(() => void showHover(el, target), 250);
   }
   function onTimelineOut(e: MouseEvent) {
-    if (!(e.target instanceof Element) || !e.target.closest("a.md-blockref")) return;
+    if (!(e.target instanceof Element) || !e.target.closest(CITE_SEL)) return;
     if (hoverTimer) clearTimeout(hoverTimer);
     hoverTimer = null;
     hover = null;
+    hoverFor = null;
+  }
+  /** The citation the hover card is for: an answer that resolves after the pointer moved on is dropped. */
+  let hoverFor: string | null = null;
+  /** The card's head: the note's name, and the heading when the citation names a section. */
+  function citeTitle(note: string, frag: string): string {
+    const name = (note.split("/").pop() ?? note).replace(/\.md$/i, "") || t("chat.thisNote");
+    return frag.startsWith("^") || POSITIONAL_RE.test(frag) ? name : `${name} › ${frag}`;
   }
   async function showHover(el: HTMLElement, target: string) {
     if (!el.isConnected) return;
     const r = el.getBoundingClientRect();
-    hover = { x: r.left, y: r.bottom + 6, title: target, text: t("hover.loading") };
     const { note, frag } = parseRefTarget(target);
+    hoverFor = target;
+    hover = { x: r.left, y: r.bottom + 6, title: citeTitle(note, frag), text: t("hover.loading") };
     const text = await citationText(note, frag);
-    if (!hover || hover.title !== target) return;
+    if (!hover || hoverFor !== target) return;
     hover = { ...hover, text: text ?? t("hover.missing"), missing: text == null };
   }
 
@@ -1155,20 +1215,18 @@
     queueMicrotask(() => el?.setSelectionRange(el.value.length, el.value.length));
   }
 
-  // The placeholder carousel: the main sentence leads, and the three syntaxes @ / # / a URL take
-  // turns showing themselves — each is one line, so the placeholder never grows into a two-line
-  // explanation. The native placeholder attribute cannot do transitions, so a .ph layer over the
-  // textarea stands in for it (the textarea itself sets no placeholder).
-  // It only rotates while the draft is empty and nothing is running; one keystroke stops it and
-  // resets it, so it starts from the main sentence again next time; while running it becomes a
-  // static "running"; under reduced-motion it does not rotate and shows the main sentence
+  // The placeholder: the main sentence, or one of the three syntaxes @ / # / a URL — each one
+  // line, so it never grows into a two-line explanation. It holds still: a sentence sliding
+  // in beside an answer being read pulls the eye away every few seconds, so each new session
+  // shows the next one instead, and a new vault starts from the main sentence. While running
+  // it says a message would be queued. A .ph layer over the textarea stands in for the
+  // native placeholder (the textarea itself sets none).
   const PH_HINTS = $derived([
     t("chat.placeholder1"),
     t("chat.placeholder2"),
     t("chat.placeholder3"),
     t("chat.placeholder4"),
   ]);
-  const PH_INTERVAL = 4000;
   /** The message's method: the draft's head token when it names an enabled skill. It stays
    *  where it was typed, as the coding agents' slash commands do — the picker only completes
    *  it — rather than turning into a chip in the row meant for the material. */
@@ -1182,15 +1240,6 @@
     return ask ? `${t("chat.skillModeHint", { name })} · ${ask}` : t("chat.skillPlaceholder", { name });
   });
   let phIdx = $state(0);
-  $effect(() => {
-    if (agent.draft !== "" || agent.running) {
-      phIdx = 0;
-      return;
-    }
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const it = setInterval(() => (phIdx = (phIdx + 1) % PH_HINTS.length), PH_INTERVAL);
-    return () => clearInterval(it);
-  });
 
   /** The stop button takes the send button's slot the moment a turn starts (send() clears the
    *  draft synchronously and runTurn sets running before its first await), so the second click
@@ -1212,7 +1261,7 @@
       return;
     }
     agent.draft = "";
-    atBottom = true; // a message you sent yourself always has to be visible
+    follow = "answer"; // a message you sent yourself always has to be visible, and its answer is read from the start
     await dispatch(text);
   }
 
@@ -1698,32 +1747,93 @@
     submit(e.altKey);
   }
 
+  /** Within this distance of the end the viewport counts as at the bottom. */
+  const BOTTOM_SLACK = 40;
+  /** Where "answer" stops: the answer's start this far below the viewport's top edge (the column's own padding). */
+  const ANSWER_TOP_GAP = 12;
+
   function onScroll() {
+    const el = scroller;
+    if (!el) return;
+    // A scroll this component made (following): the mode stays, and the popovers have moved with the text
+    if (expectTop >= 0 && Math.abs(el.scrollTop - expectTop) <= 1) {
+      expectTop = -1;
+      return;
+    }
+    expectTop = -1;
+    // The reader's own scroll: the popovers are positioned against the wrap and the viewport
+    // and do not scroll with the content, so they close (as selection popovers commonly do)
     hover = null;
-    if (!scroller) return;
-    atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
-    // The popover is positioned against the wrap and does not scroll with the content, so any scroll dismisses it (as selection popovers commonly do)
     selPop = null;
+    atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
+    follow = atBottom ? "tail" : "off";
+  }
+
+  /** Scroll the timeline by program: the popovers ride along with the text they point at
+   *  (and close once it has left the view), and the scroll event this causes is marked as ours. */
+  function scrollTimeline(el: HTMLElement, top: number) {
+    const before = el.scrollTop;
+    el.scrollTop = top;
+    const delta = el.scrollTop - before;
+    if (!delta) return;
+    expectTop = el.scrollTop;
+    if (selPop) {
+      const y = selPop.y - delta;
+      selPop = y < 0 || y > el.clientHeight ? null : { ...selPop, y };
+    }
+    if (hover) {
+      const y = hover.y - delta;
+      const r = el.getBoundingClientRect();
+      hover = y < r.top || y > r.bottom ? null : { ...hover, y };
+    }
+  }
+
+  /** Where "answer" stops: the top of this turn's newest answer (its folded reasoning
+   *  included), in the scroller's coordinates; null while the turn has no answer yet. */
+  function answerTop(el: HTMLElement): number | null {
+    const i = lastAssistantIndex;
+    if (i < 0 || i < lastUserIndex) return null;
+    const node = el.querySelector<HTMLElement>(`[data-answer="${i}"]`);
+    if (!node) return null;
+    return Math.max(0, node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - ANSWER_TOP_GAP);
   }
 
   function scrollToBottom() {
-    atBottom = true;
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    follow = "tail";
+    if (scroller) scrollTimeline(scroller, scroller.scrollHeight - scroller.clientHeight);
   }
 
   $effect(() => {
-    // While stuck to the bottom it follows the streaming output. Appending token by token changes
-    // only the last item's text and not the length, so both have to be tracked.
+    // Follow what arrives, per `follow`. Appending token by token changes only the last
+    // item's text and not the length, so both have to be tracked.
     // The visibility switch is in the same list (the same reason as autogrow's): under
-    // display:none scrolling is a no-op, and on becoming visible again the stuck-to-bottom state
-    // has to be applied once more
+    // display:none scrolling is a no-op, and on becoming visible again the mode has to be
+    // applied once more
     const last = agent.timeline[agent.timeline.length - 1];
     if (last && "text" in last) void last.text;
     void agent.timeline.length;
     void agent.thinking;
     void vault.rightTab;
     void vault.rightOpen;
-    if (scroller && atBottom) scroller.scrollTop = scroller.scrollHeight;
+    const mode = follow;
+    const el = scroller;
+    if (!el || el.clientHeight === 0) return;
+    untrack(() => {
+      const max = el.scrollHeight - el.clientHeight;
+      if (mode !== "off") {
+        let target = max;
+        if (mode === "answer") {
+          const top = answerTop(el);
+          // The answer's start can reach the top: it goes there, and following ends
+          if (top != null && top <= max) {
+            target = top;
+            follow = "off";
+          }
+        }
+        if (Math.abs(target - el.scrollTop) >= 1) scrollTimeline(el, target);
+      }
+      atBottom = max - el.scrollTop < BOTTOM_SLACK;
+    });
   });
 
   $effect(() => {
@@ -1782,13 +1892,31 @@
       {/if}
     </div>
   {/snippet}
+  <!-- The answer's action icons (14px strokes on the 20 grid, the composer's own) -->
+  {#snippet footIcon(kind: "copy" | "insert" | "pin" | "save" | "regenerate" | "undo")}
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      {#if kind === "copy"}
+        <rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 4.5V4.4a1.9 1.9 0 0 0-1.9-1.9H5.4a1.9 1.9 0 0 0-1.9 1.9v5.7A1.9 1.9 0 0 0 5.4 12h.1" />
+      {:else if kind === "insert"}
+        <path d="M15.5 4v5.5a2 2 0 0 1-2 2h-9M8 8l-3.5 3.5L8 15" />
+      {:else if kind === "pin"}
+        <path d="M3.5 10h9M9 6.5l3.5 3.5L9 13.5M16.5 4v12" />
+      {:else if kind === "save"}
+        <path d="M11.5 2.5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7z" /><path d="M11.5 2.5V7H16M10 10v5M7.5 12.5h5" />
+      {:else if kind === "regenerate"}
+        <path d="M16 10a6 6 0 1 1-1.8-4.3" /><path d="M16.5 3.5v3.5H13" />
+      {:else}
+        <path d="M4 10a6 6 0 1 1 1.8 4.3" /><path d="M3.5 16.5V13H7" />
+      {/if}
+    </svg>
+  {/snippet}
   {#snippet caret()}
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
   {/snippet}
   {#if agent.plan}
-    <!-- `live` while a turn runs: a step in progress pulses only then. A plan a stopped or
-         ended turn left half-done stays as a reminder, and must not look alive -->
-    <div class="plan-card" class:live={agent.running}>
+    <!-- The step in progress is marked by its accent glyph and holds still: while a turn runs
+         the status strip's dot is the one thing that moves -->
+    <div class="plan-card">
       <button class="plan-head" title={t(planOpen ? "chat.planCollapseHint" : "chat.planExpandHint")} onclick={() => (planOpen = !planOpen)}>
         <span class="plan-caret" class:open={planOpen} aria-hidden="true">
           {@render caret()}
@@ -1799,7 +1927,7 @@
              taking a third of a narrow panel -->
         {#if !planOpen && planHeadStep}
           <span class="plan-head-step" class:doing={planHeadStep.status === "doing"}>
-            <span class="plan-check">{PLAN_GLYPH[planHeadStep.status] ?? "☐"}</span><span class="plan-head-text">{planHeadStep.text}</span>
+            <span class="plan-check">{PLAN_GLYPH[planHeadStep.status] ?? "☐"}</span><span class="plan-head-text" use:cliptip={planHeadStep.text}>{planHeadStep.text}</span>
           </span>
         {/if}
       </button>
@@ -1823,6 +1951,7 @@
   <div
     class="timeline"
     bind:this={scroller}
+    use:tableFades
     onscroll={onScroll}
     onclick={onTimelineClick}
     onmouseup={onTimelineMouseUp}
@@ -1940,12 +2069,28 @@
         </div>
       {:else if item.kind === "assistant"}
         {@const body = item.text}
+        {@const streaming = agent.running && i === agent.timeline.length - 1}
         {#if body || isTurnFinal(i)}
-          <div class="msg assistant">
-            {#each assistantBlocks(i, body) as b, bi (bi)}{@html b}{/each}
+          <div class="answer" data-answer={i}>
+          {#if item.thought}
+            <!-- The reasoning that came before the answer, folded into one line above it the
+                 moment the answer began: it holds its place, so nothing under it moves when it
+                 folds, and it stays when the turn ends -->
+            {@const thoughtOpen = !!expandedThoughts[i]}
+            <button class="thought" aria-expanded={thoughtOpen} onclick={() => (expandedThoughts[i] = !thoughtOpen)}>
+              {t("chat.thoughtChars", { n: fmtCount(item.thought.chars) })}
+              <span class="thought-caret" class:open={thoughtOpen} aria-hidden="true">{@render caret()}</span>
+            </button>
+            {#if thoughtOpen}
+              <pre class="thought-text">{item.thought.text}</pre>
+            {/if}
+          {/if}
+          <div class="msg assistant md-body" {...answerLang(i, body, streaming)}>
+            {#each assistantBlocks(i, body, streaming) as b, bi (bi)}{@html b}{/each}
             <!-- The action bar rests at the end of each turn's final answer (where the hand already
-                 is after reading, and it covers no text): the newest turn shows it permanently and
-                 an older turn on hover; an intermediate narration bubble does not get one — select
+                 is after reading, and it covers no text): the newest turn keeps Insert in view and
+                 shows the rest on hover, an older turn all of it on hover; an intermediate narration
+                 bubble does not get one — select
                  its text and press a button here instead (the selection semantics are unchanged).
                  It is not shown while streaming. -->
             {#if isTurnFinal(i) && !(agent.running && i === lastAssistantIndex)}
@@ -1961,22 +2106,30 @@
                   <button title={t("chat.reviewAcceptHint")} onclick={() => void hostDispatch({ kind: "review-accept", paths: review.paths })}>{t("chat.reviewAccept")}</button>
                 </div>
               {/if}
+              <!-- Icons, shown on hover or focus: under a finished answer six words were the
+                   loudest thing in the column. Insert — the step that takes an answer back into
+                   the note — keeps its word and stays on the newest answer -->
               <div class="msg-foot" class:current={i === lastAssistantIndex}>
-                <button title={t("chat.copyAnswerHint")} onclick={() => void copyAnswer(body)}>{t("chat.copy")}</button>
-                <button title={t("chat.insertAnswerHint")} onclick={() => void insertAnswer(body)}>{t("chat.insert")}</button>
+                <button class="foot-insert" title={t("chat.insertAnswerHint")} onclick={() => void insertAnswer(body)}>
+                  {@render footIcon("insert")}<span>{t("chat.insert")}</span>
+                </button>
+                <button class="foot-icon" title={t("chat.copyAnswerHint")} aria-label={t("chat.copy")} onclick={() => void copyAnswer(body)}>{@render footIcon("copy")}</button>
                 <button
+                  class="foot-icon"
                   title={clipTarget.path ? t("chat.sendToTargetPlain", { name: clipTarget.name ?? "" }) : t("chat.pinFirst")}
+                  aria-label={clipTarget.path ? t("chat.sendToTargetPlain", { name: clipTarget.name ?? "" }) : t("chat.pinWord")}
                   onclick={() => void sendToPinned(body)}
-                >→{clipTarget.name ?? t("chat.pinWord")}</button>
-                <button title={t("chat.saveAsNoteHint")} onclick={() => void saveAsNote(body, i)}>{t("chat.saveAsNote")}</button>
+                >{@render footIcon("pin")}</button>
+                <button class="foot-icon" title={t("chat.saveAsNoteHint")} aria-label={t("chat.saveAsNote")} onclick={() => void saveAsNote(body, i)}>{@render footIcon("save")}</button>
                 {#if i === lastAssistantIndex && !agent.running}
-                  <button title={t("chat.regenerateHint")} onclick={doRetry}>{t("chat.regenerate")}</button>
+                  <button class="foot-icon" title={t("chat.regenerateHint")} aria-label={t("chat.regenerate")} onclick={doRetry}>{@render footIcon("regenerate")}</button>
                 {/if}
                 {#if undoable && !agent.running}
-                  <button class="undo" title={t("chat.undoTurnHint")} onclick={() => void undoTurn(undoable)}>{t("chat.undoTurn")}</button>
+                  <button class="foot-icon undo" title={t("chat.undoTurnHint")} aria-label={t("chat.undoTurn")} onclick={() => void undoTurn(undoable)}>{@render footIcon("undo")}</button>
                 {/if}
               </div>
             {/if}
+          </div>
           </div>
         {/if}
       {:else if item.kind === "read"}
@@ -2082,8 +2235,8 @@
                 </div>
               </div>
             {/each}
-            <!-- One list for the focused box, mounted outside the rows: a staying row's body is
-                 dimmed with opacity, which would dim a list rendered inside it along with it -->
+            <!-- One list for the focused box, mounted outside the rows: an unticked row's ink
+                 steps back, which a list rendered inside it would inherit -->
             {#if targetPick?.open && actionRows[targetPick.row]}
               <NoteSuggest bind:this={suggest} anchor={targetPick.el} within={targetPick.within} query={actionRows[targetPick.row].target} pinned={cardTargets} onpick={pickTarget} onclose={closeTargetList} />
             {/if}
@@ -2260,6 +2413,9 @@
   </div>
   </div>
 
+  <!-- The dock is the panel's ground across the full width; the composer inside it is the
+       timeline's column, centred with it in a wide window -->
+  <div class="composer-dock">
   <div class="composer" class:summon={summoning}>
     <!-- The status strip: what the run is doing right now (a gate waiting, the tool in flight,
          the answer streaming), the last turn's usage when idle, and the way back to the bottom
@@ -2269,7 +2425,7 @@
     {#if agent.timeline.length}
       <div class="status-strip">
         {#if agent.running}<span class="pulse"></span>{/if}
-        <span class="status-text" title={runStatus}>{runStatus}</span>
+        <span class="status-text" use:cliptip={runStatus}>{runStatus}</span>
         {#if agent.running}
           {#if stepsLeftText}<span class="status-warn" title={t("chat.stepsLeftHint")}>{stepsLeftText}</span>{/if}
           {#if elapsedText}<span class="status-usage" title={t("chat.elapsedHint")}>{elapsedText}</span>{/if}
@@ -2277,7 +2433,8 @@
           <span class="status-usage" title={usageIdleHint}>{usageIdleText}</span>
         {/if}
         {#if !atBottom}
-          <button class="to-bottom" onclick={scrollToBottom}>{t("chat.backToBottom")}</button>
+          <!-- While a turn runs, what is below is what has arrived since following stopped -->
+          <button class="to-bottom" onclick={scrollToBottom}>{t(agent.running ? "chat.newContent" : "chat.backToBottom")}</button>
         {/if}
       </div>
     {/if}
@@ -2311,7 +2468,7 @@
     {/if}
     {#if agent.queuedText}
       <div class="queue-chip">
-        <span class="queue-label" title={agent.queuedText}>{t("chat.queued", { text: agent.queuedText })}</span>
+        <span class="queue-label" use:cliptip={agent.queuedText}>{t("chat.queued", { text: agent.queuedText })}</span>
         <button aria-label={t("chat.cancelQueued")} onclick={() => (agent.queuedText = null)}>✕</button>
       </div>
     {/if}
@@ -2327,7 +2484,7 @@
           {#if agent.running}
             <span>{t("chat.runningQueueHint")}</span>
           {:else}
-            {#key phIdx}<span class="ph-item">{PH_HINTS[phIdx]}</span>{/key}
+            <span>{PH_HINTS[phIdx]}</span>
           {/if}
         </div>
       {/if}
@@ -2394,11 +2551,10 @@
              in reach, unlike a control at the end of the scrolling timeline; a draft turns it back
              into ↑, which queues -->
         <button class="send stop" title={t("chat.stopHint")} aria-label={t("chat.stop")} onclick={stopTurn}>
-          <!-- The ring is drawn in the SVG rather than by a box-shadow so that one arc of it can turn
-               while the turn runs: the button's own "working" signal, next to the elapsed time -->
+          <!-- A still ring: while a turn runs, the status strip's dot is the one thing that moves
+               (a second animation here would pull the eye from the answer being read) -->
           <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
             <circle class="stop-track" cx="14" cy="14" r="13.25" stroke="currentColor" stroke-width="1.5" />
-            <circle class="stop-arc" cx="14" cy="14" r="13.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="26 57.25" />
             <rect x="10.25" y="10.25" width="7.5" height="7.5" rx="1.25" fill="currentColor" />
           </svg>
         </button>
@@ -2423,6 +2579,7 @@
     </div>
     </div>
   </div>
+  </div>
 </div>
 
 <style>
@@ -2440,17 +2597,28 @@
     display: flex;
     flex-direction: column;
   }
+  /* The timeline is the page the answers are written on: the editor's ground, while the
+     session bar above and the composer's dock below keep the panel's */
   .timeline {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    background: var(--bg);
   }
-  /* The column itself is a child of the scroller, not the scroller (see the .turns comment in the markup) */
+  /* The column itself is a child of the scroller, not the scroller (see the .turns comment in
+     the markup). It is the body column the editor uses (--content-width, at the note's font
+     size, so its em are the note's): in a narrow panel it is the panel, and in a wide window
+     it is centred rather than running a line across the screen. The composer takes the
+     same width */
   .turns {
     padding: 12px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    width: 100%;
+    max-width: var(--content-width);
+    margin: 0 auto;
+    font-size: var(--fs-note);
   }
   /* The timeline in the overlay needs some body: an empty flex container collapses into a strip
      when there is little content, and the second glance after summoning it (the streaming answer
@@ -2474,14 +2642,11 @@
   }
   .status-warn {
     flex-shrink: 0;
-    font-size: 10px;
-    color: var(--warning, #b58900);
+    color: var(--warning);
   }
   .status-usage {
     flex-shrink: 0;
-    font-size: 10px;
     font-family: var(--font-mono);
-    color: var(--fg-faint);
   }
   .to-bottom {
     flex-shrink: 0;
@@ -2522,8 +2687,7 @@
   }
   .welcome-group-label {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
-    letter-spacing: 0.04em;
+    color: var(--fg-muted);
     white-space: nowrap;
     padding-top: 5px;
   }
@@ -2553,17 +2717,19 @@
     border-color: var(--accent);
     background: var(--accent-soft);
   }
-  /* the fold of the secondary scenes: dashed and faint, so it reads as a door, not a method */
+  /* the fold of the secondary scenes: dashed and in the secondary ink, so it reads as a door, not a method */
   .example.more {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     border-style: dashed;
   }
   .faint {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
+  /* The note's own size and line height (the reader's setting governs every long text); an
+     answer's rhythm — paragraph gaps, the heading scale — is .md-body's */
   .msg {
-    font-size: 15px;
-    line-height: 1.65;
+    font-size: var(--fs-note);
+    line-height: 1.75;
     -webkit-user-select: text;
     user-select: text;
     word-break: break-word;
@@ -2584,7 +2750,8 @@
     display: block;
     margin-top: 4px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    line-height: 1.5;
+    color: var(--fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2594,134 +2761,60 @@
   }
   .msg.assistant {
     padding: 0 2px;
+    min-width: 0;
   }
-  /* The tags the renderer generates are injected with {@html}, so the selectors need :global */
-  .msg.assistant :global(p) {
-    margin: 0 0 8px;
+  /* An answer set in a Latin or other alphabet takes the Latin column (the column itself is
+     the CJK-tuned width under a CJK interface); the readable-width switch lifts it */
+  .msg.assistant[data-script="latin"],
+  .msg.assistant[data-script="other"],
+  .msg.assistant[data-script="rtl"] {
+    max-width: var(--content-width-off, 44em);
   }
-  .msg.assistant :global(p:last-child) {
-    margin-bottom: 0;
+  /* An answer with the reasoning folded above it */
+  .answer {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    min-width: 0;
   }
-  .msg.assistant :global(ul),
-  .msg.assistant :global(ol) {
-    margin: 0 0 8px;
-    padding-left: 20px;
-  }
-  .msg.assistant :global(li) {
-    margin: 3px 0;
-  }
-  .msg.assistant :global(li::marker) {
-    color: var(--fg-faint);
-  }
-  /* A weight of 700 in the CJK face looks muddy on a dark ground, and 600 already stands out from the body */
-  .msg.assistant :global(strong) {
-    font-weight: 600;
-  }
-  .msg.assistant :global(blockquote) {
-    margin: 0 0 8px;
-    padding: 2px 10px;
-    border-left: 2px solid var(--border);
-    color: var(--fg-muted);
-  }
-  .msg.assistant :global(code) {
-    font-family: var(--font-mono);
-    font-size: 0.92em;
-    background: var(--bg-panel);
-    border-radius: 3px;
-    padding: 0 4px;
-  }
-  .msg.assistant :global(.md-code) {
-    font-family: var(--font-mono);
+  .thought {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
     font-size: var(--fs-xs);
-    background: var(--bg-panel);
-    border-radius: 6px;
-    padding: 8px;
-    overflow-x: auto;
-    margin: 0 0 8px;
-  }
-  .msg.assistant :global(.md-code code) {
-    background: none;
-    padding: 0;
-  }
-  /* The hierarchy comes from whitespace and structural lines rather than swelling font sizes — the panel is narrow, and a large heading would eat the line width */
-  .msg.assistant :global(.md-h) {
-    font-weight: 600;
-    margin: 16px 0 6px;
-  }
-  .msg.assistant :global(.md-h:first-child) {
-    margin-top: 2px;
-  }
-  .msg.assistant :global(.md-h1) {
-    font-size: 1.1em;
-  }
-  .msg.assistant :global(.md-h2) {
-    font-size: 1.05em;
-  }
-  .msg.assistant :global(.md-h1),
-  .msg.assistant :global(.md-h2) {
-    padding-bottom: 5px;
-    border-bottom: 1px solid var(--border);
-  }
-  .msg.assistant :global(.md-hr) {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: 8px 0;
-  }
-  .msg.assistant :global(.md-cite) {
-    display: inline-block;
-    font-size: 10px;
-    font-weight: 600;
-    font-family: var(--font-mono);
-    color: var(--accent);
-    background: var(--bg-hover);
-    border-radius: 4px;
-    padding: 0 4px;
-    margin: 0 1px;
-    vertical-align: super;
     line-height: 1.5;
-    cursor: pointer;
-  }
-  .msg.assistant :global(.md-cite:hover) {
-    background: var(--accent);
-    color: var(--bg);
-  }
-  .msg.assistant :global(.md-link),
-  .msg.assistant :global(.md-wiki) {
-    color: var(--accent);
-    cursor: pointer;
-  }
-  .msg.assistant :global(.md-link:hover),
-  .msg.assistant :global(.md-wiki:hover) {
-    text-decoration: underline;
-  }
-  /* A block citation: a chip with a ¶ / › glyph (the styles are global in app.css so the replay view shares them) */
-  .msg.assistant :global(.md-blockref:hover) {
-    text-decoration: none;
-  }
-  /* The table skeleton lives in app.css's global .md-tablewrap section (shared with ReadingView);
-     only the chat bubble's own paragraph spacing stays here */
-  .msg.assistant :global(.md-tablewrap) {
-    margin: 2px 0 10px;
-  }
-  /* The image placeholder chip: zero remote requests, and a click opens a browser window to see the original (the same fallback as the reading projection's) */
-  .msg.assistant :global(.md-img) {
-    display: inline-block;
-    font-size: 0.85em;
     color: var(--fg-muted);
-    background: var(--bg-panel);
-    border: 1px dashed var(--border);
-    border-radius: 5px;
-    padding: 1px 8px;
-    cursor: pointer;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    vertical-align: bottom;
+    padding: 1px 4px;
+    margin-left: -2px;
+    border-radius: 4px;
   }
-  .msg.assistant :global(.md-img:hover) {
+  .thought:hover {
     color: var(--fg);
     background: var(--bg-hover);
+  }
+  .thought-caret {
+    display: flex;
+    align-items: center;
+    transition: transform 0.15s ease;
+  }
+  .thought-caret.open {
+    transform: rotate(90deg);
+  }
+  .thought-text {
+    font-family: inherit;
+    font-size: var(--fs-xs);
+    line-height: 1.6;
+    color: var(--fg-muted);
+    white-space: pre-wrap;
+    max-height: 240px;
+    overflow-y: auto;
+    margin: 2px 0 6px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border);
+    -webkit-user-select: text;
+    user-select: text;
   }
   .msg.error {
     color: var(--danger);
@@ -2760,6 +2853,7 @@
   .tool-status.err {
     color: var(--danger);
   }
+  /* ◌ is a mark, not text: the faint ink clears the 3:1 a mark needs */
   .tool-status.pending {
     color: var(--fg-faint);
   }
@@ -2788,14 +2882,16 @@
     user-select: text;
     margin-left: 12px;
   }
-  /* Bottom-aligned: what is clipped on overflow is the oldest beginning, so the newest thinking is always visible */
+  /* The reasoning still waiting for its answer. Bottom-aligned: what is clipped on overflow is
+     the oldest beginning, so the newest thinking is always visible. Upright in the secondary
+     ink: a slant is only a machine-sheared glyph in CJK, and it is text to be read */
   .thinking {
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
-    font-style: italic;
+    line-height: 1.6;
+    color: var(--fg-muted);
     max-height: 60px;
     overflow: hidden;
   }
@@ -2806,11 +2902,16 @@
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
     mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
   }
+  /* The run's dot. Only the status strip's breathes: one thing moves while a turn runs, and
+     the dots on a searching source card or a fetching read card hold still */
   .pulse {
+    flex-shrink: 0;
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: var(--accent);
+  }
+  .status-strip .pulse {
     animation: pulse 1.2s ease-in-out infinite;
   }
   @keyframes pulse {
@@ -2819,7 +2920,7 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .pulse {
+    .status-strip .pulse {
       animation: none;
     }
   }
@@ -2833,14 +2934,13 @@
     padding: 8px;
     background: var(--bg);
   }
+  /* No capitals and no tracking: CJK has no case, and letter-spacing only pulls its characters apart */
   .sources-head {
     display: flex;
     align-items: center;
     gap: 6px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    color: var(--fg-muted);
     margin-bottom: 2px;
   }
   .sources-toggle {
@@ -2851,7 +2951,7 @@
     border-radius: 5px;
   }
   .sources-toggle:hover {
-    color: var(--fg-muted);
+    color: var(--fg);
     background: var(--bg-hover);
   }
   .sources-caret {
@@ -2865,8 +2965,6 @@
   }
   .sources-more {
     margin-top: 4px;
-    text-transform: none;
-    letter-spacing: normal;
   }
   .source-row {
     display: flex;
@@ -2892,7 +2990,7 @@
     min-width: 2ch;
     text-align: right;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-family: var(--font-mono);
   }
   .source-title {
@@ -2907,12 +3005,12 @@
   .source-domain {
     flex-shrink: 0;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .source-clip {
     flex-shrink: 0;
-    font-size: 10px;
-    color: var(--fg-faint);
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
     padding: 1px 6px;
     border-radius: 4px;
     border: 1px solid transparent;
@@ -2934,7 +3032,7 @@
   }
   .sources-queries {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     overflow: hidden;
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -2943,9 +3041,19 @@
     padding: 0 6px 2px;
   }
   /* ---- the input area ---- */
+  .composer-dock {
+    flex-shrink: 0;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border);
+  }
+  /* The timeline's column (see .turns): the same width at the same font size, centred */
   .composer {
     position: relative; /* the @ candidate overlay anchors to its viewport rect (the padding of 12 lines up with the candidate layer) */
     padding: 4px 12px 10px;
+    width: 100%;
+    max-width: var(--content-width);
+    margin: 0 auto;
+    font-size: var(--fs-note);
   }
   /* The input box: one rounded bordered container — the chips on top, the body in the middle and
      the toolbar at the bottom; with the cursor inside it is outlined in the accent colour (the
@@ -3055,15 +3163,15 @@
   }
   .ctx-chip-tag {
     flex-shrink: 0;
-    font-size: 10px;
-    color: var(--fg-faint);
+    font-size: 11px;
+    color: var(--fg-muted);
     padding-left: 2px;
   }
   /* A selection's line range: it does not shrink, so however long the file name is, the name is truncated first and the (12-20) survives */
   .ctx-chip-lines {
     flex-shrink: 0;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11px;
     color: var(--fg-muted);
   }
   .ctx-chip button {
@@ -3097,8 +3205,7 @@
   }
   /* The overlay placeholder: strictly aligned with the textarea's first-line padding and line
      height, single-line and truncated when too wide; it takes no mouse events (clicking it is
-     clicking the input). The animation lives on the span inside .ph — which is not an ancestor of
-     the textarea and does not disturb AtPicker's viewport-rect anchoring */
+     clicking the input). The secondary ink: a hint is still text to be read */
   .input-wrap {
     position: relative;
   }
@@ -3109,7 +3216,7 @@
     right: 12px;
     font-size: var(--fs-md);
     line-height: 1.5;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     pointer-events: none;
     overflow: hidden;
     white-space: nowrap;
@@ -3118,24 +3225,6 @@
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .ph-item {
-    animation: ph-in 0.3s ease;
-  }
-  @keyframes ph-in {
-    from {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .ph-item {
-      animation: none;
-    }
   }
   /* The bottom toolbar: "+", the level capsule and the hint text from the left; the round send button on the right */
   .composer-bar {
@@ -3169,9 +3258,8 @@
     flex: 1; /* it fills what is left, so the send button on the right hugs the edge */
     margin-left: 6px;
     min-width: 0;
-    font-size: 10px;
-    font-family: var(--font-mono);
-    color: var(--fg-faint);
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3210,12 +3298,15 @@
     height: 28px;
     border-radius: 50%;
     background: var(--accent);
-    color: #fff;
+    color: var(--bg);
     flex-shrink: 0;
     transition: background 0.12s ease, color 0.12s ease;
   }
+  /* A glyph on the accent is the ground's colour, never white: the dark theme's accent is
+     light, and white on it is 2.6:1. Hover moves the accent away from that ink (towards --fg),
+     so the glyph only gains contrast */
   .send:hover:not(:disabled) {
-    filter: brightness(1.08);
+    background: color-mix(in srgb, var(--accent) 86%, var(--fg));
   }
   .send:disabled {
     background: transparent;
@@ -3229,48 +3320,13 @@
   .send.stop svg {
     display: block;
   }
-  /* The ring: a faint full track, and one bright arc on it while the turn runs — a slow
-     sweep (2.4s a turn) with the arc breathing between short and long on its own period, so
-     it reads as steady work rather than a loading spinner. The two dash values always sum to
-     the circumference (2π · 13.25), or a second dash would show */
-  .stop-track {
-    opacity: 0.25;
-  }
-  .stop-arc {
-    transform-box: view-box;
-    transform-origin: center;
-    animation: stop-sweep 2.4s linear infinite, stop-breathe 1.8s ease-in-out infinite;
-  }
-  @keyframes stop-sweep {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @keyframes stop-breathe {
-    0%, 100% {
-      stroke-dasharray: 10 73.25;
-    }
-    50% {
-      stroke-dasharray: 36 47.25;
-    }
-  }
   .send.stop:hover {
     background: var(--danger);
-    color: #fff;
+    color: var(--bg);
   }
-  /* Hovered, the button is a plain filled circle: the ring would only be a white rim on red */
-  .send.stop:hover .stop-track,
-  .send.stop:hover .stop-arc {
+  /* Hovered, the button is a plain filled circle: the ring would only be a rim on red */
+  .send.stop:hover .stop-track {
     opacity: 0;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    /* No animation: the static full ring the button always had */
-    .stop-arc {
-      display: none;
-    }
-    .stop-track {
-      opacity: 1;
-    }
   }
   /* ---- The plan card: the recited task list pinned at the top of the timeline, progress at a glance ---- */
   .plan-card {
@@ -3330,7 +3386,7 @@
     padding: 1px 0 1px 4px;
   }
   .plan-item.done {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     text-decoration: line-through;
     text-decoration-color: var(--fg-faint);
   }
@@ -3346,22 +3402,10 @@
   .plan-head-step.doing .plan-check {
     color: var(--accent);
   }
-  .plan-card.live .plan-item.doing .plan-check,
-  .plan-card.live .plan-head-step.doing .plan-check {
-    animation: plan-pulse 1.4s ease-in-out infinite;
-  }
   .plan-item.skipped {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     text-decoration: line-through dotted;
     text-decoration-color: var(--fg-faint);
-  }
-  @keyframes plan-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .plan-card.live .plan-item.doing .plan-check,
-    .plan-card.live .plan-head-step.doing .plan-check { animation: none; }
   }
   .act-row {
     display: flex;
@@ -3370,8 +3414,9 @@
     padding: 4px 0;
     border-top: 1px solid var(--border);
   }
-  .act-row.off .act-body {
-    opacity: 0.55;
+  /* An unticked row steps back in ink (not opacity, which would fade its words below the secondary ink) */
+  .act-row.off .act-body input {
+    color: var(--fg-muted);
   }
   /* A staying row's target box invites a home: dashed until one is typed */
   .act-row.stay.off .act-target {
@@ -3452,13 +3497,13 @@
   .act-target-view .dir {
     flex: 1 1 0;
     min-width: 0;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .act-hint {
-    font-size: 10px;
-    color: var(--fg-faint);
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
   }
   .act-fields {
     flex-wrap: wrap;
@@ -3471,12 +3516,14 @@
     border-top: 1px solid var(--border);
     font-size: var(--fs-xs);
   }
-  .read-row.off .read-url {
-    opacity: 0.55;
+  .read-row.off .read-url,
+  .read-row.off .read-domain {
+    color: var(--fg-muted);
   }
-  .read-row.failed .read-url {
+  .read-row.failed .read-url,
+  .read-row.failed .read-domain {
     text-decoration: line-through;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .read-url {
     flex: 1;
@@ -3491,7 +3538,7 @@
     color: var(--fg);
   }
   .read-path {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3509,7 +3556,7 @@
     display: flex;
     align-items: center;
     gap: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--fg-muted);
   }
   .act-field input {
@@ -3531,8 +3578,11 @@
     padding: 8px 12px;
     margin: 4px 0;
   }
-  .plan-inline.rejected {
-    opacity: 0.65;
+  /* A rejected card steps back in ink, not opacity */
+  .plan-inline.rejected .plan-item,
+  .plan-inline.rejected .read-domain,
+  .plan-inline.rejected .plan-inline-title {
+    color: var(--fg-muted);
   }
   .plan-inline-head {
     display: flex;
@@ -3559,7 +3609,7 @@
   }
   .plan-inline-count {
     font-weight: 400;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .plan-inline-badge {
     font-weight: 400;
@@ -3569,7 +3619,7 @@
     color: var(--danger);
   }
   .plan-inline-badge.wait {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .plan-inline-badge .pulse {
     display: inline-block;
@@ -3609,18 +3659,17 @@
   .plan-actions .btn.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--bg);
   }
   .plan-actions .btn.primary:hover {
-    opacity: 0.9;
-    background: var(--accent);
+    background: color-mix(in srgb, var(--accent) 86%, var(--fg));
   }
   .plan-actions .btn.subtle {
     color: var(--fg-muted);
   }
   /* ---- The action bar at the end of an answer: the shortest path for getting an answer back
      into a note. It rests at the end of each turn's final answer — where the hand already is after
-     reading; the newest turn shows it permanently (quietened), and an older turn on hover.
+     reading; the newest turn keeps Insert in view, and every turn shows the rest on hover.
      Its space is constant, so hovering does not shift the layout ---- */
   /* The review strip under an answer whose writes await review: the amber of the
      editor's pending bar, and unlike the foot it does not wait to be hovered */
@@ -3663,38 +3712,43 @@
   .msg-foot {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 2px;
     margin-top: 8px;
-    /* Not selectable although it sits inside the selectable bubble: it is transparent until
-       hovered, and a drag started on it would otherwise anchor in its invisible labels */
+    /* Not selectable although it sits inside the selectable bubble: its buttons are
+       transparent until hovered, and a drag started on it would otherwise anchor in them */
     -webkit-user-select: none;
     user-select: none;
+  }
+  .msg-foot button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    border-radius: 5px;
+    white-space: nowrap;
     opacity: 0;
     transition: opacity 0.12s ease;
   }
-  .msg-foot.current,
-  .msg.assistant:hover .msg-foot,
-  .msg-foot:focus-within {
+  .msg-foot .foot-icon {
+    width: 24px;
+    justify-content: center;
+  }
+  .msg-foot .foot-insert {
+    padding: 0 7px 0 5px;
+  }
+  /* Its space is constant, so showing the icons never shifts the text: the newest answer
+     keeps Insert in view, and every answer shows the rest on hover or keyboard focus */
+  .msg-foot.current .foot-insert,
+  .msg.assistant:hover .msg-foot button,
+  .msg-foot:focus-within button {
     opacity: 1;
-  }
-  .msg-foot button {
-    font-size: 10px;
-    color: var(--fg-faint);
-    padding: 1px 7px;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    white-space: nowrap;
-    max-width: 150px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .msg-foot.current button {
-    color: var(--fg-muted);
   }
   .msg-foot button:hover {
     color: var(--fg);
     background: var(--bg-hover);
-    border-color: var(--border);
   }
   /* The selection popover: it appears as soon as something is selected, so the hand does not have to travel to the end of the message */
   .sel-pop {
@@ -3710,7 +3764,7 @@
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
   }
   .sel-pop button {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--fg-muted);
     padding: 1px 7px;
     border-radius: 4px;
@@ -3748,7 +3802,7 @@
     opacity: 1;
   }
   .msg-actions button {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--fg-muted);
     padding: 1px 6px;
     border-radius: 4px;
@@ -3761,8 +3815,8 @@
   /* ---- the system notice rows (compaction, forking) ---- */
   .notice {
     align-self: center;
-    font-size: 10px;
-    color: var(--fg-faint);
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
     border: 1px dashed var(--border);
     border-radius: 999px;
     padding: 1px 10px;
@@ -3797,16 +3851,17 @@
   }
   .thinking-toggle {
     align-self: flex-start;
-    font-size: 10px;
-    color: var(--fg-faint);
-  }
-  .thinking-toggle:hover {
+    font-size: var(--fs-xs);
     color: var(--fg-muted);
   }
+  .thinking-toggle:hover {
+    color: var(--fg);
+  }
   .thinking-full pre {
+    font-family: inherit;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
-    font-style: italic;
+    line-height: 1.6;
+    color: var(--fg-muted);
     white-space: pre-wrap;
     max-height: 240px;
     overflow-y: auto;
@@ -3842,11 +3897,10 @@
   }
   .src-unverified {
     flex-shrink: 0;
-    font-size: 10px;
-    color: var(--warning, #b58900);
+    font-size: 11px;
+    color: var(--warning);
     border: 1px solid currentColor;
     border-radius: 4px;
     padding: 0 4px;
-    opacity: 0.85;
   }
 </style>

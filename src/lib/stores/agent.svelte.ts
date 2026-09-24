@@ -85,7 +85,10 @@ export type TimelineItem =
    *  line on replay; older existing turns have none) — forking locates by it, so the
    *  three layers no longer each count user ordinals. */
   | { kind: "user"; text: string; turn?: string; page?: { title: string; url: string }; refs?: RefTag[] }
-  | { kind: "assistant"; text: string }
+  /** thought: the reasoning that came before this answer began (live only — the jsonl does
+   *  not keep it): the answer carries it as one folded line above itself, so it neither
+   *  trails under the text being read nor vanishes from under it when the turn ends. */
+  | { kind: "assistant"; text: string; thought?: { text: string; chars: number } }
   | { kind: "tool"; id: string; name: string; args: string; ok?: boolean; output?: string }
   /** settled: Rust settled this turn's sources (a `sources` line / event) — the card is
    *  authoritative from then on and the frontend's own link harvest stays out of it. */
@@ -209,6 +212,8 @@ class AgentStore {
   undoneTurns = $state<Record<string, boolean>>({});
   /** The notes each turn wrote (turn id → paths, in landing order): the turn's review starts from them. Live only, like the counts. */
   notesByTurn = $state<Record<string, string[]>>({});
+  /** The reasoning not yet answered: the live tail under the timeline. When an answer starts
+   *  it moves onto that answer (`thought`) and this empties. */
   thinking = $state("");
   /** How much reasoning this turn has produced, in characters. `thinking` keeps only the
    *  last 8k for reading, so its length stops moving on a long think — and a long think is
@@ -311,6 +316,8 @@ class AgentStore {
    *  against the tool rows and the ending intact. */
   private pendingDelta = "";
   private pendingThinking = "";
+  /** The length of the reasoning `thinking` holds (the window is capped, the count is not). */
+  private thoughtChars = 0;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** The single-page semantics of the web context: it replaces the page item already in
@@ -391,6 +398,7 @@ class AgentStore {
     }
     this.thinking = "";
     this.thinkingChars = 0;
+    this.thoughtChars = 0;
     this.usage = null;
     this.lastTruncated = false;
     this.viewEpoch++;
@@ -578,6 +586,7 @@ class AgentStore {
     this.running = true;
     this.thinking = "";
     this.thinkingChars = 0;
+    this.thoughtChars = 0;
     this.phase = null;
     this.turnStartedAt = Date.now();
     this.lastTruncated = false;
@@ -602,6 +611,7 @@ class AgentStore {
       this.running = false;
       this.thinking = "";
       this.thinkingChars = 0;
+      this.thoughtChars = 0;
       this.phase = null;
       if (this.turnStartedAt != null) this.lastTurnMs = Date.now() - this.turnStartedAt;
       this.turnStartedAt = null;
@@ -658,6 +668,7 @@ class AgentStore {
     this.notesByTurn = {};
     this.thinking = "";
     this.thinkingChars = 0;
+    this.thoughtChars = 0;
   }
 
   /** Resetting the session-scoped state: shared by a vault switch, a create and a switch.
@@ -949,6 +960,7 @@ class AgentStore {
       // Keep a sizeable window to expand, read and copy; the 8k cap stops one turn's thinking
       // from growing without bound, and the running total is counted before the cut
       this.thinkingChars += this.pendingThinking.length;
+      this.thoughtChars += this.pendingThinking.length;
       this.thinking = (this.thinking + this.pendingThinking).slice(-8000);
       this.pendingThinking = "";
     }
@@ -956,10 +968,22 @@ class AgentStore {
     const text = this.pendingDelta;
     this.pendingDelta = "";
     const last = this.timeline[this.timeline.length - 1];
+    // The answer has begun (or goes on after more reasoning): the reasoning before it folds onto it
+    let thought: { text: string; chars: number } | undefined;
+    if (this.thoughtChars) {
+      const prev = last?.kind === "assistant" ? last.thought : undefined;
+      thought = {
+        text: (prev ? `${prev.text}\n\n${this.thinking}` : this.thinking).slice(-8000),
+        chars: (prev?.chars ?? 0) + this.thoughtChars,
+      };
+      this.thinking = "";
+      this.thoughtChars = 0;
+    }
     if (last?.kind === "assistant") {
       last.text += text;
+      if (thought) last.thought = thought;
     } else {
-      this.timeline.push({ kind: "assistant", text });
+      this.timeline.push(thought ? { kind: "assistant", text, thought } : { kind: "assistant", text });
     }
   }
 
@@ -1113,6 +1137,7 @@ class AgentStore {
         this.settleSources();
         this.thinking = "";
         this.thinkingChars = 0;
+        this.thoughtChars = 0;
         this.phase = null;
         this.lastTruncated = e.truncated;
         break;

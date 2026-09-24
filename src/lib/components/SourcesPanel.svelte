@@ -1,8 +1,9 @@
 <script lang="ts">
   // The session's sources workbench: every web source the session cited (the union Rust
-  // settled turn by turn), numbered in table order, with its verdict — verified by a
-  // search, unverified (prose only), clipped (a local note exists) — and the three actions
-  // a source takes: open, clip or open the clip, copy the link. The same data both windows
+  // settled turn by turn), numbered in table order. Only the exception is marked —
+  // unverified (prose only, no search behind it); a verified or clipped source is the
+  // normal case and carries no badge. The three actions a source takes — open, clip or
+  // open the clip, copy the link — show on the row's hover or focus. The same data both windows
   // rebuild from the jsonl, so the list is identical wherever the conversation is shown.
   import { agent } from "$lib/stores/agent.svelte";
   import { clips } from "$lib/stores/clips.svelte";
@@ -39,12 +40,8 @@
           <span class="src-n">{n + 1}</span>
           <span class="src-t">{s.title || domainOf(s.url)}</span>
           <span class="src-domain">{domainOf(s.url)}</span>
-          {#if clipped}
-            <span class="src-badge clipped">{t("reader.alreadyClipped")}</span>
-          {:else if s.verified}
-            <span class="src-badge ok">{t("agentPanel.sourceVerified")}</span>
-          {:else}
-            <span class="src-badge warn" title={t("chat.unverifiedHint")}>{t("chat.unverified")}</span>
+          {#if !clipped && !s.verified}
+            <span class="src-badge" title={t("chat.unverifiedHint")}>{t("chat.unverified")}</span>
           {/if}
         </button>
         {#if clipped}
@@ -83,7 +80,7 @@
   }
   .src-empty {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 8px;
   }
   .src-row {
@@ -107,7 +104,7 @@
   }
   .src-n {
     flex-shrink: 0;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-variant-numeric: tabular-nums;
     min-width: 1.4em;
   }
@@ -120,27 +117,16 @@
   }
   .src-domain {
     flex-shrink: 0;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .src-badge {
     flex-shrink: 0;
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1;
     padding: 2px 5px;
     border-radius: 3px;
-    border: 1px solid var(--border);
-    color: var(--fg-muted);
-  }
-  .src-badge.ok {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  .src-badge.warn {
-    color: var(--warning, #b58900);
-    border-color: var(--warning, #b58900);
-  }
-  .src-badge.clipped {
-    color: var(--fg-muted);
+    border: 1px solid currentColor;
+    color: var(--warning);
   }
   .src-act {
     flex-shrink: 0;
@@ -148,6 +134,11 @@
     color: var(--fg-muted);
     padding: 3px 6px;
     border-radius: 4px;
+    visibility: hidden;
+  }
+  .src-row:hover .src-act,
+  .src-row:focus-within .src-act {
+    visibility: visible;
   }
   .src-act:hover {
     color: var(--fg);

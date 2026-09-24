@@ -55,7 +55,7 @@
   }
   .hc-title {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     margin-bottom: 4px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -68,6 +68,6 @@
     overflow: hidden;
   }
   .missing .hc-text {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
 </style>

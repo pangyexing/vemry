@@ -17,6 +17,9 @@
 // nothing but a link the marker keeps the title text, and the block level then merges
 // a pure-source item back into the previous one rather than rendering a lone bullet
 // holding a single number.
+// A block citation (`[[note#^id]]`, `[[note#bN]]`, `[[note#Heading]]`) folds the same
+// way into a numbered marker of its own series (¶1, ¶2 — the ¶ keeps it apart from the
+// web sources' numbers), and the answer closes with the list of the notes it cited.
 
 import { t } from "$lib/i18n/i18n.svelte";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -256,6 +259,7 @@ function renderInline(
   raw: string,
   cite: (url: string, title: string, standalone: boolean) => string,
   localImage?: (target: string, alt: string) => string,
+  wiki: (target: string, alias?: string) => string = wikiAnchor,
 ): string {
   // A line holding nothing but links and separating punctuation = the model wrote its
   // sources as their own line or list item, and folding it to a bare number would be
@@ -289,7 +293,7 @@ function renderInline(
     s = s.replace(NOTE_IMAGE, (_, alt: string, target: string) => stash(localImage(target, plainLabel(alt) || t("editor.image"))));
   s = s.replace(MD_LINK, (_, title: string, url: string) => stash(cite(stripTrailingPunct(url), title, standalone)));
   s = s.replace(BARE_URL, (m: string) => stash(cite(stripTrailingPunct(m), "", standalone)));
-  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target: string, alias?: string) => stash(wikiAnchor(target.trim(), alias)));
+  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target: string, alias?: string) => stash(wiki(target.trim(), alias)));
   s = escapeHtml(s);
   s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(EM_RE, "<em>$1</em>");
@@ -309,8 +313,17 @@ function renderInline(
  *  citeZone once merged a deliberate bibliography list into a string of markers). */
 export interface BlockRenderState {
   citeZone: boolean;
+  /** The block citations numbered so far, as `note#fragment` in document order: a
+   *  citation's number is its place here plus one. It only ever grows, so a block frozen
+   *  with its numbers stays right as later blocks cite more; a caller that renders a tail
+   *  it will render again passes a copy. */
+  notes?: string[];
 }
 
+/** An answer's markdown as blocks of HTML. Called with a state, it renders one piece of a
+ *  message that the caller assembles (the streaming panel), and the caller closes the
+ *  finished message with citedNotesHtml itself; called without one, the text is a whole
+ *  message and its last block is that list. */
 export function renderAssistantMarkdownBlocks(
   text: string,
   numberOf: Map<string, number>,
@@ -330,7 +343,54 @@ export function renderAssistantMarkdownBlocks(
     // A pure source line: the title stays in the body (still clickable) with the marker appended, matching the source card
     return `<a class="md-link" data-url="${escapeHtml(url)}" title="${escapeHtml(url)}">${escapeHtml(label)}</a>${chip}`;
   };
-  return renderBlockList(text, (line) => renderInline(line, cite), state);
+  const notes = state ? (state.notes ??= []) : [];
+  // A citation with a fragment becomes a numbered marker; an alias the model gave it is
+  // prose it meant to be read, so it stays as linked words with the marker after them.
+  // A plain [[Note]] is a link, not a citation
+  const wiki = (target: string, alias?: string): string => {
+    const { note, frag } = splitWikiTarget(target);
+    if (!frag) return wikiAnchor(target, alias);
+    const key = `${note}#${frag}`;
+    const n = notes.indexOf(key) + 1 || notes.push(key);
+    const mark = noteCiteMark(note, frag, n);
+    return alias ? `<a class="md-wiki" data-wiki="${escapeHtml(target)}">${escapeHtml(alias)}</a>${mark}` : mark;
+  };
+  const out = renderBlockList(text, (line) => renderInline(line, cite, undefined, wiki), state);
+  if (!state && notes.length) out.push(citedNotesHtml(notes));
+  return out;
+}
+
+/** A block citation's marker: `¶n`, carrying the target for the click and the hover card
+ *  (data-note / data-frag, as the chip of an embed does). The accessible name says which
+ *  note it is, since the number alone does not. */
+function noteCiteMark(note: string, frag: string, n: number): string {
+  const target = `${note}#${frag}`;
+  const name = splitWikiTarget(target).stem || t("chat.thisNote");
+  return (
+    `<a class="md-cite md-notecite" data-wiki="${escapeHtml(target)}" data-note="${escapeHtml(note)}" data-frag="${escapeHtml(frag)}" aria-label="${escapeHtml(`${name} ¶${n}`)}">` +
+    `¶${n}</a>`
+  );
+}
+
+/** The list that closes an answer citing notes: one line per note, in the order each
+ *  was first cited, with the note's name (opens it) and the markers that cite it (each
+ *  lands on its block and shows the passage on hover, as in the text). `notes` is
+ *  BlockRenderState.notes of the whole message. */
+export function citedNotesHtml(notes: string[]): string {
+  const byNote = new Map<string, { frag: string; n: number }[]>();
+  notes.forEach((key, i) => {
+    const hash = key.indexOf("#");
+    const note = key.slice(0, hash);
+    const list = byNote.get(note) ?? [];
+    list.push({ frag: key.slice(hash + 1), n: i + 1 });
+    byNote.set(note, list);
+  });
+  const rows = [...byNote].map(([note, cites]) => {
+    const name = splitWikiTarget(note).stem || t("chat.thisNote");
+    const link = note ? `<a class="md-wiki" data-wiki="${escapeHtml(note)}">${escapeHtml(name)}</a>` : escapeHtml(name);
+    return `<li>${link}${cites.map((c) => noteCiteMark(note, c.frag, c.n)).join("")}</li>`;
+  });
+  return `<div class="md-citednotes"><div class="md-citednotes-head">${escapeHtml(t("chat.citedNotes"))}</div><ul>${rows.join("")}</ul></div>`;
 }
 
 /** A note's Markdown as the editor's embed widget shows it: the chat renderer's
