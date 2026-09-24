@@ -1066,9 +1066,11 @@ palette.
   bar that lands on no display drops the memory for a default centred on the main
   window's display, and one that passes is shrunk into its display's visible area.
   The main window remembers its geometry the same way, one entry per display
-  (`settings.main_window`, most recently used first): it starts hidden, is placed
-  where it last was on a display that is connected now — or at 85% of the display,
-  no smaller than 1280×820, the first time — and only then shown.
+  (`settings.main_window`, most recently used first). It is not declared in
+  tauri.conf but built in setup, already at its geometry: where it last was on a
+  display that is connected now, or 85% of the display under the pointer (no
+  smaller than 1280×820) the first time. A window created hidden and moved before
+  its first show sometimes left its webview blank.
 - **The quick capture window** (a global shortcut, the palette's `quick-capture`,
   the File menu, the activity bar; `src-tauri/src/capture_window.rs` +
   `src/CaptureWindow.svelte` + `src/lib/components/CaptureComposer.svelte`): a

@@ -15,7 +15,7 @@
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, LogicalPosition, LogicalSize};
+use tauri::AppHandle;
 
 use crate::agent_window::WindowGeom;
 
@@ -130,39 +130,56 @@ const MAX_DISPLAYS: usize = 6;
 /// arrive at pointer frequency during a drag — too often for a disk write).
 static LATEST: Mutex<Option<DisplayGeom>> = Mutex::new(None);
 
-/// Size and place the main window before it is first shown (tauri.conf keeps it
-/// hidden until then, so it never visibly jumps): the geometry remembered for the most
-/// recently used display that is connected now, else 85% of the display it opens on.
-/// The window is shown whatever happens.
-pub fn restore_main(app: &AppHandle) {
-    let Some(win) = crate::browser::window::main_window(app) else { return };
-    if let Some(list) = displays(app) {
-        let remembered = crate::settings::load(app).main_window;
-        let hit = remembered
-            .into_iter()
-            .filter(|e| list.iter().any(|(k, _)| *k == e.display))
-            .find_map(|e| place(app, e.geom).map(|g| (e, g)));
-        match hit {
-            Some((e, g)) => {
-                apply(&win, g);
-                if e.maximized {
-                    let _ = win.maximize();
-                }
-                *crate::lock(&LATEST) = Some(DisplayGeom { geom: g, ..e });
-            }
-            None => {
-                if let Some(a) = area_under(app, &win) {
-                    apply(&win, first_main(a));
-                }
-            }
-        }
+/// Build the main window where it reopens: the geometry remembered for the most
+/// recently used display that is connected now, else 85% of the display the pointer is
+/// on. The window is created at that geometry rather than created hidden and moved
+/// before its first show: a webview whose window was resized or moved to another
+/// display while still hidden sometimes never painted (measured: the page loaded, the
+/// window stayed blank), and a window born in place never visibly jumps either.
+pub fn create_main(app: &AppHandle) -> tauri::Result<()> {
+    let (geom, maximized) = main_geometry(app);
+    let mut builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+        .title("vemry")
+        .min_inner_size(764.0, 480.0)
+        .maximized(maximized);
+    builder = match geom {
+        Some(g) => builder.inner_size(g.w, g.h).position(g.x, g.y),
+        None => builder.inner_size(1280.0, 820.0).center(),
+    };
+    let win = builder.build()?;
+    // The system creates a window on the primary display and caps its size to that
+    // screen before moving it: a size remembered on a larger external display comes
+    // out clipped to the built-in one. Now that the window is on its own display the
+    // size is applied again (a no-op when nothing was clipped).
+    if let Some(g) = geom.filter(|_| !maximized) {
+        let _ = win.set_size(tauri::LogicalSize::new(g.w, g.h));
     }
-    let _ = win.show();
+    Ok(())
 }
 
-fn apply(win: &tauri::Window, g: WindowGeom) {
-    let _ = win.set_size(LogicalSize::new(g.w, g.h));
-    let _ = win.set_position(LogicalPosition::new(g.x, g.y));
+/// The geometry the main window opens with, and whether it is maximised on top of it;
+/// None when no display can be read (the window then takes the default size, centred).
+fn main_geometry(app: &AppHandle) -> (Option<WindowGeom>, bool) {
+    let Some(list) = displays(app) else { return (None, false) };
+    let remembered = crate::settings::load(app).main_window;
+    let hit = remembered
+        .into_iter()
+        .filter(|e| list.iter().any(|(k, _)| *k == e.display))
+        .find_map(|e| place(app, e.geom).map(|g| (e, g)));
+    if let Some((e, g)) = hit {
+        let maximized = e.maximized;
+        *crate::lock(&LATEST) = Some(DisplayGeom { geom: g, ..e });
+        return (Some(g), maximized);
+    }
+    (area_at_pointer(app).map(first_main), false)
+}
+
+/// The visible area of the display the pointer is on (where the reader is looking when
+/// they launch the app), else the primary display's.
+fn area_at_pointer(app: &AppHandle) -> Option<Area> {
+    let at_pointer = app.cursor_position().ok().and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten());
+    let m = at_pointer.or_else(|| app.primary_monitor().ok().flatten())?;
+    Some(area_of(&m))
 }
 
 /// Note the main window's geometry after a move or a resize (in memory). Minimised,

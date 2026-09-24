@@ -120,10 +120,10 @@ pub fn run() {
             let settings = settings::load(app.handle());
             // The language is settled first; the menu and the error wording both read it
             i18n::set_current(i18n::resolve(settings.language));
-            // The main window starts hidden (tauri.conf): it is sized and placed for the
-            // display it opens on — where it last was, or 85% of the display the first
-            // time — and only then shown, so it never visibly jumps (window_geom.rs)
-            window_geom::restore_main(app.handle());
+            // The main window is built here rather than declared in tauri.conf: it is
+            // created at the geometry it reopens with — where it last was on this
+            // display, or 85% of the display the first time (window_geom.rs)
+            window_geom::create_main(app.handle())?;
             // The account file into its in-process copy: the hosted provider is built
             // from it on every request without a disk read
             account::warm(app.handle());
