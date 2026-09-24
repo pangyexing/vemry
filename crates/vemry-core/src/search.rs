@@ -157,23 +157,45 @@ pub fn sort_hits(hits: &mut [SearchHit]) {
 
 fn score_doc(title_lower: &str, lower: &str, content: &str, terms: &[String]) -> Option<(f32, String, usize)> {
     let mut score = 0f32;
-    let mut first_pos: Option<usize> = None;
     for term in terms {
         let in_title = title_lower.contains(term.as_str());
-        let pos = lower.find(term.as_str());
-        if !in_title && pos.is_none() {
+        let in_body = lower.contains(term.as_str());
+        if !in_title && !in_body {
             return None;
         }
         if in_title {
             score += 5.0;
         }
-        if let Some(p) = pos {
+        if in_body {
             score += lower.matches(term.as_str()).count() as f32;
-            first_pos = Some(first_pos.map_or(p, |f| f.min(p)));
         }
     }
-    let (snippet, line) = make_snippet(content, first_pos.unwrap_or(0));
+    let (snippet, line) = make_snippet(content, best_line_pos(lower, terms));
     Some((score, snippet, line))
+}
+
+/// Where the snippet (and the line a hit opens at) is taken from: the line holding the
+/// most of the query's terms, the earliest such line on a tie, at its first term. Taking
+/// the first occurrence of any term instead lands a query of several words on whichever
+/// line a short word happens to appear in first ("it" inside a frontmatter "title:").
+fn best_line_pos(lower: &str, terms: &[String]) -> usize {
+    let mut best: Option<(usize, usize)> = None; // (terms on the line, position of the first)
+    let mut start = 0;
+    for line in lower.split('\n') {
+        let mut count = 0;
+        let mut first = usize::MAX;
+        for term in terms {
+            if let Some(p) = line.find(term.as_str()) {
+                count += 1;
+                first = first.min(p);
+            }
+        }
+        if count > 0 && best.is_none_or(|(n, _)| count > n) {
+            best = Some((count, start + first));
+        }
+        start += line.len() + 1;
+    }
+    best.map_or(0, |(_, pos)| pos)
 }
 
 /// The line containing `pos`, trimmed to ~160 chars around the hit. `content` is the
@@ -215,6 +237,18 @@ mod tests {
         assert_eq!(hits[0].line, 1);
         assert!(hits[0].snippet.contains("中文"));
         assert!(match_doc("t", "Ka中文\nsecond", &["second".into()]).is_some());
+    }
+
+    /// Several words land on the line that holds them together, not on the first line
+    /// where any one of them occurs.
+    #[test]
+    fn snippet_takes_the_line_with_the_most_terms() {
+        let mut s = InMemorySearch::new();
+        s.index_note(&NoteId::new("n1"), "t", "---\ntitle: Start\n---\nnothing here\nThe claim has nothing behind it yet.");
+        let hits = s.search("nothing behind it", 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].line, 5);
+        assert!(hits[0].snippet.starts_with("The claim"));
     }
 
     /// Half-width kana and full-width digits are what an IME hands over; NFKC folds
