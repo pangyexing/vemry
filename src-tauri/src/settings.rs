@@ -129,6 +129,11 @@ pub struct Settings {
     /// last closed, so it reopens where it was.
     #[serde(default)]
     pub agent_window: Option<crate::agent_window::WindowGeom>,
+    /// The main window's geometry, one entry per display it has been on, the most
+    /// recently used first (window_geom.rs): it reopens where it last was on a display
+    /// that is connected now, and at 85% of the display the first time.
+    #[serde(default)]
+    pub main_window: Vec<crate::window_geom::DisplayGeom>,
     /// The browser's shape: true = the panel docked in the main window (the
     /// default), false = the detached standalone window. browser_set_docked persists
     /// every toggle — "remember the last choice", with no entry in the settings page.
@@ -364,6 +369,7 @@ impl Default for Settings {
             readable_line_width: true,
             reasoning_effort: default_reasoning_effort(),
             agent_window: None,
+            main_window: Vec::new(),
             browser_docked: true,
             browser_window: None,
             translate_target: String::new(),
@@ -642,6 +648,7 @@ mod tests {
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.browser_docked);
         assert!(s.browser_window.is_none());
+        assert!(s.main_window.is_empty());
         let s: Settings = serde_json::from_str(r#"{"browser_docked":false}"#).unwrap();
         assert!(!s.browser_docked);
     }

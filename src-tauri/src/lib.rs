@@ -14,6 +14,7 @@ mod settings;
 mod translate;
 mod tray;
 mod type_templates;
+mod window_geom;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -118,6 +119,10 @@ pub fn run() {
             let settings = settings::load(app.handle());
             // The language is settled first; the menu and the error wording both read it
             i18n::set_current(i18n::resolve(settings.language));
+            // The main window starts hidden (tauri.conf): it is sized and placed for the
+            // display it opens on — where it last was, or 85% of the display the first
+            // time — and only then shown, so it never visibly jumps (window_geom.rs)
+            window_geom::restore_main(app.handle());
             // The account file into its in-process copy: the hosted provider is built
             // from it on every request without a disk read
             account::warm(app.handle());
@@ -170,13 +175,21 @@ pub fn run() {
             // child webview, so the window is reached through its webview
             if let Some(main) = browser::window::main_window(app.handle()) {
                 let handle = app.handle().clone();
+                let win = main.clone();
                 main.on_window_event(move |event| match event {
-                    tauri::WindowEvent::Resized(_) => browser::window::relayout(&handle),
+                    tauri::WindowEvent::Resized(_) => {
+                        browser::window::relayout(&handle);
+                        window_geom::record_main(&win);
+                    }
+                    tauri::WindowEvent::Moved(_) => window_geom::record_main(&win),
                     // The close button: in the resident state it only hides the window (the
                     // tray icon and the Dock bring it back; tray.rs); otherwise it is a quit —
                     // the other windows cannot outlive the main one — through the same
                     // handshake as ⌘Q, so the editor buffer is written out first
                     tauri::WindowEvent::CloseRequested { api, .. } => {
+                        // Hidden or quitting, the geometry is written now (the exit below
+                        // writes it again, for the quit that never passes through here)
+                        window_geom::persist_main(&handle);
                         if tray::resident(&handle) {
                             api.prevent_close();
                             tray::hide_main(&handle);
@@ -387,6 +400,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = &event {
                 tray::reopen(app);
+            }
+            if let tauri::RunEvent::Exit = &event {
+                window_geom::persist_main(app);
             }
         });
 }

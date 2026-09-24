@@ -165,6 +165,15 @@ fn build(app: &AppHandle, geom: Option<WindowGeom>) -> Result<(), String> {
         .title(crate::i18n::t(crate::i18n::current(), "window.agentTitle"))
         .min_inner_size(380.0, 420.0)
         .focused(true);
+    // The remembered geometry may belong to a display unplugged since, or be larger than
+    // the one it lands on now: a title bar on no display drops it for the default, and
+    // one that passes is shrunk into its display's visible area (window_geom.rs). The
+    // default is centred on the main window's display and shrunk to it as well.
+    let geom = geom.and_then(|g| crate::window_geom::place(app, g)).or_else(|| {
+        let main = crate::browser::window::main_window(app)?;
+        let area = crate::window_geom::area_under(app, &main)?;
+        Some(crate::window_geom::centred(600.0, 760.0, area))
+    });
     builder = match geom {
         Some(g) => builder.position(g.x, g.y).inner_size(g.w, g.h),
         None => builder.inner_size(600.0, 760.0).center(),

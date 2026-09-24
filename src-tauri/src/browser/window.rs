@@ -1066,7 +1066,7 @@ fn independent_geom(
 /// the middle of its top edge) landing inside any monitor's visible area counts as
 /// grabbable — the user can at least drag it back. With no monitor list available it
 /// does not block (better to trust the memory).
-fn grabbable_on_some_monitor(app: &AppHandle, g: &crate::agent_window::WindowGeom) -> bool {
+pub(crate) fn grabbable_on_some_monitor(app: &AppHandle, g: &crate::agent_window::WindowGeom) -> bool {
     let Ok(monitors) = app.available_monitors() else { return true };
     if monitors.is_empty() {
         return true;
