@@ -160,7 +160,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.35);
+    background: var(--scrim);
     display: grid;
     place-items: center;
     z-index: 200;

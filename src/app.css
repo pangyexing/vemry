@@ -129,6 +129,9 @@
 
   --radius: 6px;
   --shadow: 0 8px 32px rgba(28, 25, 23, 0.14);
+  /* The dimming behind a modal (the palette, the settings, every dialog): one value, so
+     opening one over another never shows two different depths */
+  --scrim: rgba(0, 0, 0, 0.3);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -172,6 +175,7 @@
     --co-claim: #fb7185;
     --co-evidence: #22d3ee;
     --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --scrim: rgba(0, 0, 0, 0.5);
     --lab-s1: #3987e5;
     --lab-s2: #d95926;
     --lab-s3: #199e70;

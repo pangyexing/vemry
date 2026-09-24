@@ -118,7 +118,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--scrim);
     display: grid;
     place-items: center;
     /* Above the settings modal (150): its "check for updates" button opens this */
