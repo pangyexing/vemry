@@ -2676,8 +2676,6 @@ button:focus-visible,
   white-space: normal;
   font-family: var(--font-ui);
   cursor: auto;
-  -webkit-user-select: text;
-  user-select: text;
 }
 .cm-embed-body img {
   display: block;
