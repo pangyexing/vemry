@@ -58,7 +58,7 @@ pnpm tauri dev          # needs `source ~/.cargo/env` first
 ```bash
 cargo test --workspace   # Rust tests (core/agent/script carry the highest density — keep it that way)
 cargo clippy --workspace # no new warnings
-pnpm check               # svelte-check clean (also the gatekeeper for missing catalog keys)
+pnpm check               # the ink check (check:ink: every text ink ≥ its contrast on every ground, both themes; no data-theme selectors), then svelte-check clean (also the gatekeeper for missing catalog keys)
 pnpm build               # the frontend builds
 ```
 

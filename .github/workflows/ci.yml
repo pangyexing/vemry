@@ -59,5 +59,8 @@ jobs:
       - run: pnpm install
       # locales/*.json are generated; a hand edit to a committed catalog fails here
       - run: python3 scripts/gen-locales.py && git diff --exit-code -- locales/
+      # every text ink on every ground it is drawn on, both themes; no data-theme selectors
+      # (pnpm check runs it too; a step of its own names what failed)
+      - run: pnpm check:ink
       - run: pnpm check
       - run: pnpm build

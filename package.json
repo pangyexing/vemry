@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "pnpm run check:ink && svelte-check --tsconfig ./tsconfig.json",
+    "check:ink": "node scripts/check-contrast.mjs && node scripts/check-theme-selectors.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
