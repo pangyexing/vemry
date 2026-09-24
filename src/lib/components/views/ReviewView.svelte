@@ -308,10 +308,16 @@
   .back.none {
     color: var(--fg-muted);
   }
+  /* The row is as tall as the grade buttons from the start (label, interval and key on
+     three lines: 78px), with the single "show answer" button at its foot: revealing the
+     answer swaps the buttons in place, and the card above keeps its size rather than
+     giving up 42px to the taller row */
   .actions {
     display: flex;
     gap: 8px;
     justify-content: center;
+    align-items: flex-end;
+    min-height: 78px;
   }
   .actions button {
     display: inline-flex;
