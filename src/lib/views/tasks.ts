@@ -942,8 +942,9 @@ function metaTags(hit: BlockHit, text: string): string[] {
  *  point of divergence. */
 export interface TaskRow {
   hit: BlockHit;
-  /** The row's identity across requeries (TaskKeys): what the list is keyed by, what a
-   *  row the reader changed is remembered by, and the scroll anchor. */
+  /** The row's identity across requeries (TaskKeys): what the list is keyed by (so a row's
+   *  DOM survives a requery — its hover, its focus, a tip being read), what a row the
+   *  reader changed is remembered by, and the scroll anchor. */
   key: string;
   text: string;
   /** The tags the meta line shows: each once, and none the words already carry. */
@@ -1008,11 +1009,6 @@ export function rowOf(hit: BlockHit, key = `${hit.note}@${hit.block.span.start}`
  *  so a longer key does not disturb the order. */
 export const taskFilterKey = (r: TaskRow) =>
   `${r.text} ${r.tags.map((tag) => "#" + tag).join(" ")} ${r.hit.note_title} ${r.hit.note} ${r.due ?? ""} ${r.scheduled ?? ""} ${r.start ?? ""} ${r.taskId ?? ""}`;
-
-/** A task's identity across requeries — what both views key their lists by, so the DOM
- *  of a row survives a requery (its hover, its focus, a tip being read), and what a row
- *  the reader changed is remembered by. */
-export const taskKey = (r: TaskRow) => r.key;
 
 /** Gives every task hit a key that survives the edits a requery follows. Neither thing a
  *  hit carries will do on its own: the byte offset moves with every character typed

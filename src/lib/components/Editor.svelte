@@ -725,7 +725,7 @@
     loadAsset,
     // what the embedded note reads as, as the index judged it (NoteSummary.lang/script)
     langOf: (note: string) => {
-      const s = vault.notes.find((n) => n.id === note);
+      const s = vault.noteById.get(note);
       return s ? { lang: s.lang, script: s.script } : null;
     },
   };

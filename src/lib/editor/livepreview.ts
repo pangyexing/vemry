@@ -248,10 +248,10 @@ const bulletMarkDeco = Decoration.mark({ class: "cm-lp-lmark cm-lp-bullet" });
 /** The width of a list marker's box. The item's first line starts at the marker and the
  *  text of every line after it — a wrapped line or a continuation line — hangs at the
  *  box's right edge; the depth adds 1.5em per level (app.css .cm-lp-li). A bullet's box
- *  is 1.2em; a number's grows with its digits (tabular figures, 0.6em each, plus the
- *  stop and the space); a task's is the checkbox, 15px and its 1px + 8px of margin. */
-const BULLET_BOX = "1.2em";
-const TASK_BOX = "24px";
+ *  and a task's are app.css tokens (--li-box-bullet, --li-box-task); a number's grows
+ *  with its digits (tabular figures, 0.6em each, plus the stop and the space). */
+const BULLET_BOX = "var(--li-box-bullet)";
+const TASK_BOX = "var(--li-box-task)";
 const numberBox = (mark: string) => `${Math.round(((mark.length - 1) * 0.6 + 0.9) * 10) / 10}em`;
 
 const liDecos = new Map<string, Decoration>();

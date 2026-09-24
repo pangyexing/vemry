@@ -259,9 +259,6 @@
     overflow: auto;
     border: 1px solid var(--border);
     border-radius: 6px;
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    line-height: 1.6;
     -webkit-user-select: text;
     user-select: text;
   }

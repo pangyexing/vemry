@@ -381,6 +381,12 @@ const COLLECT_JS: &str = r#"
       }
     };
     S.schedule = () => { if (!S.raf) S.raf = requestAnimationFrame(S.layout); };
+    // The page's own DOM changes lay out at most every 300ms: a live page (a ticker, a
+    // clock, a feed) changes every frame, and each pass measures every entry
+    S.scheduleSoon = () => {
+      if (S.moTimer) return;
+      S.moTimer = setTimeout(() => { S.moTimer = 0; S.schedule(); }, 300);
+    };
     // What can move a block: the body or a block changing size (an image loading, a font
     // arriving, a section opening), the page changing its DOM — the entries' own changes
     // aside — and, only for a page scrolling in a container of its own, that scroll
@@ -393,7 +399,7 @@ const COLLECT_JS: &str = r#"
         if (at && at.closest('[data-vemry-tr-out]')) continue;
         const nodes = [...r.addedNodes, ...r.removedNodes];
         if (nodes.length && nodes.every(ours)) continue;
-        S.schedule();
+        S.scheduleSoon();
         return;
       }
     });
@@ -492,6 +498,7 @@ const COLLECT_JS: &str = r#"
       clearInterval(S.timer);
       if (S.raf) cancelAnimationFrame(S.raf);
       if (S.rz) cancelAnimationFrame(S.rz);
+      clearTimeout(S.moTimer);
       S.ro.disconnect();
       S.mo.disconnect();
       document.removeEventListener('scroll', S.onScroll, true);
@@ -589,38 +596,50 @@ const COLLECT_JS: &str = r#"
     if (!S.mode || S.items.size < 3) S.decide([...S.items.values(), ...found]);
   }
   const cut = S.mode === 'beside' || S.mode === 'edge' ? S.layer.getBoundingClientRect().left : Infinity;
+  // Everything the entries need is read from the page first and only then are they
+  // placed: an entry going into the page's flow moves what comes after it, so a read
+  // after each write would lay the whole page out again once per block
+  const blocks = [];
   for (const { el, text, maths } of found) {
     const r = el.getBoundingClientRect();
     // What sits under the column — a page's right-hand column, its promoted items — is not
     // what the reader is reading, and its translation would float beside nothing
     if (r.left + r.width / 2 >= cut) continue;
+    const cs = getComputedStyle(el);
+    blocks.push({
+      el, text, maths, height: r.height,
+      fontSize: parseFloat(cs.fontSize), fontFamily: cs.fontFamily, fontWeight: cs.fontWeight,
+      lineHeight: parseFloat(cs.lineHeight), display: cs.display, marginBottom: parseFloat(cs.marginBottom),
+      color: cs.color, parentDisplay: el.parentElement ? getComputedStyle(el.parentElement).display : '',
+    });
+  }
+  for (const b of blocks) {
+    const { el, text, maths } = b;
     const id = S.n++;
     el.setAttribute('data-vemry-tr', String(id));
-    const cs = getComputedStyle(el);
     const o = document.createElement('div');
     o.setAttribute('data-vemry-tr-out', String(id));
     o.setAttribute('lang', TARGET);
     // A touch smaller than the block: a CJK translation of an English paragraph then ends
     // about where the paragraph does, and the rows below it stay aligned
-    const fs = Math.max(12, Math.round(parseFloat(cs.fontSize) * 0.94));
+    const fs = Math.max(12, Math.round(b.fontSize * 0.94));
     o.style.cssText = 'all:initial;display:block;box-sizing:border-box;padding:0 12px 0 10px;white-space:pre-wrap;overflow-wrap:anywhere;cursor:pointer;color:inherit;border-left:3px dotted ' + S.ink.rule + ';line-height:' + (CJK ? '1.7' : '1.55') + ';' + (primary === 'ko' ? 'word-break:keep-all;' : CJK ? 'line-break:strict;' : '');
-    o.style.fontFamily = facesFor(cs.fontFamily);
+    o.style.fontFamily = facesFor(b.fontFamily);
     o.style.fontSize = fs + 'px';
-    o.style.fontWeight = cs.fontWeight;
+    o.style.fontWeight = b.fontWeight;
     // the placeholder: the height the translation will most likely have (the block's), so a
     // translation landing above the reader does not push the rows below it
-    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
-    const lines = Math.max(1, Math.min(4, Math.round(r.height / lh)));
-    o.style.minHeight = Math.round(r.height) + 'px';
+    const lh = b.lineHeight || b.fontSize * 1.5;
+    const lines = Math.max(1, Math.min(4, Math.round(b.height / lh)));
+    o.style.minHeight = Math.round(b.height) + 'px';
     S.skeleton(o, lines);
     o.addEventListener('click', () => S.select(id, true));
     // Under its block: inside it where a sibling would not sit below it (a list item, a
     // row of a flex or grid parent), else right after it, pulled up into half the
     // block's bottom margin so the pair reads as one, and keeping that margin below
-    const pd = el.parentElement ? getComputedStyle(el.parentElement).display : '';
-    const inside = /^(LI|DT|DD|SUMMARY)$/.test(el.tagName) || (/flex|grid/.test(pd) && !/flex|grid/.test(cs.display));
-    const mb = Math.max(0, parseFloat(cs.marginBottom) || 0);
-    const it = { el, out: o, math: maths, pending: true, lines, text, ink: cs.color, inside, mt: -Math.round(Math.min(mb * 0.5, fs * 0.4)), mb: Math.round(mb > 0 ? mb : fs * 0.6), top: null };
+    const inside = /^(LI|DT|DD|SUMMARY)$/.test(el.tagName) || (/flex|grid/.test(b.parentDisplay) && !/flex|grid/.test(b.display));
+    const mb = Math.max(0, b.marginBottom || 0);
+    const it = { el, out: o, math: maths, pending: true, lines, text, ink: b.color, inside, mt: -Math.round(Math.min(mb * 0.5, fs * 0.4)), mb: Math.round(mb > 0 ? mb : fs * 0.6), top: null };
     S.items.set(id, it);
     S.place(it);
     S.ro.observe(el);

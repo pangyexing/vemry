@@ -286,12 +286,7 @@ impl Vault {
     /// Read a non-Markdown vault file as UTF-8 text. Errors on binary or
     /// oversized content so callers can fall back to the OS default app.
     pub fn read_file(&self, path: &str) -> Result<String> {
-        let rel = validate_rel(path)?;
-        let abs = self.root.join(rel);
-        let meta = fs::metadata(&abs).map_err(|_| reject(PathReject::NotFound, rel))?;
-        if !meta.is_file() {
-            return Err(reject(PathReject::NotAFile, rel));
-        }
+        let (rel, abs, meta) = self.checked_file(path)?;
         if meta.len() > MAX_TEXT_FILE_BYTES {
             return Err(reject(PathReject::TooLarge, rel));
         }
@@ -302,12 +297,7 @@ impl Vault {
     /// Read a vault file as raw bytes (image/PDF preview). Errors on oversized
     /// content so callers can fall back to the OS default app.
     pub fn read_file_bytes(&self, path: &str) -> Result<Vec<u8>> {
-        let rel = validate_rel(path)?;
-        let abs = self.root.join(rel);
-        let meta = fs::metadata(&abs).map_err(|_| reject(PathReject::NotFound, rel))?;
-        if !meta.is_file() {
-            return Err(reject(PathReject::NotAFile, rel));
-        }
+        let (rel, abs, meta) = self.checked_file(path)?;
         if meta.len() > MAX_PREVIEW_FILE_BYTES {
             return Err(reject(PathReject::TooLarge, rel));
         }
@@ -316,15 +306,18 @@ impl Vault {
 
     /// A vault file opened for reading, for a caller that needs a part of it (an
     /// image's header) rather than the whole. The same path rules as
-    /// `read_file_bytes`, and no size limit, since nothing is read here.
-    pub fn open_file(&self, path: &str) -> Result<fs::File> {
-        let rel = validate_rel(path)?;
-        let abs = self.root.join(rel);
-        let meta = fs::metadata(&abs).map_err(|_| reject(PathReject::NotFound, rel))?;
-        if !meta.is_file() {
-            return Err(reject(PathReject::NotAFile, rel));
-        }
+    /// `read_file_bytes`, and no size limit, since nothing is read here. Takes the
+    /// vault root rather than the vault, so a caller reading many files need not hold
+    /// the vault lock meanwhile.
+    pub fn open_in(root: &Path, path: &str) -> Result<fs::File> {
+        let (_, abs, _) = checked_file_in(root, path)?;
         Ok(fs::File::open(&abs)?)
+    }
+
+    /// The path rules every whole-file read shares: a valid relative path naming an
+    /// existing regular file. Returns the relative path, the absolute one and its metadata.
+    fn checked_file<'a>(&self, path: &'a str) -> Result<(&'a str, PathBuf, fs::Metadata)> {
+        checked_file_in(&self.root, path)
     }
 
     /// Save pasted/dropped bytes under the suggested relative path, deduping
@@ -1565,6 +1558,17 @@ pub fn sanitize_filename(title: &str) -> String {
         return format!("_{safe}");
     }
     safe
+}
+
+/// `Vault::checked_file` against a root.
+fn checked_file_in<'a>(root: &Path, path: &'a str) -> Result<(&'a str, PathBuf, fs::Metadata)> {
+    let rel = validate_rel(path)?;
+    let abs = root.join(rel);
+    let meta = fs::metadata(&abs).map_err(|_| reject(PathReject::NotFound, rel))?;
+    if !meta.is_file() {
+        return Err(reject(PathReject::NotAFile, rel));
+    }
+    Ok((rel, abs, meta))
 }
 
 /// Reject empty, absolute, `~` and `..`-escaping paths; return trimmed rel path.

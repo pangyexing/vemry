@@ -43,6 +43,10 @@ const DARK_LUMA = 0.1;
 /** At least this share of the visible ink (weighted by its opacity) must be that dark. */
 const MIN_DARK_INK = 0.3;
 
+/** A JPEG has no alpha channel, so it never needs the plate: told by the vault target's
+ *  extension (an editor widget's data-target, a rendering's data-asset), it is not sampled. */
+const OPAQUE_FORMAT = /\.jpe?g$/i;
+
 /** Verdicts by image URL: a picture shown twice (the lightbox, a remounted widget) is looked at once. */
 const verdicts = new Map<string, boolean>();
 let canvas: HTMLCanvasElement | null = null;
@@ -118,6 +122,7 @@ function onLoad(e: Event) {
   if (!(img instanceof HTMLImageElement) || !img.matches(CONTENT_IMAGES)) return;
   const src = img.currentSrc || img.src;
   if (!src || !sameOrigin(src)) return;
+  if (OPAQUE_FORMAT.test(img.dataset.target ?? img.dataset.asset ?? "")) return mark(img, false);
   let plate = verdicts.get(src);
   if (plate === undefined) {
     const v = needsPlate(img);

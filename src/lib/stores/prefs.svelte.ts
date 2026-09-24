@@ -97,15 +97,10 @@ class PrefsStore {
   applyReadableLineWidth(on: boolean) {
     this.readableLineWidth = on;
     const st = document.documentElement.style;
-    // Both the base width and the per-script override (app.css [data-script]) read
-    // --content-width-off first, so one property switches every column off
-    if (on) {
-      st.removeProperty("--content-width");
-      st.removeProperty("--content-width-off");
-    } else {
-      st.setProperty("--content-width", "none");
-      st.setProperty("--content-width-off", "none");
-    }
+    // The base width and every per-script override (app.css) read --content-width-off
+    // first, so this one property switches every column off
+    if (on) st.removeProperty("--content-width-off");
+    else st.setProperty("--content-width-off", "none");
   }
 }
 

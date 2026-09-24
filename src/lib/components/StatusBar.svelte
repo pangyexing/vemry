@@ -13,19 +13,19 @@
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { k } from "$lib/shortcut";
   import { i18n } from "$lib/i18n/i18n.svelte";
-  import { readsForeign } from "$lib/langdetect";
+  import { scriptOfLang } from "$lib/notelang";
   import { account } from "$lib/stores/account.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
 
   const inPrivate = $derived(vault.currentPath !== null && vault.privatePaths.has(vault.currentPath));
-  /** The open note reads as another language than the translation target: offer the
-   *  side-by-side view (a ratio of scripts, computed locally; nothing is sent). */
-  const foreign = $derived(
-    vault.currentKind === "note" && !inPrivate && vault.mainView !== "translate"
-      // the opening is enough: the ratio settles long before MIN_LETTERS, and this runs
-      // on every autosave — over a whole imported source note it is a per-second scan
-      && readsForeign(vault.currentContent.slice(0, 20_000), prefs.translateTarget || i18n.lang),
-  );
+  /** The open note reads as another writing system than the translation target's: offer
+   *  the side-by-side view. The index already judged the note (NoteSummary.script, the same
+   *  verdict the editor's column follows), so nothing is rescanned on autosave. */
+  const foreign = $derived.by(() => {
+    if (vault.currentKind !== "note" || inPrivate || vault.mainView === "translate" || !vault.currentPath) return false;
+    const script = vault.noteById.get(vault.currentPath)?.script;
+    return !!script && script !== scriptOfLang(prefs.translateTarget || i18n.lang);
+  });
   /** Unreviewed AI blocks in notes other than the open one (the vault chip's count). */
   const others = $derived.by(() => {
     const rest = vault.pendingNotes.filter((p) => p.path !== vault.currentPath);

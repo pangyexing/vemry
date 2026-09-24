@@ -61,7 +61,7 @@
 
   /** The headings are the note's own words: they are set in its language (the index reads
    *  it), so a Japanese note's outline takes Japanese glyph forms under any interface. */
-  const noteLang = $derived(vault.notes.find((n) => n.id === vault.currentPath)?.lang ?? undefined);
+  const noteLang = $derived((vault.currentPath ? vault.noteById.get(vault.currentPath)?.lang : undefined) ?? undefined);
 
   let panelEl = $state<HTMLElement | null>(null);
   // The current section stays in sight: when the reader's cursor moves into a section whose

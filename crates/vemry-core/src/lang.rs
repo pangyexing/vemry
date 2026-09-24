@@ -4,6 +4,9 @@
 //! task views) can set it in the right faces without reading the note. Mirrors
 //! `src/lib/notelang.ts`'s `noteLanguage()` rule for rule; change both together.
 
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use serde::Serialize;
 
 /// Below this many letters a text follows the interface.
@@ -15,6 +18,11 @@ const SCAN_LETTERS: usize = 4000;
 /// their Simplified forms below.
 const TRAD: &str = "們個這說時國會來對學為與後麼樣還開經從現關點動應將過發機長問頭實體當無兩見電認沒進給產業義讓總條話區種邊聽寫書幾讀變請師壓樂氣歲顯論選聯護聲導隊術劃錢廣報際覺轉鐵夠極質據戰識標響環線須難驗觀團費館飛東車馬門語樹萬單買賣筆紅綠藍島鳥魚雲風處親愛歡記頁圖裡級歷務員層網張並嗎誰";
 const SIMP: &str = "们个这说时国会来对学为与后么样还开经从现关点动应将过发机长问头实体当无两见电认没进给产业义让总条话区种边听写书几读变请师压乐气岁显论选联护声导队术划钱广报际觉转铁够极质据战识标响环线须难验观团费馆飞东车马门语树万单买卖笔红绿蓝岛鸟鱼云风处亲爱欢记页图里级历务员层网张并吗谁";
+
+/// Each character of `TRAD` and `SIMP` to whether it is the Traditional form: one
+/// lookup per Han character instead of a scan along both strings.
+static HAN_FORM: LazyLock<HashMap<char, bool>> =
+    LazyLock::new(|| TRAD.chars().map(|c| (c, true)).chain(SIMP.chars().map(|c| (c, false))).collect());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -80,10 +88,10 @@ pub fn note_language(declared: Option<&str>, body: &str) -> NoteLanguage {
         letters += 1;
         if is_han(c) {
             han += 1;
-            if TRAD.contains(c) {
-                trad += 1;
-            } else if SIMP.contains(c) {
-                simp += 1;
+            match HAN_FORM.get(&c) {
+                Some(true) => trad += 1,
+                Some(false) => simp += 1,
+                None => {}
             }
         } else if is_kana(c) {
             kana += 1;

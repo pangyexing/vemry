@@ -15,7 +15,8 @@
 // whole, with its images already loaded (blockwidget.ts, the live half). The body's
 // words are selectable; opening the source is the header row's.
 import { t } from "$lib/i18n/i18n.svelte";
-import { blockRoot, liveRefresh, queryRefresh, recordHeight, selectableIsland, selectedWithin, swapInPlace, unwatchLive, watchLive } from "./blockwidget";
+import { selectingIn } from "$lib/views/select";
+import { blockRoot, liveRefresh, queryRefresh, recordHeight, selectableIsland, swapInPlace, unwatchLive, watchLive } from "./blockwidget";
 import { focusEditor } from "./clickguard";
 import { syntaxTree } from "@codemirror/language";
 import { type EditorState, type Extension, type Line, StateField } from "@codemirror/state";
@@ -152,7 +153,7 @@ function wire(view: EditorView, el: HTMLElement, host: EmbedHost, inner: string)
     const target = e.target as HTMLElement;
     const body = target.closest<HTMLElement>(".cm-embed-body");
     // a press that selected words is a selection, not a click on what it started on
-    if (!body || selectedWithin(body)) return;
+    if (!body || selectingIn(body)) return;
     const wiki = target.closest<HTMLElement>("a[data-wiki]");
     if (wiki?.dataset.wiki) {
       host.follow(wiki.dataset.wiki);

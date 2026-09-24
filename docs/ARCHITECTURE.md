@@ -2616,8 +2616,9 @@ the user presses "save as note".
   projection it translates the page, else the open note), the View menu,
   the editor's context menu, and a "translate" chip in the status bar that appears
   when the open note reads as written in another script than the target language's
-  (`langdetect.ts`: a ratio of CJK to Latin letters over 300 letters, computed
-  locally — nothing is sent to decide it). Double-clicking a source block leaves
+  (the index's `NoteSummary.script`, judged by `lang.rs` from a declared `lang:` or
+  a ratio of scripts over 300 letters, computed locally — nothing is sent to
+  decide it). Double-clicking a source block leaves
   the overlay and lands on that block in the editor (`openBlockAt` with the
   segment's byte offset); J/K step the lit row.
 - **Settings.** `translate_target` (empty = the interface language; the header's

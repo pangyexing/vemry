@@ -154,6 +154,8 @@ class VaultStore {
   root = $state<string | null>(null);
   noteCount = $state(0);
   notes = $state<NoteSummary[]>([]);
+  /** `notes` by id, for the lookups a surface makes per row or per embed. */
+  noteById = $derived(new Map(this.notes.map((n) => [n.id, n])));
   folders = $state<string[]>([]);
   /** non-Markdown files in the vault (attachments, data files, …) */
   otherFiles = $state<string[]>([]);

@@ -15,7 +15,6 @@
     rescheduleTask,
     TaskKeys,
     taskFilterKey,
-    taskKey,
     taskMenuEntries,
     taskStateIconSvg,
     isClosed,
@@ -50,7 +49,7 @@
   import { commitTaskWrite, copyTaskId } from "$lib/views/taskwrite";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import { cliptip } from "$lib/cliptip";
-  import { captureAnchor, restoreAnchor } from "$lib/scrollanchor";
+  import { holdAnchor } from "$lib/scrollanchor";
   import { toast } from "$lib/stores/toast.svelte";
   import { loadBucketMap, saveBucket } from "$lib/persist";
   import { noteKey } from "$lib/pickNote";
@@ -82,10 +81,7 @@
       if (seq !== loadSeq) return;
       const keys = ids.assign(res);
       const lists = boardEl ? [...boardEl.querySelectorAll<HTMLElement>(".cards")] : [];
-      const anchors = lists.map((el) => [el, captureAnchor(el)] as const);
-      data = { hits: res, keys };
-      await tick();
-      for (const [el, a] of anchors) if (el.isConnected) restoreAnchor(el, a);
+      await holdAnchor(lists, () => void (data = { hits: res, keys }), tick);
     } catch (e) {
       vault.error = String(e);
     }
@@ -113,7 +109,6 @@
   const allCards = $derived(cardsOf(data.hits, data.keys, localDate(), types.enabled));
   /** Each note's language (the index's reading of it): a card's title is set in its
    *  note's language, whatever the interface is (Agenda's rows do the same). */
-  const langOf = $derived(new Map(vault.notes.map((n) => [n.id, n.lang])));
   const shown = $derived(fuzzyKeep(allCards, query, taskFilterKey));
   const total = $derived(shown.length);
 
@@ -199,7 +194,7 @@
    *  with the pointer gone from the card, and a date menu with no card lit does not say
    *  which task it is setting. The context menu remembers what it was opened for (owner)
    *  until it closes. */
-  const heldKey = $derived(menu ? taskKey(menu.card) : contextMenu.owner);
+  const heldKey = $derived(menu ? menu.card.key : contextMenu.owner);
   /** A card dropped into "scheduled" shows there at once rather than only after its date
    *  is picked: at the top of the column while the menu is open (it has no date to sort by
    *  yet; Esc or a click outside puts the card back where it was), then — the day picked —
@@ -210,7 +205,7 @@
    *  it back early — only the write's own completion clears it. */
   let pendingDrop = $state.raw<{ card: Card; date: string | null } | null>(null);
   /** The pending card's key, read once per render by the column pass and by every card. */
-  const pendingKey = $derived(pendingDrop ? taskKey(pendingDrop.card) : null);
+  const pendingKey = $derived(pendingDrop ? pendingDrop.card.key : null);
 
   function pressCard(e: PointerEvent, card: Card) {
     if (e.button !== 0) return;
@@ -334,7 +329,7 @@
         copyId: () => void copyTaskId(card, commit),
         remove: () => void commit(card.hit, t("task.act.remove"), () => deleteTask(card.hit)),
       }),
-      taskKey(card),
+      card.key,
     );
   }
 
@@ -381,7 +376,7 @@
     const pend = pendingDrop;
     const state = groupBy.by === "state";
     if (pend && pendingKey && state) {
-      const i = cards.findIndex((c) => taskKey(c) === pendingKey);
+      const i = cards.findIndex((c) => c.key === pendingKey);
       // the day picked: the card as the write leaves it, sorted where the reload puts it
       if (i >= 0 && pend.date) {
         cards = [...cards];
@@ -393,7 +388,7 @@
     // its data still puts it in
     if (pend && pendingKey && state && !pend.date) {
       for (const list of Object.values(cols)) {
-        const i = list.findIndex((c) => taskKey(c) === pendingKey);
+        const i = list.findIndex((c) => c.key === pendingKey);
         if (i < 0) continue;
         cols.scheduled.unshift(...list.splice(i, 1));
         break;
@@ -712,8 +707,8 @@
             <!-- visible: the cards actually rendered (MAX_VISIBLE); the rest come with one click -->
             {@const visible = expanded[colDef.id] || cards.length <= MAX_VISIBLE ? cards : cards.slice(0, MAX_VISIBLE)}
             <ul class="cards">
-            {#each visible as card (taskKey(card))}
-              {@const pend = pendingKey === taskKey(card) ? pendingDrop : null}
+            {#each visible as card (card.key)}
+              {@const pend = pendingKey === card.key ? pendingDrop : null}
               <!-- The field the pending drop writes: activeField, the same one dropEdit picks -->
               {@const pendField = pend ? activeField(card) : null}
               {@const w = mainDate(card, pendField)}
@@ -722,14 +717,14 @@
               {@const stayed = stay.has(card.key)}
               <!-- doing on the li: the row after a doing card draws no separator of its own
                 (the card's frame is the separation) -->
-              <li class:doing={card.state === "doing"} data-anchor={taskKey(card)}>
+              <li class:doing={card.state === "doing"} data-anchor={card.key}>
                 <!-- A done card dragged out is reopened by the drop, and the provisional card already shows it so -->
                 <div
                   class="card"
                   class:doing={card.state === "doing"}
                   class:done={isClosed(card.state) && !pend}
                   class:stayed
-                  class:held={heldKey === taskKey(card)}
+                  class:held={heldKey === card.key}
                   role="button"
                   tabindex="0"
                   onpointerdown={(e) => pressCard(e, card)}
@@ -766,7 +761,7 @@
                         {:else if w}
                           {@render dateChip(card, w.field, t("task.editDateWith", { field: dateFieldLabel(w.field), date: card[w.field] ?? "" }), w.text, w.overdue ? "when overdue" : "when", w.field === "start")}
                         {/if}
-                        <span class="text" lang={langOf.get(card.hit.note) ?? undefined} dir="auto">{card.text}</span>
+                        <span class="text" lang={vault.noteById.get(card.hit.note)?.lang ?? undefined} dir="auto">{card.text}</span>
                       </div>
                     </div>
                     <!-- The rest of the card as one line: the dates the main slot does not show

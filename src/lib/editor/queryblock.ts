@@ -14,7 +14,8 @@
 // In any standard Markdown renderer it degrades to an ordinary code block, with zero
 // lock-in.
 import { t } from "$lib/i18n/i18n.svelte";
-import { blockRoot, liveRefresh, queryRefresh, recordHeight, selectableIsland, selectedWithin, swapInPlace, unwatchLive, watchLive } from "./blockwidget";
+import { selectingIn } from "$lib/views/select";
+import { blockRoot, liveRefresh, queryRefresh, recordHeight, selectableIsland, swapInPlace, unwatchLive, watchLive } from "./blockwidget";
 import { cliptip } from "$lib/cliptip";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
@@ -271,7 +272,7 @@ class QueryWidget extends WidgetType {
     el.addEventListener("click", (e) => {
       if (e.button !== 0 || e.defaultPrevented) return;
       if ((e.target as Element).closest(".cm-queryblock-clickable, .cm-queryblock-note")) return;
-      if (selectedWithin(el)) return;
+      if (selectingIn(el)) return;
       open();
     });
     el.addEventListener("keydown", (e) => {
@@ -400,9 +401,10 @@ class QueryWidget extends WidgetType {
     // Until the first answer the block holds the height it last had
     const known = heights.get(this.src);
     if (known) root.style.minHeight = `${known}px`;
-    /** What the widget shows now: the hits and the markup built from them. The hits
-     *  count too — the same words can stand at a different offset, and a row's click
-     *  lands on the offset it was built with. */
+    /** What the widget shows now: everything its markup is built from — the hits (the
+     *  same words can stand at a different offset, and a row's click lands on the offset
+     *  it was built with), the block types and today's date — compared before anything is
+     *  built, since every autosave anywhere requeries and the answer is usually the same. */
     let shown = "";
     let seq = 0;
     let loaded = this.versionOf(view.state);
@@ -423,10 +425,8 @@ class QueryWidget extends WidgetType {
         .runQuery(parsed.query!)
         .then((hits) => {
           if (my !== seq || !root.isConnected) return;
-          const els = this.resultEls(view, parsed, hits);
-          const probe = document.createElement("div");
-          probe.append(...els);
-          show(JSON.stringify(hits) + "\n" + probe.innerHTML, [...probe.children] as HTMLElement[], false);
+          const sig = JSON.stringify([hits, this.host.blockTypes?.() ?? [], localDate()]);
+          if (sig !== shown) show(sig, this.resultEls(view, parsed, hits), false);
         })
         .catch((e) => {
           if (my !== seq || !root.isConnected) return;

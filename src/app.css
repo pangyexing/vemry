@@ -114,8 +114,13 @@
      viewport), so dragging a sidebar wider or docking a panel follows automatically; em
      resolves where it is used, so a larger body font makes the column wider with it.
      With the "readable line width" setting off, prefs.applyReadableLineWidth overrides it
-     inline on :root to none (and --content-width-off, which the per-script widths read) */
-  --content-width: clamp(42em, 66%, 54em);
+     --content-width-off inline on :root to none, which this and every per-script width read */
+  --content-width: var(--content-width-off, clamp(42em, 66%, 54em));
+  /* A list marker's box, which the text of the item's later lines hangs at (livepreview.ts
+     emits them in --li-mark): a bullet's, and a task's — the checkbox, 1 + 15 + 8
+     (.cm-lp-checkbox's margin and width) */
+  --li-box-bullet: 1.2em;
+  --li-box-task: 24px;
 
   /* The single source of truth for the bottom status bar's height: StatusBar's own height
      and every fixed overlay that has to clear it (ToastStack) derive from
@@ -228,25 +233,24 @@
 [lang^="zh-Hant-"],
 [lang="zh-TW"],
 [lang="zh-MO"],
+[lang="zh-HK"],
 .cm-editor .cm-scroller .cm-content[lang="zh-Hant"],
 .cm-editor .cm-scroller .cm-content[lang^="zh-Hant-"],
 .cm-editor .cm-scroller .cm-content[lang="zh-TW"],
-.cm-editor .cm-scroller .cm-content[lang="zh-MO"] {
+.cm-editor .cm-scroller .cm-content[lang="zh-MO"],
+.cm-editor .cm-scroller .cm-content[lang="zh-HK"] {
   --font-cjk: "PingFang TC", "Noto Sans TC", "Noto Sans CJK TC", "Microsoft JhengHei";
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", var(--font-cjk), sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, var(--font-cjk), monospace;
   font-family: var(--font-ui);
   line-break: strict;
 }
+/* after the rule above, so Hong Kong's faces win at the same specificity */
 [lang="zh-HK"],
 [lang="zh-Hant-HK"],
 .cm-editor .cm-scroller .cm-content[lang="zh-HK"],
 .cm-editor .cm-scroller .cm-content[lang="zh-Hant-HK"] {
   --font-cjk: "PingFang HK", "Noto Sans HK", "Noto Sans CJK HK", "PingFang TC", "Microsoft JhengHei";
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", var(--font-cjk), sans-serif;
-  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, var(--font-cjk), monospace;
-  font-family: var(--font-ui);
-  line-break: strict;
 }
 /* Hyphenation wherever the language is known and has a dictionary: the interface's, or a
    note's (declared, or read from its letters) — English included, whose ragged right edge
@@ -267,9 +271,7 @@
 :root[lang="fr"],
 :root[lang="de"],
 :root[lang="es"],
-[data-script="latin"],
-[data-script="other"],
-[data-script="rtl"] {
+[data-script]:not([data-script="cjk"]) {
   --content-width: var(--content-width-off, clamp(36em, 66%, 44em));
 }
 [data-script="cjk"] {
@@ -300,11 +302,7 @@
    ragged right edge). The editor's 34px padding and a rendered surface's own padding
    hold it. CJK text only: a surface judged Latin, right-to-left or other keeps its
    punctuation inside the column */
-:is(.cm-editor .cm-content, .md-body):is(:lang(zh), :lang(ja), :lang(ko), [data-script="cjk"]):not(
-    [data-script="latin"],
-    [data-script="rtl"],
-    [data-script="other"]
-  ) {
+:is(.cm-editor .cm-content, .md-body):is([data-script="cjk"], :is(:lang(zh), :lang(ja), :lang(ko)):not([data-script])) {
   hanging-punctuation: allow-end;
 }
 /* Emphasis by writing system. Latin slants; CJK faces have no italic and the engine's
@@ -342,7 +340,7 @@
 }
 /* a rendering judged Latin (or right-to-left, or another alphabet) inside a CJK interface
    keeps the slant: its language is the interface's only by inheritance */
-:is([data-script="latin"], [data-script="rtl"], [data-script="other"]) :is(.md-body em, .cm-lp-cell-em) {
+[data-script]:not([data-script="cjk"]) :is(.md-body em, .cm-lp-cell-em) {
   font-style: italic;
   -webkit-text-emphasis: none;
   text-emphasis: none;
@@ -521,13 +519,10 @@ button:focus-visible,
   text-underline-offset: 0.24em;
   text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
 }
+/* always alongside .cm-wikilink (wikilink.ts), so the line itself comes from above */
 .cm-wikilink-unresolved {
   color: var(--fg);
-  cursor: pointer;
-  text-decoration-line: underline;
   text-decoration-style: dashed;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.24em;
   text-decoration-color: color-mix(in srgb, var(--fg-muted) 70%, transparent);
 }
 .cm-md-heading {
@@ -599,7 +594,7 @@ button:focus-visible,
 }
 .cm-lp-bullet,
 .cm-lp-bulletdot {
-  min-width: 1.2em;
+  min-width: var(--li-box-bullet);
 }
 .cm-lp-lmark-task {
   min-width: var(--li-mark);
@@ -1809,7 +1804,7 @@ button:focus-visible,
   display: inline-block;
   width: 15px;
   height: 15px;
-  /* 1 + 15 + 8: the 24px box a task's hanging indent counts (livepreview.ts TASK_BOX) */
+  /* 1 + 15 + 8: the box a task's hanging indent counts (--li-box-task) */
   margin: 0 8px 0 1px;
   vertical-align: -2px;
   cursor: pointer;
@@ -3187,28 +3182,27 @@ button:focus-visible,
 }
 .md-tablewrap.fade-start,
 .md-tablewrap.fade-end {
-  -webkit-mask-image:
-    linear-gradient(to right, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent),
+  --fade-mask:
+    linear-gradient(
+      to var(--fade-dir, right),
+      transparent,
+      #000 var(--fade-start, 0px),
+      #000 calc(100% - var(--fade-end, 0px)),
+      transparent
+    ),
     linear-gradient(#000, #000);
+  -webkit-mask-image: var(--fade-mask);
   -webkit-mask-size: 100% calc(100% - 8px), 100% 8px;
   -webkit-mask-position: top, bottom;
   -webkit-mask-repeat: no-repeat;
-  mask-image:
-    linear-gradient(to right, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent),
-    linear-gradient(#000, #000);
+  mask-image: var(--fade-mask);
   mask-size: 100% calc(100% - 8px), 100% 8px;
   mask-position: top, bottom;
   mask-repeat: no-repeat;
 }
 /* Right to left, the table starts at the right edge */
-.md-tablewrap:dir(rtl).fade-start,
-.md-tablewrap:dir(rtl).fade-end {
-  -webkit-mask-image:
-    linear-gradient(to left, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent),
-    linear-gradient(#000, #000);
-  mask-image:
-    linear-gradient(to left, transparent, #000 var(--fade-start, 0px), #000 calc(100% - var(--fade-end, 0px)), transparent),
-    linear-gradient(#000, #000);
+.md-tablewrap:dir(rtl) {
+  --fade-dir: left;
 }
 .md-tablewrap table {
   border-collapse: separate;

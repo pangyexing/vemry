@@ -464,17 +464,13 @@
     font-size: var(--fs-note);
   }
   /* The typography is the shared wide-surface .md-body (app.css), the same as the editor's
-     embeds and the translation's cells. What stays here is the projection's own: the text is
-     selectable ("selection → quote" reads window.getSelection() from here), and a static page
-     can afford balanced line breaks (the editor cannot: they re-flow a paragraph as it is
+     embeds and the translation's cells. What stays here is the projection's own (.md-body already
+     makes the text selectable, which "selection → quote" relies on): a static page can
+     afford balanced line breaks (the editor cannot: they re-flow a paragraph as it is
      typed into) */
   article {
-    -webkit-user-select: text;
-    user-select: text;
     color: var(--fg);
-    overflow-wrap: break-word;
     text-wrap: pretty;
-    hyphens: var(--hyphens);
   }
   .src {
     margin-top: 28px;

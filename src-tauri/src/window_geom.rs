@@ -1,12 +1,12 @@
-//! Where a window opens: the geometry the main window and the detached chat window
-//! remember, checked against the displays connected now.
+//! Where a window opens: the geometry the main window, the detached chat window and
+//! the detached browser window remember, checked against the displays connected now.
 //!
 //! A remembered geometry can outlive its display (an external screen unplugged, a
 //! laptop lid closed) or no longer fit it (a smaller resolution). The rule shared by
-//! every remembering window: the title bar has to land on some display's visible area
-//! (`grabbable_on_some_monitor`, the browser window's check) or the memory is dropped
-//! for a centred default; a geometry that passes is then shrunk to that display's
-//! visible area and pulled inside it, so no edge is out of reach.
+//! every remembering window (`place`): the title bar has to land on some display's
+//! visible area or the memory is dropped for a centred default; a geometry that passes
+//! is then shrunk to that display's visible area and pulled inside it, so no edge is
+//! out of reach.
 //!
 //! The main window remembers one geometry per display: moving it to an external screen
 //! does not overwrite where it sat on the built-in one, so unplugging the screen brings
@@ -54,7 +54,7 @@ fn displays(app: &AppHandle) -> Option<Vec<(String, Area)>> {
 }
 
 /// The point that has to stay reachable: the middle of the title bar, 20 logical px
-/// into the window (the same point `grabbable_on_some_monitor` tests).
+/// into the window — landing inside a visible area, the user can at least drag it.
 fn title_point(g: &WindowGeom) -> (f64, f64) {
     (g.x + g.w / 2.0, g.y + 20.0)
 }
@@ -91,15 +91,16 @@ fn first_main(a: Area) -> WindowGeom {
 /// the display holding its title bar. With no display list available the memory is
 /// trusted as it is.
 pub fn place(app: &AppHandle, g: WindowGeom) -> Option<WindowGeom> {
-    if !crate::browser::window::grabbable_on_some_monitor(app, &g) {
-        return None;
+    match displays(app) {
+        Some(list) => place_in(&list, g),
+        None => Some(g),
     }
-    let Some(list) = displays(app) else { return Some(g) };
+}
+
+/// `place` against a display list already read.
+fn place_in(list: &[(String, Area)], g: WindowGeom) -> Option<WindowGeom> {
     let point = title_point(&g);
-    Some(match list.iter().find(|(_, a)| holds(a, point)) {
-        Some((_, a)) => fit(g, *a),
-        None => g,
-    })
+    list.iter().find(|(_, a)| holds(a, point)).map(|(_, a)| fit(g, *a))
 }
 
 /// The visible area of the display a window is on, else the primary display's.
@@ -170,7 +171,7 @@ fn main_geometry(app: &AppHandle) -> (Option<WindowGeom>, bool) {
     let hit = remembered
         .into_iter()
         .filter(|e| list.iter().any(|(k, _)| *k == e.display))
-        .find_map(|e| place(app, e.geom).map(|g| (e, g)));
+        .find_map(|e| place_in(&list, e.geom).map(|g| (e, g)));
     if let Some((e, g)) = hit {
         let maximized = e.maximized;
         *crate::lock(&LATEST) = Some(DisplayGeom { geom: g, ..e });
@@ -182,22 +183,24 @@ fn main_geometry(app: &AppHandle) -> (Option<WindowGeom>, bool) {
 /// The visible area of the display the pointer is on (where the reader is looking when
 /// they launch the app), else the primary display's.
 fn area_at_pointer(app: &AppHandle) -> Option<Area> {
-    let primary = app.primary_monitor().ok().flatten();
-    let under = app.cursor_position().ok().and_then(|p| {
-        // Where the pointer and the monitors share one pixel space, the lookup answers
-        // directly. On a Mac with displays of different scales it does not: the pointer
-        // comes back as its logical point times the primary display's scale, while each
-        // display's position is in its own pixels (measured: pointer x 3767 on a 1x
-        // external display at x 1470, beside a 2x built-in one). There both are brought
-        // to logical points and compared
-        app.monitor_from_point(p.x, p.y).ok().flatten().or_else(|| {
-            let scale = primary.as_ref()?.scale_factor();
-            let point = (p.x / scale, p.y / scale);
-            app.available_monitors().ok()?.into_iter().find(|m| holds(&bounds_of(m), point))
-        })
-    });
-    let m = under.or(primary)?;
+    let m = monitor_at_pointer(app).or_else(|| app.primary_monitor().ok().flatten())?;
     Some(area_of(&m))
+}
+
+/// The display the pointer is on; None when the pointer cannot be read.
+pub fn monitor_at_pointer(app: &AppHandle) -> Option<tauri::Monitor> {
+    let p = app.cursor_position().ok()?;
+    // Where the pointer and the monitors share one pixel space, the lookup answers
+    // directly. On a Mac with displays of different scales it does not: the pointer
+    // comes back as its logical point times the primary display's scale, while each
+    // display's position is in its own pixels (measured: pointer x 3767 on a 1x
+    // external display at x 1470, beside a 2x built-in one). There both are brought
+    // to logical points and compared
+    app.monitor_from_point(p.x, p.y).ok().flatten().or_else(|| {
+        let scale = app.primary_monitor().ok().flatten()?.scale_factor();
+        let point = (p.x / scale, p.y / scale);
+        app.available_monitors().ok()?.into_iter().find(|m| holds(&bounds_of(m), point))
+    })
 }
 
 /// A display's whole bounds in logical points.

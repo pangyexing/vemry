@@ -1,8 +1,9 @@
 <script lang="ts">
   // The lines of a unified diff, one block per line, inside the caller's <pre> (which owns
-  // the frame: its border, its height, its scrolling). One drawing for the three places a
-  // diff is read before a decision or after one — the permission dialog, the note history,
-  // the session replay — so a line reads the same in all three.
+  // the frame: its border, its height, its scrolling, and user-select on the scroller;
+  // the lines own the type). One drawing for the three places a diff is read before a
+  // decision or after one — the permission dialog, the note history, the session replay —
+  // so a line reads the same in all three.
   //
   // A deleted line keeps the body ink: it is text the reader has to read before allowing
   // the change (the red that used to carry it fell to 4.24:1 on the dark ground). Its
@@ -19,6 +20,9 @@
 <style>
   .dl {
     display: block;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    line-height: 1.6;
     padding: 0 var(--diff-pad, 10px);
     white-space: pre-wrap;
     /* A long word breaks only where nothing else can: `break-all` split English words at any letter */

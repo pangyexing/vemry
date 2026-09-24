@@ -21,7 +21,7 @@
   import { executeCommand } from "$lib/commands/registry";
   import { handleCodeCopyClick, renderNoteMarkdown, streamingTail } from "$lib/markdown";
   import { langAttrs, noteLanguage, scriptOfLang, type NoteLanguage, type NoteScript } from "$lib/notelang";
-  import { restoreAnchor, type ScrollAnchor } from "$lib/scrollanchor";
+  import { captureAnchor, restoreAnchor, type ScrollAnchor } from "$lib/scrollanchor";
   import { vaultImages } from "$lib/views/assets";
   import { selectingIn } from "$lib/views/select";
   import { cliptip } from "$lib/cliptip";
@@ -73,7 +73,7 @@
     if (!d) return NONE;
     if (d.source.kind === "note") {
       const path = d.source.path;
-      const n = untrack(() => vault.notes.find((x) => x.id === path));
+      const n = untrack(() => vault.noteById.get(path));
       if (n && (n.lang || n.script)) return { lang: n.lang, script: n.script };
     }
     return noteLanguage(d.segments.filter((s) => !s.private).map((s) => s.prefix + s.text).join("\n\n"));
@@ -232,30 +232,9 @@
   }
 
   // ---- the reader's row holds still ----
-  /** The first row whose bottom is below the scroller's top, by bisection: the rows are in
-   *  document order and do not nest, so their bottoms only grow — the scan runs on every
-   *  scroll event of a document that can hold thousands of rows. Same shape as
-   *  scrollanchor.ts's captureAnchor, whose restoreAnchor puts the row back. */
-  function captureRow(c: HTMLElement): ScrollAnchor | null {
-    if (c.scrollTop <= 0) return null;
-    const rows = c.querySelectorAll<HTMLElement>("[data-anchor]");
-    const top = c.getBoundingClientRect().top;
-    let lo = 0;
-    let hi = rows.length - 1;
-    let hit = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (rows[mid].getBoundingClientRect().bottom > top) {
-        hit = mid;
-        hi = mid - 1;
-      } else lo = mid + 1;
-    }
-    if (hit < 0) return null;
-    return { key: rows[hit].dataset.anchor!, offset: rows[hit].getBoundingClientRect().top - top };
-  }
   let anchor: ScrollAnchor | null = null;
   function onscroll() {
-    if (root) anchor = captureRow(root);
+    if (root) anchor = captureAnchor(root, true);
   }
   /** Rows change height after layout and before paint (a token arrived, an image loaded, a
    *  page learned its shape): one observer on every row, and each batch of changes puts the
@@ -273,7 +252,7 @@
     if (!scroller) return;
     ro = new ResizeObserver(() => {
       restoreAnchor(scroller, anchor);
-      anchor = captureRow(scroller);
+      anchor = captureAnchor(scroller, true);
     });
     for (const n of held) ro.observe(n);
     const size = new ResizeObserver(() => measureColumn());
@@ -779,11 +758,9 @@
     padding: 0.45em 0.75em;
     min-width: 0;
     position: relative;
-    -webkit-user-select: text;
-    user-select: text;
-    /* Hyphenation by the cell's own language (app.css [lang] sets it for German, French,
-       Spanish): two columns are narrow, and a long compound would otherwise leave a gap */
-    hyphens: var(--hyphens);
+    /* selectable and hyphenated by the cell's own language through .md-body (app.css [lang]
+       sets --hyphens for German, French, Spanish): two columns are narrow, and a long
+       compound would otherwise leave a gap */
   }
   /* The source is the second voice beside the translation: secondary ink, which holds
      ≥ 4.5:1 on the lit row's ground too */
@@ -846,9 +823,6 @@
     position: relative;
     padding: 0.45em 0.75em;
     border-radius: 4px;
-    hyphens: var(--hyphens);
-    -webkit-user-select: text;
-    user-select: text;
   }
   /* A row's tools stand in the gutter to the left of the translation, clear of its text */
   .tools {

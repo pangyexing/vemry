@@ -144,9 +144,3 @@ export function selectableIsland(el: HTMLElement): void {
   el.classList.add("cm-select-island");
 }
 
-/** A press that ended as a selection of words inside `el` (a drag, a double click):
- *  not a click that opens something. */
-export function selectedWithin(el: HTMLElement): boolean {
-  const sel = el.ownerDocument.getSelection();
-  return !!sel && !sel.isCollapsed && !!sel.anchorNode && el.contains(sel.anchorNode);
-}

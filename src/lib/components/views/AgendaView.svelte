@@ -6,7 +6,7 @@
   import { t } from "$lib/i18n/i18n.svelte";
   import { fuzzyKeep } from "$lib/commands/registry";
   import { vault } from "$lib/stores/vault.svelte";
-  import { byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, EDIT_FIELDS, type EditField, estimateSum, formatEstimate, isBlocked, isClosed, isUrgent, localDate, nearDate, openIds, placeTask, priorityLabel, rescheduleTask, rowOf, TaskKeys, taskFilterKey, taskKey, taskMenuEntries, type TaskPhase, type TaskRow, taskStateIconSvg, toggleTask, updateTask } from "$lib/views/tasks";
+  import { byDate, byModified, byPriority, dateFieldLabel, type DateField, dateIconSvg, deleteTask, dueLabel, EDIT_FIELDS, type EditField, estimateSum, formatEstimate, isBlocked, isClosed, isUrgent, localDate, nearDate, openIds, placeTask, priorityLabel, rescheduleTask, rowOf, TaskKeys, taskFilterKey, taskMenuEntries, type TaskPhase, type TaskRow, taskStateIconSvg, toggleTask, updateTask } from "$lib/views/tasks";
   import { fieldChipsOf, type FieldChip } from "$lib/views/blockrow";
   import { stateGlyphSvg } from "$lib/chips";
   import { types } from "$lib/stores/types.svelte";
@@ -161,13 +161,12 @@
   const chipsOf = $derived.by(() => {
     const types_ = types.enabled;
     const m = new Map<string, FieldChip[]>();
-    for (const r of shown) m.set(taskKey(r), fieldChipsOf(r.hit, types_));
+    for (const r of shown) m.set(r.key, fieldChipsOf(r.hit, types_));
     return m;
   });
   /** Each note's language (the index's reading of it): a row's words are set in their
    *  note's language, so a Japanese note's task takes Japanese glyphs and line rules
    *  whatever the interface is. */
-  const langOf = $derived(new Map(vault.notes.map((n) => [n.id, n.lang])));
   /** The estimates of the day added up, shown beside the group's count when any row has one. */
   const todayEstimate = $derived.by(() => {
     const sum = estimateSum(groups.today);
@@ -205,7 +204,7 @@
    *  menu it opens, float at the right-click with the pointer gone from the row — and a
    *  "start date: today / tomorrow" with no row lit says nothing about which task it is
    *  setting. The context menu remembers what it was opened for (owner) until it closes. */
-  const heldKey = $derived(dateMenu ? taskKey(dateMenu.row) : contextMenu.owner);
+  const heldKey = $derived(dateMenu ? dateMenu.row.key : contextMenu.owner);
 
   function applyDate(date: string | null) {
     const m = dateMenu;
@@ -232,7 +231,7 @@
         copyId: () => void copyTaskId(r, commit),
         remove: () => void commit(r.hit, t("task.act.remove"), () => deleteTask(r.hit)),
       }),
-      taskKey(r),
+      r.key,
     );
   }
 
@@ -270,10 +269,10 @@
   {@const blocked = isBlocked(r, open)}
   {@const main = placeTask(r, today, dateKind).field}
   {@const mainDate = main ? r[main] : undefined}
-  <li data-anchor={taskKey(r)}>
+  <li data-anchor={r.key}>
     <div
       class="row"
-      class:held={taskKey(r) === heldKey}
+      class:held={r.key === heldKey}
       class:blocked
       class:closed
       role="button"
@@ -289,7 +288,7 @@
       <!-- The words take the row's width, clipped at their logical end (dir=auto: a
         right-to-left task keeps its opening words); the whole text is cliptip's, laid
         over the clipped line a quarter second into the hover -->
-      <span class="text" lang={langOf.get(r.hit.note) ?? undefined} dir="auto" use:cliptip={r.text}>{r.text}</span>
+      <span class="text" lang={vault.noteById.get(r.hit.note)?.lang ?? undefined} dir="auto" use:cliptip={r.text}>{r.text}</span>
       <!-- The date column: one date, the one that placed the row in its group, at a fixed
         width so the column stands still whatever the filter leaves -->
       <span class="when">
@@ -314,7 +313,7 @@
           {#if r.deleteOnDone}<span class="mi">{t("task.chip.deleteOnDone")}</span><span class="sep">{" · "}</span>{/if}
           <!-- The inline fields (views/blockrow.ts's one derivation): a state field with its
             step's glyph, the rest as key: value — the board shows the same -->
-          {#each chipsOf.get(taskKey(r)) ?? [] as f (f.key)}
+          {#each chipsOf.get(r.key) ?? [] as f (f.key)}
             {#if f.kind === "state"}
               <span class="mi"><i class="glyph">{@html stateGlyphSvg(f.step, f.of)}</i>{f.value}</span><span class="sep">{" · "}</span>
             {:else}
@@ -352,7 +351,7 @@
         {#if extra}<span class="extra">{extra}</span>{/if}
       </summary>
       <ul>
-        {#each rows as r (taskKey(r))}
+        {#each rows as r (r.key)}
           {@render taskRow(r, group)}
         {/each}
       </ul>

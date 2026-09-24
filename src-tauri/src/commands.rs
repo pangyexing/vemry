@@ -614,16 +614,22 @@ pub fn file_read_binary(state: State<'_, AppState>, path: String) -> Result<taur
 /// The pixel size of each vault image, `[width, height]` in the order asked, read from
 /// its header without decoding it (imagesize.rs); `null` for a file that is missing or
 /// whose size cannot be read. The editor asks for a note's images as it opens the note,
-/// so an image's placeholder has its true size before the image loads. The files are
-/// opened under the vault lock and read after it, off the main thread.
+/// so an image's placeholder has its true size before the image loads. Only the vault
+/// root is read under the vault lock; the files are opened and read after it, on a
+/// blocking thread.
 #[tauri::command]
 pub async fn image_sizes(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Option<(u32, u32)>>, String> {
     const MAX_PATHS: usize = 2000;
-    let files: Vec<_> = with_vault(&state, |v| Ok(paths.iter().take(MAX_PATHS).map(|p| v.open_file(p).ok()).collect()))?;
-    Ok(files
-        .into_iter()
-        .map(|f| f.and_then(|mut f| crate::imagesize::image_size(&mut f)))
-        .collect())
+    let root = with_vault(&state, |v| Ok(v.root().to_path_buf()))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .iter()
+            .take(MAX_PATHS)
+            .map(|p| Vault::open_in(&root, p).ok().and_then(|mut f| crate::imagesize::image_size(&mut f)))
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Save pasted image/file bytes as a vault attachment. The bytes arrive as the

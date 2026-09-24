@@ -378,11 +378,8 @@ pub(crate) fn show(app: &AppHandle) {
 /// on another screen.
 fn place(app: &AppHandle, w: &WebviewWindow) {
     let height = app.state::<AppState>().capture_window.lock().height.clamp(MIN_HEIGHT, MAX_HEIGHT);
-    let monitor = app
-        .cursor_position()
-        .ok()
-        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
-        .or_else(|| app.primary_monitor().ok().flatten());
+    let monitor =
+        crate::window_geom::monitor_at_pointer(app).or_else(|| app.primary_monitor().ok().flatten());
     if let Some(m) = monitor {
         let area = m.work_area();
         let scale = m.scale_factor();

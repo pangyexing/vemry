@@ -766,9 +766,6 @@
     text-decoration: underline;
   }
   .diff {
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    line-height: 1.6;
     max-height: 260px;
     overflow: auto;
     -webkit-user-select: text;

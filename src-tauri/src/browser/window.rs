@@ -1036,51 +1036,19 @@ fn record_detached_geom(app: &AppHandle, win: &tauri::Window) {
     }
 }
 
-/// The build geometry of the detached window: the position it was last closed at
-/// comes first, otherwise it is centred at nearly full height in the visible area
-/// (work_area, with the menu bar, Dock and taskbar already removed) of the main
-/// window's screen. None when the main window or the monitors cannot be read, and
-/// the caller falls back to builder.center().
+/// The build geometry of the detached window: the geometry it was last closed at comes
+/// first, fitted into the display holding its title bar (window_geom::place — one on an
+/// unplugged display is dropped, a window must never open off-screen); otherwise it is
+/// centred at nearly full height in the visible area of the main window's screen. None
+/// when neither can be read, and the caller falls back to builder.center().
 fn independent_geom(
     app: &AppHandle,
     remembered: Option<crate::agent_window::WindowGeom>,
 ) -> Option<crate::agent_window::WindowGeom> {
-    use crate::agent_window::WindowGeom;
-    if let Some(g) = remembered {
-        // The remembered geometry may belong to an external display that has been
-        // unplugged: when the title bar lands on no monitor at all it is discarded in
-        // favour of the "centred on the main window's screen" below — a window must
-        // never open off-screen
-        if grabbable_on_some_monitor(app, &g) {
-            return Some(g);
-        }
-    }
-    let main = main_window(app)?;
-    let monitor = main.current_monitor().ok()??;
-    let scale = monitor.scale_factor();
-    let wa = monitor.work_area();
-    let pos = wa.position.to_logical::<f64>(scale);
-    let size = wa.size.to_logical::<f64>(scale);
-    let (x, y, w, h) = initial_browser_rect(pos.x, pos.y, size.width, size.height);
-    Some(WindowGeom { x, y, w, h })
-}
-
-/// The usability check for a remembered geometry: the window's title bar (a point in
-/// the middle of its top edge) landing inside any monitor's visible area counts as
-/// grabbable — the user can at least drag it back. With no monitor list available it
-/// does not block (better to trust the memory).
-pub(crate) fn grabbable_on_some_monitor(app: &AppHandle, g: &crate::agent_window::WindowGeom) -> bool {
-    let Ok(monitors) = app.available_monitors() else { return true };
-    if monitors.is_empty() {
-        return true;
-    }
-    // The middle of the title bar, 20 logical px into the window
-    let (px, py) = (g.x + g.w / 2.0, g.y + 20.0);
-    monitors.iter().any(|m| {
-        let scale = m.scale_factor();
-        let pos = m.work_area().position.to_logical::<f64>(scale);
-        let size = m.work_area().size.to_logical::<f64>(scale);
-        px >= pos.x && px <= pos.x + size.width && py >= pos.y && py <= pos.y + size.height
+    remembered.and_then(|g| crate::window_geom::place(app, g)).or_else(|| {
+        let a = crate::window_geom::area_under(app, &main_window(app)?)?;
+        let (x, y, w, h) = initial_browser_rect(a.x, a.y, a.w, a.h);
+        Some(crate::agent_window::WindowGeom { x, y, w, h })
     })
 }
 

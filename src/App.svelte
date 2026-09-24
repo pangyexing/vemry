@@ -92,8 +92,8 @@
 
   // ---- The sidebars: dragging a sash, double-clicking to reset, swapping sides (swapSides) ----
   // The sum of the three columns' minimum widths plus the activity bar (140+300+280+44=764) goes
-  // with tauri.conf.json's minWidth=764 and the browser store's MAIN_MIN_BESIDE_PANEL=804, and
-  // a change means looking at all three
+  // with the main window's min_inner_size in window_geom.rs (764) and the browser store's
+  // MAIN_MIN_BESIDE_PANEL=804, and a change means looking at all three
   // (the coupling the old CSS grid comment described, now collected here)
   const TREE_MIN = 140;
   const CENTER_MIN = 300;
