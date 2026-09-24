@@ -138,20 +138,32 @@
   .zone :global(svg) {
     display: block;
   }
+  /* The source colours (the --prov-* tokens, defined once in app.css for both themes) are
+     marks, not ink: at 3–4:1 on the panel they would be too faint as text. So the label is
+     written in the secondary ink and the colour rides a dot before it; the pending chips
+     below carry it in their ring */
   .origin {
     max-width: 40vw;
     overflow: hidden;
     text-overflow: ellipsis;
     flex-shrink: 1;
+    --origin: var(--prov-agent);
   }
-  .origin-agent {
-    color: var(--prov-agent);
+  .origin::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 5px;
+    border-radius: 50%;
+    vertical-align: 1px;
+    background: var(--origin);
   }
   .origin-clip {
-    color: var(--prov-clip);
+    --origin: var(--prov-clip);
   }
   .origin-capture {
-    color: var(--prov-capture);
+    --origin: var(--prov-capture);
   }
   .pending.translate,
   .pending.quota {
@@ -162,7 +174,7 @@
     padding: 0 8px;
     border-radius: 999px;
     border: 1px solid var(--prov-agent);
-    color: var(--prov-agent);
+    color: var(--fg);
     background: none;
     font-size: var(--fs-xs);
     cursor: pointer;
@@ -180,14 +192,12 @@
   .pending.step {
     padding: 0 5px;
   }
-  /* the vault chip is quieter than this note's: no ring until hovered */
+  /* the vault chip is quieter than this note's: no ring until hovered (the ring alone, never a faded label) */
   .pending-vault {
     border-color: transparent;
-    opacity: 0.85;
   }
   .pending-vault:hover {
     border-color: var(--prov-agent);
-    opacity: 1;
   }
   .right {
     margin-left: auto;

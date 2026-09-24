@@ -13,6 +13,7 @@
   import { agent } from "$lib/stores/agent.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { copyText } from "$lib/copytext";
+  import { cliptip } from "$lib/cliptip";
   import Chevron from "./Chevron.svelte";
   import PrivacyIcon from "./PrivacyIcon.svelte";
 
@@ -131,12 +132,13 @@
     const i = path.lastIndexOf("/");
     return i === -1 ? null : path.slice(0, i);
   }
+  /** The extension as written, with its dot (".png"): the suffix an attachment row prints after the name */
   function extOf(path: string): string {
     const base = baseOf(path);
     const i = base.lastIndexOf(".");
-    return i > 0 ? base.slice(i + 1).toUpperCase() : "";
+    return i > 0 ? base.slice(i) : "";
   }
-  /** An attachment row shows the stem without its extension, leaving the type to the badge on the right */
+  /** An attachment row's name without its extension, which follows as a quieter suffix */
   function stemNoExt(path: string): string {
     const base = baseOf(path);
     const i = base.lastIndexOf(".");
@@ -346,11 +348,6 @@
   function zoneHint(priv: PrivacyStatus): string | undefined {
     return priv.kind === "inherited" ? t("fileTree.privacyInherited", { zone: `${priv.zone}/` }) : undefined;
   }
-  /** A file row's tooltip: the path, plus the zone line when the row is inside one (native tooltips honour the newline) */
-  function rowTitle(path: string, priv: PrivacyStatus): string {
-    const hint = zoneHint(priv);
-    return hint ? `${path}\n${hint}` : path;
-  }
 
   /** Keys on a focused tree row: ⌘⌫/Delete deletes, F2 renames, ⌘X cuts. */
   function rowKeydown(e: KeyboardEvent, path: string, kind: RowKind) {
@@ -537,7 +534,7 @@
       >
         {@render indent(depth)}
         <span class="gutter chevron" class:open={!!vault.expanded[child.path]}><Chevron /></span>
-        <span class="name">{child.name}</span>
+        <span class="label"><span class="name" use:cliptip={child.name}>{child.name}</span></span>
         {#if priv.kind === "root"}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
       </button>
     {/if}
@@ -555,12 +552,11 @@
       <button
         class="row file-row"
         class:active={vault.currentPath === note.id}
-        class:open={vault.isOpen(note.id)}
         class:inherited={priv.kind === "inherited"}
         class:cut={cut?.path === note.id}
         data-path={note.id}
         data-drop={parentOf(note.id) ?? ""}
-        title={rowTitle(note.id, priv)}
+        title={zoneHint(priv)}
         onpointerdown={(e) => pressRow(e, note.id, "note")}
         onclick={(e) => {
           focusRow(e);
@@ -576,7 +572,9 @@
       >
         {@render indent(depth)}
         <span class="gutter"></span>
-        <span class="name">{stemOf(note.id)}</span>
+        <!-- The name is set in the note's own language (the index reads it): a Japanese
+          title takes Japanese glyph forms under a Chinese interface, as in the editor -->
+        <span class="label"><span class="name" lang={note.lang ?? undefined} use:cliptip={stemOf(note.id)}>{stemOf(note.id)}</span></span>
         {#if priv.kind === "root"}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
         {#if pend}<span class="pend" title={t("prov.pendingCount", { n: pend })}></span>{/if}
       </button>
@@ -590,12 +588,11 @@
       <button
         class="row file-row other"
         class:active={vault.currentPath === file}
-        class:open={vault.isOpen(file)}
         class:inherited={priv.kind === "inherited"}
         class:cut={cut?.path === file}
         data-path={file}
         data-drop={parentOf(file) ?? ""}
-        title={rowTitle(file, priv)}
+        title={zoneHint(priv)}
         onpointerdown={(e) => pressRow(e, file, "file")}
         onclick={(e) => {
           focusRow(e);
@@ -610,9 +607,13 @@
       >
         {@render indent(depth)}
         <span class="gutter"></span>
-        <span class="name">{stemNoExt(file)}</span>
+        <!-- The extension follows the name as a quieter suffix: the name truncates, the
+          type stays readable -->
+        <span class="label"
+          ><span class="name" use:cliptip={baseOf(file)}>{stemNoExt(file)}</span
+          >{#if extOf(file)}<span class="ext">{extOf(file)}</span>{/if}</span
+        >
         {#if priv.kind === "root"}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
-        {#if extOf(file)}<span class="ext">{extOf(file)}</span>{/if}
       </button>
     {/if}
   {/each}
@@ -709,7 +710,6 @@
     <button
       class="row file-row memory-row"
       class:active={vault.currentPath === MEMORY_ID}
-      class:open={vault.isOpen(MEMORY_ID)}
       title={t("fileTree.memoryHint")}
       onclick={(e) => {
         focusRow(e);
@@ -739,9 +739,8 @@
           <path d="M6 1.4 L7.15 4.85 L10.6 6 L7.15 7.15 L6 10.6 L4.85 7.15 L1.4 6 L4.85 4.85 Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
         </svg>
       </span>
-      <span class="name">VEMRY.md</span>
+      <span class="label"><span class="name">VEMRY.md</span><span class="ext tag">{t("fileTree.memoryBadge")}</span></span>
       {#if vault.privatePaths.has(MEMORY_ID)}<span class="lock" title={t("statusBar.privacyZoneHint")}><PrivacyIcon size={14} /></span>{/if}
-      <span class="ext agent">AGENT</span>
     </button>
   </div>
 {/if}
@@ -859,7 +858,7 @@
   .sw-path {
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -879,7 +878,7 @@
     padding-left: 10px;
     font-size: var(--fs-xs);
     font-weight: 400;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .head-actions {
     display: flex;
@@ -910,7 +909,7 @@
   }
   .memory-row:hover .memory-icon,
   .memory-row.active .memory-icon {
-    color: var(--accent);
+    color: var(--fg-muted);
   }
   .tree {
     overflow-y: auto;
@@ -918,52 +917,59 @@
     min-height: 0;
     padding: 6px 4px 24px;
   }
+  /* A row is 26px: an 18px line box and 4px above and below, whole pixels (the outline
+     panel's entries are the same height). The names are content — what the reader looks
+     for and opens — so they take the body ink; a folder is told apart by its chevron and a
+     step of weight, not by being the darker of the two */
   .row {
     display: flex;
     align-items: center;
     width: 100%;
-    min-height: 24px;
-    padding: 3px 8px;
+    min-height: 26px;
+    padding: 4px 8px;
     border-radius: 4px;
     font-size: var(--fs-sm);
-    color: var(--fg-muted);
+    line-height: 18px;
+    color: var(--fg);
     text-align: left;
   }
   .row:hover {
     background: var(--bg-hover);
-    color: var(--fg);
   }
-  /* The faint highlight: open in some tab (the text colour alone); the active tab is still highlighted with a background */
-  .file-row.open {
-    color: var(--fg);
-  }
+  /* "Current" is drawn one way across the app: the active ground plus a 2px accent bar at
+     the start of the row (the outline's section, the activity bar's view and the tabs'
+     bottom line are the same mark). Whether a note is open in some tab is not marked here —
+     the tab bar already says so */
   .file-row.active {
-    background: var(--accent-soft);
-    color: var(--fg);
+    background: var(--bg-active);
+    border-radius: 0 4px 4px 0;
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  /* The name and its suffix: the group takes the free width (pushing the badges to the end),
+     and only the name gives way when it is short of room */
+  .label {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
   }
   .name {
-    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* A file's extension (".png") right after its name in the secondary ink, at the name's own
+     size — no outlined badge */
   .ext {
     flex-shrink: 0;
-    margin-left: 8px;
-    font-family: var(--font-mono);
-    font-size: 9px;
-    line-height: 1;
-    letter-spacing: 0.03em;
-    color: var(--fg-faint);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 1.5px 3px;
+    color: var(--fg-muted);
+    white-space: nowrap;
   }
-  /* AGENT is not an extension — the semantic badge uses accent to set it apart from the grey file-type badges */
-  .ext.agent {
-    color: var(--accent);
-    border-color: currentColor;
+  /* VEMRY.md's role, a word after the name rather than an extension */
+  .ext.tag {
+    margin-left: 6px;
+    font-size: var(--fs-xs);
   }
   /* The privacy-zone badge (the struck-out AI sparkle) sits on the zone root only: visible to a person, invisible to the AI */
   .lock {
@@ -981,18 +987,14 @@
     border-radius: 50%;
     background: var(--prov-agent);
   }
-  /* Inside a zone (a folder above carries the badge) the name is dimmed rather than badged
-     again. Opacity, not colour, so it composes with .file-row.open/.active's colours,
-     .folder-row's weight and .row.cut's own opacity */
-  .row.inherited .name {
-    opacity: 0.6;
-  }
-  .file-row.active .ext {
-    color: var(--accent);
-  }
   .folder-row {
-    color: var(--fg);
-    font-weight: 600;
+    font-weight: 500;
+  }
+  /* Inside a zone (a folder above carries the badge) the name is quieted rather than badged
+     again: the secondary ink, which stays readable (≥ 4.5:1 on the panel, hover and active
+     grounds), where fading it with opacity fell to 2.2:1 */
+  .row.inherited {
+    color: var(--fg-muted);
   }
   /* The indent guides: 16px per level, with the vertical line falling in the centre of the level above's arrow slot */
   .guide {
@@ -1028,11 +1030,14 @@
   .hint {
     padding: 16px 12px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
-  /* Cut and waiting to be pasted: semi-transparent (the file manager convention) */
+  /* Cut and waiting to be pasted: the secondary ink inside a dashed outline — marked as in
+     transit without fading the name out of reading */
   .row.cut {
-    opacity: 0.5;
+    color: var(--fg-muted);
+    outline: 1px dashed var(--fg-faint);
+    outline-offset: -1px;
   }
   /* The folder row hovered as a drop target while dragging (hovering a file row lights up its parent folder's row) */
   .row.drop-into {
@@ -1068,10 +1073,12 @@
     padding-bottom: 1px;
     padding-right: 8px;
   }
+  /* 1 + 24 + 1: the inline input takes exactly a row's 26px, so the rows below do not shift */
   .edit-row input {
     width: 100%;
+    height: 24px;
     font-size: var(--fs-sm);
-    padding: 2px 6px;
+    padding: 0 6px;
     border-color: var(--accent);
     border-radius: 4px;
     background: var(--bg);

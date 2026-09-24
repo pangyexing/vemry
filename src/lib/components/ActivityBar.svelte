@@ -259,16 +259,16 @@
   .ab-btn.on {
     color: var(--fg);
   }
-  /* The view's active "lit up" state: accent colouring plus an accent-soft tile (the same
-     active language as the file tree's selected row and the settings navigation), and hover
-     does not fall back to a grey ground */
+  /* The current view is drawn the way "current" is drawn everywhere (the file tree's row, the
+     outline's section): the active ground plus the 2px accent bar below — the accent is the
+     bar alone, the icon takes the ink. Hover does not fall back to the grey hover ground */
   .ab-btn.active,
   .ab-btn.active:hover {
-    color: var(--accent);
+    color: var(--fg);
   }
   .ab-btn.active::after,
   .ab-btn.active:hover::after {
-    background: var(--accent-soft);
+    background: var(--bg-active);
   }
   /* The 2px full-height indicator on the outer edge marks the current main view alone; the
      file tree button is a switch rather than a view and only brightens */
@@ -322,8 +322,10 @@
     opacity: 1;
     transition-delay: 0.15s;
   }
+  /* The shortcut is quieter than the name through a solid colour between the capsule's ground
+     and its text (≥ 5:1 in both themes), not by fading the text with opacity */
   .tip-key {
-    opacity: 0.6;
+    color: color-mix(in srgb, var(--bg) 70%, var(--fg));
     font-family: var(--font-mono);
   }
   .ab-sep {

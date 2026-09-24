@@ -183,7 +183,7 @@
   .menu-title {
     font-size: var(--fs-xs);
     font-family: var(--font-mono);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 4px 10px 2px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -229,13 +229,13 @@
     color: var(--danger);
   }
   .menu button:disabled {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     cursor: default;
   }
   .key-hint {
     float: right;
     margin-left: 14px;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-xs);
   }
 </style>

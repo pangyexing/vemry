@@ -764,6 +764,7 @@
   "fileTree.emptyVault": "Empty vault — {key} or right-click to create a note",
   "fileTree.followAi": "Let the AI follow this note",
   "fileTree.markPrivate": "Mark private",
+  "fileTree.memoryBadge": "agent",
   "fileTree.memoryHint": "VEMRY.md — vault conventions injected into the agent's system prompt",
   "fileTree.memoryMenuTitle": "VEMRY.md · vault memory",
   "fileTree.newFile": "New file",

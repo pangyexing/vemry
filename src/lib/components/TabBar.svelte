@@ -1,7 +1,7 @@
 <script lang="ts">
   // The editor's tab bar (replacing the old note-header): back and forward at the left end,
   // the tab list on the right.
-  // A preview tab is italic (a single click reuses that slot) and a double click on the
+  // A preview tab has a dotted underline (a single click reuses that slot) and a double click on the
   // title promotes it; drag-reordering goes through pointer events plus the suppressClick
   // contract (the same as FileTree's, with no ghost drawn — the id-keyed each preserves DOM
   // identity, the pointer capture is unbroken, and moveTab runs live while dragging).
@@ -14,6 +14,23 @@
   import Chevron from "./Chevron.svelte";
 
   let stripEl = $state<HTMLElement | null>(null);
+
+  // ---- the unsaved dot ----
+  // Autosave writes about a second after the last keystroke, so while the reader types the
+  // buffer is dirty for a second at a time: marking every one of those swaps the dot and the
+  // close button back and forth at the edge of sight. The dot therefore means "not saved for
+  // a while" — it appears once the buffer has stayed dirty for DIRTY_SHOWN_MS (a failing or
+  // paused save), and goes the moment it is clean.
+  const DIRTY_SHOWN_MS = 3000;
+  let dirtyShown = $state(false);
+  $effect(() => {
+    if (!vault.dirty) {
+      dirtyShown = false;
+      return;
+    }
+    const timer = setTimeout(() => (dirtyShown = true), DIRTY_SHOWN_MS);
+    return () => clearTimeout(timer);
+  });
 
   // ---- overflow ----
   // The strip hides its scrollbar, so with many tabs open nothing would say that more sit
@@ -41,7 +58,7 @@
   });
 
   $effect(() => {
-    // read what changes a tab's width: the set of tabs, the italic of the preview slot, and
+    // read what changes a tab's width: the set of tabs, which one is the preview slot, and
     // which tab is active (the active tab keeps its natural width while the rest give way, so
     // an activation alone can push the strip into overflow, or out of it, with no scroll to
     // report it; the observer above sees only the strip's own box, not its content)
@@ -221,8 +238,8 @@
 
 <div
   class="tabbar"
-  class:tree-closed={!vault.leftOpen}
-  class:panel-closed={!vault.rightOpen}
+  class:clear-left={!vault.rightOpen && vault.swapSides}
+  class:clear-right={!vault.rightOpen && !vault.swapSides}
   class:projected={vault.mainView === "reading" || vault.mainView === "translate"}
 >
   <div class="nav-btns">
@@ -246,7 +263,7 @@
         class="tab"
         class:active={isActive}
         class:preview={!tab.pinned}
-        class:dirty={isActive && vault.dirty}
+        class:dirty={isActive && dirtyShown}
         class:dragging={dragging === tab.id}
         data-tab-id={tab.id}
         role="tab"
@@ -331,20 +348,22 @@
      Every other view is a tab itself, keeps its active highlight as usual and does not take
      this branch */
   .tabbar.projected .tab {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     border-bottom-color: transparent;
   }
   .tabbar.projected .tab:hover {
-    color: var(--fg-muted);
+    color: var(--fg);
   }
   .vicon {
     flex-shrink: 0;
   }
-  /* With a sidebar collapsed it clears the floating reopen button in that corner (the old note-header contract) */
-  .tabbar.tree-closed {
+  /* With the side panel collapsed, the bar clears the floating button that reopens it — on
+     whichever side the panel docks (App's .reopen follows the swap). The file tree has no
+     such button (the activity bar reopens it), so a closed tree leaves no gap */
+  .tabbar.clear-left {
     padding-left: 46px;
   }
-  .tabbar.panel-closed {
+  .tabbar.clear-right {
     padding-right: 46px;
   }
   .nav-btns {
@@ -446,11 +465,18 @@
     /* The one tab whose name must stay readable in a crowded bar keeps its natural width */
     flex-shrink: 0;
   }
+  /* The tab being dragged is marked by its ground, not faded: its name stays readable */
   .tab.dragging {
-    opacity: 0.6;
+    background: var(--bg-active);
   }
+  /* The preview slot: a dotted underline under the name. Not italic — Han and kana have no
+     italic face, and the browser would slant them by algorithm */
   .tab.preview .tab-name {
-    font-style: italic;
+    text-decoration-line: underline;
+    text-decoration-style: dotted;
+    text-decoration-color: var(--fg-faint);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
   }
   .tab-name {
     overflow: hidden;

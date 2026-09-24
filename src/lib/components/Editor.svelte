@@ -1218,7 +1218,8 @@
         try {
           const md = await api.htmlToMarkdown(html);
           if (!md.trim() || md.trim() === plain.trim()) return null;
-          toast.push(t("chat.pastedAsMarkdown"));
+          // No notice: the converted text lands where the reader is looking, and a notice for
+          // every routine paste would only cover the body column
           return md;
         } catch {
           return null;

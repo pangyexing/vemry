@@ -1387,10 +1387,15 @@
     background: var(--bg-hover);
     color: var(--fg);
   }
+  /* The current page, drawn the way "current" is drawn across the app: the active ground
+     plus a 2px accent bar at the start of the row, the label in the body ink */
   .side-item.active {
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-weight: 600;
+    background: var(--bg-active);
+    color: var(--fg);
+    font-weight: 500;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    box-shadow: inset 2px 0 0 var(--accent);
   }
   .side-item:disabled {
     opacity: 0.45;
@@ -1515,7 +1520,7 @@
     font-size: var(--fs-sm);
   }
   .door-kind {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-xs);
     margin-left: 6px;
   }
@@ -1597,7 +1602,7 @@
   }
   small {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   small.ok {
     color: var(--accent);
@@ -1667,7 +1672,7 @@
     background: var(--bg-hover);
   }
   .rules li.comment .rule-text {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .rule-text {
     flex: 1;
@@ -1678,7 +1683,7 @@
     white-space: nowrap;
   }
   .rule-del {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-xs);
     padding: 2px 5px;
     border-radius: 4px;
@@ -1721,7 +1726,7 @@
     font-family: var(--font-mono);
   }
   .privacy .empty {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .privacy .err {
     color: var(--danger);
@@ -1798,7 +1803,7 @@
   /* which layer a skill row is: quiet for a built-in, the accent for the user's own file */
   .source-badge {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 1px 8px;
@@ -1818,10 +1823,10 @@
     gap: 8px;
   }
   .script-summary {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .scripts .empty {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .scripts .err {
     color: var(--danger);
@@ -1844,6 +1849,6 @@
   .btn.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--bg);
   }
 </style>

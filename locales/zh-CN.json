@@ -764,6 +764,7 @@
   "fileTree.emptyVault": "空知识库 — {key} 或右键新建笔记",
   "fileTree.followAi": "让 AI 跟随此笔记",
   "fileTree.markPrivate": "标记为隐私",
+  "fileTree.memoryBadge": "agent",
   "fileTree.memoryHint": "VEMRY.md — 注入 agent system prompt 的仓库约定",
   "fileTree.memoryMenuTitle": "VEMRY.md · agent 仓库约定",
   "fileTree.newFile": "新建文件",

@@ -1,13 +1,13 @@
 <script lang="ts">
-  // The notice stack, bottom centre of the window: the editor and the composer end just
-  // above it, so it lands where the eye already is — a corner shared with a panel of the
-  // same colour was passed over. The surface is inverted (the theme's ink as ground) so it
-  // stands out from whatever it lies over. The main window and the detached chat window
-  // each mount one (the toast store belongs to each window).
+  // The notice stack, bottom right of the window, just above the status bar: out of the
+  // body column, which the bottom centre lay right across for the several seconds a notice
+  // stays. The surface is inverted (the theme's ink as ground) so it stands out from
+  // whatever it lies over. The main window and the detached chat window each mount one
+  // (the toast store belongs to each window).
   // lift: a window with a bottom status bar passes var(--statusbar-h); the detached chat
   // window and the welcome page keep the default 0. The 16px baseline is added here.
   // inset: the width a docked browser window covers on the right (a native child window is
-  // always above the DOM), so the stack centres in the part of the window that can be seen.
+  // always above the DOM), so the stack keeps to the part of the window that can be seen.
   import { fade, fly } from "svelte/transition";
   import { t } from "$lib/i18n/i18n.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -59,15 +59,15 @@
     padding: 0 16px;
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-end;
     gap: 8px;
     z-index: 300;
-    /* The stack spans the width so its items can centre; only the items take the pointer */
+    /* The stack spans the width so a long notice can wrap within the window; only the items take the pointer */
     pointer-events: none;
   }
   .toast-item {
     pointer-events: auto;
-    max-width: min(560px, 100%);
+    max-width: min(400px, 100%);
     display: flex;
     align-items: baseline;
     gap: 10px;
@@ -96,14 +96,16 @@
     flex: 1 1 auto;
     min-width: 0;
   }
+  /* The close glyph is a solid colour between the ground and the text, not the text faded
+     with opacity: on the inverted surface it stays ≥ 5:1 in both themes, and the hover
+     brings it to the full text colour */
   .toast-item button {
     flex: none;
-    color: var(--bg);
-    opacity: 0.55;
+    color: color-mix(in srgb, var(--bg) 70%, var(--fg));
     font-size: var(--fs-sm);
     padding: 0 2px;
   }
   .toast-item button:hover {
-    opacity: 1;
+    color: var(--bg);
   }
 </style>

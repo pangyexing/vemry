@@ -97,7 +97,7 @@
   }
   small {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     line-height: 1.6;
   }
   input {
@@ -118,6 +118,6 @@
   .btn.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--bg);
   }
 </style>

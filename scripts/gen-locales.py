@@ -1114,6 +1114,7 @@ add("fileTree.", {
     "memoryHint": ("VEMRY.md — vault conventions injected into the agent's system prompt",
                    "VEMRY.md — 注入 agent system prompt 的仓库约定"),
     "memoryMenuTitle": ("VEMRY.md · vault memory", "VEMRY.md · agent 仓库约定"),
+    "memoryBadge": ("agent", "agent"),
     "emptyVault": ("Empty vault — {key} or right-click to create a note",
                    "空知识库 — {key} 或右键新建笔记"),
 })

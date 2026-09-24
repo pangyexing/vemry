@@ -293,14 +293,14 @@
   }
   small {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   small.err,
   .warn {
     color: var(--danger);
   }
   .muted {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .who {
     display: flex;
@@ -311,7 +311,7 @@
   /* the plan, quiet for free and the accent for a paid one */
   .badge {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 1px 8px;
@@ -350,7 +350,7 @@
   .btn.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--bg);
   }
   .btn:disabled {
     opacity: 0.5;

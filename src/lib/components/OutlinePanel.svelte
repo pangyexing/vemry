@@ -4,6 +4,7 @@
   import { plainText } from "$lib/markdown";
   import { vault } from "$lib/stores/vault.svelte";
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
+  import { cliptip } from "$lib/cliptip";
   import Chevron from "./Chevron.svelte";
 
   let links = $state<NoteLinks | null>(null);
@@ -57,26 +58,53 @@
    *  editor before scrolling: the contract is collected in vault.revealInEditor (shared
    *  with "land back after closing a browser window"). */
   const jump = (from: number) => void vault.revealInEditor(from);
+
+  /** The headings are the note's own words: they are set in its language (the index reads
+   *  it), so a Japanese note's outline takes Japanese glyph forms under any interface. */
+  const noteLang = $derived(vault.notes.find((n) => n.id === vault.currentPath)?.lang ?? undefined);
+
+  let panelEl = $state<HTMLElement | null>(null);
+  // The current section stays in sight: when the reader's cursor moves into a section whose
+  // entry lies outside the panel's viewport, the list scrolls by the nearest distance that
+  // brings it back — and not at all otherwise, so the list holds still while the section
+  // is visible
+  $effect(() => {
+    const i = activeIdx;
+    const panel = panelEl;
+    if (i < 0 || !panel) return;
+    const el = panel.querySelector<HTMLElement>(`[data-outline="${i}"]`);
+    if (!el) return;
+    const p = panel.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    // a hidden panel (the research tab in front) measures zero: nothing to follow
+    if (p.height === 0) return;
+    if (r.top < p.top) panel.scrollTop -= p.top - r.top;
+    else if (r.bottom > p.bottom) panel.scrollTop += r.bottom - p.bottom;
+  });
 </script>
 
 {#snippet chevron(open: boolean)}
   <span class="chevron" class:open><Chevron /></span>
 {/snippet}
 
-<div class="panel">
+<div class="panel" bind:this={panelEl}>
   {#if !vault.currentIsNote}
     <p class="hint">{t("outline.emptyHint")}</p>
   {:else}
-    <section>
+    <section lang={noteLang}>
       {#each vault.outline ?? [] as item, i (i)}
+        {@const label = plainText(item.text) || t("outline.untitled")}
+        <!-- Only the display is folded: App's landing point after closing a window matches against the outline's original text -->
         <button
           class="outline-entry"
           class:active={i === activeIdx}
+          class:top={item.level === minLevel}
+          data-outline={i}
           style:padding-left="{(item.level - minLevel) * 12 + 8}px"
           onclick={() => void jump(item.from)}
+          use:cliptip={label}
         >
-          <!-- Only the display is folded: App's landing point after closing a window matches against the outline's original text -->
-          {plainText(item.text) || t("outline.untitled")}
+          {label}
         </button>
       {:else}
         <p class="hint">{t("outline.noHeadings")}</p>
@@ -144,12 +172,17 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     margin-bottom: 8px;
     padding: 2px 0;
   }
+  /* Han, kana and hangul have no capitals, and tracking only pulls the characters apart */
+  .sec-head:is(:lang(zh), :lang(ja), :lang(ko)) {
+    text-transform: none;
+    letter-spacing: normal;
+  }
   .sec-head:hover {
-    color: var(--fg-muted);
+    color: var(--fg);
   }
   .chevron {
     display: inline-flex;
@@ -162,25 +195,34 @@
   .count {
     font-weight: 400;
   }
+  /* 26px entries (an 18px line box and 4px above and below), the file tree's row height.
+     The headings are the note's words and take the body ink; the top level the note uses is
+     one step heavier, the rest are told apart by their indent */
   .outline-entry {
     display: block;
     width: 100%;
     text-align: left;
     padding: 4px 8px;
     border-radius: 4px;
-    margin-bottom: 1px;
     font-size: var(--fs-sm);
-    color: var(--fg-muted);
+    line-height: 18px;
+    color: var(--fg);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .outline-entry.top {
+    font-weight: 500;
+  }
   .outline-entry:hover {
     background: var(--bg-hover);
-    color: var(--fg);
   }
+  /* The section the cursor is in: "current" drawn the one way it is drawn across the app —
+     the active ground plus a 2px accent bar at the start of the row */
   .outline-entry.active {
-    color: var(--accent);
+    background: var(--bg-active);
+    border-radius: 0 4px 4px 0;
+    box-shadow: inset 2px 0 0 var(--accent);
   }
   .entry {
     display: flex;
@@ -201,7 +243,7 @@
     color: var(--accent);
   }
   .entry.unresolved .entry-title {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .snippet {
     font-size: var(--fs-xs);
@@ -214,15 +256,15 @@
     overflow: hidden;
   }
   .badge {
-    font-size: 10px;
-    color: var(--fg-faint);
+    font-size: 11px;
+    color: var(--fg-muted);
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 0 4px;
   }
   .hint {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     padding: 4px 8px;
   }
 </style>

@@ -7,7 +7,9 @@
   import { runHostAction } from "$lib/host";
   import { executeCommand, registerCommand, syncScriptCommands } from "$lib/commands/registry";
   import { MEMORY_DRAFT_PROMPT, MEMORY_REVIEW_PROMPT } from "$lib/commands/memoryPrompts";
-  import { vault } from "$lib/stores/vault.svelte";
+  import { vault, type MainView } from "$lib/stores/vault.svelte";
+  import { untrack } from "svelte";
+  import { capturePlace, restorePlace, type ViewPlace } from "$lib/viewmemory";
   import { scaffold } from "$lib/scaffold";
   import { agent } from "$lib/stores/agent.svelte";
   import { journalToday, localDate } from "$lib/views/tasks";
@@ -25,6 +27,7 @@
   import Editor from "$lib/components/Editor.svelte";
   import FileTree from "$lib/components/FileTree.svelte";
   import ActivityBar, { ABAR_W } from "$lib/components/ActivityBar.svelte";
+  import { CONTENT_PAD } from "$lib/editor/blockhandle";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import TabBar from "$lib/components/TabBar.svelte";
   import OutlinePanel from "$lib/components/OutlinePanel.svelte";
@@ -95,31 +98,79 @@
   const TREE_MIN = 140;
   const CENTER_MIN = 300;
   const PANEL_MIN = 280;
+  // The body column comes before the sidebars: when it would hold fewer than BODY_CHARS
+  // characters a line, the sidebars give way — the file tree first, then the side panel —
+  // each only down to its yield floor, and only for as long as the room is short. They are
+  // never collapsed, and the widths the user dragged stay stored: the moment the window is
+  // wide enough again they come back by themselves. Below the floors the grid's own squeeze
+  // (toward the drag minimums above) keeps the body at CENTER_MIN.
+  const BODY_CHARS = 36;
+  const TREE_YIELD = 180;
+  const PANEL_YIELD = 320;
+  /** The side panel's default width is 30% of the layout capped here: past 1920 wide the
+   *  extra room goes to the conversation first rather than to the margins of the body column
+   *  (whose own cap does not move). */
+  const PANEL_DEFAULT_MAX = 720;
   // The sash being dragged (the highlighted handle line plus the full-screen col-resize cursor
   // overlay) has its state in the vault store (vault.resizing): the UI-state persistence effect
   // uses it to pause the synchronous localStorage writes while dragging
-  /** The column template: a column the user has dragged takes a fixed upper bound (when space
-   *  runs short the grid protects the 300 content area first and squeezes the sidebars: until
-   *  the editor reaches its minimum, a sidebar's width does not move at all); one never dragged
-   *  keeps the default elastic formula. An fr column only takes what is left once the minmax
-   *  columns are fed, so the content area's floor has to be written into its own min. Swapping
-   *  sides = reversing the column order plus the children's order (see .layout.swapped). */
+  /** The three columns' room (the window less the activity bar and a docked browser panel),
+   *  measured: the layout's own width never depends on its column template. */
+  let layoutW = $state(window.innerWidth - ABAR_W);
+  /** The column the reader dragged last holds the width they gave it: it neither gives way
+   *  nor snaps back when the drag ends. It is released as soon as the room changes (a window
+   *  resize, a sidebar opened or closed, the browser docked) — the reader's own action too. */
+  let held = $state<"tree" | "panel" | null>(null);
+  $effect(() => {
+    void layoutW;
+    void vault.leftOpen;
+    void vault.rightOpen;
+    held = null;
+  });
+  /** The width the body column wants: BODY_CHARS characters of the note font (a CJK
+   *  character is 1em, and 36em is also the Latin column's floor) plus the editor's two side
+   *  strips. */
+  const bodyWant = $derived(BODY_CHARS * prefs.noteFontSize + 2 * CONTENT_PAD);
+  /** The sidebars' drawn widths: the dragged (stored) or default width, less what each gives
+   *  way to the body column, the tree before the panel. */
+  const sideWidths = $derived.by(() => {
+    const avail = layoutW;
+    let short = bodyWant - avail;
+    const want = (open: boolean, w: number) => {
+      const v = open ? w : 0;
+      short += v;
+      return v;
+    };
+    const tree = want(vault.leftOpen, vault.leftWidth ?? 220);
+    const panel = want(vault.rightOpen, vault.rightWidth ?? Math.round(Math.min(avail * 0.3, PANEL_DEFAULT_MAX)));
+    const give = (w: number, floor: number, side: "tree" | "panel") => {
+      if (short <= 0 || held === side) return w;
+      const take = Math.min(short, Math.max(0, w - floor));
+      short -= take;
+      return w - take;
+    };
+    return { tree: give(tree, TREE_YIELD, "tree"), panel: give(panel, PANEL_YIELD, "panel") };
+  });
+  /** The column template: each sidebar's upper bound is its drawn width above and its lower
+   *  bound the drag minimum — when even the yield floors leave the body less than CENTER_MIN,
+   *  the grid squeezes the sidebars toward those minimums. An fr column only takes what is
+   *  left once the minmax columns are fed, so the content area's floor has to be written into
+   *  its own min. Swapping sides = reversing the column order plus the children's order (see
+   *  .layout.swapped). */
   const gridCols = $derived.by(() => {
-    const tree = `minmax(${TREE_MIN}px, ${vault.leftWidth ?? 220}px)`;
-    const panel = vault.rightWidth != null
-      ? `minmax(${PANEL_MIN}px, ${vault.rightWidth}px)`
-      : `minmax(${PANEL_MIN}px, min(30%, 560px))`;
     const cols: string[] = [];
-    if (vault.leftOpen) cols.push(tree);
+    if (vault.leftOpen) cols.push(`minmax(${TREE_MIN}px, ${sideWidths.tree}px)`);
     cols.push(`minmax(${CENTER_MIN}px, 1fr)`);
-    if (vault.rightOpen) cols.push(panel);
+    if (vault.rightOpen) cols.push(`minmax(${PANEL_MIN}px, ${sideWidths.panel}px)`);
     if (vault.swapSides) cols.reverse();
     return cols.join(" ");
   });
+  let treeCol = $state<HTMLElement | null>(null);
+  let panelCol = $state<HTMLElement | null>(null);
   /** A draggable column: its width now, its floor and ceiling, whether it sits on the left
    *  (dragging right widens it) and where the width goes. */
   type ResizeColumn = { startW: number; min: number; max: number; onLeft: boolean; write: (w: number) => void };
-  function resizeColumn(which: "tree" | "panel" | "browser", sash: HTMLElement): ResizeColumn {
+  function resizeColumn(which: "tree" | "panel" | "browser"): ResizeColumn {
     if (which === "browser") {
       // The panel is always at the right edge; its ceiling leaves the rest of the layout usable
       return {
@@ -136,7 +187,9 @@
     // width too
     const otherMin = which === "tree" ? (vault.rightOpen ? PANEL_MIN : 0) : (vault.leftOpen ? TREE_MIN : 0);
     return {
-      startW: sash.parentElement!.getBoundingClientRect().width,
+      // The width on screen, not the stored one: a column giving way starts the drag from
+      // where it is drawn (the sash itself may sit in the neighbouring column)
+      startW: (which === "tree" ? treeCol : panelCol)?.getBoundingClientRect().width ?? 0,
       min,
       max: window.innerWidth - browser.panelInset - ABAR_W - CENTER_MIN - otherMin,
       // Which side that column is docked on right now
@@ -156,11 +209,13 @@
     e.preventDefault(); // suppress the selection and focus side effects of the compatibility mousedown
     const sash = e.currentTarget as HTMLElement;
     const startX = e.clientX;
-    const col = resizeColumn(which, sash);
+    const col = resizeColumn(which);
     const max = Math.max(col.min, col.max);
     vault.resizing = which;
     sash.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
+      // From the first move on, the dragged column holds its width (a press alone changes nothing)
+      if (which !== "browser") held = which;
       col.write(Math.round(Math.min(max, Math.max(col.min, col.startW + (col.onLeft ? 1 : -1) * (ev.clientX - startX)))));
     };
     const up = () => {
@@ -188,6 +243,34 @@
     // while an overlay is up still gets the veil (browser.docked is a dependency here)
     if (!browser.docked) return;
     void api.browserPanelVeil(overlayOpen).catch(() => {});
+  });
+
+  // ---- A projection view keeps its place (the scroll and the open sections) across leaving
+  // it and coming back: written down as it unmounts, put back as it remounts (viewmemory.ts
+  // says why the views are not simply kept mounted). The reading projection and the
+  // translation keep their own places. Per vault, in memory: a vault switch forgets them.
+  let viewSlot = $state<HTMLElement | null>(null);
+  const viewPlaces = new Map<MainView, ViewPlace>();
+  const OWN_PLACE: MainView[] = ["editor", "reading", "translate"];
+  let shownView: MainView = vault.mainView;
+  let shownRoot = vault.root;
+  // pre: the leaving view is still in the DOM when its place is taken
+  $effect.pre(() => {
+    const view = vault.mainView;
+    const root = vault.root;
+    untrack(() => {
+      if (root !== shownRoot) viewPlaces.clear();
+      else if (view !== shownView && viewSlot && !OWN_PLACE.includes(shownView)) viewPlaces.set(shownView, capturePlace(viewSlot));
+      shownView = view;
+      shownRoot = root;
+    });
+  });
+  $effect(() => {
+    const view = vault.mainView;
+    const place = viewPlaces.get(view);
+    if (!place || !viewSlot) return;
+    viewPlaces.delete(view);
+    return restorePlace(viewSlot, place);
   });
 
   vault.loadRecent();
@@ -1299,6 +1382,24 @@
 
 <svelte:window {onkeydown} />
 
+<!-- A sidebar's sash rides its divider on the side away from any scrollbar: scrollbars sit at
+  the right edge of their pane, so the sash always takes the strip just right of the divider —
+  inside the column right of it, at that column's left edge. The column left of the content
+  area therefore draws its sash inside .center, and the one right of it inside itself -->
+{#snippet sash(which: "tree" | "panel")}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="sash"
+    class:active={vault.resizing === which}
+    role="separator"
+    aria-orientation="vertical"
+    aria-label={t(which === "tree" ? "app.resizeFileTree" : "app.resizeSidebar")}
+    title={t("app.dragToResize")}
+    onpointerdown={(e) => startResize(e, which)}
+    ondblclick={() => (which === "tree" ? (vault.leftWidth = null) : (vault.rightWidth = null))}
+  ></div>
+{/snippet}
+
 {#if !vault.root}
   <main class="welcome">
     <div class="welcome-card">
@@ -1341,22 +1442,10 @@
       alone, so it always hugs the window's outermost edge. It is outside #key vault.root as well:
       a vault switch does not remount it and nothing flickers -->
     <ActivityBar />
-    <div class="layout" class:swapped={vault.swapSides} style:grid-template-columns={gridCols}>
+    <div class="layout" class:swapped={vault.swapSides} style:grid-template-columns={gridCols} bind:clientWidth={layoutW}>
       {#if vault.leftOpen}
-        <aside class="left">
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-          <div
-            class="sash"
-            class:at-left={vault.swapSides}
-            class:at-right={!vault.swapSides}
-            class:active={vault.resizing === "tree"}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t("app.resizeFileTree")}
-            title={t("app.dragToResize")}
-            onpointerdown={(e) => startResize(e, "tree")}
-            ondblclick={() => (vault.leftWidth = null)}
-          ></div>
+        <aside class="left" bind:this={treeCol}>
+          {#if vault.swapSides}{@render sash("tree")}{/if}
           <!-- key: remounted on a vault switch, which resets the transient state (the paste
             destination, an inline edit and so on)
             (the collapsed state moved up into the vault store, is persisted per vault and is
@@ -1367,6 +1456,7 @@
         </aside>
       {/if}
       <main class="center">
+        {#if vault.swapSides ? vault.rightOpen : vault.leftOpen}{@render sash(vault.swapSides ? "panel" : "tree")}{/if}
         <!-- The tab bar is permanent: documents and projection views live in one bar (a view tab
           is the VIEW_TAB_PREFIX in vault, with no buffer); the reading projection is the one
           overlay state that does not enter the tabs, and during it the bar only greys out rather
@@ -1384,6 +1474,9 @@
           <div class="editor-host" style:display={vault.mainView === "editor" ? "contents" : "none"}>
             <Editor />
           </div>
+          <!-- display:contents: the views' height:100% still measures against .main-host; the
+            slot is only the root their place is written down from and put back into -->
+          <div class="view-slot" bind:this={viewSlot}>
           {#key vault.root}
             {#if vault.mainView === "agenda"}
               <AgendaView />
@@ -1407,23 +1500,12 @@
               <TranslateView />
             {/if}
           {/key}
+          </div>
         </div>
       </main>
       {#if vault.rightOpen}
-        <aside class="right">
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-          <div
-            class="sash"
-            class:at-left={!vault.swapSides}
-            class:at-right={vault.swapSides}
-            class:active={vault.resizing === "panel"}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t("app.resizeSidebar")}
-            title={t("app.dragToResize")}
-            onpointerdown={(e) => startResize(e, "panel")}
-            ondblclick={() => (vault.rightWidth = null)}
-          ></div>
+        <aside class="right" bind:this={panelCol}>
+          {#if !vault.swapSides}{@render sash("panel")}{/if}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="tabs" oncontextmenu={tabsMenu}>
             <button class:active={vault.rightTab === "outline"} onclick={() => (vault.rightTab = "outline")}>{t("app.tabOutline")}</button>
@@ -1543,18 +1625,21 @@
     gap: 10px;
   }
   .welcome-hint {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-xs);
   }
+  /* Text on the accent is the page ground, not white: the dark theme's accent is light, and
+    white on it falls to 2.6:1. Hover moves the fill toward the ink, which deepens the
+    contrast in both themes rather than fading the label */
   .open-btn {
     background: var(--accent);
-    color: #fff;
+    color: var(--bg);
     padding: 9px 20px;
     border-radius: 8px;
     font-size: var(--fs-md);
   }
   .open-btn:hover {
-    opacity: 0.92;
+    background: color-mix(in srgb, var(--accent) 88%, var(--fg));
   }
   .open-btn.ghost {
     background: transparent;
@@ -1562,7 +1647,6 @@
     border: 1px solid var(--border);
   }
   .open-btn.ghost:hover {
-    opacity: 1;
     color: var(--fg);
     background: var(--bg-hover);
   }
@@ -1575,10 +1659,15 @@
   }
   .recent-label {
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     margin-bottom: 4px;
+  }
+  /* Han, kana and hangul have no capitals, and tracking only pulls the characters apart */
+  .recent-label:is(:lang(zh), :lang(ja), :lang(ko)) {
+    text-transform: none;
+    letter-spacing: normal;
   }
   .recent-item {
     font-size: var(--fs-sm);
@@ -1654,7 +1743,7 @@
       elastic policy and the coupling (the content area's floor of 300, and the three columns' min
       plus the activity bar = 764 going with minWidth=764 / Rust's MIN_MAIN_VISIBLE=804) are
       explained in the script's comments; only one default fallback is kept here */
-    grid-template-columns: minmax(140px, 220px) minmax(300px, 1fr) minmax(280px, min(30%, 560px));
+    grid-template-columns: minmax(140px, 220px) minmax(300px, 1fr) minmax(280px, min(30%, 720px));
     /* single row capped at viewport height — panels scroll inside, never grow the row */
     grid-template-rows: minmax(0, 1fr);
   }
@@ -1684,6 +1773,7 @@
     min-height: 0;
   }
   .center {
+    position: relative;
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -1699,6 +1789,9 @@
     min-height: 0;
     min-width: 0;
   }
+  .view-slot {
+    display: contents;
+  }
   .right {
     position: relative;
     border-left: 1px solid var(--border-strong);
@@ -1709,39 +1802,30 @@
     min-height: 0;
     overflow: hidden;
   }
-  /* The divider: it rides the sidebar's edge facing the content area (a sidebar has
-    overflow:hidden, so the whole strip has to sit inside it and cannot cross), and the handle line
-    appears after a moment's hover or while dragging */
+  /* The sash: the strip just right of a divider, at the left edge of the column it sits in
+    (see the sash snippet: that side never holds a scrollbar, and both the sidebar and the
+    content area clip their overflow, so the strip stays inside its host). The handle line lies
+    against the divider and appears after a moment's hover or while dragging */
   .sash {
     position: absolute;
     top: 0;
     bottom: 0;
+    left: 0;
     width: 6px;
     cursor: col-resize;
     z-index: 30;
     touch-action: none;
-  }
-  .sash.at-left {
-    left: 0;
-  }
-  .sash.at-right {
-    right: 0;
   }
   .sash::after {
     content: "";
     position: absolute;
     top: 0;
     bottom: 0;
+    left: 0;
     width: 2px;
     background: transparent;
     /* It lights up after a hover delay (:hover overrides the delay) and goes out at once when the pointer leaves (through this 0s) */
     transition: background 0.1s ease 0s;
-  }
-  .sash.at-left::after {
-    left: 0;
-  }
-  .sash.at-right::after {
-    right: 0;
   }
   .sash:hover::after {
     background: var(--accent);

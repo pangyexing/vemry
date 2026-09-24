@@ -997,7 +997,7 @@ palette.
   the whole state and keeps undo; different → rebuild). So the `=== currentPath`
   tests in `dirty`, dirtyGuard and insertBlock keep their original meaning, and
   `FilesChanged` needs no path and no Rust change. Opening semantics are preview
-  tabs: a single click uses the preview slot (italic; at most one `pinned:false` in
+  tabs: a single click uses the preview slot (a dotted underline under the name; at most one `pinned:false` in
   the bar, and later single clicks reuse it); a real edit (the `loadingDoc` gate
   filters out the spurious onDirty from resetDoc/setState), a double click on the
   tab title, or a double click in the file tree promotes it; ⌘click, middle click
@@ -1062,7 +1062,13 @@ palette.
   `agent_window_close(discard=true)`: the handback belongs to the old vault and the
   whole package is dropped. Geometry (in logical pixels) is kept in memory on
   Moved/Resized and written to settings on Destroyed, so the next window opens in
-  place.
+  place — checked against the displays connected then (`window_geom.rs`): a title
+  bar that lands on no display drops the memory for a default centred on the main
+  window's display, and one that passes is shrunk into its display's visible area.
+  The main window remembers its geometry the same way, one entry per display
+  (`settings.main_window`, most recently used first): it starts hidden, is placed
+  where it last was on a display that is connected now — or at 85% of the display,
+  no smaller than 1280×820, the first time — and only then shown.
 - **The quick capture window** (a global shortcut, the palette's `quick-capture`,
   the File menu, the activity bar; `src-tauri/src/capture_window.rs` +
   `src/CaptureWindow.svelte` + `src/lib/components/CaptureComposer.svelte`): a
@@ -1279,9 +1285,19 @@ asserts step by step that the incremental result is identical to a full recomput
 swap}` (written through by `$effect.root`) — the first frontend persistence
 precedent, deliberately kept out of Rust settings: purely presentational state is
 not worth an IPC round trip. `leftW`/`rightW` are the sidebar widths the user
-dragged the sash to (in px; the default is each panel's flexible width), and `swap`
-exchanges the two sidebars. Bad data falls back to the defaults through try/catch.
-Which documents are open is not persisted (startup restores only the vault).
+dragged the sash to (in px; the default is 220 for the tree and min(30%, 720) for
+the panel), and `swap` exchanges the two sidebars. Bad data falls back to the
+defaults through try/catch. A stored width is a preference, not always the drawn
+width: when the body column would hold fewer than 36 characters a line, the tree and
+then the panel give way down to 180 and 320 (App's `sideWidths`), never collapsing,
+and grow back to the stored widths once the room returns. Which documents are open is
+not persisted (startup restores only the vault).
+
+A projection view's place — its scrolled containers and open `<details>` — is kept
+in memory while another tab has the main area (`viewmemory.ts`): written down as the
+view unmounts and put back as its rows arrive again. The views are not kept mounted
+instead: a mounted view re-queries on every vault event, the graph reheats its
+simulation on each one, and a mounted view stays registered as the AI's view context.
 
 That file is **global** state; **per-vault** state (the file tree's expanded set,
 the pinned clip target) goes through the bucketed table in `persist.ts`, described
@@ -2212,7 +2228,7 @@ overlay state that is not a tab, and while it is up the tab strip greys out rath
 than disappearing.
 
 **Preview semantics**: a tab opened with a single click is the preview slot
-(italic), and the next single click reuses that same slot; double-clicking the title
+(a dotted underline under the name), and the next single click reuses that same slot; double-clicking the title
 promotes it. This keeps "clicking through a few things" from accumulating a dozen
 tabs.
 

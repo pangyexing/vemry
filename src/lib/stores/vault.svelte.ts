@@ -1355,17 +1355,6 @@ class VaultStore {
     this.tabs = next;
   }
 
-  /** The set of open paths behind the file tree's faint highlight. It is a $derived rather
-   *  than a some() per row: every row of the file tree reads it and tabs changes once per
-   *  frame while dragging — an O(rows × tabs) linear scan would degrade, so a Set is
-   *  rebuilt whenever tabs changes and each row is O(1). */
-  readonly openPaths: Set<string> = $derived(new Set(this.tabs.map((t) => t.path)));
-
-  /** The file tree's faint highlight: this path is open in some tab. */
-  isOpen(path: string): boolean {
-    return this.openPaths.has(path);
-  }
-
   /** Promote a preview: on the first real edit (Editor's onDirty, with resetDoc's false
    *  signal already stopped by the loadingDoc gate), a double click on the tab title, or a
    *  double click in the file tree. */

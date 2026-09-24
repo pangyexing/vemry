@@ -660,7 +660,7 @@
   .space-key {
     font-family: inherit;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     white-space: nowrap;
   }
   input:focus-visible {
@@ -744,7 +744,7 @@
     flex: none;
     font-family: inherit;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     white-space: nowrap;
   }
   .foot {
@@ -776,17 +776,21 @@
     display: block;
     padding: 16px;
     text-align: center;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-sm);
   }
   li.group-head {
     display: block;
     padding: 10px 10px 3px;
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     letter-spacing: 0.08em;
     -webkit-user-select: none;
     user-select: none;
+  }
+  /* Tracking pulls Han, kana and hangul apart rather than setting a heading off */
+  li.group-head:is(:lang(zh), :lang(ja), :lang(ko)) {
+    letter-spacing: normal;
   }
   /* The first header sits right under the input's rule and needs no room above it */
   li.group-head:first-child {
