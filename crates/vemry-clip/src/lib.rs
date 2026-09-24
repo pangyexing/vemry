@@ -508,7 +508,22 @@ fn cjk_emphasis_line(line: &str) -> String {
 }
 
 fn soften_escapes(md: &str) -> String {
-    cjk_emphasis(&soften_escapes_inner(md))
+    cjk_emphasis(&soften_escapes_inner(&strip_invisible(md)))
+}
+
+/// Zero-width spaces and byte-order marks a page carries in its text (break hints a site
+/// scatters through long URLs and CJK runs, an editor's stray BOM): invisible on the page,
+/// in the note they are characters that split a word for search and a link for the parser,
+/// and an editor shows them as marks. Dropped on the way in. A soft hyphen stays — it is a
+/// hyphenation hint the note's renderers honour at a line end — and so do the zero-width
+/// joiner and non-joiner, which shape emoji sequences and Persian and Indic words.
+fn strip_invisible(s: &str) -> std::borrow::Cow<'_, str> {
+    const INVISIBLE: [char; 2] = ['\u{200B}', '\u{FEFF}'];
+    if s.contains(INVISIBLE) {
+        std::borrow::Cow::Owned(s.replace(INVISIBLE, ""))
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
 }
 
 fn soften_escapes_inner(md: &str) -> String {
@@ -689,7 +704,7 @@ pub fn extract_page(html: &str, url: &str) -> Result<ExtractedPage, ClipError> {
             if !md.is_empty() {
                 return Ok(ExtractedPage {
                     markdown: soften_escapes(md),
-                    title: article.title.trim().to_string(),
+                    title: strip_invisible(&article.title).trim().to_string(),
                     byline: article.byline.filter(|b| !b.trim().is_empty()),
                     fallback: false,
                 });
@@ -918,7 +933,10 @@ pub const FOLD_MIN_LINES: usize = 8;
 /// note that is about something else; a clip note that is nothing but the quote
 /// passes false and opens expanded. The fold state itself is never written back.
 pub fn quote_block(selection: &str, meta: &ClipMeta, foldable: bool) -> String {
-    let trimmed = selection.trim_matches('\n');
+    // the plain-text selection (the fallback when its HTML converted to nothing) has not
+    // been through soften_escapes, which drops the invisible characters on the other path
+    let cleaned = strip_invisible(selection);
+    let trimmed = cleaned.trim_matches('\n');
     let long = trimmed.chars().count() > FOLD_MIN_CHARS || trimmed.lines().count() > FOLD_MIN_LINES;
     let marker = if foldable && long { "-" } else { "" };
     let mut out = format!(
@@ -1451,6 +1469,14 @@ mod tests {
         assert_eq!(cjk_emphasis("代码 `*p。*q` 结束"), "代码 `*p。*q` 结束");
         assert_eq!(cjk_emphasis("公式 $a*b。*c$ 之后**分析。**当"), "公式 $a*b。*c$ 之后**分析**。当");
         assert_eq!(fragment_to_markdown("<p><strong>在本篇文章中，分析。</strong>当然</p>"), "**在本篇文章中，分析**。当然");
+    }
+
+    #[test]
+    fn invisible_characters_are_dropped_and_soft_hyphens_kept() {
+        let md = fragment_to_markdown("<p>\u{FEFF}long\u{200B}word re\u{00AD}search 👩\u{200D}💻 نمی\u{200C}خواهم</p>");
+        assert_eq!(md, "longword re\u{00AD}search 👩\u{200D}💻 نمی\u{200C}خواهم");
+        let q = quote_block("a\u{200B}b", &meta(), false);
+        assert!(q.ends_with("> ab\n"), "{q}");
     }
 
     #[test]
