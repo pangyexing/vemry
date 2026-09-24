@@ -202,6 +202,36 @@
 .cm-editor .cm-scroller .cm-content[lang^="zh"] {
   line-break: strict;
 }
+/* Traditional Chinese: the default stack is the Simplified one, whose glyphs differ from
+   the Traditional standard's in hundreds of shared characters and whose full-width
+   punctuation sits in the corner where the Taiwan standard centres it. Hong Kong has a
+   standard of its own (different shapes again for a few hundred characters), so it gets
+   its own faces first. The tags cover what noteLanguage() judges (zh-Hant), what a note
+   declares (zh-TW, zh-HK, zh-Hant-TW …) and what a translation targets (zh-TW). */
+[lang="zh-Hant"],
+[lang^="zh-Hant-"],
+[lang="zh-TW"],
+[lang="zh-MO"],
+.cm-editor .cm-scroller .cm-content[lang="zh-Hant"],
+.cm-editor .cm-scroller .cm-content[lang^="zh-Hant-"],
+.cm-editor .cm-scroller .cm-content[lang="zh-TW"],
+.cm-editor .cm-scroller .cm-content[lang="zh-MO"] {
+  --font-cjk: "PingFang TC", "Noto Sans TC", "Noto Sans CJK TC", "Microsoft JhengHei";
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", var(--font-cjk), sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, var(--font-cjk), monospace;
+  font-family: var(--font-ui);
+  line-break: strict;
+}
+[lang="zh-HK"],
+[lang="zh-Hant-HK"],
+.cm-editor .cm-scroller .cm-content[lang="zh-HK"],
+.cm-editor .cm-scroller .cm-content[lang="zh-Hant-HK"] {
+  --font-cjk: "PingFang HK", "Noto Sans HK", "Noto Sans CJK HK", "PingFang TC", "Microsoft JhengHei";
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", var(--font-cjk), sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, var(--font-cjk), monospace;
+  font-family: var(--font-ui);
+  line-break: strict;
+}
 [lang="de"],
 [lang="fr"],
 [lang="es"],

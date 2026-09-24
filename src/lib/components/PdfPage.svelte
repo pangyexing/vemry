@@ -1,3 +1,36 @@
+<script module lang="ts">
+  // A PDF page is paper: white, whatever the theme. On the dark theme it is dimmed a step
+  // (about 90% brightness; its text still reads at about 15:1) so opening one is not a white
+  // flash, and "night reading" inverts it for reading in the dark — off by default, since
+  // it inverts photographs and colour figures too. The choice is one for every PDF view
+  // (the preview and the translation's pages) and is remembered.
+  const NIGHT_KEY = "vemry-pdf-night";
+  function loadNight(): boolean {
+    try {
+      return localStorage.getItem(NIGHT_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+  export const pdfNight = $state({ on: loadNight() });
+  export function setPdfNight(on: boolean) {
+    pdfNight.on = on;
+    try {
+      localStorage.setItem(NIGHT_KEY, on ? "1" : "0");
+    } catch {
+      // no storage: the choice lives for the session
+    }
+  }
+  /** Whether the system is dark right now: the night switch is only offered there. One
+   *  listener for the app's life, shared by every page and switch. */
+  export const pdfScheme = $state({ dark: false });
+  if (typeof window !== "undefined" && window.matchMedia) {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    pdfScheme.dark = mq.matches;
+    mq.addEventListener("change", () => (pdfScheme.dark = mq.matches));
+  }
+</script>
+
 <script lang="ts">
   // One page of a PDF, drawn when it comes near the viewport and redrawn when its
   // column changes width. The preview stacks these; the translation view puts one
@@ -82,7 +115,7 @@
   });
 </script>
 
-<div class="page" bind:this={host} style:aspect-ratio={`1 / ${ratio}`}>
+<div class="page" class:night={pdfNight.on} bind:this={host} style:aspect-ratio={`1 / ${ratio}`}>
   <canvas bind:this={canvas}></canvas>
   {#if textLayer}
     <div class="textLayer" bind:this={layer}></div>
@@ -104,10 +137,20 @@
     display: block;
     width: 100%;
   }
-  /* The lit passage: one box per text run, multiplied onto the page so overlaps do not darken */
+  @media (prefers-color-scheme: dark) {
+    .page {
+      filter: brightness(0.9);
+    }
+    .page.night {
+      filter: invert(0.88) hue-rotate(180deg);
+    }
+  }
+  /* The lit passage: one box per text run, multiplied onto the page so overlaps do not
+     darken. Always the light theme's highlight: the page is white paper in both themes,
+     and the dark theme's weaker tint (made for a dark ground) all but vanished on it */
   .hl {
     position: absolute;
-    background: var(--mark-bg, rgba(255, 213, 79, 0.45));
+    background: rgba(250, 204, 21, 0.35);
     mix-blend-mode: multiply;
     border-radius: 2px;
     pointer-events: none;

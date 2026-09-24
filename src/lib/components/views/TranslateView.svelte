@@ -6,32 +6,49 @@
   // The store holds the document and the translations; this only renders and
   // reports what is visible. Leaving goes through vault.exitTranslate (Esc, ✕),
   // which is what closes the job.
-  import { t, tn } from "$lib/i18n/i18n.svelte";
+  //
+  // The text the reader is on does not move while the translation arrives: a streaming
+  // cell renders through the same renderer as the finished one (only its unclosed tail is
+  // held back), a cell not translated yet reserves about the height its translation will
+  // take, images keep their size from the first sight, and whatever still changes height
+  // above the viewport is paid back by holding the first visible row where it was.
+  import { untrack } from "svelte";
+  import { i18n, t, tn } from "$lib/i18n/i18n.svelte";
   import { api, type TranslateSegment } from "$lib/api";
   import { translate, targetLabel, fmtTokens, TARGET_TAGS, type TranslateMode } from "$lib/stores/translate.svelte";
-  import { fileKind, mimeOf, vault } from "$lib/stores/vault.svelte";
+  import { vault } from "$lib/stores/vault.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { executeCommand } from "$lib/commands/registry";
-  import { handleCodeCopyClick, renderNoteMarkdown } from "$lib/markdown";
+  import { handleCodeCopyClick, renderNoteMarkdown, streamingTail } from "$lib/markdown";
+  import { langAttrs, noteLanguage, scriptOfLang, type NoteLanguage, type NoteScript } from "$lib/notelang";
+  import { restoreAnchor, type ScrollAnchor } from "$lib/scrollanchor";
+  import { vaultImages } from "$lib/views/assets";
+  import { selectingIn } from "$lib/views/select";
+  import { cliptip } from "$lib/cliptip";
   import { k } from "$lib/shortcut";
   import { loadPdf, segmentTops, type PDFDocumentProxy } from "$lib/pdf";
   import PdfPage from "$lib/components/PdfPage.svelte";
+  import PdfNightToggle from "$lib/components/PdfNightToggle.svelte";
+  import ViewHeader from "./ViewHeader.svelte";
   import "katex/dist/katex.min.css";
 
-  /** Below this width two columns are too narrow to read, and the rows interleave; a PDF's
-   *  page needs more room than a paragraph of text to be legible. */
-  const NARROW_PX = 880;
-  const NARROW_PDF_PX = 1000;
+  /** A column's cap in em at the body size, by the writing system of the text in it: about
+   *  36 ideographs to a CJK line, about 65 letters to a Latin one. Each column is capped by
+   *  its own text, so an English source beside a Chinese translation gets two widths. */
+  const colEm = (s: NoteScript) => (s === "cjk" ? 36 : 32);
+  /** A PDF page is not a line of text: it wants the room to be legible as a picture. */
+  const PAGE_EM = 50;
+  /** The space between the two columns: the centre rule and a row's tools live in it. */
+  const GUTTER_PX = 44;
   /** Visibility reports are batched: a scroll fires many intersections in a row. */
   const REPORT_MS = 150;
 
   const doc = $derived(translate.doc);
   let root = $state<HTMLDivElement | null>(null);
-  let width = $state(0);
   const isPdf = $derived(doc?.source.kind === "pdf");
-  const narrow = $derived(width > 0 && width < (isPdf ? NARROW_PDF_PX : NARROW_PX));
-  /** The layout in effect: the chosen one, unless the pane is too narrow for two columns. */
-  const mode = $derived<TranslateMode>(translate.mode === "side" && narrow ? "stack" : translate.mode);
+  /** The layout is the reader's choice alone: a pane too narrow for two columns scrolls
+   *  sideways instead of re-flowing every row into the other layout under the reader. */
+  const mode = $derived<TranslateMode>(translate.mode);
   const total = $derived(translate.toTranslate.length);
   const done = $derived(translate.doneCount);
   const failed = $derived(translate.failedIds.length);
@@ -45,6 +62,38 @@
   });
 
   const run = (p: Promise<unknown>) => void p.catch((e) => toast.push(String(e), "error"));
+
+  // ---- languages: the source reads as the note does, the translation as its target ----
+  const NONE: NoteLanguage = { lang: null, script: null };
+  /** Judged once per document (R1: a column that changed width mid-read would move the text).
+   *  A note's verdict comes from the index, which also reads a declared `lang:` in the
+   *  frontmatter the segments do not carry; a page or a PDF is judged from its text. */
+  const srcLang = $derived.by<NoteLanguage>(() => {
+    const d = doc;
+    if (!d) return NONE;
+    if (d.source.kind === "note") {
+      const path = d.source.path;
+      const n = untrack(() => vault.notes.find((x) => x.id === path));
+      if (n && (n.lang || n.script)) return { lang: n.lang, script: n.script };
+    }
+    return noteLanguage(d.segments.filter((s) => !s.private).map((s) => s.prefix + s.text).join("\n\n"));
+  });
+  const trLang = $derived<NoteLanguage>(doc ? { lang: doc.target, script: scriptOfLang(doc.target) } : NONE);
+  const srcAttrs = $derived(langAttrs(srcLang));
+  const trAttrs = $derived(langAttrs(trLang));
+  /** A text too short to judge follows the interface, as the rest of the app does. */
+  const uiScript = $derived(scriptOfLang(i18n.locale));
+  const srcScript = $derived(srcLang.script ?? uiScript);
+  const trScript = $derived(trLang.script ?? uiScript);
+  /** Side by side: the two capped columns (their proportions kept as the pane narrows) and
+   *  the gutter, centred as a whole; stacked, the one column is capped by the source's text
+   *  and translation-only by the translation's (app.css [data-script] → --content-width). */
+  const layout = $derived.by(() => {
+    const a = isPdf ? PAGE_EM : colEm(srcScript);
+    const b = colEm(trScript);
+    return { cols: `minmax(0, ${a}fr) ${GUTTER_PX}px minmax(0, ${b}fr)`, max: `calc(${a + b}em + ${GUTTER_PX}px)` };
+  });
+  const rowsScript = $derived(mode === "side" ? undefined : mode === "stack" ? srcScript : trScript);
 
   // ---- a PDF: rows are pages, the page drawn on the left and its paragraphs on the right ----
   let pdfDoc = $state<PDFDocumentProxy | null>(null);
@@ -64,47 +113,6 @@
     if (id == null) return null;
     return g.segs.find((s) => s.id === id)?.text ?? null;
   }
-  /** Where each PDF segment starts on its page (a fraction of the page height), by segment id; looked up per page as the document arrives. */
-  let tops = $state<Record<number, number>>({});
-  $effect(() => {
-    const d = pdfDoc;
-    const groups = pageGroups;
-    if (!d || !groups.length) { tops = {}; return; }
-    let stale = false;
-    void (async () => {
-      const next: Record<number, number> = {};
-      for (const g of groups) {
-        const segs = g.segs.filter((s) => !s.private);
-        if (!segs.length) continue;
-        const page = await d.getPage(g.page);
-        const found = await segmentTops(page, segs.map((s) => s.text));
-        if (stale) return;
-        segs.forEach((s, i) => { const f = found[i]; if (f != null) next[s.id] = f; });
-      }
-      if (!stale) tops = next;
-    })();
-    return () => { stale = true; };
-  });
-  /** The measured heights: the page cell per page, each translation cell per segment (bind:clientHeight). */
-  let pageHeights = $state<Record<number, number>>({});
-  let cellHeights = $state<Record<number, number>>({});
-  /** Each cell's top margin so it sits at its source's height on the page — or right under the cell above when that one is taller than its block (side mode only). */
-  const cellGaps = $derived.by(() => {
-    const gaps: Record<number, number> = {};
-    if (mode !== "side") return gaps;
-    for (const g of pageGroups) {
-      const ph = pageHeights[g.page] ?? 0;
-      let bottom = 0;
-      for (const s of g.segs) {
-        if (s.private || s.kind.type === "aside") continue;
-        const want = tops[s.id] != null ? tops[s.id] * ph : bottom;
-        const gap = Math.max(0, want - bottom);
-        gaps[s.id] = gap;
-        bottom += gap + (cellHeights[s.id] ?? 0) + 6;
-      }
-    }
-    return gaps;
-  });
   /** A PDF's segments by page, in order (a page with no text still gets a row: the picture is the content). */
   const pageGroups = $derived.by(() => {
     if (doc?.source.kind !== "pdf") return [];
@@ -116,6 +124,69 @@
     }
     return groups;
   });
+  /** The segments a page shows as cells beside it. */
+  const cellsOf = (g: { segs: TranslateSegment[] }) => g.segs.filter((s) => s.kind.type !== "aside" && !s.private);
+
+  /** Where each PDF segment starts on its page (a fraction of the page height), by segment
+   *  id, and which pages have been looked up. A page's cells are only drawn once its
+   *  positions are known, so each cell appears where it belongs rather than at the top and
+   *  then sliding down; pages are looked up as they come near, not the whole document first
+   *  (on a long PDF that held every cell back, then moved them all at once). */
+  let tops = $state<Record<number, number>>({});
+  let measured = $state<Record<number, true>>({});
+  let measuring = new Set<number>();
+  let measureGen = 0;
+  $effect(() => {
+    void pdfDoc;
+    void doc;
+    tops = {};
+    measured = {};
+    measuring = new Set();
+    measureGen++;
+    // The pages already near were reported before there was a document to look them up in;
+    // observing them afresh reports them again
+    const obs = untrack(() => pageIo);
+    if (obs) for (const node of pageNodes.keys()) { obs.unobserve(node); obs.observe(node); }
+  });
+  async function measurePage(g: { page: number; segs: TranslateSegment[] }) {
+    const d = pdfDoc;
+    if (!d || measured[g.page] || measuring.has(g.page)) return;
+    measuring.add(g.page);
+    const gen = measureGen;
+    const segs = cellsOf(g);
+    try {
+      if (segs.length) {
+        const page = await d.getPage(g.page);
+        const found = await segmentTops(page, segs.map((s) => s.text));
+        if (gen !== measureGen) return;
+        const next = { ...tops };
+        segs.forEach((s, i) => { const f = found[i]; if (f != null) next[s.id] = f; });
+        tops = next;
+      }
+    } catch {
+      // no positions: the cells stack from the page's top, the same as a page with no text layer
+    }
+    if (gen === measureGen) measured = { ...measured, [g.page]: true };
+  }
+  /** The measured heights: the page cell per page, each translation cell per segment (bind:clientHeight). */
+  let pageHeights = $state<Record<number, number>>({});
+  let cellHeights = $state<Record<number, number>>({});
+  /** Each cell's top margin so it sits at its source's height on the page — or right under the cell above when that one is taller than its block (side mode only). */
+  const cellGaps = $derived.by(() => {
+    const gaps: Record<number, number> = {};
+    if (mode !== "side") return gaps;
+    for (const g of pageGroups) {
+      const ph = pageHeights[g.page] ?? 0;
+      let bottom = 0;
+      for (const s of cellsOf(g)) {
+        const want = tops[s.id] != null ? tops[s.id] * ph : bottom;
+        const gap = Math.max(0, want - bottom);
+        gaps[s.id] = gap;
+        bottom += gap + (cellHeights[s.id] ?? 0);
+      }
+    }
+    return gaps;
+  });
 
   // ---- rendering ----
   /** One segment's HTML from prefix + body: the note renderer (wikilinks, callouts, KaTeX, local images as data-asset). */
@@ -123,42 +194,96 @@
     return renderNoteMarkdown(prefix + body);
   }
 
-  // The note's own images: <img data-asset> filled from the vault, one blob URL per path for the view's life
-  const assetUrls = new Map<string, Promise<string | null>>();
-  function loadAsset(target: string): Promise<string | null> {
-    // As written, when it names a path; a bare file name has nothing to resolve against here
-    if (!target.includes("/") || fileKind(target) !== "image") return Promise.resolve(null);
-    let p = assetUrls.get(target);
-    if (!p) {
-      p = api
-        .fileReadBinary(target)
-        .then((buf) => URL.createObjectURL(new Blob([buf], { type: mimeOf(target) })))
-        .catch(() => {
-          // one transient read failure should not nail this image as "missing" for the view's life
-          assetUrls.delete(target);
-          return null;
-        });
-      assetUrls.set(target, p);
+  const images = vaultImages();
+  $effect(() => () => images.dispose());
+
+  /** How wide a segment's text runs, in em at the body size: an ideograph is a whole em,
+   *  a Latin letter a little over half, a space a third. Memoised per segment: the
+   *  placeholders read it on every render. */
+  const widthMemo = new Map<number, number>();
+  const WIDE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}　-〿＀-￯]/u;
+  function textEm(seg: TranslateSegment): number {
+    let w = widthMemo.get(seg.id);
+    if (w == null) {
+      w = 0;
+      for (const ch of seg.text) w += WIDE.test(ch) ? 1 : ch === " " ? 0.3 : 0.55;
+      widthMemo.set(seg.id, w);
     }
-    return p;
+    return w;
   }
-  /** Fill the images of a rendered cell after each render. */
-  function assets(node: HTMLElement) {
-    const fill = () => {
-      for (const img of node.querySelectorAll<HTMLImageElement>("img[data-asset]:not([src])")) {
-        const target = img.dataset.asset ?? "";
-        void loadAsset(target).then((u) => {
-          if (u && img.isConnected) img.src = u;
-        });
-      }
-    };
-    fill();
-    const mo = new MutationObserver(fill);
-    mo.observe(node, { childList: true, subtree: true });
-    return { destroy: () => mo.disconnect() };
+  /** The translation column's width in em, measured (rounded, so the estimates below only
+   *  change on a real change of width). */
+  let trColEm = $state(30);
+  /** The lines a translation not here yet will take: the source's run scaled by how the two
+   *  writing systems compare (a Chinese rendering of English prose takes about 0.6 of its
+   *  width, the other way round about 1.7), over the column's width. A heading's line is
+   *  taller. The row then keeps its height when the text arrives. */
+  function estLines(seg: TranslateSegment): number {
+    const ratio = srcScript === "cjk" && trScript !== "cjk" ? 1.7 : srcScript !== "cjk" && trScript === "cjk" ? 0.6 : 1;
+    const lines = Math.max(1, Math.ceil((textEm(seg) * ratio) / Math.max(8, trColEm)));
+    return seg.kind.type === "heading" ? lines * 1.4 : lines;
   }
-  $effect(() => () => {
-    for (const p of assetUrls.values()) void p.then((u) => u && URL.revokeObjectURL(u));
+  function measureColumn() {
+    const cell = root?.querySelector<HTMLElement>(".row .tr, .cell");
+    if (!cell) return;
+    const px = parseFloat(getComputedStyle(cell).fontSize) || 16;
+    const em = Math.round(cell.clientWidth / px);
+    if (em > 0 && em !== trColEm) trColEm = em;
+  }
+
+  // ---- the reader's row holds still ----
+  /** The first row whose bottom is below the scroller's top, by bisection: the rows are in
+   *  document order and do not nest, so their bottoms only grow — the scan runs on every
+   *  scroll event of a document that can hold thousands of rows. Same shape as
+   *  scrollanchor.ts's captureAnchor, whose restoreAnchor puts the row back. */
+  function captureRow(c: HTMLElement): ScrollAnchor | null {
+    if (c.scrollTop <= 0) return null;
+    const rows = c.querySelectorAll<HTMLElement>("[data-anchor]");
+    const top = c.getBoundingClientRect().top;
+    let lo = 0;
+    let hi = rows.length - 1;
+    let hit = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid].getBoundingClientRect().bottom > top) {
+        hit = mid;
+        hi = mid - 1;
+      } else lo = mid + 1;
+    }
+    if (hit < 0) return null;
+    return { key: rows[hit].dataset.anchor!, offset: rows[hit].getBoundingClientRect().top - top };
+  }
+  let anchor: ScrollAnchor | null = null;
+  function onscroll() {
+    if (root) anchor = captureRow(root);
+  }
+  /** Rows change height after layout and before paint (a token arrived, an image loaded, a
+   *  page learned its shape): one observer on every row, and each batch of changes puts the
+   *  anchored row back before the frame is drawn. A change below the reader's row moves
+   *  nothing above it, so the restore finds no drift and does nothing. */
+  let ro: ResizeObserver | null = null;
+  const held = new Set<HTMLElement>();
+  function hold(node: HTMLElement) {
+    held.add(node);
+    ro?.observe(node);
+    return { destroy: () => { held.delete(node); ro?.unobserve(node); } };
+  }
+  $effect(() => {
+    const scroller = root;
+    if (!scroller) return;
+    ro = new ResizeObserver(() => {
+      restoreAnchor(scroller, anchor);
+      anchor = captureRow(scroller);
+    });
+    for (const n of held) ro.observe(n);
+    const size = new ResizeObserver(() => measureColumn());
+    size.observe(scroller);
+    return () => { ro?.disconnect(); ro = null; size.disconnect(); };
+  });
+  // A layout switch changes the column's width without resizing the scroller
+  $effect(() => {
+    void mode;
+    queueMicrotask(measureColumn);
   });
 
   // ---- what is on screen is asked for first ----
@@ -181,6 +306,7 @@
     }, REPORT_MS);
   }
   let io: IntersectionObserver | null = null;
+  let pageIo: IntersectionObserver | null = null;
   /** The rows on screen right now, so a rebuilt observer picks them all up again. */
   const observed = new Set<HTMLElement>();
   function observe(node: HTMLElement, id: number) {
@@ -188,8 +314,18 @@
     io?.observe(node);
     return { destroy: () => { observed.delete(node); io?.unobserve(node); visible.delete(id); } };
   }
-  // The observer measures against the scroller, so it is built here rather than in the
-  // action: reopening the document (a changed target language) mounts a new scroller,
+  /** A PDF page row: its positions are looked up as it comes within two screens. */
+  const pageNodes = new Map<HTMLElement, { page: number; segs: TranslateSegment[] }>();
+  function nearPage(node: HTMLElement, g: { page: number; segs: TranslateSegment[] }) {
+    pageNodes.set(node, g);
+    pageIo?.observe(node);
+    return {
+      update: (next: { page: number; segs: TranslateSegment[] }) => void pageNodes.set(node, next),
+      destroy: () => { pageNodes.delete(node); pageIo?.unobserve(node); },
+    };
+  }
+  // The observers measure against the scroller, so they are built here rather than in the
+  // actions: reopening the document (a changed target language) mounts a new scroller,
   // and an observer left on the old, detached one never reports an intersection again —
   // the rows on screen would stop being asked for first.
   $effect(() => {
@@ -209,16 +345,19 @@
       { root: scroller, rootMargin: "100% 0px 200% 0px" },
     );
     for (const node of observed) io.observe(node);
-    return () => { io?.disconnect(); io = null; };
+    pageIo = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          const g = pageNodes.get(e.target as HTMLElement);
+          if (e.isIntersecting && g) void measurePage(g);
+        }
+      },
+      { root: scroller, rootMargin: "200% 0px" },
+    );
+    for (const node of pageNodes.keys()) pageIo.observe(node);
+    return () => { io?.disconnect(); io = null; pageIo?.disconnect(); pageIo = null; };
   });
   $effect(() => () => { if (reportTimer) clearTimeout(reportTimer); });
-
-  $effect(() => {
-    if (!root) return;
-    const ro = new ResizeObserver(([e]) => (width = e.contentRect.width));
-    ro.observe(root);
-    return () => ro.disconnect();
-  });
 
   // ---- interactions ----
   function select(id: number) {
@@ -275,6 +414,11 @@
       run(api.urlOpen(a.dataset.url, false));
     }
   }
+  /** A click on a translation lights its row — unless it ended a drag that selected text there. */
+  function onTrClick(e: MouseEvent, id: number) {
+    onCellClick(e);
+    if (!selectingIn(e.currentTarget as Element)) select(id);
+  }
   /** J/K step the lit row; the keys are free in this view (no editor has the focus). */
   function onkeydown(e: KeyboardEvent) {
     if (!doc || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -293,139 +437,185 @@
 
 <svelte:window {onkeydown} />
 
-<div class="view">
-  <header>
-    {#if doc}
-      <span class="title" title={doc.source.kind === "page" ? doc.source.url : doc.source.path}>{doc.title}</span>
-      <span class="actions">
-        <select
-          class="chip"
-          title={t("translate.targetHint")}
-          value={doc.target}
-          onchange={(e) => void changeTarget((e.currentTarget as HTMLSelectElement).value)}
-        >
-          {#each targets as tag (tag)}
-            <option value={tag}>{targetLabel(tag)}</option>
-          {/each}
-        </select>
-        <select
-          class="chip"
-          title={t("translate.modeHint")}
-          value={translate.mode}
-          onchange={(e) => translate.setMode((e.currentTarget as HTMLSelectElement).value as TranslateMode)}
-        >
-          <option value="side">{t("translate.mode.side")}</option>
-          <option value="stack">{t("translate.mode.stack")}</option>
-          <option value="target">{t("translate.mode.target")}</option>
-        </select>
-        <button
-          class="chip model"
-          title={spent > 0 ? `${t("translate.modelHint")}\n${t("translate.usage", { n: fmtTokens(spent), input: fmtTokens(translate.usage.prompt), output: fmtTokens(translate.usage.completion) })}` : t("translate.modelHint")}
-          onclick={() => void executeCommand("settings-ai")}
-        >{doc.model}{#if spent > 0} · {fmtTokens(spent)}{/if}</button>
-        {#if failed > 0}
-          <button class="chip warn" title={t("translate.retryFailed")} onclick={() => translate.retryFailed()}>
-            {tn("translate.failedCount", failed)} · {t("translate.retryFailed")}
-          </button>
-        {:else if done >= total}
-          <span class="chip ok">{t("translate.complete")}</span>
-        {:else}
-          <span class="chip" title={t("translate.progressHint")}>{t("translate.progress", { done, total })}</span>
-        {/if}
-        <button title={t("translate.copyAll")} onclick={() => void copyAll()}>{t("translate.copy")}</button>
-        <button class="primary" title={t("translate.saveHint")} disabled={translate.saving} onclick={() => void save()}
-          >{translate.saving && remaining > 0 ? t("translate.savingRemaining", { n: remaining }) : t("translate.save")}</button
-        >
-      </span>
+{#snippet status()}
+  {#if doc}
+    {#if failed > 0}
+      <button class="chip warn" title={t("translate.retryFailed")} onclick={() => translate.retryFailed()}>
+        {tn("translate.failedCount", failed)} · {t("translate.retryFailed")}
+      </button>
+    {:else if done >= total}
+      <span class="status ok">{t("translate.complete")}</span>
     {:else}
-      <span class="title faint">{t("view.translate")}</span>
+      <span class="status" title={t("translate.progressHint")}>{t("translate.progress", { done, total })}</span>
     {/if}
-    <button class="close" title={t("translate.leaveHint")} aria-label={t("translate.leave")} onclick={() => vault.exitTranslate()}>✕</button>
-  </header>
+  {/if}
+{/snippet}
+
+{#snippet tools()}
+  {#if doc}
+    <span class="actions">
+      {#if isPdf}<PdfNightToggle />{/if}
+      <select
+        class="chip"
+        title={t("translate.targetHint")}
+        value={doc.target}
+        onchange={(e) => void changeTarget((e.currentTarget as HTMLSelectElement).value)}
+      >
+        {#each targets as tag (tag)}
+          <option value={tag}>{targetLabel(tag)}</option>
+        {/each}
+      </select>
+      <select
+        class="chip"
+        title={t("translate.modeHint")}
+        value={translate.mode}
+        onchange={(e) => translate.setMode((e.currentTarget as HTMLSelectElement).value as TranslateMode)}
+      >
+        <option value="side">{t("translate.mode.side")}</option>
+        <option value="stack">{t("translate.mode.stack")}</option>
+        <option value="target">{t("translate.mode.target")}</option>
+      </select>
+      <button
+        class="chip model"
+        title={spent > 0 ? `${t("translate.modelHint")}\n${t("translate.usage", { n: fmtTokens(spent), input: fmtTokens(translate.usage.prompt), output: fmtTokens(translate.usage.completion) })}` : t("translate.modelHint")}
+        onclick={() => void executeCommand("settings-ai")}
+      >{doc.model}{#if spent > 0} · {fmtTokens(spent)}{/if}</button>
+      <button title={t("translate.copyAll")} onclick={() => void copyAll()}>{t("translate.copy")}</button>
+      <button class="primary" title={t("translate.saveHint")} disabled={translate.saving} onclick={() => void save()}
+        >{translate.saving && remaining > 0 ? t("translate.savingRemaining", { n: remaining }) : t("translate.save")}</button
+      >
+    </span>
+  {/if}
+{/snippet}
+
+{#snippet rowTools(seg: TranslateSegment, copy: boolean)}
+  <span class="tools">
+    <button title={t("translate.retranslate")} aria-label={t("translate.retranslate")} onclick={(e) => { e.stopPropagation(); translate.request([seg.id], true); }}>↻</button>
+    {#if copy}
+      <button title={t("translate.copy")} aria-label={t("translate.copy")} onclick={(e) => { e.stopPropagation(); void copyRow(seg); }}>⧉</button>
+    {/if}
+  </span>
+{/snippet}
+
+{#snippet trCell(seg: TranslateSegment)}
+  {@const row = translate.rows[seg.id]}
+  {#if seg.private}
+    <span class="priv">{t("translate.privateSegment")}</span>
+  {:else if seg.kind.type === "aside"}
+    <span class="aside-mark" title={t("translate.asideHint")}>·</span>
+  {:else if !seg.translate}
+    {@html html(seg.prefix, seg.text)}
+  {:else if row?.text != null}
+    <!-- Streaming or done, the same renderer: a finished cell is the streamed one plus the
+      tail that was held back while its syntax was still open -->
+    {@html html(seg.prefix, row.done ? row.text : streamingTail(row.text))}
+    {#if row.done}{@render rowTools(seg, true)}{/if}
+  {:else if row?.error}
+    <p class="failed" title={row.error}>{t("translate.untranslated")} · {row.error}</p>
+    {@render rowTools(seg, false)}
+  {:else if translate.pausedAt === seg.id}
+    <!-- the background translation stopped here at its budget: the reader decides how much further -->
+    <p class="paused">
+      <span>{t("translate.pausedHere")}</span>
+      <button onclick={(e) => { e.stopPropagation(); translate.continueBackground(false); }}>{t("translate.continue")}</button>
+      <button onclick={(e) => { e.stopPropagation(); translate.continueBackground(true); }}>{t("translate.translateAll")}</button>
+    </p>
+  {:else}
+    <!-- The room the translation will take, held from the start. Bars only on the rows asked
+      for right now; a row not asked for yet (translated when it comes into view, or with
+      "translate everything") keeps its room empty. Nothing here moves: the progress in the
+      header is the one sign that the translation is running -->
+    <div
+      class="skel"
+      class:asked={translate.requested[seg.id] && !translate.idle}
+      style:--lines={estLines(seg)}
+      title={translate.requested[seg.id] ? undefined : t("translate.notYet")}
+    ></div>
+  {/if}
+{/snippet}
+
+<div class="view">
+  <ViewHeader
+    title={doc ? doc.title : t("view.translate")}
+    clipTitle
+    left={status}
+    right={tools}
+    onclose={() => vault.exitTranslate()}
+    closeHint={t("translate.leaveHint")}
+  />
 
   {#if translate.loading}
     <div class="state"><span class="pulse"></span>{t("translate.waiting")}</div>
   {:else if translate.error}
     <div class="state error"><p>{translate.error}</p></div>
   {:else if doc}
-    <div class="scroller" bind:this={root}>
-      <div class="rows mode-{mode}" class:pdf={isPdf}>
+    <div class="scroller" bind:this={root} {onscroll}>
+      <div
+        class="rows mode-{mode}"
+        class:pdf={isPdf}
+        style:--cols={layout.cols}
+        style:--side-max={layout.max}
+        data-script={rowsScript}
+      >
         {#if mode === "side"}
+          {@const head = `${t("translate.original")}${doc.source.kind === "note" ? ` · ${t("translate.sourceHint")}` : doc.source.kind === "pdf" ? ` · ${t("translate.pdfHint")}` : ""}`}
           <div class="cols">
-            <div>{t("translate.original")}{#if doc.source.kind === "note"} <span class="hint">· {t("translate.sourceHint")}</span>{:else if doc.source.kind === "pdf"} <span class="hint">· {t("translate.pdfHint")}</span>{/if}</div>
+            <div use:cliptip={head}>{head}</div>
+            <div class="gut" aria-hidden="true"></div>
             <div>{t("translate.translation")}</div>
           </div>
         {/if}
-        {#snippet trCell(seg: TranslateSegment)}
-          {@const row = translate.rows[seg.id]}
-          {#if seg.private}
-            <span class="priv">{t("translate.privateSegment")}</span>
-          {:else if seg.kind.type === "aside"}
-            <span class="aside-mark" title={t("translate.asideHint")}>·</span>
-          {:else if !seg.translate}
-            {@html html(seg.prefix, seg.text)}
-          {:else if row?.done && row.text != null}
-            {@html html(seg.prefix, row.text)}
-            <span class="tools">
-              <button title={t("translate.retranslate")} onclick={(e) => { e.stopPropagation(); translate.request([seg.id], true); }}>↻</button>
-              <button title={t("translate.copy")} onclick={(e) => { e.stopPropagation(); void copyRow(seg); }}>⧉</button>
-            </span>
-          {:else if row?.text != null}
-            <p class="partial">{seg.prefix}{row.text}<span class="cur"></span></p>
-          {:else if row?.error}
-            <p class="failed" title={row.error}>{t("translate.untranslated")} · {row.error}</p>
-            <span class="tools">
-              <button title={t("translate.retranslate")} onclick={(e) => { e.stopPropagation(); translate.request([seg.id], true); }}>↻</button>
-            </span>
-          {:else if translate.pausedAt === seg.id}
-            <!-- the background translation stopped here at its budget: the reader decides how much further -->
-            <p class="paused">
-              <span>{t("translate.pausedHere")}</span>
-              <button onclick={(e) => { e.stopPropagation(); translate.continueBackground(false); }}>{t("translate.continue")}</button>
-              <button onclick={(e) => { e.stopPropagation(); translate.continueBackground(true); }}>{t("translate.translateAll")}</button>
-            </p>
-          {:else if translate.requested[seg.id] || !translate.idle}
-            <div class="skel"><i></i><i></i><i class="short"></i></div>
-          {:else}
-            <!-- not asked for yet: translated when it comes into view, or with "translate everything" -->
-            <div class="skel still" title={t("translate.notYet")}><i></i><i class="short"></i></div>
-          {/if}
-        {/snippet}
         {#if doc.source.kind === "pdf"}
           {#each pageGroups as g (g.page)}
-            <div class="row page">
+            {@const cells = cellsOf(g)}
+            {@const ready = !!measured[g.page]}
+            <div class="row page" use:hold use:nearPage={g} data-anchor={ready && cells.length ? undefined : `p${g.page}`}>
               <div class="src pdfpage">
                 <div class="pagebox" bind:clientHeight={pageHeights[g.page]}>
                   {#if pdfDoc}<PdfPage doc={pdfDoc} n={g.page} {root} highlight={litOn(g)} />{/if}
                 </div>
               </div>
-              <div class="tr md-body pagecells">
+              {#if mode === "side"}<div class="gut" aria-hidden="true"></div>{/if}
+              <div class="tr md-body md-wide pagecells" {...trAttrs}>
                 <div class="pagelabel">{t("translate.pageN", { n: g.page })}</div>
-                {#each g.segs.filter((s) => s.kind.type !== "aside" && !s.private) as seg (seg.id)}
-                  <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-                  <div
-                    class="cell"
-                    class:lit={translate.selected === seg.id}
-                    style:margin-top={`${cellGaps[seg.id] ?? 0}px`}
-                    bind:clientHeight={cellHeights[seg.id]}
-                    use:observe={seg.id}
-                    data-id={seg.id}
-                    onclick={(e) => { onCellClick(e); select(seg.id); }}
-                  >
-                    {@render trCell(seg)}
-                  </div>
-                {/each}
+                {#if ready}
+                  {#each cells as seg (seg.id)}
+                    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+                    <div
+                      class="cell"
+                      class:lit={translate.selected === seg.id}
+                      style:margin-top={`${cellGaps[seg.id] ?? 0}px`}
+                      bind:clientHeight={cellHeights[seg.id]}
+                      use:observe={seg.id}
+                      use:hold
+                      use:images.fill
+                      data-id={seg.id}
+                      data-anchor={`s${seg.id}`}
+                      onclick={(e) => onTrClick(e, seg.id)}
+                    >
+                      {@render trCell(seg)}
+                    </div>
+                  {/each}
+                {/if}
               </div>
             </div>
           {/each}
         {:else}
           {#each doc.segments as seg (seg.id)}
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-            <div class="row kind-{seg.kind.type}" class:lit={translate.selected === seg.id} use:observe={seg.id} data-id={seg.id}>
-              <div class="src md-body" use:assets ondblclick={() => openSource(seg)} onclick={onCellClick}>
+            <div
+              class="row kind-{seg.kind.type}"
+              class:lit={translate.selected === seg.id}
+              use:observe={seg.id}
+              use:hold
+              data-id={seg.id}
+              data-anchor={`s${seg.id}`}
+            >
+              <div class="src md-body md-wide" {...srcAttrs} use:images.fill ondblclick={() => openSource(seg)} onclick={onCellClick}>
                 {@html html(seg.prefix, seg.text)}
               </div>
-              <div class="tr md-body" use:assets onclick={(e) => { onCellClick(e); select(seg.id); }}>
+              {#if mode === "side"}<div class="gut" aria-hidden="true"></div>{/if}
+              <div class="tr md-body md-wide" {...trAttrs} use:images.fill onclick={(e) => onTrClick(e, seg.id)}>
                 {@render trCell(seg)}
               </div>
             </div>
@@ -434,7 +624,7 @@
       </div>
     </div>
   {:else}
-    <div class="state faint">{t("translate.noSource")} · {k("Mod+Shift+T")}</div>
+    <div class="state">{t("translate.noSource")} · {k("Mod+Shift+T")}</div>
   {/if}
 </div>
 
@@ -445,36 +635,24 @@
     flex-direction: column;
     min-height: 0;
   }
-  header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-    min-width: 0;
-  }
-  .title {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .status {
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    min-width: 0;
   }
-  .title.faint {
-    color: var(--fg-faint);
-    font-weight: 400;
+  .status.ok {
+    color: var(--co-success);
   }
   .actions {
-    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 4px;
-    flex-shrink: 0;
+    flex-wrap: wrap;
   }
   .actions button,
-  .actions .chip {
+  .actions .chip,
+  .chip.warn {
     font-size: var(--fs-xs);
     padding: 3px 8px;
     border: 1px solid var(--border);
@@ -504,30 +682,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .actions .ok {
-    color: var(--co-success);
-    border-color: transparent;
-  }
-  .actions .warn {
+  .chip.warn {
     color: var(--co-warn);
     border-color: var(--co-warn);
   }
   .actions .primary {
     color: var(--accent);
     border-color: var(--accent);
-  }
-  .close {
-    flex-shrink: 0;
-    min-width: 24px;
-    height: 24px;
-    display: grid;
-    place-items: center;
-    border-radius: 5px;
-    color: var(--fg-muted);
-  }
-  .close:hover {
-    background: var(--bg-hover);
-    color: var(--fg);
   }
   .state {
     padding: 40px 24px;
@@ -541,9 +702,6 @@
   .state.error {
     color: var(--danger);
   }
-  .state.faint {
-    color: var(--fg-faint);
-  }
   .pulse {
     width: 8px;
     height: 8px;
@@ -555,92 +713,113 @@
     0%, 100% { opacity: 0.3; }
     50% { opacity: 1; }
   }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse { animation: none; }
+  }
 
+  /* Sideways as well: a pane narrower than two readable columns scrolls rather than
+     switching the layout under the reader */
   .scroller {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
+    overflow: auto;
+    padding: 0 24px;
   }
   .rows {
     font-size: var(--fs-note);
-    line-height: 1.7;
     padding: 0 0 48px;
+    margin: 0 auto;
   }
+  .rows.mode-side {
+    max-width: var(--content-width-off, var(--side-max));
+    min-width: calc(40em + 44px);
+  }
+  /* One column: capped by its own text's writing system (data-script on .rows); the 36px on
+     the left is where a row's tools sit */
   .rows.mode-stack,
   .rows.mode-target {
-    max-width: var(--content-width);
-    margin: 0 auto;
+    max-width: calc(var(--content-width) + 36px);
+    padding-left: 36px;
+  }
+  .cols,
+  .row {
+    display: grid;
+    grid-template-columns: var(--cols);
+  }
+  .mode-stack .row,
+  .mode-target .row {
+    grid-template-columns: minmax(0, 1fr);
   }
   .cols {
     position: sticky;
     top: 0;
     z-index: 1;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
     font-size: var(--fs-xs);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     background: var(--bg);
     border-bottom: 1px solid var(--border);
+    margin-bottom: 0.45em;
   }
-  .cols > div {
-    padding: 5px 20px;
+  .cols > div:not(.gut) {
+    padding: 6px 0.75em;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .cols > div + div {
-    border-left: 1px solid var(--border);
+  /* The one line between the two columns: drawn per row down the gutter's middle, so the
+     rows (which abut; their spacing is inside them) join it into one rule */
+  .gut {
+    background: linear-gradient(var(--border), var(--border)) no-repeat center / 1px 100%;
   }
-  .cols .hint {
-    text-transform: none;
-    letter-spacing: 0;
-  }
-  .row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    border-bottom: 1px solid var(--border);
-  }
-  /* A page wants more width than its translation: the page is small type, the translation is not */
-  .rows.pdf .row,
-  .rows.pdf .cols {
-    grid-template-columns: 3fr 2fr;
-  }
-  .mode-stack .row,
-  .mode-target .row {
-    grid-template-columns: 1fr;
-  }
-  .row > div {
-    padding: 10px 20px;
+  /* Cells space the rows with their own padding (0.45em + 0.45em = the shared 0.9em
+     paragraph gap), not with a line under every row */
+  .row > .src,
+  .row > .tr {
+    padding: 0.45em 0.75em;
     min-width: 0;
     position: relative;
+    -webkit-user-select: text;
+    user-select: text;
+    /* Hyphenation by the cell's own language (app.css [lang] sets it for German, French,
+       Spanish): two columns are narrow, and a long compound would otherwise leave a gap */
+    hyphens: var(--hyphens);
   }
+  /* The source is the second voice beside the translation: secondary ink, which holds
+     ≥ 4.5:1 on the lit row's ground too */
   .row .src {
     color: var(--fg-muted);
   }
-  .mode-side .row .tr {
-    border-left: 1px solid var(--border);
-  }
   .mode-stack .row .src {
-    padding-bottom: 2px;
+    padding-bottom: 0.15em;
   }
   .mode-stack .row .tr {
-    padding-top: 2px;
+    padding-top: 0.15em;
   }
-  .mode-target .row .src {
+  .mode-target .row:not(.kind-aside) .src,
+  .mode-target .row.kind-aside .tr,
+  .mode-stack .row.kind-aside .tr {
     display: none;
   }
+  /* A caption, a reference, a byline: left as it is, one size down, in the same secondary
+     ink — shown in every layout, translation-only included */
+  .kind-aside .src {
+    font-size: 0.875em;
+  }
+  .aside-mark {
+    color: var(--fg-faint);
+  }
   /* The row the reader picked: lit on both sides at once */
-  .row.lit > div {
+  .row.lit > .src,
+  .row.lit > .tr,
+  .cell.lit {
     background: var(--bg-hover);
     box-shadow: inset 3px 0 0 var(--accent);
-  }
-  .row:not(.page) .tr:hover .tools,
-  .cell:hover .tools {
-    opacity: 1;
   }
   /* A PDF row: the page drawn on the left, its paragraphs as cells on the right, each at its
      source's height (the page label row is the same height as the page cell's top padding) */
   .row.page .pdfpage {
-    padding: 0 20px 14px;
+    padding: 0 0 14px;
     align-self: start;
   }
   .mode-side .row.page .pdfpage {
@@ -658,35 +837,38 @@
     box-sizing: border-box;
     padding-top: 6px;
   }
-  .kind-aside .src {
-    opacity: 0.55;
-  }
-  .aside-mark {
-    color: var(--fg-faint);
-  }
   .pagelabel {
     font-size: var(--fs-xs);
-    letter-spacing: 0.04em;
-    color: var(--fg-faint);
-    padding: 2px 20px 6px;
+    color: var(--fg-muted);
+    padding: 2px 0.75em 6px;
   }
   .cell {
     position: relative;
-    padding: 6px 20px;
+    padding: 0.45em 0.75em;
     border-radius: 4px;
+    hyphens: var(--hyphens);
+    -webkit-user-select: text;
+    user-select: text;
   }
-  .cell.lit {
-    background: var(--bg-hover);
-    box-shadow: inset 3px 0 0 var(--accent);
-  }
+  /* A row's tools stand in the gutter to the left of the translation, clear of its text */
   .tools {
     position: absolute;
-    top: 6px;
-    right: 8px;
+    top: 0.45em;
+    right: calc(100% + 11px);
     display: flex;
+    flex-direction: column;
     gap: 2px;
     opacity: 0;
     transition: opacity 120ms;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .row .tr:hover .tools,
+  .row.lit .tools,
+  .cell:hover .tools,
+  .cell.lit .tools,
+  .tools:focus-within {
+    opacity: 1;
   }
   .tools button {
     font-size: var(--fs-xs);
@@ -703,23 +885,9 @@
     color: var(--fg);
     background: var(--bg-hover);
   }
-  .partial {
-    margin: 0;
-    white-space: pre-wrap;
-  }
-  .cur {
-    display: inline-block;
-    width: 2px;
-    height: 1em;
-    background: var(--accent);
-    vertical-align: -0.15em;
-    margin-left: 2px;
-    animation: pulse 1s steps(2) infinite;
-  }
   .priv {
     font-size: var(--fs-sm);
-    color: var(--fg-faint);
-    font-style: italic;
+    color: var(--fg-muted);
   }
   .failed {
     margin: 0;
@@ -729,27 +897,14 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* The translation's room: --lines lines of the body's line height. Asked for, the lines
+     are drawn as still bars; not asked for, the room stays blank */
   .skel {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 6px 0;
+    height: calc(var(--lines) * 1.75em);
   }
-  .skel i {
-    display: block;
-    height: 0.75em;
+  .skel.asked {
+    background: repeating-linear-gradient(to bottom, transparent 0 0.5em, var(--bg-hover) 0.5em 1.25em, transparent 1.25em 1.75em);
     border-radius: 4px;
-    background: linear-gradient(90deg, var(--bg-panel), var(--border), var(--bg-panel));
-    background-size: 200% 100%;
-    animation: shimmer 1.4s linear infinite;
-  }
-  .skel i.short {
-    width: 55%;
-  }
-  .skel.still i {
-    animation: none;
-    background: var(--bg-panel);
-    opacity: 0.7;
   }
   .paused {
     margin: 0;
@@ -769,33 +924,10 @@
   .paused button:hover {
     background: var(--bg-hover);
   }
-  @keyframes shimmer {
-    from { background-position: 200% 0; }
-    to { background-position: -200% 0; }
+  /* The note's own images: the width stays inside the column; the height follows the width
+     and, once an image has been seen, the width/height attributes (views/assets.ts) */
+  .row :global(img[data-asset]) {
+    max-width: 100%;
+    height: auto;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .skel i, .cur, .pulse { animation: none; }
-  }
-
-  /* ---- the cell typography (the note renderer's tags; the same rhythm as the reading projection) ---- */
-  .row :global(p) { margin: 0 0 0.6em; }
-  .row :global(p:last-child) { margin-bottom: 0; }
-  .row :global(.md-h) { font-weight: 600; line-height: 1.4; margin: 0.2em 0; }
-  .row :global(.md-h1) { font-size: 1.6em; }
-  .row :global(.md-h2) { font-size: 1.42em; }
-  .row :global(.md-h3) { font-size: 1.27em; }
-  .row :global(.md-h4) { font-size: 1.12em; }
-  .row :global(.md-h5), .row :global(.md-h6) { font-size: 1em; }
-  .row :global(ul), .row :global(ol) { margin: 0; padding-left: 1.6em; }
-  .row :global(li) { margin: 0.1em 0; }
-  .row :global(blockquote) { margin: 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--fg-muted); }
-  .row :global(code) { font-family: var(--font-mono); font-size: 0.88em; background: var(--bg-panel); border-radius: 4px; padding: 1px 5px; }
-  .row :global(.md-code) { margin: 0; padding: 10px 12px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; font-size: 0.88em; line-height: 1.6; }
-  .row :global(.md-code code) { background: none; padding: 0; }
-  .row :global(.md-hr) { border: none; border-top: 1px solid var(--border); margin: 0.4em 0; }
-  .row :global(.md-link), .row :global(.md-wiki) { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-  .row :global(img.md-img) { max-width: 100%; height: auto; border-radius: 6px; }
-  .row :global(.katex-display) { overflow-x: auto; overflow-y: hidden; margin: 0.2em 0; }
-  .row :global(.md-tablewrap) { margin: 0; }
-  .row :global(th), .row :global(td) { padding: 4px 8px; }
 </style>

@@ -8,6 +8,7 @@
   import { executeCommand } from "$lib/commands/registry";
   import { k } from "$lib/shortcut";
   import PdfViewer from "./PdfViewer.svelte";
+  import PdfNightToggle from "./PdfNightToggle.svelte";
 
   let { path }: { path: string } = $props();
 
@@ -56,6 +57,7 @@
 {:else if isPdf}
   <div class="bar">
     <span class="name" title={path}>{name}</span>
+    <PdfNightToggle />
     <button title={t("filePreview.translateHint", { key: k("Mod+Shift+T") })} onclick={() => void executeCommand("translate-toggle")}>{t("filePreview.translate")}</button>
   </div>
   {#key path}

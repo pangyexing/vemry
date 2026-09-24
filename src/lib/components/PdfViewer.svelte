@@ -97,7 +97,7 @@
   .loading {
     padding: 40px;
     text-align: center;
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     font-size: var(--fs-sm);
   }
 </style>

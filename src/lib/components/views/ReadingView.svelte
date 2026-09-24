@@ -12,9 +12,12 @@
   import { clips } from "$lib/stores/clips.svelte";
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { toast } from "$lib/stores/toast.svelte";
+  import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import { domainOf, handleCodeCopyClick, imageChip, renderReadingMarkdown } from "$lib/markdown";
+  import { langAttrs, noteLanguage } from "$lib/notelang";
   import { openImageLightbox } from "$lib/lightbox";
   import { k } from "$lib/shortcut";
+  import ViewHeader from "./ViewHeader.svelte";
   import "katex/dist/katex.min.css";
 
   let {
@@ -29,6 +32,9 @@
 
   const run = (p: Promise<unknown>) => void p.catch((e) => toast.push(String(e), "error"));
   const cur = $derived(reading.current);
+  /** What the page reads as, judged once per page: fonts, line breaking and the column width
+   *  follow the article rather than the interface (a German page read in a Chinese UI). */
+  const lang = $derived(cur ? langAttrs(noteLanguage(cur.markdown)) : {});
 
   // The scroll position is restored when the page changes, and onscroll keeps recording it
   // otherwise. restoring blocks the scroll event the restoring itself fires, so the old page's
@@ -141,22 +147,29 @@
     return box.innerHTML;
   }
 
+  /** The article's selection as text and convertible HTML, read while it is still there: the
+   *  "more" button's mousedown prevents the default so pressing it does not collapse the
+   *  selection, and the menu item that quotes it runs after the menu has taken the pointer. */
+  function grabSelection(): { text: string; html: string } | null {
+    const sel = window.getSelection();
+    const text = sel ? String(sel) : "";
+    if (!text.trim() || !sel || !article?.contains(sel.anchorNode)) return null;
+    return { text, html: selectionFragmentHtml(sel) };
+  }
+
   /** A selection → a quote block. While the projection holds the main pane the editor is only
    *  hidden by CSS, and a bare insertAtCursor would silently write into that invisible old
    *  note — so it passes the shared guard, and when it is not visible it lands in the inbox
-   *  and says so. The selection is right here in the main webview — the button's mousedown
-   *  prevents the default, so clicking does not collapse the selection. */
-  async function quoteSelection(pickTarget = false) {
+   *  and says so. */
+  async function quoteSelection(grabbed: { text: string; html: string } | null, pickTarget = false) {
     if (!cur) return;
-    const sel = window.getSelection();
-    const text = sel ? String(sel) : "";
-    if (!text.trim() || !sel || !article?.contains(sel.anchorNode)) {
+    if (!grabbed) {
       toast.push(t("reader.selectFirst"), "error");
       return;
     }
     try {
-      const quote = await api.readingQuote(cur.url, text, selectionFragmentHtml(sel));
-      // ⌥ or ▾: choose the target note. The text is already in hand, so the panel taking the focus and collapsing the selection does not matter
+      const quote = await api.readingQuote(cur.url, grabbed.text, grabbed.html);
+      // "Pick a note": choose the target note. The text is already in hand, so the panel taking the focus and collapsing the selection does not matter
       if (pickTarget && onPickQuoteTarget) {
         onPickQuoteTarget(quote, cur.url);
         return;
@@ -212,59 +225,78 @@
   function goForward() {
     void executeCommand("nav-forward");
   }
+
+  /** The header keeps three actions in sight — keeping the page, reading it translated,
+   *  opening the original — and the rest hang under "more", so a narrow pane gives up tool
+   *  buttons rather than the page's title. */
+  function openMore(e: MouseEvent) {
+    const page = cur;
+    if (!page) return;
+    const grabbed = grabSelection();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const entries: MenuEntry[] = [
+      { label: t("reader.selectionToTarget", { name: clipTarget.name ?? t("reader.note") }), action: () => void quoteSelection(grabbed) },
+      { label: t("reader.pickTarget"), action: () => void quoteSelection(grabbed, true) },
+    ];
+    if (clipTarget.path) entries.push({ label: t("reader.clearTarget"), action: () => clipTarget.clear() });
+    entries.push(
+      { separator: true },
+      { label: t("reader.addToContext"), action: attachContext },
+      { label: t("reader.openInSystemBrowser"), action: () => run(api.urlOpenSystem(page.url)) },
+    );
+    contextMenu.openAt(r.left, r.bottom + 4, entries);
+  }
 </script>
 
-<div class="view">
-  <header>
-    <span class="nav">
+{#snippet nav()}
+  <span class="nav">
+    <button
+      title={reading.canGoBack || vault.canGoBack ? t("tabBar.backWithKey", { key: k("Mod+Alt+←") }) : t("reader.backToOrigin", { key: k("Mod+Alt+←") })}
+      aria-label={t("common.back")}
+      onclick={goBack}
+    >←</button>
+    <button
+      title={t("tabBar.forwardWithKey", { key: k("Mod+Alt+→") })}
+      aria-label={t("common.forward")}
+      disabled={!reading.canGoForward && !vault.canGoForward}
+      onclick={goForward}
+    >→</button>
+  </span>
+{/snippet}
+
+{#snippet actions()}
+  {#if cur}
+    {@const page = cur}
+    <span class="actions">
+      {#if clips.pathFor(page.url)}
+        <button class="clipped" title={t("reader.alreadyClippedHint")} onclick={openClipped}>{t("reader.alreadyClipped")}</button>
+      {:else}
+        <button title={t("reader.clipHint")} onclick={() => void clip()}>{t("reader.clip")}</button>
+      {/if}
+      <button title={t("reader.translateHint", { key: k("Mod+Shift+T") })} onclick={() => void executeCommand("translate-toggle")}>{t("reader.translate")}</button>
+      <button title={t("reader.openInBrowserHint")} onclick={() => openInBrowser(page.url)}>{t("reader.openInBrowser")}</button>
       <button
-        title={reading.canGoBack || vault.canGoBack ? t("tabBar.backWithKey", { key: k("Mod+Alt+←") }) : t("reader.backToOrigin", { key: k("Mod+Alt+←") })}
-        aria-label={t("common.back")}
-        onclick={goBack}
-      >←</button>
-      <button
-        title={t("tabBar.forwardWithKey", { key: k("Mod+Alt+→") })}
-        aria-label={t("common.forward")}
-        disabled={!reading.canGoForward && !vault.canGoForward}
-        onclick={goForward}
-      >→</button>
+        class="more"
+        title={t("common.more")}
+        aria-label={t("common.more")}
+        aria-haspopup="menu"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={openMore}>⋯</button
+      >
     </span>
-    {#if cur}
-      <span class="title" title={cur.url}>{cur.title || domainOf(cur.url)}</span>
-      <span class="domain">{domainOf(cur.url)}</span>
-      <span class="actions">
-        {#if clips.pathFor(cur.url)}
-          <button class="clipped" title={t("reader.alreadyClippedHint")} onclick={openClipped}>{t("reader.alreadyClipped")}</button>
-        {:else}
-          <button title={t("reader.clipHint")} onclick={() => void clip()}>{t("reader.clip")}</button>
-        {/if}
-        <button
-          class="target"
-          title={clipTarget.path
-            ? t("reader.selectionToTargetHint", { path: clipTarget.path, key: k("Alt") })
-            : t("reader.selectionToInboxHint", { key: k("Alt") })}
-          onmousedown={(e) => e.preventDefault()}
-          onclick={(e) => void quoteSelection(e.altKey)}
-        >{t("reader.selectionToTarget", { name: clipTarget.name ?? t("reader.note") })}</button>
-        <button
-          class="mini"
-          title={t("reader.pickTargetHint")}
-          onmousedown={(e) => e.preventDefault()}
-          onclick={() => void quoteSelection(true)}
-        >▾</button>
-        {#if clipTarget.path}
-          <button class="mini" title={t("reader.clearTargetHint")} onclick={() => clipTarget.clear()}>✕</button>
-        {/if}
-        <button title={t("reader.addToContextHint")} onclick={attachContext}>{t("reader.addToContext")}</button>
-        <button title={t("reader.translateHint", { key: k("Mod+Shift+T") })} onclick={() => void executeCommand("translate-toggle")}>{t("reader.translate")}</button>
-        <button title={t("reader.openInBrowserHint")} onclick={() => openInBrowser(cur.url)}>{t("reader.openInBrowser")}</button>
-        <button title={t("reader.openInSystemBrowser")} aria-label={t("reader.openInSystemBrowser")} onclick={() => run(api.urlOpenSystem(cur.url))}>↗</button>
-      </span>
-    {:else}
-      <span class="title faint">{t("view.reading")}</span>
-    {/if}
-    <button class="close" title={t("reader.leaveHint")} aria-label={t("reader.leave")} onclick={() => vault.exitReading()}>✕</button>
-  </header>
+  {/if}
+{/snippet}
+
+<div class="view">
+  <ViewHeader
+    title={cur ? cur.title || domainOf(cur.url) : t("view.reading")}
+    clipTitle
+    total={cur ? domainOf(cur.url) : undefined}
+    lead={nav}
+    right={actions}
+    onclose={() => vault.exitReading()}
+    closeHint={t("reader.leaveHint")}
+  />
 
   {#if reading.loading}
     <div class="state">
@@ -289,17 +321,22 @@
       </div>
     {/if}
     <div class="scroller" bind:this={scroller} {onscroll}>
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-      <article bind:this={article} onclick={onArticleClick}>
-        {@html renderReadingMarkdown(cur.markdown, cur.url)}
-      </article>
-      <footer class="src">
-        {t("reader.source")}<a class="src-link" href={cur.url} onclick={(e) => { e.preventDefault(); openInBrowser(cur.url); }}>{cur.url}</a>
-        {#if cur.byline}<span> · {cur.byline}</span>{/if}
-      </footer>
+      <!-- The column is sized here, once, at the body's font size: the article and the
+        footer under it share one width (sized on the footer's own 12px, the same 42em came
+        out a third narrower and off-centre) -->
+      <div class="page" {...lang}>
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+        <article class="md-body md-wide" bind:this={article} onclick={onArticleClick}>
+          {@html renderReadingMarkdown(cur.markdown, cur.url)}
+        </article>
+        <footer class="src">
+          {t("reader.source")}<a class="src-link" href={cur.url} onclick={(e) => { e.preventDefault(); openInBrowser(cur.url); }}>{cur.url}</a>
+          {#if cur.byline}<span> · {cur.byline}</span>{/if}
+        </footer>
+      </div>
     </div>
   {:else}
-    <div class="state faint">{t("reader.empty")}</div>
+    <div class="state">{t("reader.empty")}</div>
   {/if}
 </div>
 
@@ -309,15 +346,6 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-  }
-  header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-    min-width: 0;
   }
   .nav {
     display: flex;
@@ -332,33 +360,15 @@
     border-radius: 5px;
     color: var(--fg-muted);
   }
+  /* The arrow is a mark, not text: the faint ink says "nothing that way" without fading it */
   .nav button:disabled {
     color: var(--fg-faint);
-    opacity: 0.5;
   }
   .nav button:not(:disabled):hover {
     background: var(--bg-hover);
     color: var(--fg);
   }
-  .title {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .title.faint {
-    color: var(--fg-faint);
-    font-weight: 400;
-  }
-  .domain {
-    font-size: var(--fs-xs);
-    color: var(--fg-faint);
-    flex-shrink: 0;
-  }
   .actions {
-    margin-left: auto;
     display: flex;
     gap: 4px;
     flex-shrink: 0;
@@ -369,6 +379,7 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--fg-muted);
+    white-space: nowrap;
   }
   .actions button:hover {
     background: var(--bg-hover);
@@ -378,27 +389,9 @@
     color: var(--accent);
     border-color: var(--accent);
   }
-  .actions .target {
-    max-width: 150px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .actions .mini {
-    padding: 3px 5px;
-  }
-  .close {
-    flex-shrink: 0;
-    min-width: 24px;
-    height: 24px;
-    display: grid;
-    place-items: center;
-    border-radius: 5px;
-    color: var(--fg-muted);
-  }
-  .close:hover {
-    background: var(--bg-hover);
-    color: var(--fg);
+  .actions .more {
+    padding: 3px 6px;
+    line-height: 1;
   }
 
   .banner {
@@ -419,15 +412,12 @@
     flex-wrap: wrap;
     justify-content: center;
   }
-  .state.faint {
-    color: var(--fg-faint);
-  }
   .state.error {
     flex-direction: column;
     color: var(--danger);
   }
   .state.error p {
-    word-break: break-all;
+    overflow-wrap: anywhere;
     max-width: 60ch;
   }
   .state-actions {
@@ -466,140 +456,49 @@
     overflow-y: auto;
     padding: 24px 32px 48px;
   }
-  article {
-    /* Selectable: "selection → quote" reads window.getSelection() from here, and body turns selection off */
-    -webkit-user-select: text;
-    user-select: text;
+  /* The column: the body's font size, the width by the page's own writing system
+     (data-script from noteLanguage, app.css [data-script]) */
+  .page {
     max-width: var(--content-width);
     margin: 0 auto;
     font-size: var(--fs-note);
-    line-height: 1.8;
+  }
+  /* The typography is the shared wide-surface .md-body (app.css), the same as the editor's
+     embeds and the translation's cells. What stays here is the projection's own: the text is
+     selectable ("selection → quote" reads window.getSelection() from here), and a static page
+     can afford balanced line breaks (the editor cannot: they re-flow a paragraph as it is
+     typed into) */
+  article {
+    -webkit-user-select: text;
+    user-select: text;
     color: var(--fg);
-    word-break: break-word;
+    overflow-wrap: break-word;
+    text-wrap: pretty;
+    hyphens: var(--hyphens);
   }
   .src {
-    max-width: var(--content-width);
-    margin: 28px auto 0;
+    margin-top: 28px;
     padding-top: 12px;
     border-top: 1px solid var(--border);
     font-size: var(--fs-xs);
-    color: var(--fg-faint);
-    word-break: break-all;
+    color: var(--fg-muted);
+    overflow-wrap: anywhere;
+    -webkit-user-select: text;
+    user-select: text;
   }
   .src-link {
-    color: var(--fg-faint);
+    color: var(--fg-muted);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
   .src-link:hover {
     color: var(--accent);
   }
-
-  /* ---- the projection body's typography (the renderer only emits these tags) ---- */
-  article :global(p) {
-    margin: 0 0 0.9em;
-  }
-  article :global(.md-h) {
-    font-weight: 600;
-    line-height: 1.4;
-    margin: 1.4em 0 0.5em;
-  }
-  /* The scale matches the editor's .cm-md-h1..h5 in app.css (the same geometric progression), and they change together */
-  article :global(.md-h1) { font-size: 1.8em; }
-  article :global(.md-h2) { font-size: 1.6em; }
-  article :global(.md-h3) { font-size: 1.42em; }
-  article :global(.md-h4) { font-size: 1.27em; }
-  article :global(.md-h5) { font-size: 1.12em; }
-  article :global(.md-h6) { font-size: 1em; }
-  article :global(ul), article :global(ol) {
-    margin: 0 0 0.9em;
-    padding-left: 1.6em;
-  }
-  article :global(li) {
-    margin: 0.2em 0;
-  }
-  article :global(blockquote) {
-    margin: 0 0 0.9em;
-    padding: 2px 0 2px 12px;
-    border-left: 3px solid var(--border);
-    color: var(--fg-muted);
-  }
-  article :global(code) {
-    font-family: var(--font-mono);
-    font-size: 0.88em;
-    background: var(--bg-panel);
-    border-radius: 4px;
-    padding: 1px 5px;
-  }
-  article :global(.md-code) {
-    margin: 0 0 0.9em;
-    padding: 10px 12px;
-    background: var(--bg-panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow-x: auto;
-    font-size: 0.88em;
-    line-height: 1.6;
-  }
-  article :global(.md-code code) {
-    background: none;
-    padding: 0;
-  }
-  article :global(.md-hr) {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: 1.4em 0;
-  }
-  article :global(.md-link) {
-    color: var(--accent);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    cursor: pointer;
-  }
-  article :global(.md-link:hover) {
-    opacity: 0.85;
-  }
   /* A projected image: loaded through the vemry-asset proxy, and a click opens the lightbox in the current window */
   article :global(img.md-imgload) {
     max-width: 100%;
     height: auto;
     border-radius: 6px;
-    margin: 2px 0;
     cursor: zoom-in;
-  }
-  /* A block formula scrolls horizontally, so a long expression does not burst the body column */
-  article :global(.katex-display) {
-    overflow-x: auto;
-    overflow-y: hidden;
-    margin: 0.4em 0 0.9em;
-  }
-  /* The image placeholder chip: the fallback when the proxy is off or the load failed; a click opens a browser window to see the original */
-  article :global(.md-img) {
-    display: inline-block;
-    font-size: 0.85em;
-    color: var(--fg-muted);
-    background: var(--bg-panel);
-    border: 1px dashed var(--border);
-    border-radius: 5px;
-    padding: 1px 8px;
-    cursor: pointer;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    vertical-align: bottom;
-  }
-  article :global(.md-img:hover) {
-    color: var(--fg);
-    background: var(--bg-hover);
-  }
-  /* The table skeleton lives in app.css's global .md-tablewrap section (shared with
-     AgentPanel); only the projection's own rhythm stays here: the paragraph spacing and the
-     roomier cell padding */
-  article :global(.md-tablewrap) {
-    margin: 0 0 0.9em;
-  }
-  article :global(th), article :global(td) {
-    padding: 5px 10px;
   }
 </style>

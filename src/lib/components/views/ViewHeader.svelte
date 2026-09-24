@@ -31,6 +31,7 @@
    *  is saved. */
   import type { Snippet } from "svelte";
   import { vault } from "$lib/stores/vault.svelte";
+  import { cliptip } from "$lib/cliptip";
 
   let {
     title,
@@ -41,10 +42,15 @@
     left,
     right,
     askAi,
+    lead,
+    clipTitle = false,
+    onclose,
+    closeHint,
   }: {
     title: string;
-    /** The count line, "37 tasks" and so on — each view decides what it counts */
-    total: string;
+    /** The count line, "37 tasks" and so on — each view decides what it counts (the
+     *  reading surfaces put their secondary line here: the page's domain, the progress) */
+    total?: string;
     /** A grey sentence on the right (an interaction hint or the view's promise) */
     hint?: string;
     /** Given, it renders the filter box and doubles as its placeholder */
@@ -58,12 +64,27 @@
     left?: Snippet;
     /** The right slot: for tools such as switches */
     right?: Snippet;
+    /** Before the title: the reading projection's back / forward pair */
+    lead?: Snippet;
+    /** A title that is content rather than a view's name (a page's or a document's title,
+     *  any length): it grows up to its own width, gives way down to a few characters before
+     *  the tools wrap, and shows the rest in a clip tip */
+    clipTitle?: boolean;
+    /** A surface that is left rather than closed (the reading projection and the
+     *  translation sit over a tab rather than being one): what ✕ does, and its hover line */
+    onclose?: () => void;
+    closeHint?: string;
   } = $props();
 </script>
 
 <header>
-  <h2>{title}</h2>
-  <span class="total">{total}</span>
+  {@render lead?.()}
+  {#if clipTitle}
+    <h2 class="clip" use:cliptip={title}>{title}</h2>
+  {:else}
+    <h2>{title}</h2>
+  {/if}
+  {#if total !== undefined}<span class="total">{total}</span>{/if}
   {@render left?.()}
   <span class="spring"></span>
   <!-- The right side is one flex item: in a pane too narrow for the whole row it drops
@@ -79,8 +100,11 @@
       <input class="filter" bind:value={filter} placeholder={filterPlaceholder} spellcheck="false" />
     {/if}
     <!-- ✕ is Esc's visible entry point: it closes that view's tab, and closeTab activates the neighbour -->
-    <button class="close" title={t("viewChrome.closeView")} aria-label={t("viewChrome.closeViewLabel")} onclick={() => void vault.closeActiveView()}
-      >✕</button
+    <button
+      class="close"
+      title={closeHint ?? t("viewChrome.closeView")}
+      aria-label={t("viewChrome.closeViewLabel")}
+      onclick={() => (onclose ? onclose() : void vault.closeActiveView())}>✕</button
     >
   </span>
 </header>
@@ -105,6 +129,16 @@
     font-size: var(--fs-lg);
     font-weight: 600;
     white-space: nowrap;
+  }
+  /* The basis is what the row wraps by, so the tools stay on the title's line down to a
+     12em title; above that it grows to its own width (max-content) and no further, leaving
+     the spring the rest; below it, it gives way to a few characters */
+  h2.clip {
+    flex: 1 1 12em;
+    max-width: max-content;
+    min-width: 6em;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .total {
     font-size: var(--fs-xs);
