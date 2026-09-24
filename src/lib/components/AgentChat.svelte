@@ -208,6 +208,13 @@
    *  by the first keystroke or a focus loss). A cursor landing quietly in the input gives no
    *  sign at all — the user would think nothing happened and go looking for a new window. */
   let summoning = $state(false);
+  /** The composer dock's height, published on the root as --chat-dock-h: the detached chat
+   *  window lifts its notices above the dock, where they would otherwise cover the send
+   *  button (the main window keeps its notices off the panel altogether). */
+  let dockH = $state(0);
+  $effect(() => {
+    document.documentElement.style.setProperty("--chat-dock-h", `${dockH}px`);
+  });
   let summonHint = $state(false);
   let summonTimer: ReturnType<typeof setTimeout> | null = null;
   let hintTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2415,7 +2422,7 @@
 
   <!-- The dock is the panel's ground across the full width; the composer inside it is the
        timeline's column, centred with it in a wide window -->
-  <div class="composer-dock">
+  <div class="composer-dock" bind:clientHeight={dockH}>
   <div class="composer" class:summon={summoning}>
     <!-- The status strip: what the run is doing right now (a gate waiting, the tool in flight,
          the answer streaming), the last turn's usage when idle, and the way back to the bottom

@@ -1,13 +1,15 @@
 <script lang="ts">
-  // The notice stack, bottom right of the window, just above the status bar: out of the
+  // The notice stack, bottom right of the content column, just above the status bar: out of the
   // body column, which the bottom centre lay right across for the several seconds a notice
   // stays. The surface is inverted (the theme's ink as ground) so it stands out from
   // whatever it lies over. The main window and the detached chat window each mount one
   // (the toast store belongs to each window).
   // lift: a window with a bottom status bar passes var(--statusbar-h); the detached chat
   // window and the welcome page keep the default 0. The 16px baseline is added here.
-  // inset: the width a docked browser window covers on the right (a native child window is
-  // always above the DOM), so the stack keeps to the part of the window that can be seen.
+  // inset: the width kept clear on the right — a docked browser window (a native child
+  // window is always above the DOM) and the side panel when it is on the right (its
+  // composer's send button sits at the window's bottom right), so the stack keeps to the
+  // content column.
   import { fade, fly } from "svelte/transition";
   import { t } from "$lib/i18n/i18n.svelte";
   import { toast } from "$lib/stores/toast.svelte";

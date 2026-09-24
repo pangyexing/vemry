@@ -159,7 +159,8 @@
 
 <ContextMenu />
 <PermissionDialog />
-<ToastStack />
+<!-- Notices sit just above the composer dock rather than over the send button -->
+<ToastStack lift="var(--chat-dock-h, 0px)" />
 
 <style>
   .win {

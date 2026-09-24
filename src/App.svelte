@@ -117,6 +117,8 @@
   /** The three columns' room (the window less the activity bar and a docked browser panel),
    *  measured: the layout's own width never depends on its column template. */
   let layoutW = $state(window.innerWidth - ABAR_W);
+  /** The side panel's rendered width: notices keep clear of it (see the ToastStack below). */
+  let panelW = $state(0);
   /** The column the reader dragged last holds the width they gave it: it neither gives way
    *  nor snaps back when the drag ends. It is released as soon as the room changes (a window
    *  resize, a sidebar opened or closed, the browser docked) — the reader's own action too. */
@@ -1504,7 +1506,7 @@
         </div>
       </main>
       {#if vault.rightOpen}
-        <aside class="right" bind:this={panelCol}>
+        <aside class="right" bind:this={panelCol} bind:clientWidth={panelW}>
           {#if !vault.swapSides}{@render sash("panel")}{/if}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="tabs" oncontextmenu={tabsMenu}>
@@ -1580,7 +1582,13 @@
 
 <!-- With the main layout's bottom status bar the toast is raised; the welcome page has none and keeps
   the default. The docked browser tab covers the panel column, so the stack keeps out of it -->
-<ToastStack lift={vault.root ? "var(--statusbar-h)" : "0px"} inset={browser.panelInset} />
+<!-- The notices keep to the content column's bottom right: with the side panel open on
+  the right its composer (the send button) sits at the window's own bottom right, and a
+  notice there would cover it for the seconds it stays -->
+<ToastStack
+  lift={vault.root ? "var(--statusbar-h)" : "0px"}
+  inset={browser.panelInset + (vault.root && vault.rightOpen && !vault.swapSides ? panelW : 0)}
+/>
 <CommandPalette bind:mode={paletteMode} onPickNote={deliverPicked} />
 <ContextMenu />
 <PermissionDialog />
