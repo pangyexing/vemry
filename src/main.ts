@@ -6,10 +6,18 @@ import BrowserBar from "./BrowserBar.svelte";
 import CaptureWindow from "./CaptureWindow.svelte";
 import { initI18n } from "$lib/i18n/i18n.svelte";
 import { isAgentWindow, isBrowserbarWindow, isCaptureWindow } from "$lib/window";
+import { installImagePlate } from "$lib/imageplate";
+import { installWebImageSizes } from "$lib/webimagesize";
 
 // Language before mount so the first paint is usually already right; not awaited
 // because `t()` is reactive and a late answer just relabels on the next frame.
 void initI18n();
+
+// Two looks at every picture as it loads, whichever surface shows it: the dark-ink
+// drawing on a transparent ground gets its light plate, and a projected web picture's
+// size is remembered for the next projection of its page
+installImagePlate();
+installWebImageSizes();
 
 // One bundle mounted in four kinds of webview: the main window mounts the full
 // application, the detached AI chat window mounts the conversation side alone, the

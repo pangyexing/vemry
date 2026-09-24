@@ -6,6 +6,7 @@ mod capture_window;
 mod commands;
 mod config_store;
 mod i18n;
+mod imagesize;
 mod inbox;
 mod menu;
 mod pasteboard;
@@ -236,6 +237,7 @@ pub fn run() {
             commands::file_create,
             commands::file_read,
             commands::file_read_binary,
+            commands::image_sizes,
             commands::file_write,
             commands::attachment_save,
             commands::attachments_migrate,

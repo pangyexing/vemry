@@ -2,9 +2,9 @@
 // window opened. Wheel and trackpad pinch zooming (the zoom's fixed point follows the
 // pointer), drag panning, a double click toggling between "fit to window" and "actual
 // pixels", and Esc, a click on the background or the close button to leave.
-// Plain framework-agnostic DOM, shared by the editor widget (livepreview) and the
-// reading projection (ReadingView); the styling lives in the .imgbox section of
-// app.css.
+// Plain framework-agnostic DOM, shared by the editor widget (livepreview), an embed's
+// body and the reading projection (ReadingView); the styling lives in the .imgbox
+// section of app.css.
 
 import { t } from "$lib/i18n/i18n.svelte";
 import { browser } from "$lib/stores/browser.svelte";
@@ -39,6 +39,12 @@ export function openImageLightbox(src: string, alt = ""): void {
   const apply = () => {
     img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
   };
+  /** The picture's own width on screen before scaling: a plated image (imageplate.ts)
+   *  gives 8px on each side of its box to the plate. */
+  const pictureWidth = () => {
+    const cs = getComputedStyle(img);
+    return img.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  };
 
   // The zoom indicator: with a natural size it is computed against the original
   // image's pixels (100% = pixel for pixel), and something like an SVG with no natural
@@ -46,7 +52,7 @@ export function openImageLightbox(src: string, alt = ""): void {
   let tagTimer = 0;
   const showZoom = () => {
     const pct = img.naturalWidth
-      ? Math.round((img.clientWidth * scale * 100) / img.naturalWidth)
+      ? Math.round((pictureWidth() * scale * 100) / img.naturalWidth)
       : Math.round(scale * 100);
     tag.textContent = `${pct}%`;
     tag.classList.add("show");
@@ -124,7 +130,8 @@ export function openImageLightbox(src: string, alt = ""): void {
   img.ondblclick = (e) => {
     e.preventDefault();
     // Fit to window ↔ actual pixels; when the original is smaller than the fitted state it goes to 2×
-    const pixel = img.naturalWidth && img.clientWidth ? img.naturalWidth / img.clientWidth : 1;
+    const shown = pictureWidth();
+    const pixel = img.naturalWidth && shown > 0 ? img.naturalWidth / shown : 1;
     if (Math.abs(scale - 1) < 0.01) {
       zoomAt(Math.max(pixel, 2) / scale, e.clientX, e.clientY);
     } else {

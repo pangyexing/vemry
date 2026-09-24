@@ -30,6 +30,7 @@ import { scanFields, stateStepOf } from "$lib/fields";
 import { stateGlyphSvg, TASK_STEPS, taskStep } from "$lib/chips";
 import { types } from "$lib/stores/types.svelte";
 import { POSITIONAL_RE } from "$lib/citation";
+import { webImageSize } from "$lib/webimagesize";
 
 export interface Citation {
   title: string;
@@ -860,9 +861,12 @@ function renderReadingInline(raw: string, base: string): string {
     if (!url) return stash(escapeHtml(label));
     // The image loads through the vemry-asset proxy (SSRF validation, no cookies and a
     // disk cache on the Rust side); a failed load is swapped back to a placeholder chip
-    // by ReadingView's capture listener
+    // by ReadingView's capture listener. A picture shown before carries the size it had
+    // (webimagesize.ts), so its place is held before it loads and the text below stays put
+    const dims = webImageSize(url);
+    const size = dims ? ` width="${dims[0]}" height="${dims[1]}"` : "";
     return stash(
-      `<img class="md-imgload" src="${escapeHtml(proxiedImageUrl(url, base))}" alt="${escapeHtml(label)}" loading="lazy" data-url="${escapeHtml(url)}">`,
+      `<img class="md-imgload" src="${escapeHtml(proxiedImageUrl(url, base))}" alt="${escapeHtml(label)}"${size} loading="lazy" data-url="${escapeHtml(url)}">`,
     );
   });
   s = s.replace(READ_LINK, (_, text: string, href: string) => {

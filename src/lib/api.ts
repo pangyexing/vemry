@@ -1198,6 +1198,9 @@ export const api = {
   fileCreate: (path: string) => invoke<string>("file_create", { path }),
   fileRead: (path: string) => invoke<string>("file_read", { path }),
   fileReadBinary: (path: string) => invoke<ArrayBuffer>("file_read_binary", { path }),
+  /** Each vault image's `[width, height]` from its header (nothing is decoded), in the
+   *  order asked; null for a file that is missing or unreadable. */
+  imageSizes: (paths: string[]) => invoke<([number, number] | null)[]>("image_sizes", { paths }),
   // The path travels in an IPC header (the body is left to the binary bytes). A header
   // value has to be ISO-8859-1: a non-ASCII file name placed there raw makes Windows
   // WebView2's new Headers() throw a TypeError outright, so it is percent-encoded and

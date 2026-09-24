@@ -314,6 +314,19 @@ impl Vault {
         Ok(fs::read(&abs)?)
     }
 
+    /// A vault file opened for reading, for a caller that needs a part of it (an
+    /// image's header) rather than the whole. The same path rules as
+    /// `read_file_bytes`, and no size limit, since nothing is read here.
+    pub fn open_file(&self, path: &str) -> Result<fs::File> {
+        let rel = validate_rel(path)?;
+        let abs = self.root.join(rel);
+        let meta = fs::metadata(&abs).map_err(|_| reject(PathReject::NotFound, rel))?;
+        if !meta.is_file() {
+            return Err(reject(PathReject::NotAFile, rel));
+        }
+        Ok(fs::File::open(&abs)?)
+    }
+
     /// Save pasted/dropped bytes under the suggested relative path, deduping
     /// the filename (`-1`, `-2`, …) if taken. Returns the final relative path.
     pub fn save_attachment(&self, suggested: &str, bytes: &[u8]) -> Result<String> {

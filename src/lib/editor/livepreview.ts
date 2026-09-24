@@ -589,6 +589,83 @@ export function clearImageDims() {
   imageDims.clear();
 }
 
+/** The size an image target is known to have — read from its header when its note
+ *  opened, or measured when it loaded — for every surface drawing a vault image (this
+ *  widget, an embed's body). */
+export function imageDimsOf(target: string): { w: number; h: number } | undefined {
+  return imageDims.get(target);
+}
+
+/** Record an image's intrinsic size once it has loaded. */
+export function noteImageDims(target: string, w: number, h: number): void {
+  if (w > 0 && h > 0) imageDims.set(target, { w, h });
+}
+
+// The vault image references a note's text holds: `![[a.png]]` / `![[a.png|300]]`, and a
+// one-line `![alt](path)`. Read from the raw text before the editor exists, so a match
+// inside a code block only costs a header read.
+const WIKI_IMAGE_RE = /!\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|[^\]\n]*)?\]\]/g;
+const MD_IMAGE_RE = /!\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"\n]*")?\s*\)/g;
+
+/** Read the size of every vault image a note shows that is not known yet from the file
+ *  headers (commands.rs image_sizes). Started as the note opens, alongside the editor
+ *  being built rather than before it (a jump into the note right after opening expects
+ *  the editor to hold it at once); the answer is back within a few milliseconds, as a
+ *  rule before the first frame, and fitImagePlaceholders hands it to the images already
+ *  mounted. `resolve` maps a target to its vault path as the asset loader does; `read`
+ *  is the IPC. Resolves to whether anything new was learnt. */
+export async function primeImageDims(
+  doc: string,
+  resolve: (target: string) => string | null,
+  read: (paths: string[]) => Promise<([number, number] | null)[]>,
+): Promise<boolean> {
+  const byPath = new Map<string, string[]>();
+  const want = (raw: string) => {
+    let target = raw.trim();
+    try {
+      target = decodeURIComponent(target);
+    } catch {
+      /* not encoded: kept as written */
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target) || !IMAGE_EXT_RE.test(target) || imageDims.has(target)) return;
+    const path = resolve(target);
+    if (!path) return;
+    const targets = byPath.get(path);
+    if (!targets) byPath.set(path, [target]);
+    else if (!targets.includes(target)) targets.push(target);
+  };
+  for (const m of doc.matchAll(WIKI_IMAGE_RE)) want(m[1]);
+  for (const m of doc.matchAll(MD_IMAGE_RE)) want(m[1]);
+  if (!byPath.size) return false;
+  const paths = [...byPath.keys()];
+  const sizes = await read(paths).catch(() => null);
+  if (!sizes) return false;
+  let learnt = false;
+  paths.forEach((path, i) => {
+    const s = sizes[i];
+    if (!s) return;
+    for (const target of byPath.get(path)!) noteImageDims(target, s[0], s[1]);
+    learnt = true;
+  });
+  return learnt;
+}
+
+/** Give the image widgets still waiting on their first load the size now known for
+ *  them: the guessed placeholder box becomes the image's own aspect ratio, and the
+ *  editor measures again. */
+export function fitImagePlaceholders(view: EditorView): void {
+  let fitted = false;
+  for (const img of view.contentDOM.querySelectorAll<HTMLImageElement>("img.cm-lp-loading[data-target]")) {
+    const dims = imageDims.get(img.dataset.target!);
+    if (!dims) continue;
+    img.width = dims.w;
+    img.height = dims.h;
+    img.classList.remove("cm-lp-loading");
+    fitted = true;
+  }
+  if (fitted) view.requestMeasure();
+}
+
 /** An inline image; a vault file becomes a blob URL through loadAsset, and http(s) is used directly */
 class ImageWidget extends WidgetType {
   constructor(
@@ -619,6 +696,8 @@ class ImageWidget extends WidgetType {
       img.height = dims.h;
     } else {
       img.classList.add("cm-lp-loading");
+      // the key fitImagePlaceholders finds it by, should the header's answer come after the mount
+      img.dataset.target = this.target;
     }
     // Clicking an image in the rendered state opens the lightbox, with or without a
     // modifier (there is no longer a "⌘ opens the file itself" branch — that would

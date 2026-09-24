@@ -8,14 +8,17 @@
 // `group` and `sort`, that never leave the frontend (views/queryrows.ts) — for which
 // a 20-line parser is enough and js-yaml is not pulled in. An index update triggers
 // a requery through the queryRefresh effect — sharing the refresh signal
-// (indexVersion) with the projection views.
+// (indexVersion) with the projection views — inside the mounted widget: the rows on
+// screen stay until the new answer is in, and an unchanged answer changes nothing
+// (blockwidget.ts, the live half).
 // In any standard Markdown renderer it degrades to an ordinary code block, with zero
 // lock-in.
 import { t } from "$lib/i18n/i18n.svelte";
-import { blockRoot } from "./blockwidget";
+import { blockRoot, liveRefresh, queryRefresh, recordHeight, selectableIsland, selectedWithin, swapInPlace, unwatchLive, watchLive } from "./blockwidget";
+import { cliptip } from "$lib/cliptip";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import { type EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
+import { type EditorState, type Extension, StateField } from "@codemirror/state";
 import type { BlockHit, BlockQuery, BlockType, TaskState } from "$lib/api";
 import { fencedCodeText } from "./fenced";
 import { selectionTouches } from "./reveal";
@@ -49,8 +52,8 @@ export interface QueryHost {
   onRowState?: (hit: BlockHit, state: TaskState) => void;
 }
 
-/** An index version change → every query block requeries (a widget's eq key carries the version) */
-export const queryRefresh = StateEffect.define<number>();
+/** An index version change → every query block and embed re-reads in place (defined with the live widgets in blockwidget.ts) */
+export { queryRefresh };
 
 // The types come from api.ts's BlockQuery mirror: when the Rust side adds a kind or a state, tsc catches the drift
 const KINDS: NonNullable<BlockQuery["kind"]>[] = ["paragraph", "heading", "list_item", "task", "claim", "evidence", "code_block", "private"];
@@ -153,13 +156,10 @@ function kindLabel(kind: string): string {
   return (KINDS as string[]).includes(kind) ? t(`queryBlock.kind.${kind as (typeof KINDS)[number]}`) : kind;
 }
 
-function truncate(s: string, max: number): string {
-  const t = s.trim().replace(/\s+/g, " ");
-  return t.length <= max ? t : t.slice(0, max) + "…";
-}
-
-/** A stopped mousedown: the row's click must not move the editor's selection (which
- *  would reveal the fence's source and replace this widget under the pointer). */
+/** A stopped mousedown, for the row's controls (the checkbox, the chips, the note's
+ *  name): the press must not move the editor's selection (which would reveal the fence's
+ *  source and replace this widget under the pointer), nor start a text selection. The
+ *  rest of the row is words the reader may select; a plain click on them opens the row. */
 function onPress(el: HTMLElement, handler: (e: MouseEvent) => void) {
   el.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
@@ -169,22 +169,43 @@ function onPress(el: HTMLElement, handler: (e: MouseEvent) => void) {
   });
 }
 
+// Keyed by the fence's text: a query's answer depends on nothing else (it is not
+// relative to the note it sits in), so the same block in two notes is the same view.
+/** The last measured height, so a remount (a tab switched back, the block scrolled
+ *  into view again, the cursor leaving the fence) starts at its size, not at 80px. */
+const heights = new Map<string, number>();
+/** The groups the reader opened or closed, by title: kept across refreshes and remounts
+ *  (a refresh used to open every group the reader had closed). */
+const groupOpen = new Map<string, Map<string, boolean>>();
+
+/** Invalidated with the editor's other caches when the vault changes. */
+export function clearQueryCaches() {
+  heights.clear();
+  groupOpen.clear();
+}
+
 class QueryWidget extends WidgetType {
   constructor(
     readonly src: string,
-    readonly version: number,
     readonly host: QueryHost,
+    /** The index version the editor last announced, read at mount. */
+    readonly versionOf: (state: EditorState) => number,
   ) {
     super();
   }
+  // Not the index version: a refresh re-runs the query inside the mounted widget
+  // (watchLive), and a widget rebuilt per version collapsed to "querying…" and grew back
   eq(other: QueryWidget) {
-    return other.src === this.src && other.version === this.version;
+    return other.src === this.src;
   }
   get estimatedHeight() {
-    return 80;
+    return heights.get(this.src) ?? 80;
   }
   ignoreEvent() {
     return true;
+  }
+  destroy(dom: HTMLElement) {
+    unwatchLive(dom);
   }
 
   /** One row: a task's checkbox in the margin, the words, the chips (a state field's
@@ -198,6 +219,7 @@ class QueryWidget extends WidgetType {
     el.className = "cm-queryblock-row";
     el.setAttribute("role", "button");
     el.tabIndex = 0;
+    selectableIsland(el);
     const step = rowStep(row);
     if (step) el.classList.add(`cm-queryblock-row-${stateTone(step.step, step.of)}`);
     if (row.state) {
@@ -211,10 +233,12 @@ class QueryWidget extends WidgetType {
     } else {
       el.appendChild(Object.assign(document.createElement("span"), { className: "cm-queryblock-glyph cm-queryblock-glyph-none" }));
     }
+    // The words in full, up to two lines; the rest is in the cliptip (a clipped row
+    // used to be the first line of the block cut at 160 characters on one line)
     const text = document.createElement("span");
     text.className = "cm-queryblock-text";
-    text.textContent = truncate(row.text, 160);
-    text.title = row.text;
+    text.textContent = row.text;
+    cliptip(text, row.text);
     el.appendChild(text);
     const chips = document.createElement("span");
     chips.className = "cm-queryblock-chips";
@@ -233,15 +257,23 @@ class QueryWidget extends WidgetType {
       chips.appendChild(chip);
     }
     if (chips.childElementCount) el.appendChild(chips);
+    const open = () => host.openNote(row.hit.note, row.hit.block.span.start, row.hit.block.content);
     if (!row.titleAsText && !inNoteGroup) {
       const note = document.createElement("span");
       note.className = "cm-queryblock-note";
       note.textContent = row.hit.note_title;
-      note.title = row.hit.note;
+      cliptip(note, row.hit.note_title);
+      onPress(note, open);
       el.appendChild(note);
     }
-    const open = () => host.openNote(row.hit.note, row.hit.block.span.start, row.hit.block.content);
-    onPress(el, open);
+    // A click, not a press: a press on the words may be the start of a selection, and
+    // only a click that selected nothing opens the row
+    el.addEventListener("click", (e) => {
+      if (e.button !== 0 || e.defaultPrevented) return;
+      if ((e.target as Element).closest(".cm-queryblock-clickable, .cm-queryblock-note")) return;
+      if (selectedWithin(el)) return;
+      open();
+    });
     el.addEventListener("keydown", (e) => {
       if (e.target === el && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
@@ -291,71 +323,124 @@ class QueryWidget extends WidgetType {
     return [head, bar];
   }
 
+  /** The result's content, built off the page: the head, the rows (grouped, each group
+   *  opened or closed as the reader left it), or the empty line. */
+  private resultEls(view: EditorView, parsed: ParsedQuery, hits: BlockHit[]): HTMLElement[] {
+    const out: HTMLElement[] = [];
+    const types = this.host.blockTypes?.() ?? [];
+    const today = localDate();
+    // the tag the query filtered by is on every row: not a chip; a group by a
+    // field's tag would be the same, but a group is by value, so only the query's
+    const hideTags = parsed.query!.tag ? [parsed.query!.tag] : [];
+    const rowOf = (hit: BlockHit) => blockRowOf(hit, types, { today, hideTags });
+    // a sort or a group by a state field reads the field's declared order
+    const declaredOf = (key: { by: string; key?: string }) => (key.by === "field" && key.key ? stateField(types, key.key) : null);
+    const ordered = parsed.sort ? sortHits(hits, parsed.sort, declaredOf(parsed.sort.key)) : hits;
+    const rows = ordered.map(rowOf);
+    out.push(...this.headEl(rows, types));
+    if (parsed.group) {
+      // One <details> per group, open unless the reader closed it (an empty group starts
+      // closed); a group by note hides the per-row note name (the header says it), a
+      // missing field value lands last
+      let saved = groupOpen.get(this.src);
+      const byRow = new Map(rows.map((r) => [r.hit, r]));
+      for (const g of groupHits(ordered, parsed.group, t("queryBlock.none"), kindLabel, declaredOf(parsed.group))) {
+        const details = document.createElement("details");
+        details.className = "cm-queryblock-group";
+        details.open = saved?.get(g.title) ?? g.hits.length > 0;
+        if (!g.hits.length) details.classList.add("cm-queryblock-group-empty");
+        const summary = document.createElement("summary");
+        const title = document.createElement("span");
+        title.className = "cm-queryblock-group-title";
+        title.textContent = g.title;
+        const count = document.createElement("span");
+        count.className = "cm-queryblock-group-count";
+        count.textContent = String(g.hits.length);
+        summary.append(title, count);
+        details.appendChild(summary);
+        for (const hit of g.hits) details.appendChild(this.rowEl(byRow.get(hit)!, parsed.group.by === "note"));
+        // The reader's toggle: remembered, and the height map told (a <details> opening
+        // inside a widget is a layout change CodeMirror does not see by itself)
+        const built = details.open;
+        details.addEventListener("toggle", () => {
+          if (!details.isConnected) return;
+          // setting `open` while building queues a toggle too: that one is not the reader's
+          if (details.open === built && !saved?.has(g.title)) return;
+          if (!saved) groupOpen.set(this.src, (saved = new Map()));
+          saved.set(g.title, details.open);
+          const root = details.closest<HTMLElement>(".cm-block-root");
+          if (root) recordHeight(view, root, heights, this.src);
+          view.requestMeasure();
+        });
+        out.push(details);
+      }
+    } else {
+      for (const row of rows) out.push(this.rowEl(row, false));
+    }
+    if (!hits.length) {
+      const empty = document.createElement("div");
+      empty.className = "cm-queryblock-empty";
+      empty.textContent = t("queryBlock.noHits");
+      out.push(empty);
+    }
+    return out;
+  }
+
   toDOM(view: EditorView) {
     const wrap = document.createElement("div");
     wrap.className = "cm-queryblock";
+    const root = blockRoot(wrap);
     const parsed = parseQuerySource(this.src);
     if (parsed.error) {
       wrap.classList.add("cm-queryblock-error");
       wrap.textContent = `vemry-query: ${parsed.error}`;
-      return blockRoot(wrap);
+      return root;
     }
     wrap.textContent = t("queryBlock.querying");
-    // As in livepreview's ImageWidget: requestMeasure corrects the line height once the asynchronous load finishes
-    void this.host
-      .runQuery(parsed.query!)
-      .then((hits) => {
-        if (!wrap.isConnected) return;
-        wrap.textContent = "";
-        const types = this.host.blockTypes?.() ?? [];
-        const today = localDate();
-        // the tag the query filtered by is on every row: not a chip; a group by a
-        // field's tag would be the same, but a group is by value, so only the query's
-        const hideTags = parsed.query!.tag ? [parsed.query!.tag] : [];
-        const rowOf = (hit: BlockHit) => blockRowOf(hit, types, { today, hideTags });
-        // a sort or a group by a state field reads the field's declared order
-        const declaredOf = (key: { by: string; key?: string }) => (key.by === "field" && key.key ? stateField(types, key.key) : null);
-        const ordered = parsed.sort ? sortHits(hits, parsed.sort, declaredOf(parsed.sort.key)) : hits;
-        const rows = ordered.map(rowOf);
-        for (const el of this.headEl(rows, types)) wrap.appendChild(el);
-        if (parsed.group) {
-          // One <details> per group, open by default; a group by note hides the
-          // per-row note name (the header says it), a missing field value lands last
-          const byRow = new Map(rows.map((r) => [r.hit, r]));
-          for (const g of groupHits(ordered, parsed.group, t("queryBlock.none"), kindLabel, declaredOf(parsed.group))) {
-            const details = document.createElement("details");
-            details.className = "cm-queryblock-group";
-            details.open = g.hits.length > 0;
-            if (!g.hits.length) details.classList.add("cm-queryblock-group-empty");
-            const summary = document.createElement("summary");
-            const title = document.createElement("span");
-            title.className = "cm-queryblock-group-title";
-            title.textContent = g.title;
-            const count = document.createElement("span");
-            count.className = "cm-queryblock-group-count";
-            count.textContent = String(g.hits.length);
-            summary.append(title, count);
-            details.appendChild(summary);
-            for (const hit of g.hits) details.appendChild(this.rowEl(byRow.get(hit)!, parsed.group.by === "note"));
-            wrap.appendChild(details);
-          }
-        } else {
-          for (const row of rows) wrap.appendChild(this.rowEl(row, false));
-        }
-        if (!hits.length) {
-          const empty = document.createElement("div");
-          empty.className = "cm-queryblock-empty";
-          empty.textContent = t("queryBlock.noHits");
-          wrap.appendChild(empty);
-        }
-        view.requestMeasure();
-      })
-      .catch((e) => {
-        if (!wrap.isConnected) return;
-        wrap.classList.add("cm-queryblock-error");
-        wrap.textContent = String(e);
+    // Until the first answer the block holds the height it last had
+    const known = heights.get(this.src);
+    if (known) root.style.minHeight = `${known}px`;
+    /** What the widget shows now: the hits and the markup built from them. The hits
+     *  count too — the same words can stand at a different offset, and a row's click
+     *  lands on the offset it was built with. */
+    let shown = "";
+    let seq = 0;
+    let loaded = this.versionOf(view.state);
+    const show = (sig: string, els: HTMLElement[] | string, error: boolean) => {
+      if (sig === shown) return; // the same answer: the DOM is not touched
+      shown = sig;
+      swapInPlace(view, root, () => {
+        root.style.minHeight = "";
+        wrap.classList.toggle("cm-queryblock-error", error);
+        if (typeof els === "string") wrap.textContent = els;
+        else wrap.replaceChildren(...els);
       });
-    return blockRoot(wrap);
+      recordHeight(view, root, heights, this.src);
+    };
+    const run = () => {
+      const my = ++seq;
+      void this.host
+        .runQuery(parsed.query!)
+        .then((hits) => {
+          if (my !== seq || !root.isConnected) return;
+          const els = this.resultEls(view, parsed, hits);
+          const probe = document.createElement("div");
+          probe.append(...els);
+          show(JSON.stringify(hits) + "\n" + probe.innerHTML, [...probe.children] as HTMLElement[], false);
+        })
+        .catch((e) => {
+          if (my !== seq || !root.isConnected) return;
+          const msg = String(e);
+          show(`error\n${msg}`, msg, true);
+        });
+    };
+    run();
+    watchLive(view, root, (version) => {
+      if (version === loaded) return; // announced before this widget mounted: already current
+      loaded = version;
+      run();
+    });
+    return root;
   }
 }
 
@@ -367,7 +452,7 @@ interface BuildResult {
   hasFence: boolean;
 }
 
-function build(state: EditorState, version: number, host: QueryHost): BuildResult {
+function build(state: EditorState, host: QueryHost, versionOf: (state: EditorState) => number): BuildResult {
   const doc = state.doc;
   const decos: ReturnType<Decoration["range"]>[] = [];
   let hasFence = false;
@@ -386,7 +471,7 @@ function build(state: EditorState, version: number, host: QueryHost): BuildResul
       if (selectionTouches(state, from, to)) return false;
       if (insideFold(state, from, to)) return false;
       const src = fencedCodeText(doc, node.node);
-      decos.push(Decoration.replace({ widget: new QueryWidget(src, version, host), block: true }).range(from, to));
+      decos.push(Decoration.replace({ widget: new QueryWidget(src, host, versionOf), block: true }).range(from, to));
       return false;
     },
   });
@@ -394,28 +479,27 @@ function build(state: EditorState, version: number, host: QueryHost): BuildResul
 }
 
 export function queryBlockExtension(host: QueryHost): Extension {
-  return StateField.define<{ version: number } & BuildResult>({
-    create: (state) => ({ version: 0, ...build(state, 0, host) }),
+  // The field carries the index version for a widget mounting later; a refresh itself
+  // rebuilds nothing — the mounted widgets re-run their queries in place (liveRefresh)
+  const field: StateField<{ version: number } & BuildResult> = StateField.define({
+    create: (state) => ({ version: 0, ...build(state, host, versionOf) }),
     update(value, tr) {
       let version = value.version;
-      let refreshed = false;
-      for (const e of tr.effects) {
-        if (e.is(queryRefresh)) {
-          version = e.value;
-          refreshed = true;
-        }
-      }
+      for (const e of tr.effects) if (e.is(queryRefresh)) version = e.value;
       const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
       const foldChanged = foldRangesOf(tr).length > 0;
-      if (!tr.docChanged && !tr.selection && !treeChanged && !refreshed && !foldChanged) return value;
       // The common case — a note with no query block: neither a cursor move nor an
       // index refresh needs a full rescan (a document or syntax-tree change still does,
       // since a fence may have just been typed)
-      if (!value.hasFence && !tr.docChanged && !treeChanged && !foldChanged) {
+      if ((!tr.docChanged && !tr.selection && !treeChanged && !foldChanged) || (!value.hasFence && !tr.docChanged && !treeChanged && !foldChanged)) {
         return version === value.version ? value : { ...value, version };
       }
-      return { version, ...build(tr.state, version, host) };
+      return { version, ...build(tr.state, host, versionOf) };
     },
     provide: (f) => EditorView.decorations.from(f, (v) => v.decos),
   });
+  function versionOf(state: EditorState): number {
+    return state.field(field, false)?.version ?? 0;
+  }
+  return [field, liveRefresh];
 }

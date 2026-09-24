@@ -7,7 +7,7 @@
 // Pure apart from the types it is handed: the state vocabulary comes from fields.ts's
 // stateField (a `type: state` key of a block type), never from a store.
 import type { BlockHit, BlockType, TaskState } from "$lib/api";
-import { stripAnchor, stripFields, stateField, stateIndex } from "$lib/fields";
+import { stripAnchors, stripFields, stateField, stateIndex } from "$lib/fields";
 import { plainText } from "$lib/markdown";
 import { calloutText } from "$lib/views/claims";
 import { isClosed, TASK_ATTR_KEYS, STAMP_RE, taskText } from "$lib/views/tasks";
@@ -58,7 +58,9 @@ const TAG_TOKEN_RE = /(^|[^\p{L}\p{N}#&])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
 
 /** The words of a block, by kind: a task through the task views' rule, a callout
  *  through the claims view's, the rest with the block marker, the fields, a capture
- *  stamp and the anchor taken off, then folded to plain text. */
+ *  stamp and the anchors taken off, then folded to plain text — the whole block, its
+ *  lines joined, so a row can show two lines and a cliptip the rest (a code block
+ *  gives its first line of code). */
 export function blockText(hit: BlockHit): string {
   const k = hit.block.kind;
   const content = hit.block.content;
@@ -68,7 +70,7 @@ export function blockText(hit: BlockHit): string {
   if (k.type === "heading") s = s.replace(/^\s*#{1,6}\s+/, "");
   else if (k.type === "list_item") s = s.replace(/^\s*(?:[-*+]|\d{1,9}[.)])\s+/, "");
   else if (k.type === "code_block") s = s.split("\n").find((l) => l.trim() && !l.trim().startsWith("```")) ?? "";
-  return plainText(stripAnchor(s.split("\n")[0] ?? ""));
+  return plainText(stripAnchors(s).replace(/\s*\n\s*/g, " "));
 }
 
 /** A block's field chips: one per key (the first value, as the board reads it), a state

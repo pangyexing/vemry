@@ -10,9 +10,12 @@
 // per target so a widget mounts at its last size and scrolling does not jump.
 // A widget is equal to itself shifted by an edit elsewhere (eq ignores where it
 // stands), so typing above an embed keeps its DOM; whatever needs its position
-// reads it at event time with posAtDOM.
+// reads it at event time with posAtDOM. It is equal to itself across index versions
+// too: a refresh re-resolves inside the mounted widget and swaps a changed body in
+// whole, with its images already loaded (blockwidget.ts, the live half). The body's
+// words are selectable; opening the source is the header row's.
 import { t } from "$lib/i18n/i18n.svelte";
-import { blockRoot } from "./blockwidget";
+import { blockRoot, liveRefresh, queryRefresh, recordHeight, selectableIsland, selectedWithin, swapInPlace, unwatchLive, watchLive } from "./blockwidget";
 import { focusEditor } from "./clickguard";
 import { syntaxTree } from "@codemirror/language";
 import { type EditorState, type Extension, type Line, StateField } from "@codemirror/state";
@@ -21,8 +24,9 @@ import type { RefResolution } from "$lib/api";
 import { handleCodeCopyClick, renderNoteMarkdown } from "$lib/markdown";
 import { byteToChar } from "$lib/bytes";
 import { stripAnchors } from "$lib/fields";
-import { IMAGE_EXT_RE, inCode } from "./livepreview";
-import { queryRefresh } from "./queryblock";
+import { IMAGE_EXT_RE, imageDimsOf, inCode, noteImageDims } from "./livepreview";
+import { openImageLightbox } from "$lib/lightbox";
+import { applyLangAttrs, type NoteLanguage } from "$lib/notelang";
 import { selectionReveals, selectionTouches } from "./reveal";
 import { WIKI_RE_SOURCE } from "./wikilink";
 
@@ -36,7 +40,12 @@ export interface EmbedHost {
   /** A vault image's path → a loadable URL, the editor's own asset loader; without
    *  one, the note's images show as their alt. */
   loadAsset?(target: string): Promise<string | null>;
+  /** What a note reads as, from the index (NoteSummary.lang/script); absent or null,
+   *  the body follows the note it is shown in. */
+  langOf?(note: string): NoteLanguage | null;
 }
+
+const NO_LANG: NoteLanguage = { lang: null, script: null };
 
 export const EMBED_RE = new RegExp("!" + WIKI_RE_SOURCE, "g");
 
@@ -122,6 +131,9 @@ function crumbOf(target: string, label: string | null, r?: RefResolution): { tit
 function wire(view: EditorView, el: HTMLElement, host: EmbedHost, inner: string) {
   el.addEventListener("mousedown", (e) => {
     const target = e.target as HTMLElement;
+    // The body's words can be selected (a selectable island): its press is the
+    // browser's, and what it holds — a link, an image — acts on the click
+    if (target.closest(".cm-embed-body")) return;
     e.preventDefault();
     e.stopPropagation();
     if (e.button !== 0) return;
@@ -132,10 +144,15 @@ function wire(view: EditorView, el: HTMLElement, host: EmbedHost, inner: string)
       focusEditor(view);
       return;
     }
-    if (target.closest(".cm-embed-head, .cm-embed-chip")) {
-      void openEmbedSource(host, inner);
-      return;
-    }
+    // Opening is the header row's alone (and the chip's, which is all header)
+    if (target.closest(".cm-embed-head, .cm-embed-chip")) void openEmbedSource(host, inner);
+  });
+  el.addEventListener("click", (e) => {
+    if (handleCodeCopyClick(e) || e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    const body = target.closest<HTMLElement>(".cm-embed-body");
+    // a press that selected words is a selection, not a click on what it started on
+    if (!body || selectedWithin(body)) return;
     const wiki = target.closest<HTMLElement>("a[data-wiki]");
     if (wiki?.dataset.wiki) {
       host.follow(wiki.dataset.wiki);
@@ -146,29 +163,75 @@ function wire(view: EditorView, el: HTMLElement, host: EmbedHost, inner: string)
       host.openUrl(url.dataset.url);
       return;
     }
-  });
-  el.addEventListener("click", (e) => {
-    handleCodeCopyClick(e);
+    const img = target.closest("img");
+    if (img?.src) openImageLightbox(img.src, img.alt);
   });
 }
+
+/** Load a rendered body's own images (a paper's figure, an embedded diagram) the way
+ *  the editor's image widget loads them — a blob URL from the vault file, the size it is
+ *  known to have set before it arrives — and settle once every one has loaded or been
+ *  replaced by its chip. A rejected loader settles too: a count that never reached zero
+ *  would leave the body reserving a figure's height for good. */
+function loadImages(body: HTMLElement, host: EmbedHost): Promise<void> {
+  const imgs = [...body.querySelectorAll<HTMLImageElement>("img[data-asset]")];
+  return Promise.all(
+    imgs.map((img) => {
+      const target = img.dataset.asset ?? "";
+      const dims = imageDimsOf(target);
+      if (dims) {
+        img.width = dims.w;
+        img.height = dims.h;
+      }
+      const url = host.loadAsset?.(target) ?? Promise.resolve(null);
+      return url
+        .catch(() => null)
+        .then(
+          (u) =>
+            new Promise<void>((done) => {
+              if (!u) {
+                img.replaceWith(`⧉ ${img.alt || target}`);
+                return done();
+              }
+              img.addEventListener(
+                "load",
+                () => {
+                  noteImageDims(target, img.naturalWidth, img.naturalHeight);
+                  done();
+                },
+                { once: true },
+              );
+              img.addEventListener("error", () => done(), { once: true });
+              img.src = u;
+            }),
+        );
+    }),
+  ).then(() => undefined);
+}
+
+/** What a resolution shows: a marker line (the source gone, the anchor gone, the embed
+ *  inside its own source), or the rendered slice. */
+type Shown = { kind: "marker"; cls: string; text: string } | { kind: "body"; html: string; lang: NoteLanguage };
 
 class EmbedWidget extends WidgetType {
   /** The height cache's key: the embed text within this note, wherever it stands. */
   readonly key: string;
   constructor(
     readonly inner: string,
-    /** Where the embed stood when built; only the recursion check reads it (an
-     *  edit that changes the answer also bumps the index version and rebuilds). */
+    /** Where the embed stood when built: the first fill's recursion check (a refresh
+     *  reads where the mounted widget stands now). */
     readonly lineFrom: number,
-    readonly version: number,
     readonly host: EmbedHost,
+    /** The index version the editor last announced, read at mount. */
+    readonly versionOf: (state: EditorState) => number,
   ) {
     super();
     this.key = `${host.currentNote() ?? ""}|${inner}`;
   }
   eq(other: EmbedWidget) {
-    // not lineFrom: the same embed shifted by an edit elsewhere keeps its DOM
-    return other.inner === this.inner && other.version === this.version;
+    // not lineFrom: the same embed shifted by an edit elsewhere keeps its DOM; and not
+    // the index version: a refresh re-resolves inside the mounted widget (watchLive)
+    return other.inner === this.inner;
   }
   get estimatedHeight() {
     return heights.get(this.key) ?? 72;
@@ -176,6 +239,31 @@ class EmbedWidget extends WidgetType {
   ignoreEvent() {
     return true;
   }
+  destroy(dom: HTMLElement) {
+    unwatchLive(dom);
+  }
+
+  /** `at`: where the embed stands now (the widget outlives edits above it). */
+  private shownOf(view: EditorView, r: RefResolution, at: number): Shown {
+    if (r.state === "note_missing") return { kind: "marker", cls: "cm-embed-missing", text: t("embed.noteNotFound") };
+    if (r.state === "anchor_missing") return { kind: "marker", cls: "cm-embed-missing", text: t("embed.notFound") };
+    const self = this.host.currentNote();
+    let recursive = false;
+    if (self && r.note === self) {
+      if (r.target.kind === "note") recursive = true;
+      else {
+        const text = view.state.doc.toString();
+        const from = byteToChar(text, r.span.start);
+        const to = byteToChar(text, r.span.end);
+        recursive = at >= from && at <= to;
+      }
+    }
+    if (recursive) return { kind: "marker", cls: "cm-embed-recursive", text: t("embed.recursive") };
+    // The source note's language, as the index read it: the embed's fonts and line
+    // breaking follow the note the words come from, not the one they are shown in
+    return { kind: "body", html: renderNoteMarkdown(prepareSlice(r)), lang: this.host.langOf?.(r.note) ?? NO_LANG };
+  }
+
   toDOM(view: EditorView) {
     const { target, label } = parseEmbed(this.inner);
     const wrap = document.createElement("div");
@@ -198,8 +286,9 @@ class EmbedWidget extends WidgetType {
     edit.title = t("embed.edit");
     edit.textContent = "✎";
     head.append(title, sep, sub, open, edit);
-    const body = document.createElement("div");
+    let body: HTMLElement = document.createElement("div");
     body.className = "cm-embed-body md-body";
+    selectableIsland(body);
     const note = document.createElement("div");
     note.className = "cm-embed-note";
     note.textContent = t("embed.loading");
@@ -214,73 +303,54 @@ class EmbedWidget extends WidgetType {
     };
     setCrumb();
     wire(view, wrap, this.host, this.inner);
-    const fill = (r: RefResolution) => {
+
+    /** The resolution on screen, compared whole: an unchanged answer leaves the DOM alone. */
+    let shownSig = "";
+    /** Put a resolution on screen: the crumb, the marker or the body (`next`, already
+     *  rendered, when the refresh prepared it off the page). */
+    const paint = (r: RefResolution, shown: Shown, next?: HTMLElement) => {
       setCrumb(r);
-      body.style.minHeight = "";
-      if (r.state === "note_missing") {
-        wrap.classList.add("cm-embed-missing");
-        note.textContent = t("embed.noteNotFound");
-      } else if (r.state === "anchor_missing") {
-        wrap.classList.add("cm-embed-missing");
-        note.textContent = t("embed.notFound");
-      } else {
-        const self = this.host.currentNote();
-        let recursive = false;
-        if (self && r.note === self) {
-          if (r.target.kind === "note") recursive = true;
-          else {
-            const text = view.state.doc.toString();
-            const from = byteToChar(text, r.span.start);
-            const to = byteToChar(text, r.span.end);
-            recursive = this.lineFrom >= from && this.lineFrom <= to;
-          }
-        }
-        if (recursive) {
-          wrap.classList.add("cm-embed-recursive");
-          note.textContent = t("embed.recursive");
-        } else {
-          body.innerHTML = renderNoteMarkdown(prepareSlice(r));
-          // The note's own images (a paper's figure, an embedded diagram): loaded as the
-          // editor's image widget loads them; one that cannot be read leaves a chip.
-          // Until they have loaded the body keeps the embed's known height: a widget
-          // scrolled back into view is built afresh, and measured before its figure
-          // arrives it is a fraction of its size — the height map shrinks by the
-          // difference, and with the view at the note's end the scroll offset is clamped
-          // past the document, where an empty viewport renders nothing and so never
-          // measures the figure again (the note stays blank until a scroll)
-          const imgs = [...body.querySelectorAll<HTMLImageElement>("img[data-asset]")];
-          const known = heights.get(this.key);
-          if (imgs.length && known) body.style.minHeight = bodyMinHeight(known);
-          let loading = imgs.length;
-          const settled = () => {
-            if (--loading > 0) return;
-            body.style.minHeight = "";
-            if (!root.isConnected) return;
-            heights.set(this.key, root.offsetHeight);
-            view.requestMeasure();
-          };
-          for (const img of imgs) {
-            const target = img.dataset.asset ?? "";
-            // The rejection is caught rather than left to float: a loader that throws must
-            // still settle, or the count never reaches zero and the body keeps the stale
-            // minHeight it reserved for the figure
-            const url = this.host.loadAsset?.(target) ?? Promise.resolve(null);
-            void url.catch(() => null).then((u) => {
-              if (u) {
-                img.addEventListener("load", settled, { once: true });
-                img.addEventListener("error", settled, { once: true });
-                img.src = u;
-              } else {
-                img.replaceWith(`⧉ ${img.alt || target}`);
-                settled();
-              }
-            });
-          }
-          note.remove();
-        }
+      wrap.classList.remove("cm-embed-missing", "cm-embed-recursive");
+      if (shown.kind === "marker") {
+        wrap.classList.add(shown.cls);
+        body.replaceChildren();
+        note.textContent = shown.text;
+        if (!note.isConnected) wrap.appendChild(note);
+        return;
       }
+      if (next) {
+        body.replaceWith(next);
+        body = next;
+      } else body.innerHTML = shown.html;
+      applyLangAttrs(body, shown.lang);
+      note.remove();
     };
-    const entry = lookup(this.host, target, this.version);
+
+    // The first fill. Until a body's images have loaded it keeps the embed's known
+    // height: a widget scrolled back into view is built afresh, and measured before its
+    // figure arrives it is a fraction of its size — the height map shrinks by the
+    // difference, and with the view at the note's end the scroll offset is clamped past
+    // the document, where an empty viewport renders nothing and so never measures the
+    // figure again (the note stays blank until a scroll)
+    const fill = (r: RefResolution) => {
+      const shown = this.shownOf(view, r, this.lineFrom);
+      shownSig = JSON.stringify(r);
+      body.style.minHeight = "";
+      paint(r, shown);
+      if (shown.kind !== "body" || !body.querySelector("img[data-asset]")) return;
+      const known = heights.get(this.key);
+      if (known) body.style.minHeight = bodyMinHeight(known);
+      const filled = body;
+      void loadImages(filled, this.host).then(() => {
+        filled.style.minHeight = "";
+        if (!root.isConnected) return;
+        heights.set(this.key, root.offsetHeight);
+        view.requestMeasure();
+      });
+    };
+
+    let loaded = this.versionOf(view.state);
+    const entry = lookup(this.host, target, loaded);
     if (entry.value) {
       // A cached resolution (the target embedded twice, a widget scrolled back into the
       // viewport, a re-mounted tab): fill the DOM now, before CodeMirror mounts it. No
@@ -288,26 +358,50 @@ class EmbedWidget extends WidgetType {
       // and a guard at this point would leave the placeholder up for good.
       fill(entry.value);
       // The cache is what a rebuilt widget estimates its height from before it is measured
-      // (an index bump recreates every embed widget): filled here as well, once the DOM is
-      // attached, or an embed of 1800px estimates 72 and the height map above the viewport
-      // shrinks by the difference — with the view scrolled below it, past the document
-      view.requestMeasure({
-        read: () => (root.isConnected ? root.offsetHeight : 0),
-        write: (h) => {
-          if (h) heights.set(this.key, h);
-        },
-      });
+      // (a vault switch, a tab re-mounted): filled here as well, once the DOM is attached,
+      // or an embed of 1800px estimates 72 and the height map above the viewport shrinks
+      // by the difference — with the view scrolled below it, past the document
+      recordHeight(view, root, heights, this.key);
     } else {
       const known = heights.get(this.key);
       if (known) body.style.minHeight = bodyMinHeight(known);
       const finish = (r: RefResolution) => {
-        if (!wrap.isConnected) return; // dropped before the source arrived
-        fill(r);
+        // dropped before the source arrived, or a refresh's newer answer already painted
+        if (!wrap.isConnected || shownSig) return;
+        swapInPlace(view, root, () => fill(r));
         heights.set(this.key, root.offsetHeight);
-        view.requestMeasure();
       };
       entry.promise.then(finish, () => finish({ state: "note_missing" }));
     }
+
+    // A refresh: re-resolved in the background with the old body on screen; the same
+    // answer changes nothing, a new one is rendered off the page, its images loaded, and
+    // swapped in at once — never a "loading" line, never a figure-less body
+    let seq = 0;
+    watchLive(view, root, (version) => {
+      if (version === loaded) return; // announced before this widget mounted: already current
+      loaded = version;
+      const my = ++seq;
+      const settle = async (r: RefResolution) => {
+        if (my !== seq || !root.isConnected) return;
+        const sig = JSON.stringify(r);
+        if (sig === shownSig) return;
+        const shown = this.shownOf(view, r, view.posAtDOM(root));
+        let next: HTMLElement | undefined;
+        if (shown.kind === "body") {
+          next = document.createElement("div");
+          next.className = body.className;
+          selectableIsland(next);
+          next.innerHTML = shown.html;
+          await loadImages(next, this.host);
+          if (my !== seq || !root.isConnected) return;
+        }
+        shownSig = sig;
+        swapInPlace(view, root, () => paint(r, shown, next));
+        recordHeight(view, root, heights, this.key);
+      };
+      lookup(this.host, target, version).promise.then(settle, () => settle({ state: "note_missing" }));
+    });
     return root;
   }
 }
@@ -315,16 +409,19 @@ class EmbedWidget extends WidgetType {
 class EmbedChipWidget extends WidgetType {
   constructor(
     readonly inner: string,
-    readonly version: number,
     readonly host: EmbedHost,
+    readonly versionOf: (state: EditorState) => number,
   ) {
     super();
   }
   eq(other: EmbedChipWidget) {
-    return other.inner === this.inner && other.version === this.version;
+    return other.inner === this.inner;
   }
   ignoreEvent() {
     return true;
+  }
+  destroy(dom: HTMLElement) {
+    unwatchLive(dom);
   }
   toDOM(view: EditorView) {
     const { target, label } = parseEmbed(this.inner);
@@ -334,18 +431,24 @@ class EmbedChipWidget extends WidgetType {
     el.textContent = `⧉ ${c.title}${c.sep ? ` ${c.sep} ${c.sub}` : ""}`.trim();
     el.title = t("embed.open");
     wire(view, el, this.host, this.inner);
-    const entry = lookup(this.host, target, this.version);
     const mark = (r: RefResolution) => {
-      if (r.state !== "resolved") el.classList.add("cm-embed-chip-missing");
-      else {
-        const cc = crumbOf(target, label, r);
-        el.textContent = `⧉ ${cc.title}${cc.sep ? ` ${cc.sep} ${cc.sub}` : ""}`.trim();
-      }
+      el.classList.toggle("cm-embed-chip-missing", r.state !== "resolved");
+      const cc = crumbOf(target, label, r);
+      el.textContent = `⧉ ${cc.title}${cc.sep ? ` ${cc.sep} ${cc.sub}` : ""}`.trim();
     };
+    let loaded = this.versionOf(view.state);
+    const entry = lookup(this.host, target, loaded);
     // a cached resolution is applied before the chip is mounted (no isConnected
     // guard, as for EmbedWidget); a late one only if the chip is still there
     if (entry.value) mark(entry.value);
     else entry.promise.then((r) => void (el.isConnected && mark(r))).catch(() => undefined);
+    watchLive(view, el, (version) => {
+      if (version === loaded) return;
+      loaded = version;
+      lookup(this.host, target, version)
+        .promise.then((r) => void (el.isConnected && mark(r)))
+        .catch(() => undefined);
+    });
     return el;
   }
 }
@@ -355,7 +458,7 @@ interface BuildResult {
   hasEmbed: boolean;
 }
 
-function build(state: EditorState, version: number, host: EmbedHost): BuildResult {
+function build(state: EditorState, host: EmbedHost, versionOf: (state: EditorState) => number): BuildResult {
   const doc = state.doc;
   const decos: ReturnType<Decoration["range"]>[] = [];
   let hasEmbed = false;
@@ -372,36 +475,34 @@ function build(state: EditorState, version: number, host: EmbedHost): BuildResul
     const line: Line = doc.lineAt(start);
     if (line.text.trim() === m[0]) {
       if (selectionTouches(state, line.from, line.to)) continue;
-      decos.push(Decoration.replace({ widget: new EmbedWidget(m[1], line.from, version, host), block: true }).range(line.from, line.to));
+      decos.push(Decoration.replace({ widget: new EmbedWidget(m[1], line.from, host, versionOf), block: true }).range(line.from, line.to));
     } else {
       if (selectionReveals(state, start, end)) continue;
-      decos.push(Decoration.replace({ widget: new EmbedChipWidget(m[1], version, host) }).range(start, end));
+      decos.push(Decoration.replace({ widget: new EmbedChipWidget(m[1], host, versionOf) }).range(start, end));
     }
   }
   return { decos: Decoration.set(decos, true), hasEmbed };
 }
 
 /** The StateField (a block-level replace may not come from a ViewPlugin). Shares
- *  queryRefresh with the query block: an index version bump re-resolves. */
+ *  queryRefresh with the query block: an index version bump re-resolves the mounted
+ *  widgets in place, and the field only records the version for later mounts. */
 export function embedExtension(host: EmbedHost): Extension {
-  return StateField.define<{ version: number } & BuildResult>({
-    create: (state) => ({ version: 0, ...build(state, 0, host) }),
+  const field: StateField<{ version: number } & BuildResult> = StateField.define({
+    create: (state) => ({ version: 0, ...build(state, host, versionOf) }),
     update(value, tr) {
       let version = value.version;
-      let refreshed = false;
-      for (const e of tr.effects) {
-        if (e.is(queryRefresh)) {
-          version = e.value;
-          refreshed = true;
-        }
-      }
+      for (const e of tr.effects) if (e.is(queryRefresh)) version = e.value;
       const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
-      if (!tr.docChanged && !tr.selection && !treeChanged && !refreshed) return value;
-      if (!value.hasEmbed && !tr.docChanged && !treeChanged) {
+      if ((!tr.docChanged && !tr.selection && !treeChanged) || (!value.hasEmbed && !tr.docChanged && !treeChanged)) {
         return version === value.version ? value : { ...value, version };
       }
-      return { version, ...build(tr.state, version, host) };
+      return { version, ...build(tr.state, host, versionOf) };
     },
     provide: (f) => EditorView.decorations.from(f, (v) => v.decos),
   });
+  function versionOf(state: EditorState): number {
+    return state.field(field, false)?.version ?? 0;
+  }
+  return [field, liveRefresh];
 }

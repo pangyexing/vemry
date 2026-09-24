@@ -1528,21 +1528,25 @@ button:focus-visible,
 .cm-lab-out-err {
   color: var(--danger);
 }
-/* The vemry-query block: the live query result replaces the whole fence */
+/* The vemry-query block: the live query result replaces the whole fence. One step
+   smaller than the body it sits in (an embedded view, not the note's own words), and
+   following the body-size setting: 0.875 of it, to a whole pixel */
 .cm-queryblock {
   margin: 2px 0;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
-  font-size: var(--fs-sm);
+  font-size: calc(var(--fs-note) * 0.875);
+  font-size: round(nearest, calc(var(--fs-note) * 0.875), 1px);
+  line-height: 1.5;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 .cm-queryblock-head {
   font-size: var(--fs-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-family: var(--font-mono);
   margin-bottom: 2px;
 }
@@ -1591,10 +1595,12 @@ button:focus-visible,
   opacity: 0.45;
 }
 /* A row: the state glyph, the words, the chips, the note (views/blockrow.ts decides
-   which of a block's metadata is words and which a chip) */
+   which of a block's metadata is words and which a chip). The words take up to two
+   lines, so everything else sits on the first line's baseline. The words can be
+   selected by a drag (blockwidget.ts selectableIsland); a click opens the row */
 .cm-queryblock-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   text-align: left;
   padding: 3px 6px;
@@ -1614,6 +1620,9 @@ button:focus-visible,
   width: 15px;
   height: 15px;
   display: inline-flex;
+  /* centred on the first line (an svg has no baseline to share) */
+  align-self: flex-start;
+  margin-top: calc((1.5em - 15px) / 2);
 }
 .cm-queryblock-glyph svg {
   width: 100%;
@@ -1631,9 +1640,12 @@ button:focus-visible,
 .cm-queryblock-text {
   flex: 1;
   min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 /* A row at its last step reads as finished: the words step back, no strike (that stays the editor's done-task convention) */
 .cm-queryblock-row-done .cm-queryblock-text {
@@ -1651,13 +1663,14 @@ button:focus-visible,
   flex-shrink: 0;
   font-size: var(--fs-xs);
   color: var(--accent);
+  cursor: pointer;
   max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .cm-queryblock-empty {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-size: var(--fs-xs);
   padding: 2px 6px;
 }
@@ -1670,7 +1683,7 @@ button:focus-visible,
   align-items: baseline;
   gap: 6px;
   padding: 3px 4px;
-  font-size: var(--fs-sm);
+  font-size: 1em;
   font-weight: 600;
   cursor: pointer;
   -webkit-user-select: none;
@@ -1684,10 +1697,10 @@ button:focus-visible,
 .cm-queryblock-group-count {
   font-size: var(--fs-xs);
   font-weight: 400;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 .cm-queryblock-group-empty > summary {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-weight: 500;
 }
 .cm-queryblock-error {
@@ -1714,7 +1727,7 @@ button:focus-visible,
   line-height: 1.5;
 }
 .vchip-key {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 .vchip-key::after {
   content: ":";
@@ -1723,8 +1736,9 @@ button:focus-visible,
   color: var(--accent);
   background: var(--accent-soft);
 }
+/* The hash is part of the tag's name and takes its ink: faded, it was text under the
+   contrast floor */
 .vchip-hash {
-  opacity: 0.55;
   margin-right: -2px;
 }
 .vchip-date {
@@ -2636,7 +2650,7 @@ button:focus-visible,
   color: var(--accent);
 }
 .cm-embed-sep {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 .cm-embed-open,
 .cm-embed-edit {
@@ -2655,32 +2669,28 @@ button:focus-visible,
 .cm-embed-edit:hover {
   color: var(--accent);
 }
+/* The body's words can be selected (blockwidget.ts selectableIsland); opening the
+   source is the header row's. Its typography is .md-body's, nothing of its own */
 .cm-embed-body {
   padding: 6px 12px;
   white-space: normal;
   font-family: var(--font-ui);
-  cursor: default;
+  cursor: auto;
+  -webkit-user-select: text;
+  user-select: text;
 }
-.cm-embed-body img.md-img {
+.cm-embed-body img {
   display: block;
   max-width: 100%;
   height: auto;
   margin: 4px 0;
   border-radius: 4px;
-}
-.cm-embed-body .md-h1 {
-  font-size: 1.25em;
-}
-.cm-embed-body .md-h2 {
-  font-size: 1.15em;
-}
-.cm-embed-body .md-h3 {
-  font-size: 1.05em;
+  cursor: zoom-in;
 }
 .cm-embed-note {
   padding: 6px 12px;
   font-size: var(--fs-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 .cm-embed-missing,
 .cm-embed-recursive {
@@ -2697,8 +2707,42 @@ button:focus-visible,
   white-space: nowrap;
 }
 .cm-embed-chip-missing {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   text-decoration: line-through;
+}
+/* A widget region the reader can select text in: the press focuses the region itself
+   (so the editor leaves the selection to the browser), and that focus draws no ring */
+.cm-select-island {
+  -webkit-user-select: text;
+  user-select: text;
+}
+.cm-select-island:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ---- The image plate (imageplate.ts): a picture drawn in dark ink on a transparent
+   ground gets a light plate in the dark theme — the light theme's ground (#fafaf9),
+   8px round the picture, 6px corners. The box keeps its size: border-box sizing with
+   the picture's own ratio on the box (--plate-ratio, set with the class), so the
+   padding comes out of the picture and nothing around it moves. The lightbox's veil is
+   dark in both themes, so there the plate is always drawn ---- */
+@media (prefers-color-scheme: dark) {
+  img.img-plate {
+    box-sizing: border-box;
+    aspect-ratio: var(--plate-ratio);
+    padding: 8px;
+    object-fit: contain;
+    background: #fafaf9;
+    border-radius: 6px;
+  }
+}
+.imgbox img.img-plate {
+  box-sizing: border-box;
+  aspect-ratio: var(--plate-ratio);
+  padding: 8px;
+  object-fit: contain;
+  background: #fafaf9;
+  border-radius: 6px;
 }
 
 /* ---- Completion sections and details (the reference stages, the @ picker, the slash menu) ---- */

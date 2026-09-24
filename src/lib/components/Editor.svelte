@@ -18,7 +18,7 @@
   import { copyText } from "$lib/copytext";
   import { blocksOf } from "$lib/citation";
   import { privateRangeAt, selectionTouchesPrivate } from "$lib/editor/privateblock";
-  import { queryRefresh } from "$lib/editor/queryblock";
+  import { clearQueryCaches, queryRefresh } from "$lib/editor/queryblock";
   import { suppressReveal } from "$lib/editor/reveal";
   import { ensureSyntaxTree } from "@codemirror/language";
   import { fencedCodeAt } from "$lib/editor/fenced";
@@ -36,7 +36,7 @@
   import { privacyMenuItem } from "$lib/privacyMenu";
   import FilePreview from "./FilePreview.svelte";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
-  import { clearImageDims } from "$lib/editor/livepreview";
+  import { clearImageDims, fitImagePlaceholders, primeImageDims } from "$lib/editor/livepreview";
   import { clearEmbedCaches, type EmbedHost } from "$lib/editor/embed";
   import {
     isPending,
@@ -723,6 +723,11 @@
     openBlockAt: (note: string, byteStart: number, content?: string) => void vault.openBlockAt(note, byteStart, content),
     currentNote: () => docPath,
     loadAsset,
+    // what the embedded note reads as, as the index judged it (NoteSummary.lang/script)
+    langOf: (note: string) => {
+      const s = vault.notes.find((n) => n.id === note);
+      return s ? { lang: s.lang, script: s.script } : null;
+    },
   };
 
   const host = {
@@ -790,6 +795,7 @@
     assetUrls.clear();
     clearImageDims(); // the size placeholder cache has the same trap: the previous vault's aspect ratio would skew a same-named image in the new one
     clearEmbedCaches(); // and the embed caches: the same target names another note's block in the new vault
+    clearQueryCaches(); // and the query blocks' remembered heights and groups
   });
 
   /** An image embed's target → a vault-relative path. With a / it matches the vault-root-relative
@@ -1200,6 +1206,10 @@
     }
     // notes get markdown+wikilinks; other files get their language by extension
     const isNote = path.endsWith(".md");
+    // The note's images at their true size from the first frame: their headers are read
+    // while the editor is built, and the answer resizes the placeholders already mounted
+    // (a guessed placeholder moved everything below it when the image arrived)
+    const sized = isNote ? primeImageDims(content, resolveAsset, api.imageSizes) : null;
     const language = isNote ? null : await languageFor(path);
     if (counter !== loadedFor || !container) return; // superseded while loading
     const opts = {
@@ -1302,6 +1312,10 @@
     } finally {
       loadingDoc = false;
     }
+    const built = view;
+    void sized?.then((learnt) => {
+      if (learnt && built && view === built && docPath === path) fitImagePlaceholders(built);
+    });
     finishLoad(path, !isNote && content.includes("\r\n") ? "\r\n" : "\n", 0);
   }
 
