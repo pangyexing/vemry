@@ -962,6 +962,9 @@ fn ensure_detached_window(app: &AppHandle) -> Result<tauri::Window, String> {
         builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
     }
     let win = builder.build().map_err(|e| e.to_string())?;
+    if let Some(g) = geom {
+        crate::window_geom::settle_size(&win, g);
+    }
     let width = logical_inner(&win).map(|s| s.width).unwrap_or(1080.0);
     win.add_child(
         WebviewBuilder::new(BAR_LABEL, WebviewUrl::App("index.html".into())).focused(false),

@@ -179,6 +179,9 @@ fn build(app: &AppHandle, geom: Option<WindowGeom>) -> Result<(), String> {
         None => builder.inner_size(600.0, 760.0).center(),
     };
     let window = builder.build().map_err(|e| e.to_string())?;
+    if let Some(g) = geom {
+        crate::window_geom::settle_size(&window.as_ref().window(), g);
+    }
 
     let handle = app.clone();
     window.on_window_event(move |event| match event {

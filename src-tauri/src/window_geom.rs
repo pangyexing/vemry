@@ -147,14 +147,19 @@ pub fn create_main(app: &AppHandle) -> tauri::Result<()> {
         None => builder.inner_size(1280.0, 820.0).center(),
     };
     let win = builder.build()?;
-    // The system creates a window on the primary display and caps its size to that
-    // screen before moving it: a size remembered on a larger external display comes
-    // out clipped to the built-in one. Now that the window is on its own display the
-    // size is applied again (a no-op when nothing was clipped).
     if let Some(g) = geom.filter(|_| !maximized) {
-        let _ = win.set_size(tauri::LogicalSize::new(g.w, g.h));
+        settle_size(&win.as_ref().window(), g);
     }
     Ok(())
+}
+
+/// Apply a built window's size once more. The system creates a window on the primary
+/// display and caps its size to that screen before moving it: a size remembered on a
+/// larger external display comes out clipped to the built-in one (measured: 2560×1540
+/// opened as 1470×923). Now that the window is on its own display the size holds; when
+/// nothing was clipped this changes nothing.
+pub fn settle_size(win: &tauri::Window, g: WindowGeom) {
+    let _ = win.set_size(tauri::LogicalSize::new(g.w, g.h));
 }
 
 /// The geometry the main window opens with, and whether it is maximised on top of it;
