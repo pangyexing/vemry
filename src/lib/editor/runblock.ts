@@ -145,7 +145,7 @@ class RunWidget extends WidgetType {
   }
   toDOM(view: EditorView) {
     const btn = document.createElement("button");
-    btn.className = "cm-lp-run";
+    btn.className = "cm-lp-run cm-lp-code-btn";
     btn.textContent = t("runBlock.run");
     btn.onmousedown = (e) => {
       e.preventDefault();

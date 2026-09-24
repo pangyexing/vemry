@@ -250,12 +250,14 @@ function build(state: EditorState, rows: ProvRow[], overlay: boolean, marks: boo
     // block the model extended keeps its reviewed lines bare), else on the whole block;
     // the block stays the unit of accepting, the line is the unit of showing
     const pend = pending ? lines(shown(r).from, shown(r).to) : null;
-    const title = originLabel(r.origin);
+    // No title on the lines: a native tooltip over every hovered line of an AI block
+    // covered the text being read, and the status bar already names the origin of the
+    // block under the cursor
     for (let n = block.first; n <= block.last; n++) {
       const cls: string[] = [];
       if (overlay) cls.push(`cm-prov-${r.origin.origin}`);
       if (pend && n >= pend.first && n <= pend.last) cls.push("cm-prov-pending");
-      if (cls.length) decos.push(Decoration.line({ class: cls.join(" "), attributes: { title } }).range(doc.line(n).from));
+      if (cls.length) decos.push(Decoration.line({ class: cls.join(" ") }).range(doc.line(n).from));
     }
   }
   if (marks) {

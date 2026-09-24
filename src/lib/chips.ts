@@ -31,8 +31,10 @@ export function stateTone(step: number, of: number): StateTone {
 /** The glyph of step `step` of `of`: a box filling the 24 viewBox with a small radius
  *  (drawn at 15px its stroke is 1.5px and its corners 2.5px — a square with the corners
  *  taken off, the shape of a checkbox, not a pill), empty at the first step, filled from
- *  the bottom by the share of the way through in between, solid with a white tick at
- *  the last; a cancelled task is the empty box crossed out — closed, but not by being
+ *  the bottom by the share of the way through in between, solid with a tick at the last
+ *  (in the ground's colour, --bg, as every glyph on an accent fill: white would fall to
+ *  2.6:1 on the dark theme's lighter accent; a style rather than the stroke attribute,
+ *  which does not read var()); a cancelled task is the empty box crossed out — closed, but not by being
  *  done. The partial fill is a path with square top corners and rounded bottom ones (a
  *  liquid level) rather than a clipped rect, so that no clipPath id is minted per glyph
  *  (ids are document-global). */
@@ -41,7 +43,7 @@ export function stateGlyphSvg(step: number, of: number, cancelled = false): stri
   const kind: StateTone | "cancel" = cancelled ? "cancel" : last ? "done" : step > 0 ? "active" : "idle";
   let inner = `<rect x="1.5" y="1.5" width="21" height="21" rx="4"${kind === "done" ? ' fill="currentColor"' : ""}/>`;
   if (kind === "cancel") inner += '<path d="m7.5 7.5 9 9M16.5 7.5l-9 9"/>';
-  else if (kind === "done") inner += '<path d="m6.3 12.3 4 4 7.4-8.6" stroke="#fff" stroke-width="2.8"/>';
+  else if (kind === "done") inner += '<path d="m6.3 12.3 4 4 7.4-8.6" style="stroke:var(--bg)" stroke-width="2.8"/>';
   else if (kind === "active") {
     // The box's inner edge sits at 2.7 (the stroke's centre plus half its width) on every
     // side; the fill is that share of the inner height, its bottom corners following the

@@ -33,9 +33,21 @@
   /* The ink of an inverted surface (a notice): the other theme's accent and danger, since the
      ground under them is the other theme's ground */
   --accent-inverse: #38b2a3;
-  --danger-inverse: #e06c6c;
+  --danger-inverse: #e87878;
   --diff-add-bg: rgba(15, 118, 110, 0.08);
   --diff-del-bg: rgba(185, 28, 28, 0.07);
+  /* The ground of selected text: 1.36:1 against --bg, so a selection is seen at a glance,
+     with the body ink still 12.3:1 on it (10% was 1.15:1 and all but invisible) */
+  --sel-bg: rgba(15, 118, 110, 0.22);
+  /* The ground of code (a code block, inline code, a table's head row): a step off the
+     page. Light, the panel's; dark, a step above it (the panel was 1.09:1 on the page and
+     a code block had no visible edge), with a 1px --border around the block in both */
+  --bg-code: var(--bg-panel);
+  /* A popover's ground (the completion menu, the full-text tip): light, the panel's, which
+     the shadow lifts off the page; dark, where no shadow shows, a step above the panel so
+     it never reads darker than what it covers, and still a step under --bg-hover so a
+     hovered row inside it shows */
+  --bg-popover: var(--bg-panel);
 
   --mark-bg: rgba(250, 204, 21, 0.35);
   /* Callout tints. Each is the head's text colour at body size and 600 weight, so
@@ -133,13 +145,16 @@
     --border-strong: #4a4844;
     --accent: #38b2a3;
     --accent-soft: rgba(56, 178, 163, 0.13);
-    --danger: #e06c6c;
+    --danger: #e87878; /* 4.8:1 on a hovered row (#e06c6c was 4.24) */
     --ok: #7cc494;
     --warning: #e0a63a;
     --accent-inverse: #0f766e;
     --danger-inverse: #b91c1c;
     --diff-add-bg: rgba(56, 178, 163, 0.1);
-    --diff-del-bg: rgba(224, 108, 108, 0.09);
+    --diff-del-bg: rgba(232, 120, 120, 0.09);
+    --sel-bg: rgba(56, 178, 163, 0.28);
+    --bg-code: #2e2e2b;
+    --bg-popover: #2a2a27;
     --mark-bg: rgba(250, 204, 21, 0.22);
     /* every dark tint clears 5.5:1 on --bg; --co-warn is a step yellower than the
        light theme's amber so it stays apart from question's orange */
@@ -157,6 +172,7 @@
     --lab-s3: #199e70;
     --lab-s4: #c98500;
     --lab-s5: #d55181;
+    --lab-s6: #37a33a;
     --lab-s7: #9085e9;
     --lab-s8: #e66767;
     --lab-seq-lo: #232a33;
@@ -232,12 +248,13 @@
   font-family: var(--font-ui);
   line-break: strict;
 }
-[lang="de"],
-[lang="fr"],
-[lang="es"],
-.cm-editor .cm-scroller .cm-content[lang="de"],
-.cm-editor .cm-scroller .cm-content[lang="fr"],
-.cm-editor .cm-scroller .cm-content[lang="es"] {
+/* Hyphenation wherever the language is known and has a dictionary: the interface's, or a
+   note's (declared, or read from its letters) — English included, whose ragged right edge
+   in a narrow column was the widest of all. A hyphen falls only at a line's end. */
+[lang|="en"],
+[lang|="de"],
+[lang|="fr"],
+[lang|="es"] {
   --hyphens: auto;
 }
 /* Latin prose reads best at 60-75 characters; the CJK-tuned column (42-54em, about 40-50
@@ -257,6 +274,78 @@
 }
 [data-script="cjk"] {
   --content-width: var(--content-width-off, clamp(42em, 66%, 54em));
+}
+
+/* ---- How each writing system is set, on every surface that reads (the editor's body
+   and every .md-body rendering) ---- */
+/* The space between a CJK character and a Latin letter or digit ("读 Walker 2017 的第 6
+   章"), drawn by the engine (about an eighth of an em) rather than typed: the text on disk
+   is untouched, and where a space is already typed none is added. Off in code, where
+   every character's position is the text's own */
+.cm-editor .cm-content,
+.md-body {
+  text-autospace: normal;
+}
+.cm-md-mono,
+.cm-lp-icode,
+.cm-lp-code,
+.cm-lp-tablesrc,
+.md-body code,
+.md-body pre,
+.katex {
+  text-autospace: no-autospace;
+}
+/* A full stop or comma that lands at a CJK line's end hangs into the margin rather than
+   taking the character before it down to the next line (a line one character short, a
+   ragged right edge). The editor's 34px padding and a rendered surface's own padding
+   hold it. CJK text only: a surface judged Latin, right-to-left or other keeps its
+   punctuation inside the column */
+:is(.cm-editor .cm-content, .md-body):is(:lang(zh), :lang(ja), :lang(ko), [data-script="cjk"]):not(
+    [data-script="latin"],
+    [data-script="rtl"],
+    [data-script="other"]
+  ) {
+  hanging-punctuation: allow-end;
+}
+/* Emphasis by writing system. Latin slants; CJK faces have no italic and the engine's
+   synthetic slant smears the strokes, so CJK emphasis takes the marks of its language:
+   Chinese a dot under each character, Japanese a sesame dot over it, Korean a dot over
+   it. The editor decides per span (livepreview marks a span holding CJK letters,
+   cm-lp-em-cjk); a rendered surface by its language (the text's own `lang`, else the
+   interface's). The language of the mark is the nearest `lang`: the note's, else the
+   interface's */
+.cm-md-em,
+.md-body em,
+.cm-lp-cell-em {
+  font-style: italic;
+}
+.cm-lp-em-cjk,
+.cm-lp-em-cjk .cm-md-em,
+.cm-md-em .cm-lp-em-cjk,
+:is(.md-body em, .cm-lp-cell-em):is(:lang(zh), :lang(ja), :lang(ko)),
+[data-script="cjk"] :is(.md-body em, .cm-lp-cell-em) {
+  font-style: normal;
+  -webkit-text-emphasis: filled dot;
+  text-emphasis: filled dot;
+  -webkit-text-emphasis-position: under right;
+  text-emphasis-position: under right;
+}
+:lang(ja):is(.cm-lp-em-cjk, .cm-lp-em-cjk .cm-md-em, .cm-md-em .cm-lp-em-cjk, .md-body em, .cm-lp-cell-em) {
+  -webkit-text-emphasis: filled sesame;
+  text-emphasis: filled sesame;
+  -webkit-text-emphasis-position: over right;
+  text-emphasis-position: over right;
+}
+:lang(ko):is(.cm-lp-em-cjk, .cm-lp-em-cjk .cm-md-em, .cm-md-em .cm-lp-em-cjk, .md-body em, .cm-lp-cell-em) {
+  -webkit-text-emphasis-position: over right;
+  text-emphasis-position: over right;
+}
+/* a rendering judged Latin (or right-to-left, or another alphabet) inside a CJK interface
+   keeps the slant: its language is the interface's only by inheritance */
+:is([data-script="latin"], [data-script="rtl"], [data-script="other"]) :is(.md-body em, .cm-lp-cell-em) {
+  font-style: italic;
+  -webkit-text-emphasis: none;
+  text-emphasis: none;
 }
 
 html,
@@ -330,18 +419,27 @@ button:focus-visible,
   outline-offset: -1px;
 }
 
+/* Scrollbars: WebKit's custom ones never hide by themselves, so a bar stood beside the
+   text at all times — and at 1.2:1 it was too faint to find a place by when it was
+   wanted. Now the thumb is clear (the faint ink, 3.3:1) while the pointer is over the
+   area being scrolled, which is also whenever a wheel or a trackpad scrolls it, and gone
+   otherwise */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: transparent;
   border-radius: 4px;
 }
-::-webkit-scrollbar-thumb:hover {
+:hover::-webkit-scrollbar-thumb {
   background: var(--fg-faint);
 }
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted);
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
@@ -399,15 +497,37 @@ button:focus-visible,
 }
 .cm-selectionBackground,
 .cm-editor ::selection {
-  background: var(--accent-soft) !important;
+  background: var(--sel-bg) !important;
 }
-.cm-wikilink {
+/* The characters CodeMirror still draws as a placeholder (control characters, bidi
+   overrides; setup.ts SPECIAL_CHARS): the danger ink of the theme, not its fixed red.
+   !important for the same reason as the cursor: its base theme is injected later */
+.cm-editor .cm-specialChar {
+  color: var(--danger) !important;
+}
+/* A link is told by its line as well as its colour: a 1px underline at 35% of the link's
+   ink, set 0.24em below the baseline where it clears the bottom of a CJK character.
+   Colour alone left links unreadable as links to a colour-blind reader. A link to a note
+   that does not exist yet is body ink with a dashed line: it is text to read, not a
+   dimmed control */
+.cm-wikilink,
+.md-body .md-link,
+.md-body .md-wiki:not(.md-blockref) {
   color: var(--accent);
   cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.24em;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
 }
 .cm-wikilink-unresolved {
-  color: var(--fg-faint);
+  color: var(--fg);
   cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.24em;
+  text-decoration-color: color-mix(in srgb, var(--fg-muted) 70%, transparent);
 }
 .cm-md-heading {
   /* 600 rather than 650: the CJK face has only the discrete 400/500/600 weights, and a non-standard step makes mixed Latin and CJK text differ in weight */
@@ -418,7 +538,7 @@ button:focus-visible,
    bold only).
    The size has to be here and cannot go into setup.ts's HighlightStyle rules — there a
    class and the style properties are mutually exclusive (see the mdHighlight note).
-   Change it together with ReadingView.svelte's .md-h1..h6 */
+   Change it together with the wide rendered scale, .md-body.md-wide's --h values */
 .cm-md-h1 { font-size: 1.8em; }
 .cm-md-h2 { font-size: 1.6em; }
 .cm-md-h3 { font-size: 1.42em; }
@@ -428,24 +548,80 @@ button:focus-visible,
   font-family: var(--font-mono);
   font-size: 0.9em;
 }
-.cm-md-quote {
+/* Syntax marks in source (`>`, `#`, `**`, a list marker, a link's brackets): muted. A
+   quote's text has no class of its own and reads in the body ink */
+.cm-md-meta {
   color: var(--fg-muted);
 }
+/* Inline code: its ground and a little room around it, so a span of code reads as one in
+   running CJK text, where a monospace face alone barely shows (the rendered surfaces
+   draw it the same, .md-body code) */
+.cm-lp-icode {
+  background: var(--bg-code);
+  border-radius: 4px;
+  padding: 0.2em;
+}
 /* ---- live preview (note mode) ---- */
-/* A descendant selector: the highlighter's .cm-md-quote is nested inside the marker and
-   hits the text directly, and without covering it this accent would never take effect
-   (the list marker in the raw state) */
+/* A list marker is structure, not a link: the muted ink, the accent kept for what can be
+   clicked. A descendant selector: the highlighter's .cm-md-meta is nested inside the
+   marker in source and would otherwise set the colour itself */
 .cm-lp-bullet,
-.cm-lp-bullet .cm-md-quote,
+.cm-lp-bullet .cm-md-meta,
+.cm-lp-bulletdot,
+.cm-lp-lnum,
+.cm-lp-lnum .cm-md-meta {
+  color: var(--fg-muted);
+}
+/* A list item's lines (livepreview.ts liLine): the marker sits in a box of its own width
+   (--li-mark) at the item's depth, and every later line of the item — a wrapped line, a
+   continuation line — hangs at the box's edge. So the text of an item is one column, and
+   revealing the marker's source (the same box) moves nothing sideways. The source's own
+   indentation is folded away; the depth draws it, 1.5em a level. One class deeper than the
+   other line paddings, so a list inside a quote or a callout (which set --lp-inset, their
+   own inset) still hangs */
+.cm-editor .cm-scroller .cm-line.cm-lp-li {
+  padding-inline-start: calc(var(--lp-inset, 0px) + var(--li-depth) * 1.5em + var(--li-mark));
+  text-indent: calc(-1 * var(--li-mark));
+}
+.cm-editor .cm-scroller .cm-line.cm-lp-li-cont {
+  text-indent: 0;
+}
+/* text-indent is inherited, and an inline-block (a marker box, an image, a chip) would
+   indent its own first line by it */
+.cm-editor .cm-scroller .cm-lp-li * {
+  text-indent: 0;
+}
+.cm-lp-lmark {
+  display: inline-block;
+  white-space: pre;
+  font-variant-numeric: tabular-nums;
+}
+.cm-lp-bullet,
 .cm-lp-bulletdot {
-  color: var(--accent);
+  min-width: 1.2em;
+}
+.cm-lp-lmark-task {
+  min-width: var(--li-mark);
+}
+/* The fold chevron keeps its place in the left strip beside the block handle whatever
+   the item's depth: pulled back by the depth's indent, and the same given back after it,
+   so the marker does not move */
+.cm-editor .cm-scroller .cm-line.cm-lp-li .cm-fold-toggle {
+  margin-inline-start: calc(-20px - var(--li-depth) * 1.5em);
+  margin-inline-end: calc(2px + var(--li-depth) * 1.5em);
+}
+/* A blank line between two text lines is a paragraph gap, not a whole empty line: 0.9em,
+   the gap every rendered surface puts between paragraphs. With the cursor on it, it is a
+   line to type in again and returns to full height */
+.cm-editor .cm-scroller .cm-lp-gap {
+  height: 0.9em;
 }
 /* A heading's vertical rhythm: space above alone. The value is 0.8 × that level's font
    size and shrinks in step with the geometric scale of .cm-md-h1..h6; em resolves on the
    line (the font size sits on an inner span), so what is written here is the converted
-   multiple — a larger body font widens the spacing with it. On the reading projection's
-   side the counterpart is ReadingView's margin:1.4em 0 .5em: that is parsed HTML with no
-   blank lines, so the numbers differ while the rhythm (large above, small below) matches.
+   multiple — a larger body font widens the spacing with it. The rendered surfaces'
+   counterpart is .md-body .md-h's margin: the same 0.8 of the heading's size above, and
+   the paragraph gap below that the blank line after a heading draws here (cm-lp-gap).
    The line decoration is attached by livepreview.ts's headingLines, and the document's
    first line does not get one */
 .cm-editor .cm-scroller .cm-lp-h1 { padding-top: 1.44em; }
@@ -454,18 +630,44 @@ button:focus-visible,
 .cm-editor .cm-scroller .cm-lp-h4 { padding-top: 1.02em; }
 .cm-editor .cm-scroller .cm-lp-h5 { padding-top: 0.9em; }
 .cm-editor .cm-scroller .cm-lp-h6 { padding-top: 0.8em; }
+/* A quote is told by its rule, not by greying its text: the body ink, the rule a
+   structural line (--border-strong). --lp-inset carries the quote's inset to a list line
+   inside it, whose own padding rule comes later */
 .cm-editor .cm-scroller .cm-lp-quote {
-  border-left: 2px solid var(--fg-faint);
-  padding-left: 12px;
+  --lp-inset: 12px;
+  border-inline-start: 2px solid var(--border-strong);
+  padding-inline-start: 12px;
 }
+/* A code block: its ground, a 1px border, 6px corners, and 8px above and below the code —
+   the hidden fence lines shrink to that margin (cm-lp-code-fence) and return to a full
+   line when the cursor is on one */
 .cm-editor .cm-scroller .cm-lp-code {
-  background: var(--bg-panel);
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-block: 0;
   font-family: var(--font-mono);
   font-size: 0.92em;
   padding: 0 10px;
 }
-.cm-lp-code-head {
+.cm-editor .cm-scroller .cm-lp-code-head {
   position: relative;
+  border-top: 1px solid var(--border);
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+}
+.cm-editor .cm-scroller .cm-lp-code-last {
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+}
+.cm-editor .cm-scroller .cm-lp-code-fence {
+  height: 8px;
+}
+.cm-editor .cm-scroller .cm-lp-code-head.cm-lp-code-fence {
+  height: 9px; /* the 8px and the top border */
+}
+.cm-editor .cm-scroller .cm-lp-code-last.cm-lp-code-fence {
+  height: 9px;
 }
 /* The copy button: an icon alone, with the words moved into the hover tip (::after reads data-tip) */
 .cm-lp-copy {
@@ -484,11 +686,23 @@ button:focus-visible,
   border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
-  opacity: 0.75;
 }
 .cm-lp-copy:hover {
   opacity: 1;
   color: var(--fg);
+}
+/* A code block's copy and run buttons stay off the code until they are wanted: while the
+   pointer is over the block (cm-lp-hot, livepreview.ts codeHover), while the cursor is in
+   it (cm-lp-code-cur), on keyboard focus, and while a run is under way */
+.cm-lp-code-btn {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.cm-lp-code-btn.cm-lp-hot,
+.cm-lp-code-cur .cm-lp-code-btn,
+.cm-lp-code-btn:focus-visible,
+.cm-lp-code-btn:disabled {
+  opacity: 1;
 }
 .cm-lp-copy svg {
   display: block;
@@ -538,13 +752,12 @@ button:focus-visible,
   border-radius: 4px;
   padding: 2px 8px;
   cursor: pointer;
-  opacity: 0.75;
 }
 .cm-lp-run:hover {
-  opacity: 1;
+  background: var(--bg-hover);
 }
 .cm-lp-run:disabled {
-  opacity: 0.5;
+  color: var(--fg-muted);
   cursor: default;
 }
 /* A js code block's output: it exists only in the editor's state and never reaches disk */
@@ -574,7 +787,7 @@ button:focus-visible,
   position: absolute;
   right: 6px;
   top: 6px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-size: var(--fs-xs);
   padding: 2px 5px;
   border-radius: 4px;
@@ -643,7 +856,7 @@ button:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 /* the cold card: what a lab block looks like before its first run — one line, the block's caption, a Run button */
 .cm-lab-cold .cm-lab-head {
@@ -720,7 +933,8 @@ button:focus-visible,
   filter: brightness(1.08);
 }
 .cm-lab-run:disabled {
-  opacity: 0.6;
+  color: var(--fg-muted);
+  background: var(--bg-hover);
   cursor: default;
 }
 .cm-lab-run:focus-visible {
@@ -933,7 +1147,7 @@ button:focus-visible,
   overflow: visible;
 }
 .cm-lab-empty {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   text-align: center;
   padding: 18px 0;
 }
@@ -1124,8 +1338,18 @@ button:focus-visible,
   overflow: hidden;
   transition: box-shadow 0.08s;
 }
-.cm-lab-heat-cell.ink-hi {
+/* the number's ink flips where the two inks have equal contrast on the cell, a point of
+   its own for each scale and theme (charts.ts HEAT_SWITCH); a cell carries both verdicts */
+.cm-lab-heat-cell.ink-hi-l {
   color: var(--lab-heat-ink-hi);
+}
+@media (prefers-color-scheme: dark) {
+  .cm-lab-heat-cell.ink-hi-l {
+    color: var(--fg);
+  }
+  .cm-lab-heat-cell.ink-hi-d {
+    color: var(--lab-heat-ink-hi);
+  }
 }
 .cm-lab-heat-cell.empty {
   background: repeating-linear-gradient(45deg, transparent 0 4px, var(--border) 4px 5px);
@@ -1279,13 +1503,14 @@ button:focus-visible,
   background: var(--bg-hover);
 }
 .cm-lab-btn:disabled {
-  opacity: 0.45;
+  color: var(--fg-muted);
+  background: var(--bg-panel);
   cursor: default;
 }
 .cm-lab-step-count {
   margin-left: auto;
   font-size: var(--fs-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 /* console output under the views; an error in the danger colour */
@@ -1517,8 +1742,8 @@ button:focus-visible,
    projection, Agenda, a board card, a query row, a field chip. It colours itself, here
    and nowhere else: the muted ink for an empty box (a crisp outline, a thing to be
    clicked — the faint ink read as disabled), the faint ink for a cancelled one, the
-   accent for one in progress or done (the tick inside a done box is white in the
-   drawing). A host gives it a size — 15px wherever it stands for a checkbox — and may
+   accent for one in progress or done (the tick inside a done box is the ground's colour,
+   --bg, in the drawing). A host gives it a size — 15px wherever it stands for a checkbox — and may
    turn the box accent on hover as a preview of the click; it does not colour it
    otherwise */
 .vstate {
@@ -1551,8 +1776,10 @@ button:focus-visible,
   text-decoration: line-through;
   color: var(--fg-muted);
 }
+/* A finished task steps back a grade, to the secondary ink, struck through: still read
+   (5.6:1), no longer competing */
 .cm-lp-done {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   text-decoration: line-through;
 }
 .cm-lp-hr {
@@ -1567,7 +1794,8 @@ button:focus-visible,
   display: inline-block;
   width: 15px;
   height: 15px;
-  margin: 0 7px 0 1px;
+  /* 1 + 15 + 8: the 24px box a task's hanging indent counts (livepreview.ts TASK_BOX) */
+  margin: 0 8px 0 1px;
   vertical-align: -2px;
   cursor: pointer;
 }
@@ -1575,25 +1803,28 @@ button:focus-visible,
   width: 100%;
   height: 100%;
 }
+/* The folded frontmatter: one quiet line of metadata, not a box — the first thing a note
+   shows is its text. A note whose frontmatter holds only the app's own keys shows
+   nothing (cm-lp-frontmatter-none) */
 .cm-lp-frontmatter {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: baseline;
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
-  border-radius: var(--radius);
-  padding: 6px 12px;
   margin-bottom: 12px;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--fg-muted);
   cursor: pointer;
 }
+.cm-lp-frontmatter:hover {
+  color: var(--fg);
+}
 .cm-lp-fm-label {
-  color: var(--fg-muted);
-  font-weight: 600;
+  font-weight: 500;
   flex-shrink: 0;
 }
 .cm-lp-fm-keys {
-  color: var(--fg-faint);
+  color: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1614,7 +1845,7 @@ button:focus-visible,
 /* The `#` of a tag stays (it is what makes the word a tag on disk, and what was typed)
    but steps back, so the name carries the capsule — the same fade as a row's tag chip */
 .cm-lp-tag-hash {
-  opacity: 0.55;
+  color: var(--fg-muted);
 }
 /* A date marker on a task line that does not parse: the parser silently treats it as no date, and this draws the warning */
 .cm-lp-baddate {
@@ -1694,7 +1925,7 @@ button:focus-visible,
 .cm-lp-attr-faint,
 .cm-lp-attr-cancelled,
 .cm-lp-attr-created {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 /* An inline `key:: value` field as a chip (the key muted, the value plain); the source
    `key::` is faint while the cursor is on it */
@@ -1710,7 +1941,7 @@ button:focus-visible,
 }
 .cm-lp-field-key,
 .md-body .md-field-key {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   margin-right: 4px;
 }
 .cm-lp-field-key::after,
@@ -1752,6 +1983,23 @@ button:focus-visible,
 .cm-lp-mathblock:hover {
   background: var(--bg-hover);
 }
+/* An inline formula at 1.1em of the text (KaTeX's own 1.21em stood a size above it); a
+   display formula keeps KaTeX's size */
+.cm-lp-math .katex,
+.md-body .katex {
+  font-size: 1.1em;
+}
+.cm-lp-math-display .katex,
+.cm-lp-mathblock .katex,
+.md-body .katex-display > .katex {
+  font-size: 1.21em;
+}
+/* An inline formula taller than the line (math.ts fitLine): an inline-block whose negative
+   block margins, set from KaTeX's struts, keep the part past the line out of the line's
+   height — it overhangs into the leading, and the line spacing stays even */
+.math-fit {
+  display: inline-block;
+}
 .cm-lp-math-display .katex-display,
 .cm-lp-mathblock .katex-display,
 .md-math .katex-display {
@@ -1763,12 +2011,10 @@ button:focus-visible,
   max-width: 100%;
   overflow-x: auto;
 }
-/* an emphasis span the parser refused for CJK punctuation at its edge, read leniently */
+/* a bold span the parser refused for CJK punctuation at its edge, read leniently (the
+   emphasis twin takes .cm-md-em, above) */
 .cm-lp-cjk-strong {
   font-weight: 600;
-}
-.cm-lp-cjk-em {
-  font-style: italic;
 }
 .cm-lp-math-src {
   font-family: var(--font-mono);
@@ -1787,14 +2033,14 @@ button:focus-visible,
   margin: 0.3em 0;
 }
 /* An empty field (`[key:: ]`, the placeholder a block type leaves): an outlined slot with a
-   faint "empty" for the value, filled by a click on the chip */
+   muted "empty" for the value, filled by a click on the chip (upright: the word may be CJK,
+   which has no italic) */
 .cm-lp-field-empty {
   background: transparent;
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--border-strong);
 }
 .cm-lp-field-empty .cm-lp-field-val {
-  color: var(--fg-faint);
-  font-style: italic;
+  color: var(--fg-muted);
 }
 .cm-lp-chip-click {
   cursor: pointer;
@@ -1804,12 +2050,16 @@ button:focus-visible,
 }
 /* The *(timestamp)* signature a memo or a clip writes: demoted to a metadata footnote */
 .cm-lp-stamp {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-size: 0.85em;
 }
-/* Where a block anchor is defined, "^id": a quiet mono badge marking that this block can be cited as [[note#^id]] */
+/* Where a block anchor is defined, "^id": a quiet mono badge marking that this block can be
+   cited as [[note#^id]] — on the cursor's line only. Elsewhere the id folds into a
+   zero-width pin (livepreview.ts AnchorPinWidget) whose badge floats over the end of the
+   line while the pointer is over it: no width, so showing it reflows nothing, and right-
+   anchored at the text's end, so it never reaches past the column */
 .cm-lp-anchor {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -1817,20 +2067,43 @@ button:focus-visible,
   font-size: 0.75em;
   padding: 0 4px;
 }
+.cm-lp-anchor-pin {
+  position: relative;
+}
+.cm-lp-anchor-tip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 2px);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.cm-line:hover .cm-lp-anchor-tip {
+  opacity: 1;
+  transition-delay: 0.3s;
+}
 /* The friendly rendering of a wikilink's suffix: the heading separator "›", the block reference "¶", the supports prefix */
 .cm-lp-linksep {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   padding: 0 2px;
 }
 .cm-lp-blockref {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-size: 0.8em;
   padding-left: 3px;
 }
 .cm-lp-supports {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-size: 0.85em;
   margin-right: 4px;
+}
+/* A link's address while the cursor is in its label: folded to "(…)", opened when the
+   cursor reaches it (livepreview.ts, the Link case) */
+.cm-lp-urlfold {
+  color: var(--fg-muted);
 }
 .cm-lp-image {
   position: relative;
@@ -1882,9 +2155,9 @@ button:focus-visible,
 .cm-lp-image-missing {
   display: inline-block;
   padding: 2px 10px;
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-size: var(--fs-sm);
 }
 /* Zoomed image viewing (the lightbox, src/lib/lightbox.ts): an overlay in the current
@@ -1985,17 +2258,14 @@ button:focus-visible,
   overflow-wrap: normal;
 }
 .cm-lp-table th {
-  background: var(--bg-panel);
+  background: var(--bg-code);
   font-weight: 600;
 }
 .cm-lp-cell-strong {
   font-weight: 600;
 }
-.cm-lp-cell-em {
-  font-style: italic;
-}
 .cm-lp-cell-code {
-  background: var(--bg-panel);
+  background: var(--bg-code);
   border-radius: 3px;
   padding: 0 4px;
 }
@@ -2005,14 +2275,15 @@ button:focus-visible,
 }
 .cm-lp-callout {
   --co-color: var(--co-info);
-  border-left: 2px solid var(--co-color);
+  border-inline-start: 2px solid var(--co-color);
   background: color-mix(in srgb, var(--co-color) 7%, transparent);
 }
 /* Only the padding's specificity is raised: raising the whole rule to three levels would
    defeat the (0,1,0) --co-color overrides of the .cm-lp-co-tip family below, and every
    callout would turn info blue */
 .cm-editor .cm-scroller .cm-lp-callout {
-  padding-left: 12px;
+  --lp-inset: 12px;
+  padding-inline-start: 12px;
 }
 .cm-editor .cm-scroller .cm-lp-co-first {
   border-top-left-radius: var(--radius);
@@ -2217,26 +2488,53 @@ button:focus-visible,
    line padding; the colours are tokens so the status bar and the overlay agree ---- */
 :root {
   --prov-you: #6b7f6b;
-  --prov-agent: #c7891a;
+  /* 3.9:1 on the page: the bar and the review glyphs are marks, and clear 3:1 */
+  --prov-agent: #a86d0c;
   --prov-clip: #3b7bbf;
   --prov-capture: #8a63c7;
 }
-:root[data-theme="dark"] {
-  --prov-you: #8fa88f;
-  --prov-agent: #e0a63a;
-  --prov-clip: #6ea3e0;
-  --prov-capture: #b08fe6;
+/* Under the colour scheme, as every dark value is: the app sets no theme attribute, and a
+   selector on one never matched (a check in CI refuses one) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --prov-you: #8fa88f;
+    --prov-agent: #e0a63a;
+    --prov-clip: #6ea3e0;
+    --prov-capture: #b08fe6;
+  }
 }
+/* The amber bar of a block awaiting review is drawn outside the text's box, in the left
+   strip: it takes no padding, so accepting or rejecting moves no text, and it leaves a
+   quote's or a code block's own padding alone */
 .cm-editor .cm-scroller .cm-line.cm-prov-pending {
-  box-shadow: inset 3px 0 0 var(--prov-agent);
-  padding-left: 6px;
+  position: relative;
 }
-/* The one-click review control after an unreviewed block's first line */
+.cm-editor .cm-scroller .cm-line.cm-prov-pending::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: -7px;
+  width: 3px;
+  background: var(--prov-agent);
+  pointer-events: none;
+}
+/* The one-click review control after an unreviewed block's first line: there while the
+   cursor or the pointer is on that line, and holding its place otherwise (hidden, not
+   removed), so showing it reflows nothing. The bar and the status bar's pending count
+   are the standing signs */
 .cm-prov-controls {
   display: inline-flex;
   gap: 4px;
   margin-left: 8px;
   vertical-align: baseline;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.cm-line:hover .cm-prov-controls,
+.cm-lp-curline .cm-prov-controls,
+.cm-prov-controls:focus-within {
+  opacity: 1;
 }
 .cm-prov-review {
   display: inline-block;
@@ -2249,12 +2547,10 @@ button:focus-visible,
   line-height: 1.5;
   vertical-align: baseline;
   cursor: pointer;
-  opacity: 0.65;
   -webkit-user-select: none;
   user-select: none;
 }
 .cm-prov-review:hover {
-  opacity: 1;
   background: color-mix(in srgb, var(--prov-agent) 14%, transparent);
 }
 .cm-prov-review.cm-prov-reject:hover {
@@ -2263,17 +2559,7 @@ button:focus-visible,
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 .cm-prov-review.cm-prov-old-toggle.active {
-  opacity: 1;
   background: color-mix(in srgb, var(--prov-agent) 22%, transparent);
-}
-/* A block's own pair inside a run of several: there on hover of its line only, the
-   run's pair on the first line being the one that is always shown */
-.cm-line .cm-prov-controls.cm-prov-block {
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-.cm-line:hover .cm-prov-controls.cm-prov-block {
-  opacity: 1;
 }
 /* What a run's write replaced, unfolded above it: the text as it was, struck through,
    read-only (a block widget, so it goes through blockRoot like every other) */
@@ -2417,7 +2703,7 @@ button:focus-visible,
 /* ---- Completion sections and details (the reference stages, the @ picker, the slash menu) ---- */
 .cm-tooltip-autocomplete .cm-completionSection {
   font-size: var(--fs-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   padding: 4px 8px 2px;
   border-top: 1px solid var(--border);
 }
@@ -2426,8 +2712,12 @@ button:focus-visible,
 }
 .cm-tooltip-autocomplete .cm-completionDetail {
   margin-left: 10px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-style: normal;
+}
+/* on the selected row's ground (--bg-active) the muted ink falls just under 4.5:1 */
+.cm-tooltip-autocomplete ul li[aria-selected] .cm-completionDetail {
+  color: var(--fg);
 }
 /* The drawn icon of a task attribute entry in the @ palette (completions.ts attrIconOption):
    the chip's icon in the chip's tone, sitting between the label and the detail */
@@ -2614,7 +2904,7 @@ button:focus-visible,
   padding: 0 8px;
   font-size: 0.8em;
   line-height: 1.5;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -2626,42 +2916,66 @@ button:focus-visible,
   color: var(--accent);
   border-color: var(--accent);
 }
-/* ---- The body typography of the assistant's Markdown bubbles (the class-name contract
-   markdown.ts's renderAssistantMarkdown* produces). Attaching .md-body gives the whole
-   set: content injected with {@html} would otherwise have to be written out with
-   :global() rule by rule inside each component, and every extra consumer would copy
-   another ~100 lines — one change to the class-name contract would then mean changing N
-   places. This is that contract's only style implementation; each consumer overrides only
-   what is really different for it (ReadingView's heading scale, say). The skeleton classes
-   .md-tablewrap/.md-codewrap/.md-check/.md-taskdone are below and are global as well. ---- */
-.md-body p {
-  margin: 0 0 8px;
+/* ---- Rendered Markdown (.md-body): the one typography of every read-only rendering of
+   Markdown — an embed, the chat's answers, a session replay, the reading projection, a
+   translated page — over the class-name contract markdown.ts's renderers produce. It is
+   the only implementation: content injected with {@html} would otherwise be styled with
+   :global() rule by rule inside each component, and the surfaces drifted apart (the chat's
+   headings a step apart, the projection's callouts unstyled). A consumer attaches the
+   class and deletes its own copies; it overrides only what is really its own.
+   The rhythm is the editor's: line height 1.75, a paragraph gap of 0.9em (the editor's
+   blank line between two paragraphs), the font size inherited from the surface (which
+   takes the reader's body size, --fs-note). Two heading scales: .md-body alone is the
+   narrow scale for a side panel (1.3 / 1.2 / 1.1 / 1em), .md-body.md-wide the editor's
+   own scale for a surface as wide as the note column (1.8 / 1.6 / 1.42 / 1.27 / 1.12 /
+   1em). A heading has space above at 0.8 of its size and the paragraph gap below, as in
+   the editor. The text is selectable. Each paragraph, item and heading takes its
+   direction from its own first strong letter, so a Hebrew or Arabic one runs right to
+   left and aligns right beside English ones. The skeleton classes
+   .md-tablewrap/.md-codewrap/.md-check/.md-taskdone are below and are global as well ---- */
+.md-body {
+  line-height: 1.75;
+  hyphens: var(--hyphens);
+  overflow-wrap: break-word;
+  -webkit-user-select: text;
+  user-select: text;
 }
+.md-body ::selection {
+  background: var(--sel-bg);
+}
+.md-body p,
+.md-body li,
+.md-body .md-h {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+.md-body p {
+  margin: 0 0 0.9em;
+}
+.md-body > :last-child,
 .md-body p:last-child {
   margin-bottom: 0;
 }
 .md-body ul,
 .md-body ol {
-  margin: 0 0 8px;
-  padding-left: 20px;
-}
-.md-body li {
-  margin: 3px 0;
+  margin: 0 0 0.9em;
+  padding-inline-start: 1.5em;
 }
 .md-body li::marker {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
 }
 .md-body strong {
   font-weight: 600;
 }
+/* A quote is told by its rule, not by greying its text */
 .md-body blockquote {
-  margin: 0 0 8px;
-  padding: 2px 10px;
-  border-left: 2px solid var(--border);
-  color: var(--fg-muted);
+  margin: 0 0 0.9em;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid var(--border-strong);
 }
-/* A callout in a read-only rendering (an embed, the reading projection, chat): the
-   editor's tint groups on the same variables, the head in the group's colour */
+/* A callout in a read-only rendering: the editor's tint groups on the same variables, the
+   head in the group's colour, the body in the body ink */
 /* The default tint, split out at one class so the shared .md-co-* family above — two
    classes in this form, and ~500 lines earlier in the file — always wins it whatever the
    source order. The same trap as the .cm-lp-callout note above, mirrored. */
@@ -2669,10 +2983,11 @@ button:focus-visible,
   --co-color: var(--co-info);
 }
 .md-body .md-callout {
-  margin: 0 0 8px;
-  padding: 6px 10px;
-  border-left: 2px solid var(--co-color);
-  border-radius: 0 4px 4px 0;
+  margin: 0 0 0.9em;
+  padding: 6px 12px;
+  border-inline-start: 2px solid var(--co-color);
+  border-start-end-radius: var(--radius);
+  border-end-end-radius: var(--radius);
   background: color-mix(in srgb, var(--co-color) 7%, transparent);
 }
 .md-body .md-callout > p {
@@ -2687,7 +3002,7 @@ button:focus-visible,
   display: inline-flex;
   align-items: center;
   vertical-align: -3px;
-  margin-right: 6px;
+  margin-inline-end: 6px;
 }
 .md-body .md-co-icon svg {
   width: 15px;
@@ -2696,67 +3011,86 @@ button:focus-visible,
 .md-body .md-co-quote .md-co-icon {
   color: var(--co-color);
 }
+/* Inline code: the editor's (.cm-lp-icode) */
 .md-body code {
   font-family: var(--font-mono);
-  font-size: 0.92em;
-  background: var(--bg-panel);
-  border-radius: 3px;
-  padding: 0 4px;
+  font-size: 0.9em;
+  background: var(--bg-code);
+  border-radius: 4px;
+  padding: 0.2em;
 }
+/* A code block: the editor's ground, border, corners and 8px above and below */
 .md-body .md-code {
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  background: var(--bg-panel);
-  border-radius: 6px;
-  padding: 8px;
+  font-size: 0.92em;
+  line-height: 1.6;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
   overflow-x: auto;
-  margin: 0 0 8px;
+  margin: 0 0 0.9em;
 }
 .md-body .md-code code {
+  font-size: inherit;
   background: none;
   padding: 0;
 }
 .md-body .md-h {
+  --h: 1;
+  font-size: calc(var(--h) * 1em);
   font-weight: 600;
-  margin: 16px 0 6px;
+  line-height: 1.4;
+  margin: 0.8em 0 calc(0.9em / var(--h));
 }
 .md-body .md-h:first-child {
-  margin-top: 2px;
+  margin-top: 0;
 }
 .md-body .md-h1 {
-  font-size: 1.1em;
+  --h: 1.3;
 }
 .md-body .md-h2 {
-  font-size: 1.05em;
+  --h: 1.2;
 }
-.md-body .md-h1,
-.md-body .md-h2 {
-  padding-bottom: 5px;
-  border-bottom: 1px solid var(--border);
+.md-body .md-h3 {
+  --h: 1.1;
+}
+.md-body.md-wide .md-h1 {
+  --h: 1.8;
+}
+.md-body.md-wide .md-h2 {
+  --h: 1.6;
+}
+.md-body.md-wide .md-h3 {
+  --h: 1.42;
+}
+.md-body.md-wide .md-h4 {
+  --h: 1.27;
+}
+.md-body.md-wide .md-h5 {
+  --h: 1.12;
 }
 .md-body .md-hr {
   border: none;
   border-top: 1px solid var(--border);
-  margin: 8px 0;
-}
-.md-body .md-link,
-.md-body .md-wiki {
-  color: var(--accent);
-  cursor: pointer;
+  margin: 0.9em 0;
 }
 .md-body .md-link:hover,
-.md-body .md-wiki:hover {
-  text-decoration: underline;
+.md-body .md-wiki:not(.md-blockref):hover {
+  text-decoration-color: currentColor;
 }
 .md-body .md-tablewrap {
-  margin: 2px 0 10px;
+  margin: 0 0 0.9em;
 }
-.md-body .md-img {
+/* The placeholder chip of an image that is not drawn (a remote one the surface does not
+   load, one that failed): a link in a dashed box. A real <img> — markdown.ts's vault
+   images carry the class too — is not styled here; each surface sizes its own */
+.md-body .md-img:not(img) {
   display: inline-block;
   font-size: 0.85em;
   color: var(--fg-muted);
   background: var(--bg-panel);
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--border-strong);
   border-radius: 5px;
   padding: 1px 8px;
   cursor: pointer;
@@ -2766,7 +3100,7 @@ button:focus-visible,
   white-space: nowrap;
   vertical-align: bottom;
 }
-.md-body .md-img:hover {
+.md-body .md-img:not(img):hover {
   color: var(--fg);
   background: var(--bg-hover);
 }
@@ -2846,13 +3180,13 @@ button:focus-visible,
 .md-tablewrap th,
 .md-tablewrap td {
   padding: 4px 10px;
-  text-align: left;
+  text-align: start;
   vertical-align: top;
   overflow-wrap: anywhere;
 }
 /* A header is content: the body ink, set apart by its weight and its ground */
 .md-tablewrap th {
-  background: var(--bg-panel);
+  background: var(--bg-code);
   font-size: 0.92em;
   font-weight: 600;
   color: var(--fg);
@@ -2878,8 +3212,8 @@ button:focus-visible,
   position: absolute;
   top: 4px;
   right: 4px;
-  font-size: 10px;
-  color: var(--fg-faint);
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -2920,9 +3254,9 @@ button:focus-visible,
 .cm-code-string {
   color: #0a3069;
 }
+/* a comment is text to read: the secondary ink, upright (the faint italic was 2.4:1) */
 .cm-code-comment {
-  color: var(--fg-faint);
-  font-style: italic;
+  color: var(--fg-muted);
 }
 .cm-code-atom {
   color: #0550ae;
@@ -2956,17 +3290,8 @@ button:focus-visible,
     color: #7ee787;
   }
 }
-.cm-tooltip.cm-tooltip-autocomplete {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  font-family: var(--font-ui);
-}
-.cm-tooltip-autocomplete ul li[aria-selected] {
-  background: var(--accent-soft);
-  color: var(--fg);
-}
+/* The completion menu's ground, border and selected row are in setup.ts's chromeTheme:
+   CodeMirror's own defaults for them are scoped deeper than a rule here can reach */
 /* The full text of a clipped line (cliptip.ts): one box shared by every hovered line, so
    it lives on body and is styled here. Read-only, and passes the pointer through */
 .clip-tip {
@@ -2974,7 +3299,7 @@ button:focus-visible,
   z-index: 95;
   max-width: 420px;
   padding: 6px 10px;
-  background: var(--bg-panel);
+  background: var(--bg-popover);
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: var(--shadow);

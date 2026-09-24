@@ -1,8 +1,19 @@
 import type { FieldStat, BlockType } from "$lib/api";
 // CodeMirror assembly for the note editor and the plain/code file editor.
 import { t } from "$lib/i18n/i18n.svelte";
-import { EditorSelection, EditorState, Prec, type Extension } from "@codemirror/state";
-import { EditorView, keymap, drawSelection, highlightSpecialChars, placeholder, type Command } from "@codemirror/view";
+import { Compartment, EditorSelection, EditorState, Prec, RangeSetBuilder, type Extension } from "@codemirror/state";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  keymap,
+  drawSelection,
+  highlightSpecialChars,
+  placeholder,
+  ViewPlugin,
+  type Command,
+  type ViewUpdate,
+} from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownLanguage, insertNewlineContinueMarkupCommand, deleteMarkupBackward } from "@codemirror/lang-markdown";
 import { syntaxHighlighting, HighlightStyle, LanguageDescription } from "@codemirror/language";
@@ -41,6 +52,104 @@ const codeFont = EditorView.theme({
   ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6" },
 });
 
+// What CodeMirror's own base themes colour, taken over in the theme layer for the same
+// cascade reason as the font above: its light and dark defaults are scoped one class
+// deeper than a bare app.css rule, so the completion menu's selected row stayed its
+// default bright blue with white text (the app's rule never applied), and the menu's
+// ground was its grey. Here the row is the app's active ground with the body ink, in
+// both themes. The colours are the tokens, so the theme needs no dark variant of its own.
+const chromeTheme = EditorView.theme({
+  ".cm-tooltip": {
+    background: "var(--bg-popover)",
+    color: "var(--fg)",
+    border: "1px solid var(--border)",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete": {
+    borderRadius: "var(--radius)",
+    boxShadow: "var(--shadow)",
+    fontFamily: "var(--font-ui)",
+    overflow: "hidden",
+  },
+  ".cm-tooltip-autocomplete ul li[aria-selected]": {
+    background: "var(--bg-active)",
+    color: "var(--fg)",
+  },
+  ".cm-completionMatchedText": {
+    textDecoration: "none",
+    fontWeight: "600",
+  },
+});
+
+// Whether the editor is on a dark ground, told to CodeMirror (EditorView.darkTheme) so
+// the defaults it still owns take their dark values rather than light ones on a dark
+// page. It follows the system scheme live: each view listens and reconfigures its
+// compartment when the scheme flips (the app sets no theme of its own; the tokens follow
+// prefers-color-scheme, and so does this).
+const darkMode = new Compartment();
+const darkQuery = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+const darkFacet = () => EditorView.darkTheme.of(!!darkQuery?.matches);
+const followScheme = ViewPlugin.fromClass(
+  class {
+    constructor(readonly view: EditorView) {
+      darkQuery?.addEventListener("change", this.flip);
+    }
+    flip = () => {
+      this.view.dispatch({ effects: darkMode.reconfigure(darkFacet()) });
+    };
+    destroy() {
+      darkQuery?.removeEventListener("change", this.flip);
+    }
+  },
+);
+
+// The characters drawn as a visible placeholder: the control characters, and the ones
+// that can make a line say something other than it looks (the bidi overrides, the
+// interlinear annotation marks). Left out, and so drawn as the browser draws them: the
+// zero-width space and the BOM (invisible; a clip carries them in from the web, and a
+// red dot for each read as damage), the soft hyphen (a hyphenation hint the browser
+// honours at a line end), and the direction marks and isolates (invisible, and what
+// keeps a mixed right-to-left line in order).
+const SPECIAL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029\u202d\u202e\ufff9-\ufffc]/;
+
+/** A right-to-left letter: Hebrew, Arabic, Syriac, Thaana, N'Ko and their presentation forms. */
+const RTL_CHAR = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc]/;
+const autoDirLine = Decoration.line({ attributes: { dir: "auto" } });
+
+function bidiDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const doc = view.state.doc;
+  for (const { from, to } of view.visibleRanges) {
+    for (let pos = from; pos <= to; ) {
+      const line = doc.lineAt(pos);
+      if (RTL_CHAR.test(line.text)) builder.add(line.from, line.from, autoDirLine);
+      if (line.to >= to) break;
+      pos = line.to + 1;
+    }
+  }
+  return builder.finish();
+}
+
+/** Each line takes the direction of its own first strong letter: a Hebrew or Arabic
+ *  paragraph runs right to left and aligns right, its full stop and its "ב-2013" in
+ *  order, while the lines around it stay left to right. Only a line holding a
+ *  right-to-left letter gets `dir="auto"` (a Chinese or English line is untouched), and
+ *  perLineTextDirection makes the cursor motion read each line's own direction. */
+const perLineDirection: Extension = [
+  EditorView.perLineTextDirection.of(true),
+  ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) {
+        this.decorations = bidiDecorations(view);
+      }
+      update(u: ViewUpdate) {
+        if (u.docChanged || u.viewportChanged) this.decorations = bidiDecorations(u.view);
+      }
+    },
+    { decorations: (v) => v.decorations },
+  ),
+];
+
 // The heading scale lives entirely in app.css's .cm-md-h1..h5 classes. A TagStyle's
 // class and its style properties are mutually exclusive: once a class is set, the
 // fontSize and friends of the same rule are silently dropped (in
@@ -55,12 +164,17 @@ const mdHighlight = HighlightStyle.define([
   { tag: tags.heading5, class: "cm-md-heading cm-md-h5" },
   { tag: tags.heading, class: "cm-md-heading" }, // the h6 fallback: 1em, bold only
   { tag: tags.monospace, class: "cm-md-mono" },
-  { tag: tags.quote, class: "cm-md-quote" },
-  { tag: tags.emphasis, fontStyle: "italic" },
+  // A quote's text gets no class: it reads in the body ink, and a callout's head in its
+  // group's colour. A muted class on every span of the quote outranked the line's colour
+  // and turned every callout head and every clipped paragraph grey. Only the syntax marks
+  // (`>`, `#`, `**`, a list marker in source) step back, as cm-md-meta.
+  // Emphasis is a class so app.css can draw it per writing system: italic in Latin, the
+  // emphasis marks of the language in CJK (livepreview marks a span holding CJK text).
+  { tag: tags.emphasis, class: "cm-md-em" },
   { tag: tags.strong, fontWeight: "600" },
   { tag: [tags.url, tags.link], class: "cm-wikilink" },
   { tag: tags.strikethrough, class: "cm-lp-strike" },
-  { tag: tags.processingInstruction, class: "cm-md-quote" },
+  { tag: tags.processingInstruction, class: "cm-md-meta" },
   { tag: highlightTag, class: "cm-md-mark" },
 ]);
 
@@ -339,7 +453,11 @@ function buildState(opts: EditorOptions): EditorState {
       history(),
       drawSelection(),
       clickGuard(),
-      highlightSpecialChars(),
+      highlightSpecialChars({ specialChars: SPECIAL_CHARS }),
+      chromeTheme,
+      darkMode.of(darkFacet()),
+      followScheme,
+      perLineDirection,
       EditorView.lineWrapping,
       closeBrackets(),
       ...mode,

@@ -9,8 +9,10 @@ import { stripAnchor } from "$lib/fields";
 
 /** LaTeX → KaTeX HTML. The renderer's only third-party HTML injection point: called
  *  on recognised formula fragments alone, with trust:false forbidding dangerous
- *  commands such as \href; a syntax error renders as the source in red
- *  (throwOnError:false) rather than throwing and taking the whole document down. */
+ *  commands such as \href; a syntax error renders as the source in the danger ink
+ *  (throwOnError:false) rather than throwing and taking the whole document down — the
+ *  token rather than KaTeX's fixed #cc0000, which falls to 2.8:1 on the dark ground.
+ *  An inline formula taller than a line of text is wrapped by fitLine. */
 export function renderMathHtml(tex: string, display: boolean): string {
   const src = tex.trim();
   const key = (display ? "d" : "i") + src;
@@ -21,15 +23,50 @@ export function renderMathHtml(tex: string, display: boolean): string {
     html = katex.renderToString(src, {
       displayMode: display,
       throwOnError: false,
+      errorColor: "var(--danger)",
       trust: false,
       output: "html",
     });
+    if (!display) html = fitLine(html);
   } catch {
     html = `<code>${src.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code>`;
   }
   if (MATH_HTML.size >= MATH_HTML_MAX) MATH_HTML.delete(MATH_HTML.keys().next().value!);
   MATH_HTML.set(key, html);
   return html;
+}
+
+/** A strut of KaTeX's HTML: its height is the base's height plus depth, its
+ *  vertical-align minus the depth (absent when there is none), both in the formula's em. */
+const STRUT_RE = /class="katex-strut" style="height:([\d.]+)em;(?:vertical-align:(-?[\d.]+)em;)?/g;
+/** The inline formula's size against the text: app.css sets `.katex` to 1.1em inline. */
+const INLINE_SCALE = 1.1;
+/** How far above and below the baseline a formula may reach, in the text's em, before it
+ *  would open the line up: a line at the body's 1.75 line height reaches about 1.23em above
+ *  the baseline and 0.52em below it, and these stay a margin inside that. */
+const LINE_ASCENT = 1.1;
+const LINE_DEPTH = 0.45;
+
+/** An inline formula taller than a line of text (a fraction, a sum with limits, a stacked
+ *  superscript) opened its line up, so the lines of a paragraph stood unevenly apart. Such
+ *  a formula is wrapped in an inline-block whose negative block margins take back what
+ *  reaches past the line: the line keeps its height and the formula overhangs into the
+ *  leading above and below, as a tall glyph would. The extent is read from KaTeX's own
+ *  struts, so nothing is measured in the DOM and the result caches with the HTML. A
+ *  formula of ordinary height is left as it was, breakable across lines. */
+function fitLine(html: string): string {
+  let ascent = 0;
+  let depth = 0;
+  for (const m of html.matchAll(STRUT_RE)) {
+    const d = m[2] ? -Number(m[2]) : 0;
+    ascent = Math.max(ascent, Number(m[1]) - d);
+    depth = Math.max(depth, d);
+  }
+  const over = (v: number, room: number) => Math.max(0, Math.round((v * INLINE_SCALE - room) * 1000) / 1000);
+  const up = over(ascent, LINE_ASCENT);
+  const down = over(depth, LINE_DEPTH);
+  if (!up && !down) return html;
+  return `<span class="math-fit" style="margin-top:-${up}em;margin-bottom:-${down}em">${html}</span>`;
 }
 
 /** The same formula is typeset over and over — a note scrolled back through the

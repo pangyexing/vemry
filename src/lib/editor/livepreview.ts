@@ -91,7 +91,16 @@ const CJK_PUNCT = /[。，、；：！？）」』】》〉…—～（「『【
  *  into a word, or CommonMark's flanking rule would have taken it already. */
 const WORD_OUTSIDE = /[\s\p{P}\p{S}]/u;
 const cjkStrongDeco = Decoration.mark({ class: "cm-lp-cjk-strong" });
-const cjkEmDeco = Decoration.mark({ class: "cm-lp-cjk-em" });
+/** The lenient emphasis span above; it touches CJK punctuation by construction, but its
+ *  words may still be Latin, so it takes the same per-span verdict as a parsed one. */
+const cjkEmDeco = Decoration.mark({ class: "cm-md-em cm-lp-em-cjk" });
+const latinEmDeco = Decoration.mark({ class: "cm-md-em" });
+/** A span holding a Han, kana or hangul letter. Its emphasis is drawn with the emphasis
+ *  marks of the note's language (app.css .cm-lp-em-cjk), not slanted: CJK faces have no
+ *  italic, and the engine's synthetic slant smears the strokes. A Latin-only span in the
+ *  same note keeps its italic — the verdict is per span, not per note. */
+const CJK_TEXT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const cjkEmphDeco = Decoration.mark({ class: "cm-lp-em-cjk" });
 /** A bare URL's extent for the escape fold above (the click boundary itself is mdlink's) */
 const BARE_URL_RE = /https?:\/\/[^\s<>]+/g;
 /** The whole-line gate for that fold: the same characters CLIP_ESCAPE_RE names, derived
@@ -104,12 +113,22 @@ export const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|tiff?)$/i;
 // CALLOUT_RE lives in blocks.ts (the block model, fold.ts and this renderer share it)
 
 const hideDeco = Decoration.replace({});
-const bulletDeco = Decoration.mark({ class: "cm-lp-bullet" });
 const doneDeco = Decoration.mark({ class: "cm-lp-done" });
+/** A task's `- [ ] ` while the cursor is in it: the source in the checkbox's box (at
+ *  least; the source may be wider, and then pushes the text). */
+const taskSrcDeco = Decoration.mark({ class: "cm-lp-lmark cm-lp-lmark-task" });
 const tagDeco = Decoration.mark({ class: "cm-lp-tag" });
 /** The `#` of a tag: kept in the text, faded by CSS (the name carries the capsule) */
 const tagHashDeco = Decoration.mark({ class: "cm-lp-tag-hash" });
 const anchorDeco = Decoration.mark({ class: "cm-lp-anchor" });
+/** Inline code, backticks included: the ground and the padding sit on the whole span. */
+const inlineCodeDeco = Decoration.mark({ class: "cm-lp-icode" });
+/** The line holding a bare cursor (the armed reveal rule's lines): what shows only
+ *  where the reader is — a block's id, an AI block's accept and reject — keys on it. */
+const curLineDeco = Decoration.line({ class: "cm-lp-curline" });
+/** A blank line between two text lines: a paragraph gap rather than a whole empty line
+ *  (app.css .cm-lp-gap, 0.9em — the gap the rendered surfaces put between paragraphs). */
+const gapLineDeco = Decoration.line({ class: "cm-lp-gap" });
 const badDateDeco = Decoration.mark({
   class: "cm-lp-baddate",
   attributes: { title: t("editor.badDate") },
@@ -123,6 +142,11 @@ const stampDeco = Decoration.mark({ class: "cm-lp-stamp" });
 const quoteLine = Decoration.line({ class: "cm-lp-quote" });
 const codeLine = Decoration.line({ class: "cm-lp-code" });
 const codeHeadLine = Decoration.line({ class: "cm-lp-code-head" });
+const codeLastLine = Decoration.line({ class: "cm-lp-code-last" });
+/** A fence line while it is hidden: only the block's inner margin is left of it. */
+const codeFenceLine = Decoration.line({ class: "cm-lp-code-fence" });
+/** The head line of the block holding the cursor: its copy and run buttons show. */
+const codeCurLine = Decoration.line({ class: "cm-lp-code-cur" });
 const tableSrcLine = Decoration.line({ class: "cm-lp-tablesrc" });
 /** The vertical rhythm of a heading line (the space above; the values live in app.css's .cm-lp-h1..h6); the index is the level minus 1 */
 const headingLines = [1, 2, 3, 4, 5, 6].map((n) => Decoration.line({ class: `cm-lp-h${n}` }));
@@ -217,7 +241,62 @@ class TextBadgeWidget extends WidgetType {
 // The glyphs of -/*/+ drift with the platform's fonts (on Windows the * is small and
 // high and reads as unformatted), while a round dot is the stable "formatted" shape;
 // an ordered number keeps its source
-const bulletDotDeco = Decoration.replace({ widget: new TextBadgeWidget("•", "cm-lp-bulletdot") });
+const bulletDotDeco = Decoration.replace({ widget: new TextBadgeWidget("•", "cm-lp-lmark cm-lp-bulletdot") });
+/** A bullet's `- ` while the cursor is on it: the source in the same box the dot takes. */
+const bulletMarkDeco = Decoration.mark({ class: "cm-lp-lmark cm-lp-bullet" });
+
+/** The width of a list marker's box. The item's first line starts at the marker and the
+ *  text of every line after it — a wrapped line or a continuation line — hangs at the
+ *  box's right edge; the depth adds 1.5em per level (app.css .cm-lp-li). A bullet's box
+ *  is 1.2em; a number's grows with its digits (tabular figures, 0.6em each, plus the
+ *  stop and the space); a task's is the checkbox, 15px and its 1px + 8px of margin. */
+const BULLET_BOX = "1.2em";
+const TASK_BOX = "24px";
+const numberBox = (mark: string) => `${Math.round(((mark.length - 1) * 0.6 + 0.9) * 10) / 10}em`;
+
+const liDecos = new Map<string, Decoration>();
+/** The line decoration of a list item's line (`cont`: a continuation line of the item,
+ *  which only takes the hanging position). Cached by shape: a long list reuses a handful. */
+function liLine(depth: number, box: string, cont: boolean): Decoration {
+  const key = `${cont ? "c" : "m"}${depth}|${box}`;
+  let d = liDecos.get(key);
+  if (!d) {
+    d = Decoration.line({ class: cont ? "cm-lp-li cm-lp-li-cont" : "cm-lp-li", attributes: { style: `--li-depth: ${depth}; --li-mark: ${box}` } });
+    liDecos.set(key, d);
+  }
+  return d;
+}
+const numberDecos = new Map<string, Decoration>();
+/** An ordered item's number in its box (shown as written, cursor or not). */
+function numberMark(box: string): Decoration {
+  let d = numberDecos.get(box);
+  if (!d) {
+    d = Decoration.mark({ class: "cm-lp-lmark cm-lp-lnum", attributes: { style: `min-width: ${box}` } });
+    numberDecos.set(box, d);
+  }
+  return d;
+}
+
+/** A block id while the cursor is elsewhere: no ink in the reading column, and no width
+ *  either — a zero-width pin at the end of the text, whose badge floats above the line's
+ *  end while the pointer is over the block (app.css .cm-lp-anchor-pin). */
+class AnchorPinWidget extends WidgetType {
+  constructor(readonly id: string) {
+    super();
+  }
+  eq(other: AnchorPinWidget) {
+    return other.id === this.id;
+  }
+  toDOM() {
+    const pin = document.createElement("span");
+    pin.className = "cm-lp-anchor-pin";
+    const tip = document.createElement("span");
+    tip.className = "cm-lp-anchor cm-lp-anchor-tip";
+    tip.textContent = `^${this.id}`;
+    pin.appendChild(tip);
+    return pin;
+  }
+}
 
 /** A task attribute chip: a valid date (📅 ⏳ ⏩ … or its `key::` spelling) renders as a
  *  small capsule looking exactly like Agenda's, an overdue (and open) due date coloured
@@ -653,7 +732,13 @@ class HrWidget extends WidgetType {
   }
 }
 
-/** The folded frontmatter property strip; a click moves the cursor into the block and expands the source */
+/** Frontmatter keys the app writes for itself and reads on its own: a note that declares
+ *  only these shows no property line at all (its `lang:` is already at work in the page). */
+const APP_KEYS = new Set(["lang"]);
+
+/** The folded frontmatter property line; a click moves the cursor into the block and
+ *  expands the source. With no key of the reader's own it folds to nothing, and the
+ *  source still opens when the cursor moves into it. */
 class FrontmatterWidget extends WidgetType {
   constructor(readonly keys: string[]) {
     super();
@@ -662,11 +747,12 @@ class FrontmatterWidget extends WidgetType {
     return other.keys.join("\n") === this.keys.join("\n");
   }
   get estimatedHeight() {
-    return 34;
+    return this.keys.length ? 30 : 0;
   }
   toDOM(view: EditorView) {
     const el = document.createElement("div");
-    el.className = "cm-lp-frontmatter";
+    el.className = this.keys.length ? "cm-lp-frontmatter" : "cm-lp-frontmatter-none";
+    if (!this.keys.length) return blockRoot(el);
     const label = document.createElement("span");
     label.className = "cm-lp-fm-label";
     label.textContent = t("editor.properties");
@@ -698,6 +784,7 @@ class CopyWidget extends WidgetType {
   }
   toDOM(view: EditorView) {
     const { btn, flash } = copyIconButton(t("editor.copyCode"));
+    btn.classList.add("cm-lp-code-btn");
     btn.onmousedown = (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -815,6 +902,14 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
             hide(from, to);
             break;
           }
+          case "Emphasis": {
+            if (CJK_TEXT.test(doc.sliceString(node.from, node.to))) marks.push({ from: node.from, to: node.to, deco: cjkEmphDeco });
+            break;
+          }
+          case "InlineCode": {
+            marks.push({ from: node.from, to: node.to, deco: inlineCodeDeco });
+            break;
+          }
           case "EmphasisMark":
           case "StrikethroughMark":
           case "HighlightMark": {
@@ -837,15 +932,24 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
             // keeps the link styling; a reference or shortcut link has a different
             // structure and is shown as written
             const n = node.node;
-            if (revealedEl(n.from, n.to)) break;
             // CommonMark allows a newline inside the label or the (url), but a
             // ViewPlugin's replace decoration spanning lines makes CodeMirror throw a
             // RangeError outright — a link across lines keeps its source
             if (doc.lineAt(n.from).number !== doc.lineAt(n.to).number) break;
             const linkMarks = n.getChildren("LinkMark");
             if (!n.getChild("URL") || linkMarks.length < 4) break;
-            hide(linkMarks[0].from, linkMarks[0].to);
-            hide(linkMarks[1].from, n.to);
+            if (!revealedEl(n.from, n.to)) {
+              hide(linkMarks[0].from, linkMarks[0].to);
+              hide(linkMarks[1].from, n.to);
+              break;
+            }
+            // The cursor in the label shows the brackets but keeps the address folded to
+            // "(…)": a click into a link no longer spills a long URL over several lines and
+            // reflows the paragraph. The address opens once the cursor reaches it — from
+            // the label one more step past the `]`, from outside the link at the `)`
+            const open = linkMarks[2];
+            if (!revealedEl(open.from, n.to))
+              hides.push({ from: open.from, to: n.to, deco: Decoration.replace({ widget: new TextBadgeWidget("(…)", "cm-lp-urlfold") }) });
             break;
           }
           case "Autolink": {
@@ -896,6 +1000,8 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
               listMark && /^[-*+]$/.test(doc.sliceString(listMark.from, listMark.to))
                 ? listMark.from
                 : node.from; // an ordered task only swaps the [ ] itself and keeps the number
+            // the space after the box is the box's own, like a bullet's (the list's hanging indent counts it in)
+            const boxTo = doc.sliceString(node.to, node.to + 1) === " " ? node.to + 1 : node.to;
             const marker = doc.sliceString(node.from, node.to);
             const taskState: TaskState = stateOfChar(marker.length >= 3 ? marker[1] : " ");
             const closed = isClosed(taskState);
@@ -986,19 +1092,58 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
               const c = attrChipParts(am);
               hides.push({ from: aFrom, to: aTo, deco: Decoration.replace({ widget: new AttrChipWidget(am.kind, c.text, c.cls, c.title, c.icon) }) });
             }
-            if (revealedEl(bulletFrom, node.to)) break;
+            if (revealedEl(bulletFrom, node.to)) {
+              marks.push({ from: bulletFrom, to: boxTo, deco: taskSrcDeco });
+              break;
+            }
             hides.push({
               from: bulletFrom,
-              to: node.to,
+              to: boxTo,
               deco: Decoration.replace({ widget: new CheckboxWidget(taskState) }),
             });
             break;
           }
-          case "ListMark": {
-            if (node.node.parent?.getChild("Task")) break; // a task item belongs to TaskMarker
-            marks.push({ from: node.from, to: node.to, deco: bulletDeco });
-            if (!revealedEl(node.from, node.to) && /^[-*+]$/.test(doc.sliceString(node.from, node.to)))
-              hides.push({ from: node.from, to: node.to, deco: bulletDotDeco });
+          case "ListItem": {
+            // The hanging indent: the item's line starts with its marker in a box of the
+            // marker's width, and the text of every later line of the item — wrapped or a
+            // continuation — lines up at the box's edge. The source's own indentation is
+            // not drawn (the depth is), so revealing a marker moves no text sideways
+            const item = node.node;
+            const mark = item.getChild("ListMark");
+            if (!mark) break;
+            let depth = 0;
+            for (let p = item.parent; p; p = p.parent) if (p.name === "ListItem") depth++;
+            const markText = doc.sliceString(mark.from, mark.to);
+            const bullet = /^[-*+]$/.test(markText);
+            const task = item.getChild("Task") != null;
+            const num = bullet ? "" : numberBox(markText);
+            const box = task ? (bullet ? TASK_BOX : `calc(${num} + ${TASK_BOX})`) : bullet ? BULLET_BOX : num;
+            const markEnd = doc.sliceString(mark.to, mark.to + 1) === " " ? mark.to + 1 : mark.to;
+            const first = doc.lineAt(mark.from);
+            if (first.from >= range.from && first.from <= range.to) {
+              addLine(first.from, liLine(depth, box, false), "li");
+              if (mark.from > first.from && /^[ \t]+$/.test(doc.sliceString(first.from, mark.from))) hide(first.from, mark.from);
+              // a task's box belongs to TaskMarker (a bullet task's box is the checkbox)
+              if (!bullet) marks.push({ from: mark.from, to: markEnd, deco: numberMark(num) });
+              else if (!task) {
+                if (revealedEl(mark.from, mark.to)) marks.push({ from: mark.from, to: markEnd, deco: bulletMarkDeco });
+                else hides.push({ from: mark.from, to: markEnd, deco: bulletDotDeco });
+              }
+            }
+            for (let c = item.firstChild; c; c = c.nextSibling) {
+              if (c.name !== "Paragraph" && c.name !== "Task") continue;
+              const to = Math.min(c.to, range.to);
+              for (let pos = Math.max(c.from, range.from); pos <= to; ) {
+                const l = doc.lineAt(pos);
+                if (l.from !== first.from) {
+                  addLine(l.from, liLine(depth, box, true), "li");
+                  const lead = /^[ \t]*/.exec(l.text)![0].length;
+                  if (lead) hide(l.from, l.from + lead);
+                }
+                if (l.to >= to) break;
+                pos = l.to + 1;
+              }
+            }
             break;
           }
           case "Blockquote": {
@@ -1068,8 +1213,16 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
             const firstLine = doc.lineAt(n.from);
             addLine(firstLine.from, codeHeadLine, "ch");
             addLine(firstLine.from, copyDeco, "copy");
-            if (!revealedLine(firstLine.from, firstLine.to)) hide(firstLine.from, firstLine.to);
+            // the cursor anywhere in the block shows its buttons (the pointer does too, codeHover)
+            if (lineReveals.some(([a, b]) => a <= n.to && b >= n.from)) addLine(firstLine.from, codeCurLine, "cc");
+            // A hidden fence line keeps only the block's inner margin (8px): the empty
+            // full-height lines above and below the code read as a gap inside the block
+            if (!revealedLine(firstLine.from, firstLine.to)) {
+              hide(firstLine.from, firstLine.to);
+              addLine(firstLine.from, codeFenceLine, "cf");
+            }
             const lastLine = doc.lineAt(n.to);
+            if (lastLine.from > firstLine.from) addLine(lastLine.from, codeLastLine, "cl");
             // The start of the line tolerates a quote marker (contentStart, the same rule
             // as the button anchor's retry): a fence from a clipped selection lives
             // inside a quote block, where the closing line is "> ```"
@@ -1077,8 +1230,10 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
               lastLine.from > firstLine.from &&
               /^(`{3,}|~{3,})\s*$/.test(lastLine.text.slice(contentStart(lastLine.text))) &&
               !revealedLine(lastLine.from, lastLine.to)
-            )
+            ) {
               hide(lastLine.from, lastLine.to);
+              addLine(lastLine.from, codeFenceLine, "cf");
+            }
             break;
           }
         }
@@ -1213,7 +1368,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
         if (!cjkTail && !cjkHead) continue;
         if (isCode(start)) continue;
         if (ancestorNamed(state, start + run, "Emphasis", "StrongEmphasis")) continue; // the parser took it: nothing to do here
-        marks.push({ from: start + run, to: end - run, deco: run === 2 ? cjkStrongDeco : cjkEmDeco });
+        marks.push({ from: start + run, to: end - run, deco: run === 2 ? cjkStrongDeco : CJK_TEXT.test(inner) ? cjkEmDeco : latinEmDeco });
         if (revealedEl(start, end)) continue;
         hide(start, start + run);
         hide(end - run, end);
@@ -1230,15 +1385,42 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
       marks.push({ from: start, to: start + 1, deco: tagHashDeco });
     }
 
-    // Where a block anchor is defined, "… ^id" renders as a small badge (the marker a
-    // [[note#^id]] can cite); like a tag it is a mark decoration and keeps its styling
-    // on the cursor's line. The whitespace is limited to [ \t]: the parser requires a
-    // space before the ^
+    // Where a block anchor is defined, "… ^id" is metadata a reader has no use for: on
+    // the cursor's line it is a small badge (the marker a [[note#^id]] can cite, there to
+    // be edited), elsewhere it folds, with its space, into a zero-width pin whose badge
+    // shows over the line's end on hover — an imported paper has one on every paragraph.
+    // The whitespace is limited to [ \t]: the parser requires a space before the ^
     ANCHOR_RE.lastIndex = 0;
     while ((m = ANCHOR_RE.exec(text))) {
       const start = range.from + m.index + 1; // the leading whitespace is not styled
+      const end = start + 1 + m[1].length;
       if (isCode(start)) continue;
-      marks.push({ from: start, to: start + 1 + m[1].length, deco: anchorDeco });
+      if (revealedLine(start, end)) marks.push({ from: start, to: end, deco: anchorDeco });
+      else hides.push({ from: start - 1, to: end, deco: Decoration.replace({ widget: new AnchorPinWidget(m[1]) }) });
+    }
+
+    // Line by line: the cursor's lines, and the blank lines that separate two text
+    // lines, drawn as a paragraph gap. A blank line with the cursor on it keeps its full
+    // height (the reader is about to type there); a run of several blank lines is left
+    // as written; code, the frontmatter and a formula block's lines are not blank lines
+    // of the prose
+    const fmEndGap = frontmatterEnd(doc);
+    for (let pos = range.from; pos <= range.to; ) {
+      const line = doc.lineAt(pos);
+      if (revealedLine(line.from, line.to)) addLine(line.from, curLineDeco, "cur");
+      else if (
+        line.number > 1 &&
+        line.number < doc.lines &&
+        line.from >= fmEndGap &&
+        !line.text.trim() &&
+        doc.line(line.number - 1).text.trim() &&
+        doc.line(line.number + 1).text.trim() &&
+        !isCode(line.from) &&
+        !mathBlocks.some((b) => line.from >= b.from && line.to <= b.to)
+      )
+        addLine(line.from, gapLineDeco, "gap");
+      if (line.to >= range.to) break;
+      pos = line.to + 1;
     }
 
     // The *(YYYY-MM-DD HH:MM)* signature of a memo or a clip: demoted to small, faint
@@ -1374,7 +1556,7 @@ function frontmatterDeco(state: EditorState): DecorationSet {
       break;
     }
     const key = /^([\w-]+)\s*:/.exec(text);
-    if (key) keys.push(key[1]);
+    if (key && !APP_KEYS.has(key[1])) keys.push(key[1]);
   }
   if (end < 0) return Decoration.none;
   // A selection touching the block expands the source (block-level selectionTouches:
@@ -1418,9 +1600,52 @@ const compositionRelease = EditorView.domEventHandlers({
   },
 });
 
+/** A code block's copy and run buttons are not drawn over the code while nobody is
+ *  using them: they show while the cursor is in the block (cm-lp-code-cur) and while the
+ *  pointer is over any of its lines — this plugin. The lines of a block are consecutive
+ *  siblings, so the head is the nearest line above that carries cm-lp-code-head. The
+ *  mark goes on the buttons (widget DOM, which CodeMirror leaves alone), not on the line,
+ *  whose attributes it rewrites on every sync. */
+const codeHover = ViewPlugin.fromClass(
+  class {
+    hot: Element | null = null;
+    /** The line last looked up: a move within one line settles nothing new. */
+    over: Element | null = null;
+    constructor(readonly view: EditorView) {}
+    set(head: Element | null) {
+      if (head === this.hot) return;
+      for (const b of this.hot?.querySelectorAll(".cm-lp-code-btn") ?? []) b.classList.remove("cm-lp-hot");
+      this.hot = head;
+      for (const b of head?.querySelectorAll(".cm-lp-code-btn") ?? []) b.classList.add("cm-lp-hot");
+    }
+    destroy() {
+      this.set(null);
+    }
+  },
+  {
+    eventHandlers: {
+      mousemove(e) {
+        let line = e.target instanceof Element ? e.target.closest(".cm-line") : null;
+        if (line === this.over) return;
+        this.over = line;
+        if (line && !line.classList.contains("cm-lp-code")) line = null;
+        while (line && !line.classList.contains("cm-lp-code-head")) {
+          const prev: Element | null = line.previousElementSibling;
+          line = prev?.classList.contains("cm-lp-code") ? prev : null;
+        }
+        this.set(line);
+      },
+      mouseleave() {
+        this.over = null;
+        this.set(null);
+      },
+    },
+  },
+);
+
 export function livePreview(opts: LivePreviewOptions = {}): Extension {
   // revealArmed is registered here (rather than in setup.ts): every consumer of the
   // reveal predicates (livepreview/table/queryblock/frontmatter/clickopen) lives in
   // note mode alone, and note mode always carries livePreview()
-  return [revealArmed, livePreviewPlugin(opts), compositionRelease, frontmatterField, tableField, mathBlockField, emptyFieldCloser(opts.onFieldChip)];
+  return [revealArmed, livePreviewPlugin(opts), compositionRelease, frontmatterField, tableField, mathBlockField, emptyFieldCloser(opts.onFieldChip), codeHover];
 }

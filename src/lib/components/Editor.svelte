@@ -5,7 +5,7 @@
   import { EditorView } from "@codemirror/view";
   import { type EditorState, Text, Transaction } from "@codemirror/state";
   import { createEditor, resetDoc, languageFor } from "$lib/editor/setup";
-  import { noteLang } from "$lib/notelang";
+  import { applyLangAttrs, noteLanguage } from "$lib/notelang";
   import { foldMarkedIn, foldOnLoad } from "$lib/editor/fold";
   import { type EditorBlock, blockAt, blockContentStart, extentTo } from "$lib/editor/blocks";
   import { blockMenuEntries, type BlockMenuHost } from "$lib/editor/blockmenu";
@@ -1035,12 +1035,16 @@
    *  editorLoc and editorSelStats in this batch would once have meant keeping four sites in
    *  step, and missing one is stale data. With head=0, lineAt(0) gives exactly 1:1, which
    *  matches the old hardcoded value. */
-  /** Stamp the note's own language (frontmatter `lang:`) on the editor body, or clear it so the
-   *  interface language applies. Read at load: frontmatter edits are rare and the next load sees them. */
-  function applyNoteLang(v: NonNullable<typeof view>) {
-    const tag = noteLang(v.state.doc.sliceString(0, Math.min(v.state.doc.length, 2000)));
-    if (tag) v.contentDOM.setAttribute("lang", tag);
-    else v.contentDOM.removeAttribute("lang");
+  /** Stamp what the note reads as on the editor body: `lang` (its declared `lang:`, else the
+   *  language its letters give away) for faces, line breaking and emphasis marks, and
+   *  `data-script` for the column width. A note too short to judge, and every non-note file,
+   *  carries neither and follows the interface. Read once at load and never while the reader
+   *  edits: a column that changed width mid-sentence would move the text under the cursor (a
+   *  `lang:` edit takes effect at the next load). The head of the document is enough — the
+   *  detector stops after a few thousand letters. */
+  function applyNoteLang(v: NonNullable<typeof view>, path: string) {
+    const nl = path.endsWith(".md") ? noteLanguage(v.state.doc.sliceString(0, Math.min(v.state.doc.length, 16000))) : { lang: null, script: null };
+    applyLangAttrs(v.contentDOM, nl);
   }
 
   function finishLoad(path: string, eol: "\n" | "\r\n", head: number) {
@@ -1055,7 +1059,7 @@
     // note's stale outline)
     cancelOutline();
     computeOutline();
-    applyNoteLang(v);
+    applyNoteLang(v, path);
     vault.editorCursor = head;
     const ln = v.state.doc.lineAt(head);
     vault.editorLoc = { line: ln.number, col: head - ln.from + 1 };

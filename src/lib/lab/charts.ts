@@ -528,6 +528,26 @@ export function drawScatter(view: ScatterView, width: number, tip: TipHost): HTM
 
 type HeatmapView = Extract<LabView, { kind: "heatmap" }>;
 
+/** Where a cell's number switches from the text ink to --lab-heat-ink-hi, as the share of
+ *  the way from the light (or neutral) end: the point where the two inks have equal
+ *  contrast on the mixed ground, computed from app.css's --lab-seq-*, --lab-div-*, --fg and
+ *  --lab-heat-ink-hi (an oklab mix, as the cells are painted) and to be recomputed with
+ *  them. Each scale and theme crosses over somewhere else — the light diverging poles are
+ *  never dark enough for the white ink before ~0.9 — so one shared 0.55 left the middle
+ *  cells at ~3:1. A cell carries the verdict for both themes (ink-hi-l, ink-hi-d) and the
+ *  stylesheet applies the current one, so a theme switch needs no re-render. */
+const HEAT_SWITCH = {
+  seq: { light: 0.6, dark: 0.49 },
+  pos: { light: 0.97, dark: 0.61 },
+  neg: { light: 0.89, dark: 0.65 },
+} as const;
+
+function markHeatInk(cell: HTMLElement, p: number, scale: keyof typeof HEAT_SWITCH) {
+  const s = HEAT_SWITCH[scale];
+  if (p > s.light) cell.classList.add("ink-hi-l");
+  if (p > s.dark) cell.classList.add("ink-hi-d");
+}
+
 export function buildHeatmap(view: HeatmapView, tip: TipHost): HTMLElement {
   const wrap = el("div", "cm-lab-chart");
   const rows = view.data.length;
@@ -573,11 +593,11 @@ export function buildHeatmap(view: HeatmapView, tip: TipHost): HTMLElement {
         if (diverging) {
           const p = Math.min(1, Math.abs(v) / max);
           cell.style.background = `color-mix(in oklab, var(${v >= 0 ? "--lab-div-pos" : "--lab-div-neg"}) ${Math.round(p * 100)}%, var(--lab-div-mid))`;
-          if (p > 0.55) cell.classList.add("ink-hi");
+          markHeatInk(cell, p, v >= 0 ? "pos" : "neg");
         } else {
           const p = Math.min(1, Math.max(0, (v - min) / (max - min)));
           cell.style.background = `color-mix(in oklab, var(--lab-seq-hi) ${Math.round(p * 100)}%, var(--lab-seq-lo))`;
-          if (p > 0.55) cell.classList.add("ink-hi");
+          markHeatInk(cell, p, "seq");
         }
         if (showNumbers) cell.textContent = fmt(v, view.digits ?? (Number.isInteger(v) ? 0 : 2));
       }
