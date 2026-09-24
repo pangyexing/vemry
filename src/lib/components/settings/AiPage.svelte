@@ -2,7 +2,7 @@
   import { api, EFFORT_OPTIONS } from "$lib/api";
   import { t } from "$lib/i18n/i18n.svelte";
   import { account } from "$lib/stores/account.svelte";
-  import { settingsUi } from "$lib/stores/settingsUi.svelte";
+  import { openSettings } from "$lib/stores/settingsUi.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { targetLabel, TARGET_TAGS } from "$lib/stores/translate.svelte";
   import { vault } from "$lib/stores/vault.svelte";
@@ -18,8 +18,10 @@
 
   /** This vault's standing write grant ("allow" = the permission dialog's "always allow in this vault"). */
   let writePolicy = $state<"allow" | "ask">("ask");
+  // Read in search results too: the grant's row exists only while there is one, so a search
+  // that finds it has to know whether it does. Once per vault, not per keystroke
   $effect(() => {
-    if (!vault.root || search?.query) return;
+    if (!vault.root) return;
     api.vaultWritePolicyGet().then((p) => (writePolicy = p)).catch(() => (writePolicy = "ask"));
   });
   async function revokeWritePolicy() {
@@ -60,7 +62,7 @@
       {@const catalogDefault = account.models.find((m) => m.default)?.id}
       <SettingRow id="ai.model" hint={account.loggedIn ? t("settings.hostedModelHint") : t("settings.hostedSignedOut")}>
         {#if !account.loggedIn}
-          <button class="link" onclick={() => (settingsUi.page = "account")}>{t("settings.signIn")} →</button>
+          <button class="link" onclick={() => openSettings("account.panel")}>{t("settings.signIn")} →</button>
         {/if}
         <select {@attach rowControl} value={s.hosted_model} disabled={!account.loggedIn} onchange={(e) => void form.set({ hosted_model: e.currentTarget.value })}>
           <option value="">{catalogDefault ? t("settings.hostedModelDefault", { model: catalogDefault }) : t("settings.hostedModelDefaultSignedOut")}</option>

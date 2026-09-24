@@ -33,7 +33,7 @@
 
   import { prettyUrl, webCandidates } from "$lib/urls";
   import { pageLabel, searchSettings, settingAvailable, settingHint, settingLabel } from "$lib/settings";
-  import { openSettings } from "$lib/stores/settingsUi.svelte";
+  import { currentSettingsState, openSettings } from "$lib/stores/settingsUi.svelte";
 
   interface Item {
     id: string;
@@ -219,7 +219,9 @@
     if (mode !== "pick-note" || pickStage || !query.includes("#")) return;
     const hash = query.indexOf("#");
     const rest = query.slice(hash + 1);
-    const cands = fuzzyFilter(vault.notes, query.slice(0, hash), noteKey);
+    // The same list the rows were drawn from: with nothing before the #, the recency order
+    const prefix = query.slice(0, hash);
+    const cands = prefix.trim() ? fuzzyFilter(vault.notes, prefix, noteKey) : notesByRecency(true);
     const cand = cands[selected] ?? cands[0];
     if (cand) {
       pickStage = { path: cand.id, title: cand.title };
@@ -341,7 +343,7 @@
       });
       const list: Item[] = ranked.filter((r) => commandAvailable(r.c)).map(flat);
       searchSettings(q)
-        .filter((s) => settingAvailable(s, !!vault.root))
+        .filter((s) => settingAvailable(s, currentSettingsState()))
         .forEach((s, i) => {
           const title = settingLabel(s);
           list.push({

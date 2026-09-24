@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { setContext, tick } from "svelte";
+  import { setContext, tick, untrack } from "svelte";
   import { t, tn } from "$lib/i18n/i18n.svelte";
   import { PAGES, pageAvailable, pageLabel, searchSettings, settingAvailable, type SettingsPage } from "$lib/settings";
-  import { settingsUi } from "$lib/stores/settingsUi.svelte";
+  import { currentSettingsState, settingsUi } from "$lib/stores/settingsUi.svelte";
   import { vault } from "$lib/stores/vault.svelte";
   import type { SearchContext } from "./settings/context";
   import { form } from "./settings/form.svelte";
@@ -33,7 +33,7 @@
   const q = $derived(query.trim());
   let searchEl = $state<HTMLInputElement | null>(null);
   let panelEl = $state<HTMLDivElement | null>(null);
-  const hits = $derived(q ? searchSettings(q).filter((s) => settingAvailable(s, !!vault.root)) : []);
+  const hits = $derived(q ? searchSettings(q).filter((s) => settingAvailable(s, currentSettingsState())) : []);
   const hitIds = $derived(new Set(hits.map((h) => h.id)));
   const hitPages = $derived(PAGES.filter((p) => hits.some((h) => h.page === p.id)));
 
@@ -44,12 +44,16 @@
     matches: (id) => hitIds.has(id),
   });
 
-  // Each opening reads the settings afresh and puts the cursor in the search field
+  // Each opening reads the settings afresh and puts the cursor in the search field. Only
+  // the opening: were the page or the vault a dependency, every page switch would read the
+  // settings again and pull the focus back to the search field
   $effect(() => {
     if (!settingsUi.open) return;
-    query = "";
-    void form.load();
-    if (!pageAvailable(settingsUi.page, !!vault.root)) settingsUi.page = "general";
+    untrack(() => {
+      query = "";
+      void form.load();
+      if (!pageAvailable(settingsUi.page, !!vault.root)) settingsUi.page = "general";
+    });
     queueMicrotask(() => searchEl?.focus());
   });
 

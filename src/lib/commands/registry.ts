@@ -165,7 +165,8 @@ function fuzzyScore(key: string, chars: string[]): number | null {
   const at = key.indexOf(q);
   if (at !== -1) {
     for (let s = at; s !== -1; s = key.indexOf(q, s + 1)) {
-      if (startsWord(key[s - 1])) return 1030 - s - key.length * 0.01;
+      // A word start far down the key is worth no less than the first occurrence was
+      if (startsWord(key[s - 1])) return Math.max(1030 - s, 1000 - at) - key.length * 0.01;
     }
     return 1000 - at - key.length * 0.01;
   }

@@ -7,7 +7,7 @@
   import { k } from "$lib/shortcut";
   import { account } from "$lib/stores/account.svelte";
   import { CAPTURE_HOTKEY_DEFAULT } from "$lib/stores/prefs.svelte";
-  import { settingsUi } from "$lib/stores/settingsUi.svelte";
+  import { openSettings } from "$lib/stores/settingsUi.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { vault, vaultName } from "$lib/stores/vault.svelte";
   import { rowControl, settingsSearch } from "./context";
@@ -284,7 +284,7 @@
   <SettingSection title={t("settings.capture.phone")}>
     <SettingRow id="capture.phone" block hint={account.loggedIn && inboxLastLanded ? `${t("settings.capture.phoneHint")} ${lastLandedLine(inboxLastLanded)}` : undefined}>
       {#if !account.loggedIn}
-        <small class="empty">{t("settings.capture.phoneSignIn")} <button class="link" onclick={() => (settingsUi.page = "account")}>{t("settings.capture.phoneSignInGo")} →</button></small>
+        <small class="empty">{t("settings.capture.phoneSignIn")} <button class="link" onclick={() => openSettings("account.panel")}>{t("settings.capture.phoneSignInGo")} →</button></small>
       {:else}
         <!-- The pairing card's four states: folded (a button and a hint), a code on show with its countdown,
              just paired (a tick for three seconds), failed (the error and a retry) -->

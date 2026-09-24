@@ -7,8 +7,7 @@
 
 import { fold } from "$lib/commands/registry";
 import { t, tEnglish, type MessageKey } from "$lib/i18n/i18n.svelte";
-import { k } from "$lib/shortcut";
-import { isMac } from "$lib/shortcut";
+import { isMac, k } from "$lib/shortcut";
 
 export type SettingsPage = "general" | "editing" | "ai" | "account" | "browser" | "capture" | "privacy" | "skills";
 
@@ -29,7 +28,17 @@ export const pageLabel = (p: SettingsPage): string => t(`settings.tab.${p}` as M
 const NEEDS_VAULT = new Set(PAGES.filter((p) => p.needsVault).map((p) => p.id));
 /** Whether a page can be shown: the vault's own pages need an open vault. */
 export const pageAvailable = (p: SettingsPage, hasVault: boolean): boolean => hasVault || !NEEDS_VAULT.has(p);
-export const settingAvailable = (s: SettingEntry, hasVault: boolean): boolean => pageAvailable(s.page, hasVault);
+
+/** What decides whether a row is on its page at all — the few facts a page shows or hides rows by. */
+export interface SettingsState {
+  hasVault: boolean;
+  signedIn: boolean;
+  provider: "hosted" | "custom";
+  captureTarget: string;
+}
+/** Whether a search may offer the setting: its page can be shown and the row is on it now. */
+export const settingAvailable = (s: SettingEntry, st: SettingsState): boolean =>
+  pageAvailable(s.page, st.hasVault) && (s.shownWhen?.(st) ?? true);
 
 export interface SettingEntry {
   id: string;
@@ -41,6 +50,9 @@ export interface SettingEntry {
   hintParams?: () => Record<string, string>;
   /** Extra words a search should find it by, in any language (space-separated). */
   keywords?: string;
+  /** The row is on its page only in this state (the endpoint only with your own key):
+   *  a search offers it only then, so it never points at a row that is not there. */
+  shownWhen?: (st: SettingsState) => boolean;
   /** A list or a card rather than one control: in search results it is a row that jumps to
    *  the page instead of being rendered in place (its content loads with the page). */
   jump?: boolean;
@@ -66,14 +78,14 @@ export const SETTINGS: SettingEntry[] = [
 
   { id: "ai.provider", page: "ai", label: "settings.provider", hint: "settings.providerHint", keywords: "托管 hosted key provider 提供方" },
   { id: "ai.model", page: "ai", label: "settings.model", keywords: "模型 model glm deepseek" },
-  { id: "ai.endpoint", page: "ai", label: "settings.endpoint", hint: "settings.endpointHint", keywords: "端点 endpoint url openai ollama" },
-  { id: "ai.apiKey", page: "ai", label: "settings.apiKey", hint: "settings.apiKeyNote", keywords: "key 密钥 api" },
+  { id: "ai.endpoint", page: "ai", shownWhen: (st) => st.provider === "custom", label: "settings.endpoint", hint: "settings.endpointHint", keywords: "端点 endpoint url openai ollama" },
+  { id: "ai.apiKey", page: "ai", shownWhen: (st) => st.provider === "custom", label: "settings.apiKey", hint: "settings.apiKeyNote", keywords: "key 密钥 api" },
   { id: "ai.effort", page: "ai", label: "settings.reasoningEffort", hint: "settings.reasoningHint", keywords: "思考 thinking reasoning effort 深度" },
   { id: "ai.webSearch", page: "ai", label: "settings.webSearch", hint: "settings.webSearchHint", keywords: "搜索 联网 search web" },
   { id: "ai.planConfirm", page: "ai", label: "settings.planConfirm", hint: "settings.planConfirmHint", keywords: "计划 plan" },
   { id: "ai.provenanceMarks", page: "ai", label: "settings.provenanceMarks", hint: "settings.provenanceMarksHint", keywords: "审阅 review 出处 provenance" },
   { id: "ai.formatAgentWrites", page: "ai", label: "settings.formatAgentWrites", hint: "settings.formatAgentWritesHint", keywords: "格式化 format" },
-  { id: "ai.writeGrant", page: "ai", label: "settings.writeGrant", hint: "settings.writeGrantHint", keywords: "免审 授权 permission allow" },
+  { id: "ai.writeGrant", page: "ai", shownWhen: () => false, label: "settings.writeGrant", hint: "settings.writeGrantHint", keywords: "免审 授权 permission allow" },
   { id: "ai.translateTarget", page: "ai", label: "settings.translate.target", keywords: "翻译 translate 语言 language" },
   { id: "ai.translateModel", page: "ai", label: "settings.translate.model", hint: "settings.translate.modelHint", keywords: "翻译 translate 模型 model" },
   { id: "ai.translateAddendum", page: "ai", label: "settings.translate.addendum", hint: "settings.translate.addendumHint", keywords: "翻译 translate" },
@@ -86,10 +98,10 @@ export const SETTINGS: SettingEntry[] = [
 
   { id: "capture.hotkey", page: "capture", label: "settings.capture.hotkey", hint: "settings.capture.hotkeyHint", keywords: "速记 capture 快捷键 shortcut hotkey" },
   { id: "capture.target", page: "capture", label: "settings.capture.target", hint: "settings.capture.targetHint", hintParams: () => ({ key: k("Mod+Enter") }), keywords: "速记 capture inbox 日志 journal" },
-  { id: "capture.pinnedNote", page: "capture", label: "settings.capture.pinnedNote", hint: "settings.capture.pinnedNoteHint", keywords: "速记 capture 钉 pin" },
-  { id: "capture.pinnedHeading", page: "capture", label: "settings.capture.pinnedHeading", hint: "settings.capture.pinnedHeadingHint", keywords: "速记 capture 小节 section" },
+  { id: "capture.pinnedNote", page: "capture", shownWhen: (st) => st.captureTarget === "pinned" && st.hasVault, label: "settings.capture.pinnedNote", hint: "settings.capture.pinnedNoteHint", keywords: "速记 capture 钉 pin" },
+  { id: "capture.pinnedHeading", page: "capture", shownWhen: (st) => st.captureTarget === "pinned" && st.hasVault, label: "settings.capture.pinnedHeading", hint: "settings.capture.pinnedHeadingHint", keywords: "速记 capture 小节 section" },
   { id: "capture.phone", page: "capture", label: "settings.capture.phone", hint: "settings.capture.phoneHint", keywords: "手机 phone 配对 pair 二维码 qr", jump: true },
-  { id: "capture.phoneVault", page: "capture", label: "settings.capture.phoneVault", hint: "settings.capture.phoneVaultHint", keywords: "手机 phone 知识库 vault" },
+  { id: "capture.phoneVault", page: "capture", shownWhen: (st) => st.signedIn, label: "settings.capture.phoneVault", hint: "settings.capture.phoneVaultHint", keywords: "手机 phone 知识库 vault" },
 
   { id: "privacy.rules", page: "privacy", label: "settings.privacyRules", hint: "settings.privacyRulesHint", keywords: "隐私 privacy private 规则 rules", jump: true },
   { id: "privacy.marked", page: "privacy", label: "settings.privacyMarkedNotes", hint: "settings.privacyMarkedHint", keywords: "隐私 privacy private", jump: true },
