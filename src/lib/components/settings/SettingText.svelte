@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
   import type { SettingsUpdate } from "$lib/api";
   import { isImeKeydown } from "$lib/ime";
   import { rowControl } from "./context";
@@ -49,9 +48,6 @@
     if (draft === value) return;
     void form.set(patch(draft), row, true);
   }
-  onDestroy(() => {
-    if (editing) done();
-  });
 </script>
 
 {#if rows > 0}

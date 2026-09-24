@@ -57,6 +57,18 @@
     queueMicrotask(() => searchEl?.focus());
   });
 
+  // A page is about to change (a click in the page list, a "go there", a link): a field
+  // still holding the focus is blurred first, while it is in the page, so what was typed
+  // into it is written like any other edit — removing a focused field fires no blur, and on
+  // macOS a click does not take the focus away from it
+  $effect.pre(() => {
+    void settingsUi.page;
+    untrack(() => {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && panelEl?.contains(el)) el.blur();
+    });
+  });
+
   // The setting an entry point (or a search result's "go there") asked for: the search
   // gives way to its page, and the row is scrolled to the middle and flashed once that
   // page (and the settings it needs) has rendered
