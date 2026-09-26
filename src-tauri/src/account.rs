@@ -71,7 +71,8 @@ pub struct Me {
     pub hosted: bool,
     #[serde(default)]
     pub quota: Option<Quota>,
-    /// The credit pack, in fen; negative while an overdraft awaits the next credit.
+    /// The credit pack, in credits ($0.001 each; the field name predates the unit);
+    /// negative while an overdraft awaits the next credit.
     #[serde(default)]
     pub pack_fen: i64,
     #[serde(default)]
@@ -115,7 +116,7 @@ pub struct Subscription {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Estimates {
-    /// What one study run costs on average, in fen: "about N papers left" divides by it.
+    /// What one study run costs on average, in credits: "about N papers left" divides by it.
     #[serde(default)]
     pub study_fen: i64,
     #[serde(default)]

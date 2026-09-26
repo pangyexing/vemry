@@ -30,12 +30,12 @@
     return Math.floor((Date.now() - at) / 86_400_000);
   });
 
-  /** Fen → an amount in the interface's locale with the currency spelled by its code
-   *  ("CN¥12.34" in English, "¥12.34" in Chinese, "元12.34" in Japanese): a bare ¥ reads as
-   *  yen to a Japanese user. The interface shows money and papers, never tokens. */
-  const money = $derived(new Intl.NumberFormat(i18n.locale, { style: "currency", currency: "CNY" }));
-  function yuan(fen: number): string {
-    return money.format(Math.abs(fen) / 100);
+  /** Credits in the interface's locale ("3,000"). A credit is $0.001 of charge; it is never
+   *  shown as money, since "$6.00" beside a $10 pack would read as its price. The interface
+   *  shows credits and papers, never tokens. */
+  const count = $derived(new Intl.NumberFormat(i18n.locale, { maximumFractionDigits: 0 }));
+  function credits(fen: number): string {
+    return count.format(Math.abs(fen));
   }
   /** A date the server sent (YYYY-MM-DD or RFC 3339) in the interface's locale; unparseable stays as it came. */
   function day(s: string | null | undefined): string {
@@ -192,12 +192,12 @@
           <li class="lead">{t("account.studyLeft", { n: account.studyLeft })}</li>
         {/if}
         <li>
-          {t("account.quota", { left: yuan(left), total: yuan(me.quota.total_fen) })}
+          {t("account.quota", { left: credits(left), total: credits(me.quota.total_fen) })}
           {#if me.quota.resets_at}<span class="muted"> · {t("account.quotaResets", { date: day(me.quota.resets_at) })}</span>{/if}
         </li>
       {/if}
       <li class:warn={me.pack_fen < 0}>
-        {me.pack_fen < 0 ? t("account.packNegative", { amount: yuan(me.pack_fen) }) : t("account.pack", { amount: yuan(me.pack_fen) })}
+        {me.pack_fen < 0 ? t("account.packNegative", { amount: credits(me.pack_fen) }) : t("account.pack", { amount: credits(me.pack_fen) })}
       </li>
       {#if me.subscription}
         {@const sub = me.subscription}

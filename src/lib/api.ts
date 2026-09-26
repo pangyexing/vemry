@@ -310,7 +310,7 @@ export interface Me {
   /** Hosted model access is open to this account. */
   hosted: boolean;
   quota: { total_fen: number; used_fen: number; resets_at: string | null } | null;
-  /** The credit pack in fen; negative while an overdraft awaits the next credit. */
+  /** The credit pack in credits ($0.001 each; the name predates the unit); negative while an overdraft awaits the next credit. */
   pack_fen: number;
   subscription: {
     status: "active" | "canceling" | "canceled" | "past_due" | string;

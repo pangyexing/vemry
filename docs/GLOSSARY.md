@@ -51,6 +51,7 @@ starts, and `locales/src/README.md` fixes the register per language (です・�
 | 自带 key | bring your own key | custom endpoint (that is the setting's internal name), own API |
 | 账户 | account | membership, profile |
 | 算力包 | credit pack | top-up, balance (the pack has a balance; it is not one), tokens |
+| 积分 | credits | points, yuan or ¥, dollars (a credit is $0.001 of hosted use; the interface counts credits, never money) |
 | 配额 | quota | allowance, limit (that is a cap) |
 | 设备令牌 | device token | API key (it doubles as one, but the user never sees it as such), session |
 
