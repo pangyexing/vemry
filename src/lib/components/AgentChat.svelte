@@ -28,6 +28,8 @@
   import { clipTarget } from "$lib/stores/clipTarget.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { prefs } from "$lib/stores/prefs.svelte";
+  import { account } from "$lib/stores/account.svelte";
+  import { executeCommand } from "$lib/commands/registry";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
   import { t, i18n } from "$lib/i18n/i18n.svelte";
   import { PLAN_GLYPH, toolLabel } from "$lib/views/session";
@@ -738,6 +740,20 @@
    *  wrap up with five left) is shown only once it is nearly spent — before that the count
    *  says nothing a user can act on. */
   const STEPS_LEFT_WARN = 5;
+  /** Before a close reading on the hosted provider: the balance against what one reading
+   *  draws (the server's estimate, doubled at peak). Shown while the draft leads with /study
+   *  and the balance falls short, so a run is not cut off partway unannounced — a trial's
+   *  last credits most of all. It warns and does not block: the estimate is a median. */
+  const studyShort = $derived.by(() => {
+    if (prefs.provider !== "hosted" || !account.hostedOk || skillHead(agent.draft) !== "study") return "";
+    const me = account.me;
+    if (!me) return "";
+    const have = Math.max(0, me.quota ? me.quota.total_fen - me.quota.used_fen : 0) + me.pack_fen;
+    const need = me.estimates.study_fen * (me.peak ? 2 : 1);
+    if (need <= 0 || have >= need) return "";
+    const count = new Intl.NumberFormat(i18n.locale, { maximumFractionDigits: 0 });
+    return t(me.peak ? "chat.studyShortPeak" : "chat.studyShort", { have: count.format(Math.max(0, have)), need: count.format(need) });
+  });
   const stepsLeftText = $derived.by(() => {
     const u = agent.usage;
     if (!agent.running || !u) return "";
@@ -2479,6 +2495,12 @@
         <button aria-label={t("chat.cancelQueued")} onclick={() => (agent.queuedText = null)}>✕</button>
       </div>
     {/if}
+    {#if studyShort}
+      <div class="queue-chip balance-chip">
+        <span class="queue-label" use:cliptip={studyShort}>{studyShort}</span>
+        <button onclick={() => void executeCommand("settings-account")}>{t("chat.studyShortAction")}</button>
+      </div>
+    {/if}
     {#if atQuery != null}
       <AtPicker bind:this={picker} query={atQuery} anchor={composerEl} {curSel} onPick={onAtPick} onPickFiles={onAtPickFiles} onStage={onAtStage} onClose={closeAt} />
     {/if}
@@ -3898,6 +3920,12 @@
   .queue-chip button {
     color: var(--fg-faint);
     flex-shrink: 0;
+  }
+  .balance-chip .queue-label {
+    color: var(--warning);
+  }
+  .balance-chip button {
+    color: var(--accent);
   }
   .queue-chip button:hover {
     color: var(--fg);

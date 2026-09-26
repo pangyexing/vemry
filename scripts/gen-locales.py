@@ -470,11 +470,13 @@ add("account.", {
     "plan.free": ("Free", "免费"),
     "plan.pro": ("Pro", "Pro"),
     "plan.founder": ("Founder", "创始会员"),
+    "plan.trial": ("Trial", "体验"),
     "proUntil": ("Pro until {date}", "Pro 有效至 {date}"),
     "hostedOn": ("Hosted models: on", "托管模型：已开通"),
     "hostedOff": ("Hosted models: not included in this account — see the pricing page",
                   "托管模型：此账户未开通——见定价页"),
     "studyLeft": ("About {n} papers left this month", "本月还能精读约 {n} 篇"),
+    "studyLeftTrial": ("About {n} papers left in the trial", "体验还能精读约 {n} 篇"),
     "quota": ("Monthly quota: {left} of {total} credits left", "本月配额：剩 {left} / {total} 积分"),
     "quotaResets": ("resets {date}", "{date} 重置"),
     "pack": ("Credit pack: {amount} credits", "算力包余额：{amount} 积分"),
@@ -1683,6 +1685,11 @@ add("chat.", {
     "statusAnswering": ("Writing the answer…", "正在撰写回答…"),
     "queued": ("Queued: {text}", "已排队：{text}"),
     "cancelQueued": ("Cancel the queued message", "取消排队消息"),
+    "studyShort": ("About {have} credits left; a close reading takes about {need} — it may stop partway",
+                   "余额约 {have} 积分，精读一篇约需 {need} 积分，可能读不完"),
+    "studyShortPeak": ("About {have} credits left; a close reading takes about {need} at peak hours — it may stop partway",
+                       "余额约 {have} 积分，高峰时段精读一篇约需 {need} 积分，可能读不完"),
+    "studyShortAction": ("Subscribe or top up", "订阅或充值"),
     "runningQueueHint": ("Running · type the next one, Enter queues it", "运行中 · 输入下一条，回车排队"),
     "composerAria": ("Ask a question or give a task", "提问或下达任务"),
     "addContextHint": ("Add context: a note, folder, selection or web page, or a file from your computer "
@@ -2596,9 +2603,11 @@ add("ipc.", {
     "hosted.failed": ("The account service refused the request: {error}", "账户服务拒绝了请求：{error}"),
     "hosted.auth_invalid": ("This device's sign-in is no longer valid — sign in again under Settings › Account",
                             "本设备的登录已失效——请到「设置 › 账户」重新登录"),
-    "hosted.insufficient_balance": ("The hosted balance is used up — top up a credit pack under Settings › Account, "
-                                    "or wait for the monthly quota to reset",
-                                    "托管余额已用完——到「设置 › 账户」充值算力包，或等本月配额重置"),
+    "hosted.insufficient_balance": ("The hosted credits are used up — subscribe to Pro or top up a credit pack under "
+                                    "Settings › Account (packs are for members), or wait for the monthly quota to reset; "
+                                    "your own API key keeps working",
+                                    "托管积分已用完——到「设置 › 账户」订阅 Pro 或充值算力包（算力包仅限会员），"
+                                    "或等本月配额重置；自带 key 不受影响"),
     "hosted.hosted_not_allowed": ("This account has no hosted model access (it is part of Pro and the credit packs — "
                                   "see the pricing page); bring your own key keeps working",
                                   "此账户未开通托管模型（Pro 与算力包含此权益，见定价页）；自带 key 不受影响"),

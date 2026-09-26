@@ -324,6 +324,8 @@ export interface Me {
   portal_url: string;
   server_time: string;
   peak: boolean;
+  /** On the first-sign-in trial (600 credits for 14 days), nothing paid since. */
+  trial: boolean;
 }
 
 /** How old the account snapshot is: fresh (≤ 10 min), stale (≤ 7 days, the offline grace — it

@@ -89,6 +89,9 @@ pub struct Me {
     pub server_time: String,
     #[serde(default)]
     pub peak: bool,
+    /// On the first-sign-in trial, nothing paid since.
+    #[serde(default)]
+    pub trial: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -43,7 +43,8 @@
     const d = new Date(s.length === 10 ? `${s}T00:00:00` : s);
     return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString(i18n.locale, { year: "numeric", month: "short", day: "numeric" });
   }
-  function planLabel(plan: string): string {
+  function planLabel(plan: string, trial: boolean): string {
+    if (trial) return t("account.plan.trial");
     return plan === "pro" ? t("account.plan.pro") : plan === "founder" ? t("account.plan.founder") : t("account.plan.free");
   }
 
@@ -179,7 +180,7 @@
   {:else if me}
     <div class="who">
       <span>{t("account.signedInAs", { email: me.email })}</span>
-      <span class="badge" class:pro={me.plan === "pro" || me.plan === "founder"}>{planLabel(me.plan)}</span>
+      <span class="badge" class:pro={me.plan === "pro" || me.plan === "founder"}>{planLabel(me.plan, me.trial)}</span>
     </div>
     <ul class="facts">
       {#if me.pro_until}
@@ -189,7 +190,7 @@
       {#if me.quota}
         {@const left = Math.max(0, me.quota.total_fen - me.quota.used_fen)}
         {#if account.studyLeft != null}
-          <li class="lead">{t("account.studyLeft", { n: account.studyLeft })}</li>
+          <li class="lead">{t(me.trial ? "account.studyLeftTrial" : "account.studyLeft", { n: account.studyLeft })}</li>
         {/if}
         <li>
           {t("account.quota", { left: credits(left), total: credits(me.quota.total_fen) })}
