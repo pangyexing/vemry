@@ -277,7 +277,6 @@ mod tests {
         "ipc.hosted.moderation_refused",
         "ipc.hosted.email_invalid",
         "ipc.hosted.otp_invalid",
-        "ipc.hosted.code_invalid",
         // Path rejections, reached through `err()` above rather than by name: the
         // keys live in `PathReject::key()` in vemry-core, so grepping this crate for
         // a string literal will not find them. Renaming one is a two-file edit

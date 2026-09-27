@@ -402,7 +402,7 @@ CMD = {
     ),
     "settings-account": (
         ("Account", "账户"),
-        ("Sign in to vemry hosted, see the quota and the credit pack, redeem a code", "登录 vemry 托管，查看配额与算力包，兑换码"),
+        ("Sign in to vemry hosted, see the quota and the credit pack", "登录 vemry 托管，查看配额与算力包"),
     ),
     "check-updates": (
         ("Check for updates", "检查更新"),
@@ -488,10 +488,6 @@ add("account.", {
     "manageSubscription": ("Manage subscription", "管理订阅"),
     "buy": ("Buy / top up…", "购买 / 充值…"),
     "buyHint": ("Opens vemry.app in your browser; payment never goes through the app", "在系统浏览器打开 vemry.app；支付不经过应用"),
-    "redeem": ("Redeem a code", "兑换码"),
-    "redeemPlaceholder": ("VEMRY-XXXX-XXXX-XXXX", "VEMRY-XXXX-XXXX-XXXX"),
-    "redeemBtn": ("Redeem", "兑换"),
-    "redeemed": ("Code redeemed", "已兑换"),
     "refresh": ("Refresh", "刷新"),
     "refreshing": ("Refreshing…", "刷新中…"),
     "signOut": ("Sign out", "退出登录"),
@@ -1928,7 +1924,7 @@ add("settings.", {
     "scriptEvents": ("events: {list}", "事件：{list}"),
     "scriptSchedules": ("schedules: {list}", "定时：{list}"),
     "scriptNothing": ("nothing registered", "无注册项"),
-    "accountHint": ("Sign in, quota, credit pack, redeem a code.", "登录、配额、算力包与兑换码。"),
+    "accountHint": ("Sign in, quota, credit pack.", "登录、配额与算力包。"),
 })
 
 # ---------------------------------------------------------------- settings dialog: translation
@@ -2631,7 +2627,6 @@ add("ipc.", {
     "hosted.otp_invalid": ("The code is wrong or has expired — send a new one", "验证码错误或已过期——请重新发送"),
     "hosted.mail_unavailable": ("The sign-in code could not be sent right now — try again in a moment",
                                 "验证码暂时发不出去——稍后再试"),
-    "hosted.code_invalid": ("The code is unknown, already used or expired", "兑换码无效、已使用或已过期"),
 })
 
 # The interface languages, in the order the settings picker lists them. Mirrored by

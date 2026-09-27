@@ -90,7 +90,7 @@ export const SETTINGS: SettingEntry[] = [
   { id: "ai.translateModel", page: "ai", label: "settings.translate.model", hint: "settings.translate.modelHint", keywords: "翻译 translate 模型 model" },
   { id: "ai.translateAddendum", page: "ai", label: "settings.translate.addendum", hint: "settings.translate.addendumHint", keywords: "翻译 translate" },
 
-  { id: "account.panel", page: "account", label: "settings.tab.account", hint: "settings.accountHint", keywords: "登录 邮箱 配额 算力包 兑换码 订阅 sign in email quota credit redeem subscription", jump: true },
+  { id: "account.panel", page: "account", label: "settings.tab.account", hint: "settings.accountHint", keywords: "登录 邮箱 配额 算力包 积分 订阅 体验 sign in email quota credit subscription trial", jump: true },
 
   { id: "browser.adblock", page: "browser", label: "settings.adblock", hint: "settings.adblockHint", keywords: "广告 ad block 拦截" },
   { id: "browser.ruleUrls", page: "browser", label: "settings.ruleUrls", hint: "settings.ruleUrlsHint", keywords: "广告 ad block 规则 rules" },

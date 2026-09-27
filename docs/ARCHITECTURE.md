@@ -200,8 +200,8 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   module's in-process copy. Stored in the OS app-config directory, never inside a
   vault.
 - `account.rs`: the hosted account — `account.json` (0600), sign-in by e-mail code,
-  the device token, the `/v1/me` snapshot with its freshness rule, redeeming a
-  code, the `account://changed` event, and `localize_relay_error`, the one place a
+  the device token, the `/v1/me` snapshot with its freshness rule, the
+  `account://changed` event, and `localize_relay_error`, the one place a
   relay error code becomes the user's wording and a 401 clears the token. See
   "Hosted mode" under the network-exit list.
 

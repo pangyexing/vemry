@@ -1361,7 +1361,6 @@ export const api = {
   accountLogout: () => invoke<void>("account_logout"),
   /** Fetch the entitlement snapshot again (a 304 when nothing changed). */
   accountRefresh: () => invoke<AccountStatus>("account_refresh"),
-  accountRedeem: (code: string) => invoke<AccountStatus>("account_redeem", { code }),
   // ---- the phone inbox (inbox.rs): items arrive on onInboxItems; the main window lands them and acks ----
   /** The main window wrote these items into the vault (the ledger first, then the service); `target` is the
    *  spot's label (spotLabel), for the settings page's "last one filed". */

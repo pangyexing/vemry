@@ -270,7 +270,6 @@ pub fn run() {
             account::account_login_verify,
             account::account_logout,
             account::account_refresh,
-            account::account_redeem,
             inbox::inbox_ack,
             inbox::inbox_failed,
             inbox::inbox_ready,

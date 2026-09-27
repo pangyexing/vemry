@@ -17,8 +17,6 @@
   let code = $state("");
   let busy = $state(false);
   let error = $state<string | null>(null);
-  let redeemCode = $state("");
-  let redeemBusy = $state(false);
   let refreshing = $state(false);
 
   const me = $derived(account.me);
@@ -107,22 +105,6 @@
       error = failed(e);
     } finally {
       refreshing = false;
-    }
-  }
-
-  async function redeem() {
-    const c = redeemCode.trim();
-    if (!c || redeemBusy) return;
-    redeemBusy = true;
-    error = null;
-    try {
-      await api.accountRedeem(c);
-      redeemCode = "";
-      toast.push(t("account.redeemed"));
-    } catch (e) {
-      error = failed(e);
-    } finally {
-      redeemBusy = false;
     }
   }
 
@@ -228,17 +210,6 @@
       <button class="btn" disabled={busy} onclick={() => void signOut()}>{t("account.signOut")}</button>
     </div>
     <small>{t("account.buyHint")}</small>
-    <h4>{t("account.redeem")}</h4>
-    <div class="row">
-      <input
-        class="redeem"
-        bind:value={redeemCode}
-        placeholder={t("account.redeemPlaceholder")}
-        spellcheck="false"
-        onkeydown={(e) => e.key === "Enter" && !isImeKeydown(e) && void redeem()}
-      />
-      <button class="btn" disabled={redeemBusy || !redeemCode.trim()} onclick={() => void redeem()}>{t("account.redeemBtn")}</button>
-    </div>
   {/if}
   {#if error}<small class="err">{error}</small>{/if}
 </section>
@@ -252,12 +223,6 @@
   h3 {
     font-size: var(--fs-sm);
     font-weight: 600;
-  }
-  h4 {
-    margin-top: 8px;
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    color: var(--fg-muted);
   }
   .note {
     font-size: var(--fs-xs);
@@ -281,10 +246,6 @@
     font-family: var(--font-mono);
     letter-spacing: 0.2em;
     max-width: 12ch;
-  }
-  input.redeem {
-    flex: 1;
-    font-family: var(--font-mono);
   }
   .row {
     display: flex;

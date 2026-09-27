@@ -1,5 +1,5 @@
 //! The hosted account: the client's side of the account protocol (sign-in by
-//! e-mail code, the device token, the entitlement snapshot, redeeming a code)
+//! e-mail code, the device token, the entitlement snapshot)
 //! and the one file it lives in.
 //!
 //! `account.json` sits in the OS app-config directory beside settings.json but
@@ -41,7 +41,7 @@ const GRACE_SECS: i64 = 7 * 24 * 60 * 60;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// What account.json holds. `me` and `etag` are what the last successful
-/// `/v1/me` (or the sign-in, or a redeem) returned; `fetched_at` is when.
+/// `/v1/me` (or the sign-in) returned; `fetched_at` is when.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AccountFile {
     #[serde(default)]
@@ -469,27 +469,6 @@ pub async fn refresh(app: &AppHandle) -> Result<AccountStatus, String> {
     Ok(st)
 }
 
-/// Redeem an invite or a purchase code; the answer carries the fresh snapshot.
-pub async fn redeem(app: &AppHandle, code: &str) -> Result<AccountStatus, String> {
-    let f = cached(app);
-    if f.token.is_empty() {
-        return Err(t(i18n::current(), "ipc.hosted.signIn"));
-    }
-    let code = code.trim();
-    if code.is_empty() {
-        return Err(t(i18n::current(), "ipc.hosted.code_invalid"));
-    }
-    let (_, headers, text) =
-        send(app, client().post(format!("{}/v1/redeem", base())).bearer_auth(&f.token).json(&json!({ "code": code }))).await?;
-    let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let me: Me = serde_json::from_value(v.get("me").cloned().unwrap_or(Value::Null)).map_err(|e| e.to_string())?;
-    let next = AccountFile { me: Some(me), fetched_at: Some(Utc::now().to_rfc3339()), etag: etag_of(&headers), ..f };
-    save(app, &next)?;
-    let st = status(app);
-    emit(app, &st);
-    Ok(st)
-}
-
 fn etag_of(headers: &reqwest::header::HeaderMap) -> Option<String> {
     headers.get(reqwest::header::ETAG).and_then(|v| v.to_str().ok()).map(str::to_owned)
 }
@@ -519,11 +498,6 @@ pub async fn account_logout(app: AppHandle) {
 #[tauri::command]
 pub async fn account_refresh(app: AppHandle) -> Result<AccountStatus, String> {
     refresh(&app).await
-}
-
-#[tauri::command]
-pub async fn account_redeem(app: AppHandle, code: String) -> Result<AccountStatus, String> {
-    redeem(&app, &code).await
 }
 
 #[cfg(test)]
