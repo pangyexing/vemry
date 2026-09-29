@@ -18,8 +18,10 @@
 //!
 //! Network exit 6 of docs/ARCHITECTURE.md: nothing here runs unless the user
 //! signs in or turns hosted mode on. What leaves the machine is the e-mail
-//! address at sign-in and, from then on, the requests the relay forwards —
-//! byte for byte what bring-your-own-key mode would send to the vendor.
+//! address at sign-in and, from then on, the snapshot's refresh (`GET /v1/me`)
+//! and the requests the relay forwards — byte for byte what bring-your-own-key
+//! mode would send to the vendor. The phone inbox (inbox.rs) rides on the same
+//! token and exit.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

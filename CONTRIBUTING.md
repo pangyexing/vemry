@@ -58,10 +58,15 @@ pnpm tauri dev          # needs `source ~/.cargo/env` first
 
 ```bash
 cargo test --workspace   # Rust tests (core/agent/script carry the highest density — keep it that way)
-cargo clippy --workspace # no new warnings
+cargo clippy --workspace -- -D warnings   # zero warnings, as CI enforces
+cargo test -p vemry-agent --test evals   # offline agent evals: each tests/evals/*.json replays scripted model output through the real runner
+python3 scripts/gen-locales.py           # regenerate locales/*.json; CI fails if a committed catalog differs from the generator's output
 pnpm check               # the ink check (check:ink: every text ink ≥ its contrast on every ground, both themes; no data-theme selectors), then svelte-check clean (also the gatekeeper for missing catalog keys)
 pnpm build               # the frontend builds
 ```
+
+The evals are part of `cargo test --workspace` as well; the separate line runs
+only them after a change to prompts, tools or skills.
 
 ### Live API integration test (optional, skipped by default)
 

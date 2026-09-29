@@ -2161,13 +2161,20 @@ still allowing only http(s)) renders it into `mainView = "reading"`.
 6. The hosted account and relay (`api.vemry.app`, `src-tauri/src/account.rs`) — taken
    only when the user signs in, or has switched the AI provider to *vemry hosted*.
    What leaves the machine: the e-mail address at sign-in (and the device's name,
-   platform and app version, for the account's device list); from then on, in hosted
-   mode, the model requests themselves — **byte for byte what bring-your-own-key
-   mode would send to the vendor**, plus four headers (a metering category, a request
-   id, a priority, the client version). The relay is not a new read path: privacy
-   zones, the permission gate and the audit log are unchanged and all client-side,
-   and the request is assembled by the same runner before either provider sees it.
-   Signing out, or switching back to bring your own key, closes the exit; the account
+   platform and app version, for the account's device list); from then on, while
+   signed in, the entitlement snapshot's refresh (`GET /v1/me`, with its ETag: before
+   a hosted turn when the snapshot is older than ten minutes, after every hosted turn,
+   and when the account panel asks) and the phone inbox (`src-tauri/src/inbox.rs`:
+   one long-poll of `GET /v1/inbox/pull` held open for as long as the app runs, the
+   acks of the items written, and pairing and the list of paired phones when the
+   settings page asks — see "The phone inbox"); and, in hosted mode, the model
+   requests themselves — **byte for byte what bring-your-own-key mode would send to
+   the vendor**, plus four headers (a metering category, a request id, a priority,
+   the client version). The relay is not a new read path: privacy zones, the
+   permission gate and the audit log are unchanged and all client-side, and the
+   request is assembled by the same runner before either provider sees it. Signing
+   out closes the exit; switching back to bring your own key closes the relay but
+   not the snapshot refresh and the inbox, which follow the sign-in. The account
    snapshot cached on disk is read without any network.
 
 ### Hosted mode (the client side of the account protocol)
