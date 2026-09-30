@@ -90,7 +90,7 @@ them stores anything of its own; each is a query over the one index, and a
 
 ![Board view — every task in the vault, by state](docs/assets/kanban.png)
 
-![Graph — the same index, drawn as links; the two private notes are visible to you and not to the model](docs/assets/graph.png)
+![Graph — the same index, drawn as links; the three private notes are visible to you and not to the model](docs/assets/graph.png)
 
 ### Ask, and check the answer
 
@@ -123,11 +123,12 @@ included, is in one searchable palette (⌘P).
    [Releases](https://github.com/pangyexing/vemry/releases), or
    [build from source](#build-from-source).
 2. **Open the example vault.** Clone this repo, then ⌘P → *Open another vault…* →
-   `examples/demo-vault`. It is one learner's vault from a week in September 2026:
-   a paper read in chapters with an experiment you can run, the cards it left, a
-   research thread with its claims and evidence, a nap experiment with its tasks, an
-   inbox of quick captures, a clipped page, a journal and a private folder. Its
-   *Start Here* note is the tour.
+   `examples/demo-vault`. It is one learner's week in September 2026, the same story
+   the website tells: a paper read in chapters, with two experiments you can run and
+   the cards a checked retelling left; a project with its tasks; a research thread
+   with its claims and evidence; a page clipped from the web and a handout to read
+   in translation; an inbox of captures from a desktop and a phone; a journal, three
+   recorded AI sessions and a private folder. Its *Start Here* note is the tour.
 3. **Add an AI key** (optional). Settings → API key. Any OpenAI-compatible
    endpoint works, including a local Ollama; the mainland default is Zhipu, whose
    `glm-4.7-flash` is free and supports tool calls. Or switch the provider to *vemry
@@ -155,8 +156,8 @@ What changed in this vault this week?
 Tidy the research/ folder.
 ```
 
-Then mark `private/` as a privacy zone and ask the AI to list your notes. It will
-not see the folder, and it will not know that anything is missing.
+In the example vault, `private/` is already a privacy zone: ask the AI to list your
+notes. It will not see the folder, and it will not know that anything is missing.
 
 ## What stays on your machine
 
