@@ -67,9 +67,14 @@
   {#if foreign}
     <button class="pending translate" title={t("statusBar.translateHint", { key: k("Mod+Shift+T") })} onclick={() => void executeCommand("translate-toggle")}>{t("statusBar.translate")}</button>
   {/if}
-  {#if prefs.provider === "hosted" && account.hostedOk && account.studyLeft != null}
-    <!-- this month's hosted quota as papers (the one figure the account shows in the interface); the click opens the account page -->
-    <button class="pending quota" title={t("statusBar.studyLeftHint", { n: account.studyLeft })} onclick={() => void executeCommand("settings-account")}>{t("statusBar.studyLeft", { n: account.studyLeft })}</button>
+  {#if prefs.provider === "hosted" && account.hostedOk && account.me}
+    {@const me = account.me}
+    {@const quota = me.quota ? Math.max(0, me.quota.total_fen - me.quota.used_fen) : 0}
+    {@const pack = Math.max(0, me.pack_fen)}
+    {@const fmt = new Intl.NumberFormat(i18n.locale, { maximumFractionDigits: 0 })}
+    <!-- the credits a hosted call can still draw on: the month's quota first, then the pack; the tooltip splits
+         the two and the click opens the account page -->
+    <button class="pending quota" title={t("statusBar.creditsHint", { quota: fmt.format(quota), pack: fmt.format(pack) })} onclick={() => void executeCommand("settings-account")}>{t("statusBar.credits", { n: fmt.format(quota + pack) })}</button>
   {/if}
   {#if vault.editorOrigin && vault.editorOrigin.origin !== "you"}
     <span class="origin origin-{vault.editorOrigin.origin}" title={originLabel(vault.editorOrigin)}>{originLabel(vault.editorOrigin, { withState: false })}</span>

@@ -1,8 +1,8 @@
 <script lang="ts">
   // The account page of the settings dialog (Settings › Account): signed out, an
-  // e-mail address and the 6-digit code it receives; signed in, the entitlements
-  // (plan, expiry, "about N papers left", the credit pack, the subscription) and the
-  // actions on them. Purchase and subscription management open vemry.app in the
+  // e-mail address and the 6-digit code it receives; signed in, the entitlements as
+  // label/value rows (plan and expiry, hosted models, the month's quota with a bar of
+  // what is left, the credit pack, the subscription) and the actions on them. Purchase and subscription management open vemry.app in the
   // system browser — payment never passes through the app. Everything shown is the
   // account store's snapshot; the store follows Rust's account event.
   import { api } from "$lib/api";
@@ -30,7 +30,7 @@
 
   /** Credits in the interface's locale ("3,000"). A credit is $0.001 of charge; it is never
    *  shown as money, since "$6.00" beside a $10 pack would read as its price. The interface
-   *  shows credits and papers, never tokens. */
+   *  shows credits, never tokens. */
   const count = $derived(new Intl.NumberFormat(i18n.locale, { maximumFractionDigits: 0 }));
   function credits(fen: number): string {
     return count.format(Math.abs(fen));
@@ -124,7 +124,6 @@
 </script>
 
 <section class="account">
-  <h3>{t("account.title")}</h3>
   {#if !account.loggedIn}
     <p class="note">{t("account.intro")}</p>
     {#if step === "email"}
@@ -168,54 +167,59 @@
       </div>
     {/if}
   {:else if me}
-    <div class="who">
-      <span>{t("account.signedInAs", { email: me.email })}</span>
-      <span class="badge" class:pro={me.plan === "pro" || me.plan === "founder"}>{planLabel(me.plan, me.trial)}</span>
-    </div>
-    <ul class="facts">
-      {#if me.pro_until}
-        <li>{t("account.proUntil", { date: day(me.pro_until) })}</li>
-      {/if}
-      <li>{me.hosted ? t("account.hostedOn") : t("account.hostedOff")}</li>
+    {@const sub = me.subscription}
+    {@const subscribed = !!sub && sub.status !== "canceled"}
+    <dl class="kv">
+      <dt>{t("account.row.email")}</dt>
+      <dd>{me.email}</dd>
+      <dt>{t("account.row.plan")}</dt>
+      <dd>
+        <span class="badge" class:pro={me.plan === "pro" || me.plan === "founder"}>{planLabel(me.plan, me.trial)}</span>
+        {#if me.pro_until}<span class="muted">{t("account.until", { date: day(me.pro_until) })}</span>{/if}
+      </dd>
+      <dt>{t("account.row.hosted")}</dt>
+      <dd class:muted={!me.hosted}>{me.hosted ? t("account.hostedOn") : t("account.hostedOff")}</dd>
       {#if me.quota}
         {@const left = Math.max(0, me.quota.total_fen - me.quota.used_fen)}
-        {#if account.studyLeft != null}
-          <li class="lead">{t(me.trial ? "account.studyLeftTrial" : "account.studyLeft", { n: account.studyLeft })}</li>
-        {/if}
-        <li>
-          {t("account.quota", { left: credits(left), total: credits(me.quota.total_fen) })}
-          {#if me.quota.resets_at}<span class="muted"> · {t("account.quotaResets", { date: day(me.quota.resets_at) })}</span>{/if}
-        </li>
+        {@const share = me.quota.total_fen > 0 ? Math.min(100, Math.round((left * 100) / me.quota.total_fen)) : 0}
+        <dt>{t(me.trial ? "account.row.quotaTrial" : "account.row.quota")}</dt>
+        <dd class="quota">
+          <strong>{t("account.quotaLeft", { n: credits(left) })}</strong>
+          <span class="meter" class:low={share < 10} aria-hidden="true"><span style:width="{share}%"></span></span>
+          <small>{t(me.trial ? "account.quotaOfTrial" : "account.quotaOf", { total: credits(me.quota.total_fen), date: day(me.quota.resets_at) })}</small>
+        </dd>
       {/if}
-      <li class:warn={me.pack_fen < 0}>
+      <dt>{t("account.row.pack")}</dt>
+      <dd class:warn={me.pack_fen < 0}>
         {me.pack_fen < 0 ? t("account.packNegative", { amount: credits(me.pack_fen) }) : t("account.pack", { amount: credits(me.pack_fen) })}
-      </li>
-      {#if me.subscription}
-        {@const sub = me.subscription}
-        <li class="sub">
+      </dd>
+      {#if sub}
+        <dt>{t("account.row.subscription")}</dt>
+        <dd class="sub">
           {#if sub.status === "past_due"}
             <span class="warn">{t("account.subscriptionPastDue")}</span>
           {:else if sub.cancel_at_period_end || sub.status === "canceling" || sub.status === "canceled"}
-            {t("account.subscriptionCancelled", { date: day(me.pro_until) })}
+            <span>{t("account.subscriptionCancelled", { date: day(me.pro_until) })}</span>
           {:else}
-            {t("account.subscriptionOn", { date: day(sub.next_charge_at), price: sub.price ? ` · ${sub.price}` : "" })}
+            <span>{t("account.subscriptionOn", { date: day(sub.next_charge_at), price: sub.price ? ` · ${sub.price}` : "" })}</span>
           {/if}
           <button class="btn small" onclick={() => void openPortal("subscription")}>{t("account.manageSubscription")}</button>
-        </li>
+        </dd>
       {/if}
-      {#if me.peak && me.hosted}
-        <li class="muted">{t("account.peak")}</li>
-      {/if}
-    </ul>
+    </dl>
+    {#if me.peak && me.hosted}
+      <small>{t("account.peak")}</small>
+    {/if}
     {#if status?.freshness === "expired"}
       <small class="err">{t("account.expired")}</small>
     {:else if status?.freshness === "stale" && staleDays >= 1}
       <small class="warn">{t("account.offlineStale", { days: staleDays })}</small>
     {/if}
-    <div class="row">
-      <button class="btn primary" onclick={() => void openPortal()}>{t("account.buy")}</button>
+    <div class="row actions">
+      <!-- With a subscription running the account page offers only the pack -->
+      <button class="btn primary" onclick={() => void openPortal()}>{subscribed ? t("account.buyPack") : t("account.buy")}</button>
       <button class="btn" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? t("account.refreshing") : t("account.refresh")}</button>
-      <button class="btn" disabled={busy} onclick={() => void signOut()}>{t("account.signOut")}</button>
+      <button class="btn signout" disabled={busy} onclick={() => void signOut()}>{t("account.signOut")}</button>
     </div>
     <small>{t("account.buyHint")}</small>
   {/if}
@@ -227,10 +231,6 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-  }
-  h3 {
-    font-size: var(--fs-sm);
-    font-weight: 600;
   }
   .note {
     font-size: var(--fs-xs);
@@ -272,11 +272,52 @@
   .muted {
     color: var(--fg-muted);
   }
-  .who {
+  /* the entitlements: a label column and a value column, as on the account page */
+  .kv {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 8px 20px;
+    margin: 4px 0;
+    font-size: var(--fs-sm);
+  }
+  .kv dt {
+    color: var(--fg-muted);
+  }
+  .kv dd {
+    margin: 0;
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: var(--fs-sm);
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  /* the month's quota: what is left, a bar of it, then the total and the reset */
+  .kv dd.quota {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+  .quota strong {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .meter {
+    display: block;
+    width: 100%;
+    max-width: 240px;
+    height: 5px;
+    border-radius: 999px;
+    background: var(--bg-hover);
+    overflow: hidden;
+  }
+  .meter > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+  }
+  .meter.low > span {
+    background: var(--warning);
   }
   /* the plan, quiet for free and the accent for a paid one */
   .badge {
@@ -291,21 +332,12 @@
     color: var(--accent);
     border-color: var(--accent);
   }
-  .facts {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: var(--fs-sm);
+  .actions {
+    margin-top: 4px;
   }
-  .facts .lead {
-    font-weight: 600;
-  }
-  .facts .sub {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
+  /* signing out is not one of the account's actions: it stands apart, at the far end */
+  .btn.signout {
+    margin-left: auto;
   }
   .btn {
     font-size: var(--fs-sm);

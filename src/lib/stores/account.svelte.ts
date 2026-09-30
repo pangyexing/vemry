@@ -19,10 +19,6 @@ class AccountStore {
   get hostedOk(): boolean {
     return this.status?.hosted_ok ?? false;
   }
-  /** "About N papers left this month", or null without a quota. */
-  get studyLeft(): number | null {
-    return this.status?.study_left ?? null;
-  }
   /** The hosted model catalog (empty while signed out). */
   get models() {
     return this.status?.me?.models ?? [];

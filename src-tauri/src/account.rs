@@ -121,7 +121,8 @@ pub struct Subscription {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Estimates {
-    /// What one study run costs on average, in credits: "about N papers left" divides by it.
+    /// What one study run costs on average, in credits: the composer's warning before a
+    /// close reading the balance cannot finish compares against it.
     #[serde(default)]
     pub study_fen: i64,
     #[serde(default)]
@@ -138,7 +139,7 @@ pub enum Freshness {
 }
 
 /// What the frontend sees (mirrored as `AccountStatus` in api.ts): the snapshot,
-/// how old it is, and the two derived answers every surface needs.
+/// how old it is, and the derived answer every surface needs.
 #[derive(Clone, Debug, Serialize)]
 pub struct AccountStatus {
     pub logged_in: bool,
@@ -148,8 +149,6 @@ pub struct AccountStatus {
     /// Hosted requests may go out: signed in, the account has hosted access, and
     /// the snapshot is not expired.
     pub hosted_ok: bool,
-    /// `floor(quota remaining / study_fen)`, or None without a quota or an estimate.
-    pub study_left: Option<i64>,
 }
 
 // ---- the file and its in-process copy ----
@@ -214,8 +213,7 @@ fn status_of(f: &AccountFile, now: DateTime<Utc>) -> AccountStatus {
     let freshness = freshness_at(f.fetched_at.as_deref(), now);
     let me = if logged_in { f.me.clone() } else { None };
     let hosted_ok = logged_in && freshness != Freshness::Expired && me.as_ref().is_some_and(|m| m.hosted);
-    let study_left = me.as_ref().and_then(study_left);
-    AccountStatus { logged_in, me, fetched_at: f.fetched_at.clone(), freshness, hosted_ok, study_left }
+    AccountStatus { logged_in, me, fetched_at: f.fetched_at.clone(), freshness, hosted_ok }
 }
 
 fn freshness_at(fetched_at: Option<&str>, now: DateTime<Utc>) -> Freshness {
@@ -230,17 +228,6 @@ fn freshness_at(fetched_at: Option<&str>, now: DateTime<Utc>) -> Freshness {
     } else {
         Freshness::Expired
     }
-}
-
-/// "About N papers left this month": the quota's remainder over the study
-/// estimate. The credit pack is not "this month" and stays out of it.
-fn study_left(me: &Me) -> Option<i64> {
-    let q = me.quota.as_ref()?;
-    let per = me.estimates.study_fen;
-    if per <= 0 {
-        return None;
-    }
-    Some((q.total_fen - q.used_fen).max(0) / per)
 }
 
 fn emit(app: &AppHandle, st: &AccountStatus) {
@@ -553,15 +540,13 @@ mod tests {
         assert_eq!(freshness_at(Some("not a date"), now), Freshness::Expired);
     }
 
-    /// hosted_ok needs all three: a token, the flag, and a snapshot within the grace;
-    /// study_left is the quota's remainder over the estimate.
+    /// hosted_ok needs all three: a token, the flag, and a snapshot within the grace.
     #[test]
-    fn status_derives_hosted_ok_and_study_left() {
+    fn status_derives_hosted_ok() {
         let now = at("2026-10-13T12:00:00Z");
         let f = AccountFile { token: "t".into(), me: Some(me(true)), fetched_at: Some("2026-10-13T11:59:00Z".into()), etag: None };
         let st = status_of(&f, now);
         assert!(st.logged_in && st.hosted_ok && st.freshness == Freshness::Fresh);
-        assert_eq!(st.study_left, Some(10)); // (1000 − 370) / 63
         // Stale still applies
         let stale = AccountFile { fetched_at: Some("2026-10-10T12:00:00Z".into()), ..f.clone() };
         assert!(status_of(&stale, now).hosted_ok);
@@ -573,20 +558,9 @@ mod tests {
         assert!(!status_of(&AccountFile { me: Some(me(false)), ..f.clone() }, now).hosted_ok);
         // Signed out: no snapshot is shown either
         let out = status_of(&AccountFile { token: String::new(), ..f }, now);
-        assert!(!out.logged_in && !out.hosted_ok && out.me.is_none() && out.study_left.is_none());
+        assert!(!out.logged_in && !out.hosted_ok && out.me.is_none());
     }
 
-    /// No quota (free, or a founder without one) or no estimate: no number rather than a division by zero.
-    #[test]
-    fn study_left_needs_a_quota_and_an_estimate() {
-        assert_eq!(study_left(&Me { quota: None, ..me(true) }), None);
-        assert_eq!(study_left(&Me { estimates: Estimates::default(), ..me(true) }), None);
-        let over = Me { quota: Some(Quota { total_fen: 100, used_fen: 250, resets_at: None }), ..me(true) };
-        assert_eq!(study_left(&over), Some(0));
-    }
-
-    /// The relay's error body is found through the transport's and the runner's
-    /// wrapping, and the status beside it.
     #[test]
     fn relay_error_code_and_status_are_read_through_the_wrapping() {
         let text = r#"api error: HTTP 402 Payment Required: {"error":{"code":"insufficient_balance","message":"…","request_id":"r1"}}"#;

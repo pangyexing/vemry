@@ -341,8 +341,6 @@ export interface AccountStatus {
   freshness: Freshness;
   /** Hosted requests may go out: signed in, hosted access, and the snapshot not expired. */
   hosted_ok: boolean;
-  /** floor(quota remaining / study estimate); null without a quota or an estimate. */
-  study_left: number | null;
 }
 
 export interface SettingsView {
