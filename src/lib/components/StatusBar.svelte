@@ -6,7 +6,7 @@
   // Every figure comes from what the vault store already pushes — the editor is the
   // only producer, and this merely projects it.
   import { t, tn } from "$lib/i18n/i18n.svelte";
-  import { stemOf, vault, vaultName } from "$lib/stores/vault.svelte";
+  import { stemOf, vault } from "$lib/stores/vault.svelte";
   import { originLabel } from "$lib/editor/provenance";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { executeCommand } from "$lib/commands/registry";
@@ -52,7 +52,7 @@
 </script>
 
 <footer class="statusbar">
-  <span class="vault-name" title={vault.root}>{vaultName(vault.root)}</span>
+  <span class="vault-name" title={vault.root}>{vault.name}</span>
   {#if inPrivate}
     <span class="zone" title={t("statusBar.privacyZoneHint")}>
       <PrivacyIcon />

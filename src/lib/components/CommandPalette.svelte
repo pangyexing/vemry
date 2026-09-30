@@ -490,9 +490,9 @@
     }
     if (mode === "vaults") {
       const q = query.trim();
-      const vaults = fuzzyFilter(vault.recent, query, (p) => p);
+      const vaults = fuzzyFilter(vault.recent, query, (p) => `${vault.nameOf(p)} ${p}`);
       const list: Item[] = vaults.map((p) => {
-        const title = p.split("/").pop() ?? p;
+        const title = vault.nameOf(p);
         return {
           id: p,
           title,

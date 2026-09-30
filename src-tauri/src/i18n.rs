@@ -233,6 +233,7 @@ mod tests {
         // one up.
         "ipc.fileExists",
         "ipc.dirNotEmpty",
+        "ipc.notAVault",
         "ipc.imageFormatUnsupported",
         "ipc.copyImageUnsupported",
         "ipc.httpOnly",

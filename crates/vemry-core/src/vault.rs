@@ -152,15 +152,20 @@ pub struct Vault {
 }
 
 impl Vault {
-    pub fn open(root: impl Into<PathBuf>) -> Result<Vault> {
-        let root: PathBuf = root.into();
+    /// The form a vault root takes everywhere (the recent list, the UI, the
+    /// settings): the canonical path of an existing directory. dunce: on Windows
+    /// std canonicalize returns the verbatim `\\?\D:\…` form, which would leak all
+    /// the way into the recent list and the UI; dunce keeps the prefix only when it
+    /// is required (very long or reserved names).
+    pub fn canonical_root(root: &Path) -> Result<PathBuf> {
         if !root.is_dir() {
             return Err(reject(PathReject::NotADirectory, root.display().to_string()));
         }
-        // dunce: on Windows std canonicalize returns the verbatim `\\?\D:\…`
-        // form, which leaks all the way into the recent list and the UI; dunce
-        // keeps the prefix only when it is required (very long or reserved names).
-        let root = dunce::canonicalize(&root)?;
+        Ok(dunce::canonicalize(root)?)
+    }
+
+    pub fn open(root: impl Into<PathBuf>) -> Result<Vault> {
+        let root = Vault::canonical_root(&root.into())?;
 
         let rel_paths: Vec<PathBuf> = WalkDir::new(&root)
             .follow_links(false)
@@ -1376,13 +1381,12 @@ impl Vault {
     }
 
     /// Vault-level config directory (.vemry) — a **pure path accessor that does
-    /// not create anything**. Read paths (listing sessions/skills, reading config)
-    /// must not leave a .vemry side effect in a directory that is merely being
-    /// browsed: otherwise the "a directory opened by mistake does not enter the
-    /// recent list" check would, on the second open, be fooled by the traces it
-    /// left itself, and every folder ever glanced at would grow a stray directory.
-    /// Write paths call create_dir_all themselves (creating a subdirectory creates
-    /// its parent too).
+    /// not create anything**. The directory is the mark that the user chose this
+    /// folder as a vault (the app asks before the first open of an unmarked
+    /// folder and creates it on the answer), so a read path (listing
+    /// sessions/skills, reading config) must not make one as a side effect: a
+    /// folder would then pass for a vault nobody chose. Write paths call
+    /// create_dir_all themselves (creating a subdirectory creates its parent too).
     pub fn meta_dir(&self) -> PathBuf {
         self.root.join(".vemry")
     }

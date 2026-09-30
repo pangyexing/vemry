@@ -47,6 +47,25 @@ export interface GraphData {
 export interface VaultInfo {
   root: string;
   note_count: number;
+  /** The name the vault is shown by: its own (`.vemry/config.json`), else its folder's. */
+  name: string;
+}
+
+/** A recent-list entry. */
+export interface RecentVault {
+  path: string;
+  name: string;
+  /** The folder is gone (moved or deleted since): the entry can only be removed. */
+  missing: boolean;
+}
+
+/** A folder looked at before it is opened (`vault_inspect`). */
+export interface VaultInspect {
+  /** The canonical root, in the form the recent list holds. */
+  root: string;
+  name: string;
+  /** Already a vault (a `.vemry/`, or in the recent list); an unknown folder is asked about first. */
+  known: boolean;
 }
 
 export interface SearchHit {
@@ -1157,10 +1176,18 @@ export type ScriptEvent =
 // ---- commands ----
 
 export const api = {
-  vaultOpen: (path: string) => invoke<VaultInfo>("vault_open", { path }),
-  vaultCreate: (path: string) => invoke<VaultInfo>("vault_create", { path }),
-  vaultRecent: () => invoke<string[]>("vault_recent"),
-  vaultRecentRemove: (path: string) => invoke<string[]>("vault_recent_remove", { path }),
+  vaultInspect: (path: string) => invoke<VaultInspect>("vault_inspect", { path }),
+  /** `name` is the answer to the dialog that asked about an unknown folder (empty = the
+   *  folder's name); without it, a folder that is not a vault yet is refused unread. */
+  vaultOpen: (path: string, name?: string) => invoke<VaultInfo>("vault_open", { path, name }),
+  vaultCreate: (path: string, name: string) => invoke<VaultInfo>("vault_create", { path, name }),
+  /** Rename a vault — the open one or one on the recent list, without opening it (empty =
+   *  its folder's name); returns the name it is now shown by. */
+  vaultRename: (path: string, name: string) => invoke<string>("vault_rename", { path, name }),
+  /** Show a vault's folder (the open one or a recent one) in the system file manager. */
+  vaultShowFolder: (path: string) => invoke<void>("vault_show_folder", { path }),
+  vaultRecent: () => invoke<RecentVault[]>("vault_recent"),
+  vaultRecentRemove: (path: string) => invoke<RecentVault[]>("vault_recent_remove", { path }),
   vaultLast: () => invoke<string | null>("vault_last"),
   /** The vault that is open (the second webview picks up the main window's vault without going through vault_open). */
   vaultCurrent: () => invoke<VaultInfo | null>("vault_current"),

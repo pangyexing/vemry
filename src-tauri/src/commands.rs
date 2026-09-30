@@ -25,6 +25,89 @@ use crate::AppState;
 pub struct VaultInfo {
     pub root: String,
     pub note_count: usize,
+    /// The name the vault is shown by (see `vault_name`).
+    pub name: String,
+}
+
+/// A recent-list entry: the root, and the name it is shown by.
+#[derive(Serialize)]
+pub struct RecentVault {
+    pub path: String,
+    pub name: String,
+    /// The folder is gone (moved or deleted since): the entry can only be removed.
+    pub missing: bool,
+}
+
+/// What `vault_inspect` knows about a folder before it is opened.
+#[derive(Serialize)]
+pub struct VaultInspect {
+    /// The canonical root (the form the recent list holds).
+    pub root: String,
+    /// The name it would be shown by: its own, else the folder's.
+    pub name: String,
+    /// Already a vault: it has a `.vemry/`, or it is in the recent list (a vault
+    /// opened before the mark existed). An unknown folder is asked about first.
+    pub known: bool,
+}
+
+/// The key in .vemry/config.json holding the vault's name.
+const VAULT_NAME_KEY: &str = "name";
+
+/// A vault's default name: its folder's. A drive root has no folder name and is
+/// shown by its path (`D:\`, `/`).
+fn folder_name(root: &std::path::Path) -> String {
+    root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| root.to_string_lossy().to_string())
+}
+
+/// The name a vault is shown by: the one the user gave it in `.vemry/config.json`,
+/// else its folder's. It travels with the folder; a vault that was never renamed
+/// has no key, so renaming the folder renames the vault.
+fn vault_name(root: &std::path::Path) -> String {
+    vemry_agent::skills::read_vault_config(&root.join(".vemry"))
+        .and_then(|c| c.get(VAULT_NAME_KEY)?.as_str().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| folder_name(root))
+}
+
+/// Give a vault a name. Empty, or the folder's own name, removes the key (the name
+/// then follows the folder again), and a vault with nothing to remove is left
+/// untouched. Returns the name it is now shown by.
+fn set_vault_name(root: &std::path::Path, name: &str) -> Result<String, String> {
+    let name = name.trim();
+    let meta = root.join(".vemry");
+    if name.is_empty() || name == folder_name(root) {
+        let named = vemry_agent::skills::read_vault_config(&meta).is_some_and(|c| c.get(VAULT_NAME_KEY).is_some());
+        if named {
+            config_set_at(&meta, VAULT_NAME_KEY, serde_json::Value::Null)?;
+        }
+    } else {
+        config_set_at(&meta, VAULT_NAME_KEY, json!(name))?;
+    }
+    Ok(vault_name(root))
+}
+
+/// Recent-list roots with the names they are shown by.
+fn named(roots: Vec<String>) -> Vec<RecentVault> {
+    roots
+        .into_iter()
+        .map(|path| {
+            let root = std::path::Path::new(&path);
+            RecentVault { name: vault_name(root), missing: !root.is_dir(), path }
+        })
+        .collect()
+}
+
+/// A folder the user has already made a vault — the one open, or one on the recent
+/// list — in canonical form. The commands that act on a vault by path go through
+/// here, so none of them can reach, or mark, an arbitrary folder.
+fn known_vault(app: &AppHandle, state: &State<'_, AppState>, path: &str) -> Result<std::path::PathBuf, String> {
+    let root = Vault::canonical_root(std::path::Path::new(path)).map_err(crate::i18n::err)?;
+    let open = state.vault.lock().unwrap().as_ref().is_some_and(|v| v.root() == root);
+    if open || is_recent(app, &root) {
+        Ok(root)
+    } else {
+        Err(crate::i18n::t(crate::i18n::current(), "ipc.notAVault"))
+    }
 }
 
 /// The one place vault events fan out from — the concrete form of the
@@ -77,7 +160,11 @@ pub(crate) fn broadcast(app: &AppHandle, event: &VaultEvent) {
 #[tauri::command]
 pub fn vault_current(state: State<'_, AppState>) -> Option<VaultInfo> {
     let guard = state.vault.lock().unwrap();
-    guard.as_ref().map(|v| VaultInfo { root: v.root().to_string_lossy().to_string(), note_count: v.index().note_count() })
+    guard.as_ref().map(|v| VaultInfo {
+        root: v.root().to_string_lossy().to_string(),
+        note_count: v.index().note_count(),
+        name: vault_name(v.root()),
+    })
 }
 
 pub(crate) fn with_vault<T>(state: &State<'_, AppState>, f: impl FnOnce(&Vault) -> Result<T, String>) -> Result<T, String> {
@@ -95,11 +182,47 @@ pub(crate) fn with_vault_mut<T>(
     f(vault)
 }
 
+/// Whether a canonical root is in the recent list.
+fn is_recent(app: &AppHandle, root: &std::path::Path) -> bool {
+    let root = root.to_string_lossy();
+    settings::load(app).recent_vaults.iter().any(|p| *p == root)
+}
+
+/// Look at a folder before it is opened (reads one config file, walks nothing),
+/// so the frontend can ask about an unknown one before switching anything.
 #[tauri::command]
-pub fn vault_open(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<VaultInfo, String> {
-    let vault = Vault::open(&path).map_err(crate::i18n::err)?;
+pub fn vault_inspect(app: AppHandle, path: String) -> Result<VaultInspect, String> {
+    let root = Vault::canonical_root(std::path::Path::new(&path)).map_err(crate::i18n::err)?;
+    Ok(VaultInspect {
+        name: vault_name(&root),
+        known: root.join(".vemry").is_dir() || is_recent(&app, &root),
+        root: root.to_string_lossy().to_string(),
+    })
+}
+
+/// Open a folder as the vault. Whether a folder is a vault is the user's call:
+/// one without a `.vemry/` is opened only with `name` — the answer from the
+/// dialog that asked (empty = the folder's name) — or when it is in the recent
+/// list (a vault opened before the mark existed), and either way it then gets the
+/// mark. Anything else is refused before a single file is read, so a folder
+/// picked by mistake (a whole drive, a home folder) costs nothing.
+#[tauri::command]
+pub fn vault_open(app: AppHandle, state: State<'_, AppState>, path: String, name: Option<String>) -> Result<VaultInfo, String> {
+    let dir = Vault::canonical_root(std::path::Path::new(&path)).map_err(crate::i18n::err)?;
+    if !dir.join(".vemry").is_dir() {
+        if name.is_none() && !is_recent(&app, &dir) {
+            return Err(crate::i18n::t(crate::i18n::current(), "ipc.notAVault"));
+        }
+        // Best effort: a read-only folder still opens, and is asked about again next time
+        let _ = std::fs::create_dir_all(dir.join(".vemry"));
+    }
+    let vault = Vault::open(&dir).map_err(crate::i18n::err)?;
+    if let Some(name) = &name {
+        set_vault_name(vault.root(), name)?;
+    }
     let root = vault.root().to_string_lossy().to_string();
     let note_count = vault.index().note_count();
+    let name = vault_name(vault.root());
 
     // Switching vaults invalidates any in-flight agent turn: cancel it and
     // wake pending permission dialogs so the loop observes the flag before it
@@ -150,24 +273,9 @@ pub fn vault_open(app: AppHandle, state: State<'_, AppState>, path: String) -> R
         scripts.as_ref().unwrap().reload();
     }
 
-    // A directory opened by mistake does not enter the recent history (recent/last):
-    // it has to have notes or a .vemry/ to "look like a vault"; an empty directory
-    // counts too — starting a new vault in an empty folder is an explicit intent.
-    // Failing the check still opens it, it is just not remembered, and a restart
-    // returns to the last real vault.
-    if note_count > 0 || looks_like_vault(std::path::Path::new(&root)) {
-        settings::remember_vault(&app, &root);
-    }
+    settings::remember_vault(&app, &root);
     broadcast(&app, &VaultEvent::IndexReady { note_count });
-    Ok(VaultInfo { root, note_count })
-}
-
-/// "Looks like a vault": it has a `.vemry/` config directory, or (hidden entries
-/// aside) it is an empty directory.
-/// The "has .md files" branch is decided by the caller from note_count — the index
-/// has counted them already, so the disk is not touched again.
-fn looks_like_vault(root: &std::path::Path) -> bool {
-    root.join(".vemry").is_dir() || dir_effectively_empty(root)
+    Ok(VaultInfo { root, note_count, name })
 }
 
 /// The directory holds no non-hidden entry. System clutter does not count — Windows
@@ -186,31 +294,16 @@ fn dir_effectively_empty(dir: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Record the currently open vault in the recent history. The entry check runs once
-/// in vault_open, and a directory holding nothing but pdf/txt is judged "not like a
-/// vault" — the moment the first note is created it really is one, and this covers
-/// that other moment. Already at the front, it is skipped, so creating a note does
-/// not rewrite the settings file every time.
-fn remember_open_vault(app: &AppHandle, state: &State<'_, AppState>) {
-    let Ok(root) = with_vault(state, |v| Ok(v.root().to_string_lossy().to_string())) else {
-        return;
-    };
-    if settings::load(app).recent_vaults.first() == Some(&root) {
-        return;
-    }
-    settings::remember_vault(app, &root);
-}
-
 /// Create a vault: when the target does not exist (or holds nothing but hidden or
 /// system clutter), create the directory, the `.vemry/` skeleton and the full
 /// VEMRY.md template (the same wording as the ⌘P initialisation command), then go
 /// through the same opening path as vault_open (watcher, script host and recent
-/// history all identical — having written VEMRY.md, the recent-history check passes
-/// naturally). A directory that already holds data is refused outright: "create"
-/// must not silently become "open", or a user who picked a real directory by
-/// mistake would think the vault was empty.
+/// history all identical), with the name the user gave it. A directory that
+/// already holds data is refused outright: "create" must not silently become
+/// "open", or a user who picked a real directory by mistake would think the vault
+/// was empty.
 #[tauri::command]
-pub fn vault_create(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<VaultInfo, String> {
+pub fn vault_create(app: AppHandle, state: State<'_, AppState>, path: String, name: String) -> Result<VaultInfo, String> {
     let p = std::path::Path::new(&path);
     if p.exists() {
         if !p.is_dir() {
@@ -223,19 +316,32 @@ pub fn vault_create(app: AppHandle, state: State<'_, AppState>, path: String) ->
     std::fs::create_dir_all(p.join(".vemry")).map_err(|e| e.to_string())?;
     // The emptiness check guarantees this overwrites no existing VEMRY.md (its name is neither hidden nor clutter)
     std::fs::write(p.join("VEMRY.md"), memory_template(&app)).map_err(|e| e.to_string())?;
-    vault_open(app, state, path)
+    vault_open(app, state, path, Some(name))
+}
+
+/// Give a vault a name (empty = its folder's) — the open one or one on the recent
+/// list, without opening it; returns the name it is now shown by.
+#[tauri::command]
+pub fn vault_rename(app: AppHandle, state: State<'_, AppState>, path: String, name: String) -> Result<String, String> {
+    set_vault_name(&known_vault(&app, &state, &path)?, &name)
+}
+
+/// Show a vault's folder in the system file manager.
+#[tauri::command]
+pub fn vault_show_folder(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
+    opener::open(known_vault(&app, &state, &path)?).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn vault_recent(app: AppHandle) -> Vec<String> {
-    settings::load(&app).recent_vaults
+pub fn vault_recent(app: AppHandle) -> Vec<RecentVault> {
+    named(settings::load(&app).recent_vaults)
 }
 
 /// Remove one entry from the recent list (a settings-level operation that does not
 /// touch the directory on disk); returns the updated list.
 #[tauri::command]
-pub fn vault_recent_remove(app: AppHandle, path: String) -> Result<Vec<String>, String> {
-    settings::forget_vault(&app, &path)
+pub fn vault_recent_remove(app: AppHandle, path: String) -> Result<Vec<RecentVault>, String> {
+    settings::forget_vault(&app, &path).map(named)
 }
 
 #[tauri::command]
@@ -313,7 +419,6 @@ pub fn note_create(
     folder: Option<String>,
 ) -> Result<String, String> {
     let id = with_vault_mut(&state, |v| v.create_note(&title, folder.as_deref()).map_err(crate::i18n::err))?;
-    remember_open_vault(&app, &state);
     broadcast(&app, &VaultEvent::NoteAdded { id: id.clone() });
     Ok(id.to_string())
 }
@@ -1417,11 +1522,15 @@ fn vault_write_policy(vault: &Vault) -> WritePolicy {
 /// would wipe out the other keys. `Null` removes the key: a setting back at its
 /// default leaves no line behind.
 fn vault_config_set(vault: &Vault, key: &str, value: serde_json::Value) -> Result<(), String> {
+    config_set_at(&vault.meta_dir(), key, value)
+}
+
+/// `vault_config_set` by meta directory, for a vault that need not be the open one.
+fn config_set_at(dir: &std::path::Path, key: &str, value: serde_json::Value) -> Result<(), String> {
     // meta_dir is a pure accessor now (it creates nothing), so a write path creates the directory itself
-    let dir = vault.meta_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join("config.json");
-    let mut obj = vault_config_read(vault).and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    let mut obj = vemry_agent::skills::read_vault_config(dir).and_then(|v| v.as_object().cloned()).unwrap_or_default();
     if value.is_null() {
         obj.remove(key);
     } else {
@@ -2104,7 +2213,6 @@ pub fn init_memory_file(app: AppHandle, state: State<'_, AppState>) -> Result<St
         }
         v.write_note(&id, &memory_template(&app)).map_err(crate::i18n::err)
     })?;
-    remember_open_vault(&app, &state);
     broadcast(&app, &event);
     Ok("VEMRY.md".into())
 }
@@ -2466,7 +2574,7 @@ pub fn privacy_rule_remove(app: AppHandle, state: State<'_, AppState>, line: Str
 mod tests {
     use super::decode_path_header;
 
-    /// The "empty directory" branch of the recent-history check: hidden entries do not count, and unreadable counts as not empty.
+    /// vault_create's emptiness check: hidden entries do not count, and unreadable counts as not empty.
     #[test]
     fn dir_effectively_empty_ignores_hidden_entries() {
         let base = std::env::temp_dir().join(format!("vemry-empty-test-{}", std::process::id()));
@@ -2480,6 +2588,32 @@ mod tests {
         std::fs::write(base.join("readme.txt"), b"x").unwrap();
         assert!(!super::dir_effectively_empty(&base));
         assert!(!super::dir_effectively_empty(&base.join("missing")));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A vault is shown by its own name, else its folder's. Naming it after its folder,
+    /// or nothing, leaves no key behind — the name then follows the folder again — and a
+    /// vault that was never named gets no config file for it.
+    #[test]
+    fn vault_name_falls_back_to_the_folder() {
+        let base = std::env::temp_dir().join(format!("vemry-name-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("Notes");
+        std::fs::create_dir_all(root.join(".vemry")).unwrap();
+        let vault = vemry_core::Vault::open(&root).unwrap();
+        let config = vault.meta_dir().join("config.json");
+        assert_eq!(super::vault_name(vault.root()), "Notes");
+        assert_eq!(super::set_vault_name(vault.root(), "").unwrap(), "Notes");
+        assert!(!config.exists());
+        assert_eq!(super::set_vault_name(vault.root(), "  Thesis ").unwrap(), "Thesis");
+        assert_eq!(super::vault_config_get(&vault, "name"), Some(serde_json::json!("Thesis")));
+        assert_eq!(super::set_vault_name(vault.root(), "Notes").unwrap(), "Notes");
+        assert!(super::vault_config_get(&vault, "name").is_none());
+        assert_eq!(super::set_vault_name(vault.root(), "Thesis").unwrap(), "Thesis");
+        assert_eq!(super::set_vault_name(vault.root(), " ").unwrap(), "Notes");
+        assert!(super::vault_config_get(&vault, "name").is_none());
+        // A drive root has no folder name and is shown by its path
+        assert_eq!(super::folder_name(std::path::Path::new("/")), "/");
         let _ = std::fs::remove_dir_all(&base);
     }
 

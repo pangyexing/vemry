@@ -3,7 +3,7 @@ import { t } from "$lib/i18n/i18n.svelte";
 import { tick, untrack } from "svelte";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { api, onVaultEvent, type EditorSelection, type NoteSummary, type Origin, type PendingNote, type VaultEvent } from "$lib/api";
+import { api, onVaultEvent, type EditorSelection, type NoteSummary, type Origin, type PendingNote, type RecentVault, type VaultEvent, type VaultInfo } from "$lib/api";
 import { agent } from "$lib/stores/agent.svelte";
 import { clips } from "$lib/stores/clips.svelte";
 import { prefs } from "$lib/stores/prefs.svelte";
@@ -152,6 +152,8 @@ const UNDO_MAX = 50;
 
 class VaultStore {
   root = $state<string | null>(null);
+  /** The name the open vault is shown by (its own, else its folder's). */
+  name = $state("");
   noteCount = $state(0);
   notes = $state<NoteSummary[]>([]);
   /** `notes` by id, for the lookups a surface makes per row or per embed. */
@@ -160,6 +162,8 @@ class VaultStore {
   /** non-Markdown files in the vault (attachments, data files, …) */
   otherFiles = $state<string[]>([]);
   recent = $state<string[]>([]);
+  /** The recent vaults' entries (the name each is shown by, whether its folder is gone), by root. */
+  recentInfo = $state<Record<string, RecentVault>>({});
   /** Whether recent has really been loaded from the backend — the persistence trimming
    *  (saveBucket's keep) only trusts a loaded value, and the empty array of a startup
    *  race or a failed IPC must not be read as "no other vault exists" (which would
@@ -667,10 +671,20 @@ class VaultStore {
     return this.currentPath ? fileKind(this.currentPath) : null;
   }
 
+  /** The name a vault is shown by: the open one's, a recent one's, else its folder's. */
+  nameOf(path: string): string {
+    return path === this.root ? this.name : (this.recentInfo[path]?.name ?? folderName(path));
+  }
+
+  private applyRecent(list: RecentVault[]) {
+    this.recent = list.map((r) => r.path);
+    this.recentInfo = Object.fromEntries(list.map((r) => [r.path, r]));
+    this.recentLoaded = true;
+  }
+
   async loadRecent() {
     try {
-      this.recent = await api.vaultRecent();
-      this.recentLoaded = true;
+      this.applyRecent(await api.vaultRecent());
     } catch {
       // Keep the previous values (initially empty); recentLoaded is not set, so persistence skips the trimming on failure
     }
@@ -683,25 +697,36 @@ class VaultStore {
    *  expanded state goes too. */
   async removeRecent(path: string) {
     try {
-      this.recent = await api.vaultRecentRemove(path);
-      this.recentLoaded = true;
+      this.applyRecent(await api.vaultRecentRemove(path));
     } catch (e) {
       this.error = String(e);
     }
   }
 
-  async openVault(path: string) {
-    await this.enterVault(() => api.vaultOpen(path));
+  /** Open a vault. `name` is the answer to the dialog that asked about a folder that is
+   *  not a vault yet (see App's pickVault); every other caller opens a known vault. */
+  async openVault(path: string, name?: string) {
+    await this.enterVault(() => api.vaultOpen(path, name));
   }
 
   /** Create a vault (a path that does not exist or an empty directory → the .vemry
-   *  skeleton plus the VEMRY.md template); once Rust has created it, it goes through the
-   *  same chain as vault_open, so everything after entering matches opening exactly. */
-  async createVault(path: string) {
-    await this.enterVault(() => api.vaultCreate(path));
+   *  skeleton plus the VEMRY.md template) with the name the user gave it; once Rust has
+   *  created it, it goes through the same chain as vault_open, so everything after
+   *  entering matches opening exactly. */
+  async createVault(path: string, name: string) {
+    await this.enterVault(() => api.vaultCreate(path, name));
   }
 
-  private async enterVault(open: () => Promise<{ root: string; note_count: number }>) {
+  /** Rename a vault, the open one or a recent one (empty = its folder's name). Throws for
+   *  the caller to report. */
+  async renameVault(path: string, name: string) {
+    const shown = await api.vaultRename(path, name);
+    if (path === this.root) this.name = shown;
+    const entry = this.recentInfo[path];
+    if (entry) entry.name = shown;
+  }
+
+  private async enterVault(open: () => Promise<VaultInfo>) {
     this.error = null;
     try {
       if (agent.running) {
@@ -820,8 +845,9 @@ class VaultStore {
    *  old/empty expanded) it would write that state into the new vault's bucket, ahead of
    *  the load, wiping out what was stored. This invariant lives here alone; do not
    *  rewrite it at a call site. */
-  private adoptRoot(info: { root: string; note_count: number }) {
+  private adoptRoot(info: VaultInfo) {
     this.root = info.root;
+    this.name = info.name;
     this.expanded = Object.fromEntries((loadBucketMap<string[]>(TREE_KEY)[info.root] ?? []).map((p) => [p, true]));
     this.noteCount = info.note_count;
     // The tabs are restored in the same synchronous batch as root (the same invariant as
@@ -1857,10 +1883,9 @@ export function stemOf(path: string): string {
   return b.endsWith(".md") ? b.slice(0, -3) : b;
 }
 
-/** The display name of a vault's root path. A Windows path uses backslashes;
- *  filter(Boolean) copes with a drive-root vault such as "D:\". The FileTree switcher and
- *  the status line share this one. */
-export function vaultName(root: string | null): string {
+/** The last segment of a folder path, the name a vault takes unless given one. A Windows
+ *  path uses backslashes; filter(Boolean) copes with a drive root such as "D:\". */
+export function folderName(root: string | null): string {
   return root?.split(/[\\/]/).filter(Boolean).pop() ?? root ?? "";
 }
 

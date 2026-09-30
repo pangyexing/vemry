@@ -7,7 +7,8 @@
   import { runHostAction } from "$lib/host";
   import { executeCommand, registerCommand, syncScriptCommands, type Command } from "$lib/commands/registry";
   import { MEMORY_DRAFT_PROMPT, MEMORY_REVIEW_PROMPT } from "$lib/commands/memoryPrompts";
-  import { vault, type MainView } from "$lib/stores/vault.svelte";
+  import { folderName, vault, type MainView } from "$lib/stores/vault.svelte";
+  import { vaultDialog, vaultManager } from "$lib/stores/vaultDialog.svelte";
   import { untrack } from "svelte";
   import { capturePlace, restorePlace, type ViewPlace } from "$lib/viewmemory";
   import { scaffold } from "$lib/scaffold";
@@ -42,6 +43,8 @@
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import ScriptGrantDialog from "$lib/components/ScriptGrantDialog.svelte";
   import UpdateDialog from "$lib/components/UpdateDialog.svelte";
+  import VaultDialog from "$lib/components/VaultDialog.svelte";
+  import VaultManager from "$lib/components/VaultManager.svelte";
   import SettingsModal from "$lib/components/SettingsModal.svelte";
   import { openSettings, settingsUi } from "$lib/stores/settingsUi.svelte";
   import CommandPalette, { type PaletteMode } from "$lib/components/CommandPalette.svelte";
@@ -516,18 +519,42 @@
     void types.refresh();
   });
 
+  /** Open a picked folder. One that is not a vault yet is asked about first — its name,
+   *  starting as the folder's — before anything in it is read, so a folder picked by
+   *  mistake (a whole drive, a home folder) is one Cancel away. */
   async function pickVault() {
     const dir = await openDialog({ directory: true, title: t("app.pickVaultFolder") });
-    if (typeof dir === "string") await vault.openVault(dir);
+    if (typeof dir !== "string") return;
+    // An inspect that fails (the folder is gone) falls through to the open, which reports it
+    const info = await api.vaultInspect(dir).catch(() => null);
+    if (info && !info.known) {
+      const name = await vaultDialog.ask("open", info.root, info.name);
+      if (name !== null) await vault.openVault(dir, name);
+    } else {
+      await vault.openVault(dir);
+    }
   }
 
   /** Create a vault: the save dialog is used as "choose a location and name a new directory" —
    *  the path it returns usually does not exist, the Rust side only accepts one that does not
    *  exist or is empty, and picking a directory with data by mistake is an error rather than
-   *  silently becoming "open". */
+   *  silently becoming "open". The vault's name is asked next, starting as the new folder's. */
   async function createVaultFlow() {
     const target = await saveDialog({ title: t("app.newVaultTitle"), defaultPath: t("app.newVaultDefaultName") });
-    if (typeof target === "string") await vault.createVault(target);
+    if (typeof target !== "string") return;
+    const name = await vaultDialog.ask("create", target, folderName(target));
+    if (name !== null) await vault.createVault(target, name);
+  }
+
+  async function renameVaultFlow() {
+    if (!vault.root) return;
+    const name = await vaultDialog.ask("rename", vault.root, vault.name);
+    if (name === null) return;
+    try {
+      await vault.renameVault(vault.root, name);
+    } catch (e) {
+      toast.push(String(e), "error");
+    }
   }
 
   // ---- everything is a command ----
@@ -553,6 +580,8 @@
     id: "switch-vault", group: "vault",
     run: () => { paletteMode = "vaults"; },
   });
+  registerCommand({ id: "rename-vault", group: "vault", ...needsVault, run: renameVaultFlow });
+  registerCommand({ id: "manage-vaults", group: "vault", run: () => { vaultManager.open = true; } });
   registerCommand({
     id: "new-note", hotkey: k("Mod+N"), group: "note", ...needsVault,
     run: () => { paletteMode = "new-note"; },
@@ -1453,13 +1482,16 @@
         <div class="recent">
           <span class="recent-label">{t("app.recent")}</span>
           {#each vault.recent as path (path)}
-            <!-- lrm bookends: under the rtl truncation trick, the neutral characters at a path's ends would be reordered by bidi -->
             <button
               class="recent-item"
               onclick={() => vault.openVault(path)}
               oncontextmenu={(e) =>
                 contextMenu.open(e, [{ label: t("fileTree.removeFromRecent"), action: () => void vault.removeRecent(path) }])}
-            >&lrm;{path}&lrm;</button>
+            >
+              <span class="recent-name">{vault.nameOf(path)}</span>
+              <!-- lrm bookends: under the rtl truncation trick, the neutral characters at a path's ends would be reordered by bidi -->
+              <span class="recent-path">&lrm;{path}&lrm;</span>
+            </button>
           {/each}
         </div>
       {/if}
@@ -1631,6 +1663,9 @@
 <HistoryDialog />
 <ScriptGrantDialog />
 <UpdateDialog />
+<!-- The manager before the name dialog: a rename asked from it is drawn on top, and its Escape is heard first -->
+<VaultManager />
+<VaultDialog />
 <SettingsModal />
 
 <style>
@@ -1714,20 +1749,35 @@
     letter-spacing: normal;
   }
   .recent-item {
-    font-size: var(--fs-sm);
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
     padding: 5px 8px;
     border-radius: 5px;
+    text-align: left;
+    min-width: 0;
+  }
+  .recent-item:hover {
+    background: var(--bg-hover);
+  }
+  .recent-name {
+    font-size: var(--fs-sm);
+    color: var(--fg);
+    white-space: nowrap;
+    flex-shrink: 0;
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .recent-path {
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     direction: rtl;
-    text-align: left;
-  }
-  .recent-item:hover {
-    background: var(--bg-hover);
-    color: var(--fg);
+    min-width: 0;
   }
   .error {
     color: var(--danger);

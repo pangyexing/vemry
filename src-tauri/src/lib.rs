@@ -213,8 +213,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::vault_inspect,
             commands::vault_open,
             commands::vault_create,
+            commands::vault_rename,
+            commands::vault_show_folder,
             commands::vault_recent,
             commands::vault_recent_remove,
             commands::vault_last,

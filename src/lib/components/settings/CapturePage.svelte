@@ -9,7 +9,7 @@
   import { CAPTURE_HOTKEY_DEFAULT } from "$lib/stores/prefs.svelte";
   import { openSettings } from "$lib/stores/settingsUi.svelte";
   import { toast } from "$lib/stores/toast.svelte";
-  import { vault, vaultName } from "$lib/stores/vault.svelte";
+  import { vault } from "$lib/stores/vault.svelte";
   import { rowControl, settingsSearch } from "./context";
   import { form } from "./form.svelte";
   import SettingRow from "./SettingRow.svelte";
@@ -340,7 +340,7 @@
         <select {@attach rowControl} value={s.inbox_vault ?? ""} onchange={(e) => void form.set({ inbox_vault: e.currentTarget.value })}>
           <option value="">{t("settings.capture.phoneVaultOpen")}</option>
           {#each inboxVaultChoices as root (root)}
-            <option value={root} title={root}>{vaultName(root)}</option>
+            <option value={root} title={root}>{vault.nameOf(root)}</option>
           {/each}
         </select>
       </SettingRow>

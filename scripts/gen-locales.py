@@ -84,6 +84,14 @@ CMD = {
         ("Switch vault…", "切换知识库…"),
         ("Switch between recently opened vaults", "在最近打开的知识库间切换"),
     ),
+    "rename-vault": (
+        ("Rename vault…", "重命名知识库…"),
+        ("Change the name this vault is shown by; the folder keeps its own", "修改知识库显示的名称，文件夹名不变"),
+    ),
+    "manage-vaults": (
+        ("Manage vaults…", "管理知识库…"),
+        ("Open, rename, show or remove the vaults you have opened", "打开、重命名、显示或移除打开过的知识库"),
+    ),
     "new-note": (("New note", "新建笔记"), None),
     "open-note": (("Open note…", "打开笔记…"), None),
     "search": (("Search all notes", "全文搜索"), None),
@@ -2152,6 +2160,36 @@ add("vaultStore.", {
     "forkedFromAnother": ("Forked from another session", "分叉自另一会话"),
 })
 
+# The one question asked about a folder: the name it is shown by, when an unmarked
+# folder is first opened as a vault, when a vault is created, and on a rename
+add("vaultDialog.", {
+    "openTitle": ("Open as a vault", "作为知识库打开"),
+    "createTitle": ("New vault", "新建知识库"),
+    "renameTitle": ("Rename vault", "重命名知识库"),
+    "name": ("Name", "名称"),
+    "nameHint": ("Leave it empty to use the folder’s name", "留空则使用文件夹名"),
+    "openBody": ("vemry reads every Markdown file in this folder and watches it for changes. A .vemry "
+                 "folder inside marks it as a vault, so this is not asked again.",
+                 "vemry 会读取这个文件夹里的所有 Markdown 文件并监听其中的变化。文件夹里会创建 .vemry "
+                 "作为知识库的标记，以后打开不再询问。"),
+    "open": ("Open", "打开"),
+    "create": ("Create", "新建"),
+    "rename": ("Rename", "重命名"),
+})
+
+# The manage-vaults dialog: every vault on the recent list, with what can be done to each
+add("vaultManager.", {
+    "title": ("Manage vaults", "管理知识库"),
+    "current": ("Current", "当前"),
+    "missing": ("Folder not found", "文件夹不存在"),
+    "open": ("Open", "打开"),
+    "rename": ("Rename…", "重命名…"),
+    "showInFinder": ("Show in Finder", "在访达中显示"),
+    "showInExplorer": ("Show in File Explorer", "在文件资源管理器中显示"),
+    "showInFileManager": ("Show in the file manager", "在文件管理器中显示"),
+    "empty": ("No vaults yet — open a folder or create one", "还没有知识库——打开一个文件夹或新建一个"),
+})
+
 # ---------------------------------------------------------------- editor
 add("filePreview.", {
     "translate": ("Translate", "对照翻译"),
@@ -2556,6 +2594,8 @@ add("ipc.", {
     "dirNotEmpty": ("That folder exists and is not empty — pick another place for a new vault, or open "
                     "the existing one with “Open vault”",
                     "目标目录已存在且不为空——新建请换一个位置，已有的库走「打开知识库」"),
+    "notAVault": ("That folder is not a vault yet — pick it with “Open vault” to make it one",
+                  "这个文件夹还不是知识库——通过「打开知识库」选择它，确认后即可作为知识库打开"),
     "imageFormatUnsupported": ("The system clipboard does not support this image format",
                                "图片格式不受系统剪贴板支持"),
     "copyImageUnsupported": ("Copying images is not supported on this platform yet", "当前平台暂不支持复制图片"),

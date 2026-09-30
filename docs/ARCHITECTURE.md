@@ -604,8 +604,8 @@ keeps its authorship across a toggle — here the toggle is the point.
 The table lives in `.vemry/block-times.json` and is a **cache, not state**:
 without it every block falls back to its note's mtime, which is what the views
 showed before it existed, so deleting the file loses nothing but precision.
-Opening a vault stamps but never saves (a directory merely being browsed must not
-grow a `.vemry`, the rule `Vault::meta_dir` states); the vault's own writes save
+Opening a vault stamps but never saves (`Vault::open` creates no `.vemry`, the rule
+`Vault::meta_dir` states); the vault's own writes save
 and may create the directory, an external change seen by the watcher saves only
 where `.vemry/` already exists, a rename carries the stamps over, and a rescan
 prunes the notes that are gone. A save is throttled to one write in five seconds
@@ -2230,6 +2230,35 @@ replaces the relay's origin and is never persisted.
 
 "The app shell" covered the activity bar, the menu bar and context menus. These came
 later, and each carries one non-obvious constraint.
+
+### Opening a folder as a vault
+
+**Whether a folder is a vault is the user's call, and it is made before anything in
+the folder is read.** Opening walks the whole tree, reads every Markdown file and
+watches all of it, so a folder picked by mistake — a whole drive, a home folder —
+would freeze the app on the first open and weigh on every refresh after it. The mark
+is a `.vemry/` directory: a folder that has one opens directly; one that does not is
+refused by `vault_open` unread, and the picker first asks (`vault_inspect` reads one
+config file and walks nothing; the dialog is `VaultDialog.svelte`). The question is
+the vault's name, starting as the folder's; the answer creates `.vemry/` and opens
+it, and Cancel leaves nothing behind. Creating a vault asks the same question after
+the location is picked. A folder already on the recent list (a vault opened before
+the mark existed) counts as answered and gets the mark on its next open. Since every
+opened folder is then a vault by the user's own word, every open enters the recent
+list.
+
+The name lives in `.vemry/config.json` (`name`), so it travels with the folder. It is
+written only when it differs from the folder's name: a vault that was never named has
+no key, and renaming the folder renames the vault. `rename-vault` changes it later
+(also on the file tree header's context menu), and an empty name goes back to the
+folder's.
+
+`manage-vaults` (`VaultManager.svelte`, also at the foot of the vault switcher) lists
+the recent vaults and the open one: each can be opened, renamed without being opened,
+shown in the system file manager, or removed from the list. The commands that act on
+a vault by path (`vault_rename`, `vault_show_folder`) accept only the open vault or
+one on the recent list, so none of them can reach, or mark, an arbitrary folder. A
+vault whose folder has gone away since is shown as missing, and can only be removed.
 
 ### Tabs
 

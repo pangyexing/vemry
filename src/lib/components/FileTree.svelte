@@ -3,7 +3,7 @@
   import { tick } from "svelte";
   import { api } from "$lib/api";
   import { executeCommand } from "$lib/commands/registry";
-  import { vault, type FileOp, type PrivacyStatus, baseOf, vaultName } from "$lib/stores/vault.svelte";
+  import { vault, type FileOp, type PrivacyStatus, baseOf } from "$lib/stores/vault.svelte";
   import { privacyMenuItem } from "$lib/privacyMenu";
   import { isImeKeydown } from "$lib/ime";
   import { isMac, k } from "$lib/shortcut";
@@ -37,9 +37,8 @@
 
   /** Whether the header's vault switcher dropdown is open */
   let switcher = $state(false);
-  /** The switcher's list: when the current vault did not enter recent because of the
-   *  entry check (a directory of nothing but pdf/txt, say), it still needs a row of its
-   *  own — the tick and the note count hang on it */
+  /** The switcher's list, with the open vault always in it — the tick and the note count
+   *  hang on its row, and it is on the recent list only once the settings write landed */
   const switcherVaults = $derived(
     vault.root && !vault.recent.includes(vault.root) ? [vault.root, ...vault.recent] : vault.recent,
   );
@@ -630,8 +629,13 @@
       contextMenu.close();
       switcher = !switcher;
     }}
+    oncontextmenu={(e) => {
+      e.stopPropagation();
+      switcher = false;
+      contextMenu.open(e, [{ label: t("cmd.rename-vault.title"), action: () => void executeCommand("rename-vault") }]);
+    }}
   >
-    <span class="vault-name">{vaultName(vault.root)}</span>
+    <span class="vault-name">{vault.name}</span>
     <svg class="caret" width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true">
       <path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
@@ -647,14 +651,17 @@
           oncontextmenu={(e) => {
             e.stopPropagation();
             contextMenu.open(e, [
-              // Disabled for the vault that is open: removing it would only have remember add it
-              // back on the next open or note creation, which is a pure no-op
+              ...(path === vault.root
+                ? [{ label: t("cmd.rename-vault.title"), action: () => { switcher = false; void executeCommand("rename-vault"); } }]
+                : []),
+              // Disabled for the vault that is open: removing it would only have the next open
+              // add it back, which is a pure no-op
               { label: t("fileTree.removeFromRecent"), disabled: path === vault.root, action: () => void vault.removeRecent(path) },
             ]);
           }}
         >
           <span class="sw-name">
-            {vaultName(path)}
+            {vault.nameOf(path)}
             {#if path === vault.root}
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                 <path d="M2.5 6.5 L5 9 L9.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
@@ -686,6 +693,16 @@
         }}
       >
         {t("cmd.create-vault.title")}
+      </button>
+      <button
+        role="menuitem"
+        class="sw-item sw-pick"
+        onclick={() => {
+          switcher = false;
+          void executeCommand("manage-vaults");
+        }}
+      >
+        {t("cmd.manage-vaults.title")}
       </button>
     </div>
   {/if}
