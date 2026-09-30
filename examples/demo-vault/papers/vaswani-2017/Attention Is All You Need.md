@@ -7,11 +7,12 @@ tags: [paper]
 
 # Attention Is All You Need
 
-Vaswani et al., 2017. The source is [[papers/vaswani-2017/source]], one paragraph per block; each chapter embeds the paragraphs it rests on and explains one idea. Reading it to understand the mechanism, not to reproduce it.
+Vaswani et al., 2017. The source is [[papers/vaswani-2017/source]], one paragraph per block; each chapter embeds the paragraphs it rests on and explains one idea. Reading it to understand the mechanism well enough to present it, and to rebuild the attention block in [[Reproducing the Transformer]].
 
 ## Known
 
-- Nothing in this vault yet — this is the first paper here, so the chapters start from zero
+- [[Softmax]]: what it does to a row of scores, and why it hardens when they grow
+- [[Encoder and decoder]]: the shape of a sequence-to-sequence model before this paper
 
 ## To learn
 

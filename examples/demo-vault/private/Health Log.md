@@ -5,11 +5,10 @@ private: true
 
 # Health Log
 
-The raw log for [[Nap Experiment]]: one row per day, filled in the evening.
+| day | slept | ran | note |
+|---|---|---|---|
+| 2026-09-27 | 7h20 | 5 km | |
+| 2026-09-28 | 6h05 | — | up late with the Jain & Wallace paper |
+| 2026-09-29 | 7h40 | 5 km | knee fine again |
 
-| day | kind | slept | nap | evening cards |
-|---|---|---|---|---|
-| 2026-09-15 | control | 6h50 | — | 7 of 9 |
-| 2026-09-16 | nap | 7h10 | 22 min | 8 of 9 |
-
-Woke at 06:40 both days. Coffee only before noon, on both kinds of day.
+One late night a week at most. Coffee only before noon.

@@ -3,7 +3,7 @@
 
 ## In one sentence
 
-Every query scores every key with a dot product, the scores are shrunk by $\sqrt{d_k}$ so the softmax stays soft, and the resulting weights mix the values.
+Every query scores every key with a dot product; the scores are divided by $\sqrt{d_k}$ so the [[Softmax|softmax]] stays soft, and the weights mix the values.
 
 ## From the paper
 
@@ -12,6 +12,12 @@ Every query scores every key with a dot product, the scores are shrunk by $\sqrt
 ![[papers/vaswani-2017/source#^s321p2]]
 
 ![[papers/vaswani-2017/source#^s321p3]]
+
+![[papers/vaswani-2017/source#^s321fn4]]
+
+![[papers/vaswani-2017/source#^s321fn4]]
+
+![[papers/vaswani-2017/source#^s321fn4]]
 
 ## Notation
 
@@ -63,4 +69,4 @@ What happens to the gradient of the softmax when $d_k$ grows and the scores are 
 
 ## In my words
 
-Each query is compared with every key by a dot product, one score per key. The scores are divided by $\sqrt{d_k}$ so that the numbers do not overflow when the vectors are long, then a softmax turns them into weights that sum to one, and the output is the keys added up with those weights.
+The bigger $d_k$ gets, the bigger the dot products, and the softmax ends up where its gradients vanish; so we divide by $d_k$ to shrink the scores back.

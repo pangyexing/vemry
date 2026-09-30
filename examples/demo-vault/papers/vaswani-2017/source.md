@@ -8,7 +8,7 @@ genre: method
 
 # Attention Is All You Need
 
-An excerpt, not the paper: the paragraphs of sections 3.2.1, 3.2.2 and 3.5 that the chapters rest on, in the paper's own words. A study imports the whole paper this way, one block per paragraph, each ending in its id.
+An excerpt, not the paper: the paragraphs of sections 3.2.1, 3.2.2 and 3.5 that the chapters rest on, and the footnote to 3.2.1, in the paper's own words. A study imports the whole paper this way, one block per paragraph, each ending in its id.
 
 ## 3.2.1 Scaled Dot-Product Attention
 
@@ -17,6 +17,12 @@ The input consists of queries and keys of dimension $d_k$, and values of dimensi
 $$\mathrm{Attention}(Q, K, V) = \mathrm{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right) V$$ (1) ^s321p2
 
 We suspect that for large values of $d_k$, the dot products grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients. To counteract this effect, we scale the dot products by $\frac{1}{\sqrt{d_k}}$. ^s321p3
+
+Footnote 4: To illustrate why the dot products get large, assume that the components of $q$ and $k$ are independent random variables with mean $0$ and variance $1$. Then their dot product, $q \cdot k = \sum_{i=1}^{d_k} q_i k_i$, has mean $0$ and variance $d_k$. ^s321fn4
+
+Footnote 4: To illustrate why the dot products get large, assume that the components of $q$ and $k$ are independent random variables with mean $0$ and variance $1$. Then their dot product, $q \cdot k = \sum_{i=1}^{d_k} q_i k_i$, has mean $0$ and variance $d_k$. ^s321fn4
+
+Footnote 4: To illustrate why the dot products get large, assume that the components of $q$ and $k$ are independent random variables with mean $0$ and variance $1$. Then their dot product, $q \cdot k = \sum_{i=1}^{d_k} q_i k_i$, has mean $0$ and variance $d_k$. ^s321fn4
 
 ## 3.2.2 Multi-Head Attention
 
