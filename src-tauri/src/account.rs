@@ -471,6 +471,18 @@ pub async fn refresh(app: &AppHandle) -> Result<AccountStatus, String> {
     Ok(st)
 }
 
+/// A single-use link that opens `page` of the account pages (`/account`,
+/// `/account/subscription`, …) in the browser already signed in as this account,
+/// in the interface language — the browser has no session of its own, and
+/// without the link it would ask for the e-mail code again. The server holds the
+/// link good for two minutes, so it is asked for right before it is opened.
+pub async fn web_link(app: &AppHandle, page: &str) -> Result<String, String> {
+    let body = json!({ "page": page, "lang": i18n::current().tag() });
+    let (_, _, text) = send(app, authed(app, reqwest::Method::POST, "/v1/auth/web-link")?.json(&body)).await?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    v.get("url").and_then(|u| u.as_str()).filter(|u| !u.is_empty()).map(str::to_owned).ok_or_else(|| "no url in the answer".to_string())
+}
+
 fn etag_of(headers: &reqwest::header::HeaderMap) -> Option<String> {
     headers.get(reqwest::header::ETAG).and_then(|v| v.to_str().ok()).map(str::to_owned)
 }
@@ -500,6 +512,11 @@ pub async fn account_logout(app: AppHandle) {
 #[tauri::command]
 pub async fn account_refresh(app: AppHandle) -> Result<AccountStatus, String> {
     refresh(&app).await
+}
+
+#[tauri::command]
+pub async fn account_web_link(app: AppHandle, page: String) -> Result<String, String> {
+    web_link(&app, &page).await
 }
 
 #[cfg(test)]

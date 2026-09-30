@@ -108,10 +108,18 @@
     }
   }
 
-  /** The account page on vemry.app (`portal_url` from the snapshot; `#hash` picks a section), in the system browser. */
-  function openPortal(hash = "") {
-    const base = me?.portal_url || "https://vemry.app/account";
-    void api.urlOpenSystem(hash ? `${base}#${hash}` : base).catch((e) => toast.push(String(e), "error"));
+  /** An account page on vemry.app (`section` is its path under /account), in the system browser: through a
+   *  single-use sign-in link so the browser does not ask for the e-mail code again, else the plain page. */
+  async function openPortal(section = "") {
+    const page = section ? `/account/${section}` : "/account";
+    let url: string;
+    try {
+      url = await api.accountWebLink(page);
+    } catch {
+      const base = me?.portal_url || "https://vemry.app/account";
+      url = section ? `${base}/${section}` : base;
+    }
+    void api.urlOpenSystem(url).catch((e) => toast.push(String(e), "error"));
   }
 </script>
 
@@ -192,7 +200,7 @@
           {:else}
             {t("account.subscriptionOn", { date: day(sub.next_charge_at), price: sub.price ? ` · ${sub.price}` : "" })}
           {/if}
-          <button class="btn small" onclick={() => openPortal("subscription")}>{t("account.manageSubscription")}</button>
+          <button class="btn small" onclick={() => void openPortal("subscription")}>{t("account.manageSubscription")}</button>
         </li>
       {/if}
       {#if me.peak && me.hosted}
@@ -205,7 +213,7 @@
       <small class="warn">{t("account.offlineStale", { days: staleDays })}</small>
     {/if}
     <div class="row">
-      <button class="btn primary" onclick={() => openPortal()}>{t("account.buy")}</button>
+      <button class="btn primary" onclick={() => void openPortal()}>{t("account.buy")}</button>
       <button class="btn" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? t("account.refreshing") : t("account.refresh")}</button>
       <button class="btn" disabled={busy} onclick={() => void signOut()}>{t("account.signOut")}</button>
     </div>

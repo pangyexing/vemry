@@ -201,6 +201,7 @@ Every URL in the output is in `[..](url)` or `<url>` form — a bare URL's
   vault.
 - `account.rs`: the hosted account — `account.json` (0600), sign-in by e-mail code,
   the device token, the `/v1/me` snapshot with its freshness rule, the
+  single-use sign-in link that opens the account pages, the
   `account://changed` event, and `localize_relay_error`, the one place a
   relay error code becomes the user's wording and a 401 clears the token. See
   "Hosted mode" under the network-exit list.
@@ -2164,7 +2165,9 @@ still allowing only http(s)) renders it into `mainView = "reading"`.
    platform and app version, for the account's device list); from then on, while
    signed in, the entitlement snapshot's refresh (`GET /v1/me`, with its ETag: before
    a hosted turn when the snapshot is older than ten minutes, after every hosted turn,
-   and when the account panel asks) and the phone inbox (`src-tauri/src/inbox.rs`:
+   and when the account panel asks), a sign-in link for the account pages
+   (`POST /v1/auth/web-link`, when the user opens one from the account panel) and
+   the phone inbox (`src-tauri/src/inbox.rs`:
    one long-poll of `GET /v1/inbox/pull` held open for as long as the app runs, the
    acks of the items written, and pairing and the list of paired phones when the
    settings page asks — see "The phone inbox"); and, in hosted mode, the model
@@ -2195,7 +2198,10 @@ The account lives in `account.json` (app-config directory, mode 0600, separate f
 settings.json so an exported settings file never carries the token): the token, the
 last `/v1/me` snapshot, when it was fetched and its ETag. Sign-in is an e-mail
 address and a 6-digit code — no password, no deep link, the same flow on the desktop
-and on the account page. **Freshness** is the offline rule: a snapshot fetched
+and on the account page. A signed-in app does not send its user through the code a
+second time: opening the account pages from the account panel first asks the service
+for a single-use link (two minutes, dead with the device) that signs the browser in
+and carries the interface language; if that fails, the plain page opens. **Freshness** is the offline rule: a snapshot fetched
 within ten minutes is fresh; within seven days it is stale and still applies (a
 machine that cannot reach the service keeps its Pro); past that it is expired and the
 account counts as free and not hosted until a refresh succeeds. A hosted turn

@@ -1361,6 +1361,8 @@ export const api = {
   accountLogout: () => invoke<void>("account_logout"),
   /** Fetch the entitlement snapshot again (a 304 when nothing changed). */
   accountRefresh: () => invoke<AccountStatus>("account_refresh"),
+  /** A single-use link (two minutes) that opens `page` of the account pages in the browser already signed in. */
+  accountWebLink: (page: string) => invoke<string>("account_web_link", { page }),
   // ---- the phone inbox (inbox.rs): items arrive on onInboxItems; the main window lands them and acks ----
   /** The main window wrote these items into the vault (the ledger first, then the service); `target` is the
    *  spot's label (spotLabel), for the settings page's "last one filed". */
