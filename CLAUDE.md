@@ -23,6 +23,7 @@ cargo clippy --workspace -- -D warnings # CI enforces zero warnings
 pnpm check                # check:ink (contrast of every text ink, both themes; no data-theme selectors), then svelte-check (also catches missing catalog keys)
 pnpm build                # the frontend builds
 python3 scripts/gen-locales.py   # regenerate locales/*.json; CI fails if a committed catalog differs from the generator's output
+python3 scripts/gen-notices.py   # after any Cargo.lock / pnpm-lock.yaml change: regenerate THIRD-PARTY-NOTICES.txt (bundled into the app); CI diffs it the same way
 
 # after touching the agent layer, run one real end-to-end turn (crates/vemry-agent/tests/live.rs, --ignored by default)
 VEMRY_TEST_API_KEY=sk-... cargo test -p vemry-agent --test live -- --ignored

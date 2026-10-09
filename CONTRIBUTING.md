@@ -61,6 +61,7 @@ cargo test --workspace   # Rust tests (core/agent/script carry the highest densi
 cargo clippy --workspace -- -D warnings   # zero warnings, as CI enforces
 cargo test -p vemry-agent --test evals   # offline agent evals: each tests/evals/*.json replays scripted model output through the real runner
 python3 scripts/gen-locales.py           # regenerate locales/*.json; CI fails if a committed catalog differs from the generator's output
+python3 scripts/gen-notices.py           # after a dependency change: regenerate THIRD-PARTY-NOTICES.txt; CI fails if the committed file differs
 pnpm check               # the ink check (check:ink: every text ink ≥ its contrast on every ground, both themes; no data-theme selectors), then svelte-check clean (also the gatekeeper for missing catalog keys)
 pnpm build               # the frontend builds
 ```

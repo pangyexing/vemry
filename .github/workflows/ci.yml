@@ -56,9 +56,13 @@ jobs:
         with:
           node-version: 22
       - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install
       # locales/*.json are generated; a hand edit to a committed catalog fails here
       - run: python3 scripts/gen-locales.py && git diff --exit-code -- locales/
+      # THIRD-PARTY-NOTICES.txt is generated from Cargo.lock and the installed packages;
+      # a dependency change that did not rerun the generator fails here
+      - run: python3 scripts/gen-notices.py && git diff --exit-code -- THIRD-PARTY-NOTICES.txt
       # every text ink on every ground it is drawn on, both themes; no data-theme selectors
       # (pnpm check runs it too; a step of its own names what failed)
       - run: pnpm check:ink
