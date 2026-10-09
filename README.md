@@ -2,12 +2,13 @@
 
 # vemry
 
-**Understand a paper, and keep what you learned.**
+**Turn what you read into what you know.**
 
-A local-first AI study workbench. Papers, pages and PDFs come in as plain Markdown
-on your own disk, and the AI that works in that folder sees only what you allow.
+A local-first AI study workbench. Capture a thought, clip a page or a paper, read it
+beside a translation, study it chapter by chapter and review it as cards. The AI does
+the chores; the reading and thinking stay yours, in plain Markdown on your computer.
 
-[**Download**](https://github.com/pangyexing/vemry/releases) · [Get started](#get-started) · [Docs](#learn-more) · [Discussions](https://github.com/pangyexing/vemry/discussions)
+[**Download**](https://vemry.app/download) · [Website](https://vemry.app) · [Get started](#get-started) · [Docs](#learn-more) · [Discussions](https://github.com/pangyexing/vemry/discussions)
 
 [![Release](https://img.shields.io/github/v/release/pangyexing/vemry?include_prereleases&sort=semver)](https://github.com/pangyexing/vemry/releases)
 [![CI](https://github.com/pangyexing/vemry/actions/workflows/ci.yml/badge.svg)](https://github.com/pangyexing/vemry/actions/workflows/ci.yml)
@@ -22,16 +23,18 @@ on your own disk, and the AI that works in that folder sees only what you allow.
 
 <br>
 
-**Your notes are files.** Plain Markdown in a folder you chose. No database, no
-account, no sync service. Open the folder in any editor and you see exactly what
-vemry sees.
+**Your notes are files.** Plain Markdown in a folder you chose, with no database and
+no format of its own. Open the folder in any editor and you see exactly what vemry
+sees; if you ever switch tools, you take the folder with you.
 
 **The AI asks before it writes.** Every edit stops at a diff you allow, deny, or
-edit and then apply. What you mark private, the model never sees.
+edit and then apply. What you mark private, the model never sees, and it cannot
+tell that anything is missing.
 
-**It works offline.** Nothing reaches the network unless you did something that
-needs it. No telemetry, no account, and without an API key it is still a complete
-local editor.
+**It works offline.** No sign-up, no telemetry, and nothing reaches the network
+unless you did something that needs it. Without an API key it is still a complete
+local editor; connect a model that runs on your own computer and even the AI stays
+on your machine.
 
 ## What vemry is
 
@@ -44,49 +47,93 @@ It is not a cloud service, and it is not a chat window with a notes folder
 attached. The AI is one participant in your vault, with a permission gate in front
 of every write and a privacy boundary it cannot see across.
 
-**Fuss less. Understand more. Remember longer.** Finish a paper and explain it in
-your own words. Where you drift, you see it on the spot. When it starts to fade, a
-card brings it back. The tedious part, clipping to Markdown, translating side by
-side, filing, tracing sources, making the cards, you never do by hand, and every
-write still waits at a diff for your yes.
+Finish a paper and explain it in your own words. Where you drift, you see it on the
+spot. When it starts to fade, a card brings it back. The tedious part — clipping to
+Markdown, translating side by side, filing, tracing sources, making the cards — you
+never do by hand, and every write still waits at a diff for your yes.
 
 ## What you can do
 
-### Read a paper chapter by chapter
+### Write without leaving the line
 
-Paste an arXiv link, drop in a PDF or point at a clipped page and pick *Study a
-paper*. The source arrives as a note you can move around in — every section,
-equation, figure and table its own block — and the reading unfolds one chapter at a
-time. Each chapter starts from what your vault already knew about the idea, marks
-what is new, and links every sentence to the passage it came from.
+Type `/` at the start of a line and headings, tasks, tables, code and callouts are in
+one menu that narrows as you type. ⌘P opens the command palette, where each of the
+app's eighty-odd commands, and every command your scripts add, can be found by name.
+Rich text copied from the web pastes in as clean Markdown; however you write it,
+what is saved is always standard Markdown.
 
-### Find out whether you actually got it
+| Key | Does |
+|---|---|
+| `/` | Insert any kind of block |
+| `[[` | Link a note, or one of its sections or blocks |
+| `@` | Dates, due dates, priorities and references |
+| ⌘P | Command palette |
+| ⌘O | Open a note by title |
+| ⌘⇧F | Search every note |
 
-Explain a chapter back in your own words and see exactly where your account drifts
-from the paper. Want to try the idea? Ask for an experiment and a runnable block
-appears in the chapter. What you did not fully get becomes flashcards, and the
-Review view brings them back just before you would have forgotten.
+### Catch the thought before it's gone
+
+Whatever app you are in, press ⌥⇧Space and the capture box drops in. Type a line,
+press Enter, and it is in your inbox without pulling you out of what you were doing.
+When captures pile up, *File the inbox* sorts each one into the note where it
+belongs.
+
+Pair your phone by scanning a code, and what occurs to you on the go lands in the
+same inbox: within a second if your computer is on, or the next time you open it if
+not. Phone capture needs a vemry account (free); your captures travel through it to
+your computer.
 
 ### Read in two languages at once
 
-Open a note, a web page or a PDF beside its translation, aligned paragraph by
-paragraph. On a PDF, a translated paragraph lights up the passage it came from on
-the page.
+Open a page in the built-in browser and press *Translate*: each paragraph's
+translation appears beside it as you read. For a PDF, press ⌘⇧T: the page on the
+left, its translation on the right, each paragraph level with its original. Click a
+translation and the passage it came from lights up, so checking it takes one glance.
 
-### Clip the web without leaving
+Formulas stay as they are, and captions and references are never sent for
+translation. Notes can be read side by side too, interleaved or as translation only,
+and a translation can be saved as a note of its own. Translate into English,
+Chinese, Japanese, Korean, French, German, Spanish and more.
 
-A built-in browser opens next to your notes. Clip a page or a selection and it
-lands in a note with its source and its images saved into your vault; ad blocking
-is built in. A thought that does not belong anywhere yet goes to an inbox note
-with one palette command.
+### Clip anything worth keeping
+
+Press ⌘⇧S in the built-in browser and the page becomes a note in `clips/`, with its
+text, its images, its link and the date. The images are saved into your own folder,
+so the note outlives the page. Want only one passage? Select it and press
+*Selection → note*, and it lands in the note you are writing, with its source.
+
+Papers are easier still: paste an arXiv link and every section, equation, figure and
+table becomes a block you can cite on its own. On macOS, the built-in browser also
+blocks ads and trackers.
+
+### Understand it chapter by chapter
+
+To read a paper, pick *Study a paper* and paste the link, or drop in a PDF. The source
+comes in as blocks and is split into chapters; each chapter starts from what your
+vault already knows, then moves on to what is new, with the passages it draws on
+embedded alongside.
+
+Finish a chapter and retell it in your own words: you see what you got right, what
+you left out and which symbol you mixed up, each point linked to the paper. Want to
+try the idea? Ask for an experiment and a runnable block appears in the chapter; it
+runs only when you press Run. Everyday reading works the same way: open an article
+in the Reader, ask as you go, and every answer names its source.
+
+### See it again before it fades
+
+Cards come only from the gaps in your retelling. The Review view brings them back as
+they start to fade: press *Good* if you remembered and the next review comes later,
+or *Again* if you didn't. The cards and their schedule live in your notes, as plain
+Markdown.
 
 ### One vault, seen by the question you are asking
 
 What is due today: Agenda. Where each thing stands: Board. What happened this
 month: Timeline. How your notes connect: Graph. Which claims have evidence behind
 them and which do not: Claims and Evidence. Which cards are due: Review. None of
-them stores anything of its own; each is a query over the one index, and a
-`vemry-query` fence inside a note renders the same query in place.
+them stores anything of its own; each is a query over the one index, so ticking off a
+task in any of them changes that line in the file, and a `vemry-query` fence inside
+a note renders the same query in place.
 
 ![Board view — every task in the vault, by state](docs/assets/kanban.png)
 
@@ -101,12 +148,12 @@ note as a block. Press `@` to hand the AI a note, a folder or the current select
 ### Hand over the chores, on your terms
 
 Sixteen built-in skills cover the work around reading: tidy a folder, file the
-inbox, restructure a note, turn meeting notes into actions, draft the weekly report
-from the week's notes for you to finish, close the day. The chores go to the AI; the reading, the
-retelling and the decisions stay with you. Add your own as a Markdown file in
-`.vemry/skills/`. Every write is a diff, a whole
-turn's writes can be undone, and every session is an audit log you can replay in
-the Session Replay view.
+inbox, restructure a note, turn meeting notes into actions, start and close the day,
+draft the weekly report from the week's notes for you to finish. The chores go to
+the AI; the reading, the retelling and the decisions stay with you. Add your own as
+a Markdown file in `.vemry/skills/`. Every write is a diff, a whole turn's writes can
+be undone, and every session is an audit log you can replay in the Session Replay
+view.
 
 ![The write gate — the agent proposed this edit; nothing reaches disk until you answer](docs/assets/permission-diff.png)
 
@@ -114,14 +161,22 @@ the Session Replay view.
 
 Drop a `.js` file into `.vemry/scripts/` and it is live on save. Scripts register
 palette commands, subscribe to vault events and run on a cron, inside a sandbox
-with no filesystem, no network and no processes. Every capability in the app, yours
-included, is in one searchable palette (⌘P).
+with no filesystem, no network and no processes.
 
 ## Get started
 
-1. **Install.** Download the `.dmg`, `.exe`, `.AppImage`, `.deb` or `.rpm` from
-   [Releases](https://github.com/pangyexing/vemry/releases), or
+1. **Install.** Download vemry for your platform from
+   [vemry.app/download](https://vemry.app/download): a `.dmg` for Apple silicon or
+   Intel, an `.exe` installer for Windows, an `.AppImage` or a `.deb` for Linux.
+   Every file, with its checksum, is also on
+   [Releases](https://github.com/pangyexing/vemry/releases); or
    [build from source](#build-from-source).
+   - macOS 10.15 or later. Signed and notarised by Apple: it opens like any other app.
+   - Windows 10 or later; the installer adds the WebView2 runtime if it is missing.
+     The installer isn't signed yet: if SmartScreen stops it, choose *More info*,
+     then *Run anyway*.
+   - Linux with WebKitGTK 4.1, such as Ubuntu 22.04 or later. Make the AppImage
+     executable before its first run: `chmod +x vemry_*.AppImage`.
 2. **Open the example vault.** Clone this repo, then ⌘P → *Open another vault…* →
    `examples/demo-vault`. It is one learner's week in September 2026, the same story
    the website tells: a paper read in chapters, with two experiments you can run and
@@ -129,23 +184,26 @@ included, is in one searchable palette (⌘P).
    with its claims and evidence; a page clipped from the web and a handout to read
    in translation; an inbox of captures from a desktop and a phone; a journal, three
    recorded AI sessions and a private folder. Its *Start Here* note is the tour.
-3. **Add an AI key** (optional). Settings → API key. Any OpenAI-compatible
-   endpoint works, including a local Ollama; the mainland default is Zhipu, whose
-   `glm-4.7-flash` is free and supports tool calls. Or switch the provider to *vemry
-   hosted* and sign in with your e-mail address: the models come with the
-   account, and a request goes through vemry's relay to the model vendor
-   unchanged.
+3. **Choose how the AI runs** (optional). Settings → AI → Provider. With *Bring your
+   own key*, paste a key from any OpenAI-compatible provider: the default endpoint is
+   Zhipu, whose `glm-4.7-flash` is free and supports tool calls, and the *Ollama,
+   local* preset points it at a model on your own machine. With *vemry hosted*, sign
+   in with your e-mail address and there is no key to set up: a new account's first
+   sign-in from the desktop app comes with 600 credits to try, valid for 14 days, no
+   card needed, and after that hosted AI comes with [Pro](#free-and-pro). Either way,
+   a request reaches the model vendor unchanged.
 4. **Study a paper.** Open the AI panel, pick *Study a paper* and paste an arXiv
    link, or drop in a PDF. The source note, the chapters and the cards arrive as
    diffs you approve.
 
 That is the whole loop. Everything it made is a Markdown file in your folder.
 
-On Windows and Linux, read ⌘ as Ctrl.
+On Windows and Linux, read ⌘ as Ctrl and ⌥ as Alt.
 
 ### First things to try
 
-Open the AI panel (⌘J from anywhere) and type one of these:
+Press ⌥⇧Space in any app and write down the first thing on your mind. Then open the
+AI panel (⌘J from anywhere) and type one of these:
 
 ```
 Study this: https://arxiv.org/abs/1706.03762
@@ -164,20 +222,43 @@ notes. It will not see the folder, and it will not know that anything is missing
 **Private means absent.** Mark a folder, a note or a single `> [!private]` block
 private and the agent never reads it, never writes to it and never sees it in a
 prompt. This is enforced in Rust at every read and write choke point, and a private
-file returns byte-for-byte the same error as a file that was never there.
+file returns byte-for-byte the same error as a file that was never there. Using a
+cloud model? Draw your privacy zones first.
 
 **Every write stops at a diff.** Allow it, deny it, or edit it and then apply. The
 gate lives in the same Rust layer that owns file access, so nothing in the interface
 can step around it.
 
-**Five network exits, each one triggered by you.** The LLM channel, a page you
-opened, the reader's image proxy, a blocking-rule download and an update check.
-They are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and everything
-else works with the network off.
+**Five network exits, each one triggered by you, and a sixth only if you sign in.**
+Without an account, vemry reaches the network for the AI endpoint you configured, a
+web page you opened, images in the Reader, ad-blocking rules you subscribed to and
+an update check; with your own key, a request goes straight from your computer to
+the vendor you chose. Signing in adds the vemry account: its relay for hosted AI,
+which forwards each request unchanged and stores neither prompts nor answers, and
+the phone inbox. The exits are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+what the server keeps is in the [privacy policy](https://vemry.app/privacy), and
+everything else works with the network off.
 
 **Arbitrary code never runs by itself.** Opening a note is not running it. Every
 execution starts from something you did, and the agent has no tool that can run
 code at all.
+
+## Free and Pro
+
+vemry is free to use. Pro is for when you would rather not set up an API key.
+
+| Plan | Price | What it includes |
+|---|---|---|
+| Free | $0 | The editor, every view, the built-in browser and clipping. Add your own API key and you get the full AI as well, every built-in skill included. |
+| Pro | $5 / month, or $50 / year | No key to set up: 3,000 credits of vemry hosted AI a month, enough for about 30 close readings. |
+| Founder | $4 / month, or $40 / year | For the first 500 accounts: Pro at 20% off for life, with exactly the same credits and features. |
+
+Pro and Founder accounts can add a credit pack: $10 for 6,000 credits that never
+expire. Hosted credit is charged per call at the model vendor's official dollar
+price × 1.3, a multiplier fixed for two years, and the account page lists every
+call so you can check it against the official price yourself. If you stop paying,
+nothing happens to your notes: they were always Markdown files in your folder.
+Full pricing and questions: [vemry.app/pricing](https://vemry.app/pricing).
 
 ## The Markdown dialect
 
@@ -202,11 +283,15 @@ complete dialect and each fallback: [docs/SYNTAX.md](docs/SYNTAX.md).
 
 ## Status
 
-As of September 2026, working on `main`: the editor and its live preview, the
-Agenda, Board, Timeline, Graph, Claims, Evidence and Review views, the block index
-and query API, the agent with its tools behind the write gate, privacy zones, the scripting sandbox, the built-in browser with clipping,
-side-by-side translation of a note, a web page or a PDF, and an interface in English
-and Chinese (Japanese, Korean, French, German and Spanish follow as their translations land).
+The first release, 1.0.0, is on its way ([changelog](https://vemry.app/changelog)).
+It holds everything working on `main` as of September 2026: the editor and its live
+preview, quick capture from any app and from a paired phone, the Agenda, Board,
+Timeline, Graph, Claims, Evidence, Review and Session Replay views, the block index
+and query API, the agent with its tools behind the write gate, privacy zones, the
+scripting sandbox, the built-in browser with clipping, side-by-side translation of a
+note, a web page or a PDF, the optional vemry account with hosted AI credit, and an
+interface in English and Chinese (Japanese, Korean, French, German and Spanish
+follow as their translations land).
 
 Next, in the order the study loop needs them: PDF annotation that lands in the
 source note, reference management on source notes (DOI, BibTeX export), and reading
@@ -217,6 +302,8 @@ window. The seam each one grows from is listed in
 
 ## Learn more
 
+- [vemry.app](https://vemry.app) — the website: each capability shown at work, the
+  downloads, pricing and the changelog
 - [docs/SYNTAX.md](docs/SYNTAX.md) — the Markdown dialect and how it degrades
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the layers, the flows, the security
   boundaries, and the network-exit list
@@ -229,6 +316,8 @@ window. The seam each one grows from is listed in
 | You want to… | Go to |
 |---|---|
 | Report a bug or ask a question | [Discussions](https://github.com/pangyexing/vemry/discussions) |
+| Ask about your account, a payment or a refund | [support@vemry.app](mailto:support@vemry.app) |
+| Report a security issue | [security@vemry.app](mailto:security@vemry.app) |
 | Work on something in vemry | Say so in Discussions first; then [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Automate your own vault | A script in `.vemry/scripts/` — vemry itself needs no change |
 
