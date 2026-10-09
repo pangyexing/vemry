@@ -416,6 +416,11 @@ CMD = {
         ("Check for updates", "检查更新"),
         ("Look for a newer version and offer to install it", "查询新版本，有则提示安装"),
     ),
+    "open-licenses": (
+        ("Open-source licenses", "开源许可"),
+        ("The licenses of the third-party software vemry is built from, in a text viewer",
+         "用文本查看器打开 vemry 所用第三方软件的许可声明"),
+    ),
     "clear-agent": (
         ("New AI session", "新建 AI 会话"),
         ("Archive the current conversation and start with a clean context",
@@ -580,6 +585,7 @@ add("menu.", {
     "trayOpen": ("Open vemry", "打开 vemry"),
     "trayQuit": ("Quit vemry", "退出 vemry"),
     "helpGithub": ("vemry Help (GitHub)", "vemry 帮助（GitHub）"),
+    "licenses": ("Open-Source Licenses", "开源许可"),
 })
 
 # ---------------------------------------------------------------- settings: language
@@ -1847,6 +1853,11 @@ add("settings.", {
     "autoCheck": ("Check for updates at launch", "启动时检查更新"),
     "autoCheckHint": ("Speaks up only for a new version and asks before installing. Off, it goes online only when you check.",
                       "有新版才提示，安装前会问你。关闭时只在你点「检查更新」时联网。"),
+    "about": ("About", "关于"),
+    "licenses": ("Open-source licenses", "开源许可"),
+    "licensesHint": ("vemry is under FSL-1.1-ALv2; the third-party software in it keeps its own licenses.",
+                     "vemry 采用 FSL-1.1-ALv2，其中的第三方软件沿用各自的许可。"),
+    "licensesOpen": ("View", "查看"),
     "adblock": ("Block ads and trackers", "拦截广告与跟踪器"),
     "adblockHint": ("Pages in the built-in browser; macOS only.", "作用于内置浏览器里的网页，仅 macOS。"),
     "adblockActive": ("Active · {n} rules", "已生效 · {n} 条规则"),

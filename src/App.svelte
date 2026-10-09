@@ -1357,6 +1357,7 @@
   registerCommand({ id: "settings-account", group: "system", run: () => openSettings("account") });
   // The whole flow (checking, the version found, download, restart) runs in the update dialog
   registerCommand({ id: "check-updates", group: "system", run: () => void updater.check(true) });
+  registerCommand({ id: "open-licenses", group: "system", run: () => void api.licensesOpen().catch((e) => toast.push(String(e), "error")) });
   registerCommand({
     // The old "clear the AI conversation" only cleared the timeline and not the model context —
     // the meaning is now a new session: the UI and Rust's history change gear together, and the

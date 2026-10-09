@@ -1260,6 +1260,8 @@ export const api = {
   pathDelete: (path: string) => invoke<void>("path_delete", { path }),
   fileOpenSystem: (path: string) => invoke<void>("file_open_system", { path }),
   urlOpenSystem: (url: string) => invoke<void>("url_open_system", { url }),
+  /** The bundled THIRD-PARTY-NOTICES.txt, in the OS default text viewer. */
+  licensesOpen: () => invoke<void>("licenses_open"),
   /** The single link-opening funnel: it branches by the setting into the built-in or the system browser; invert (⌘click) inverts it. */
   urlOpen: (url: string, invert = false, focus = true) => invoke<void>("url_open", { url, invert, focus }),
   /** Navigate the active tab, or open a new one (newTab, or none open yet); returns the tab's label. */

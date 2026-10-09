@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { executeCommand } from "$lib/commands/registry";
   import { LANGS, langName, t, type LangSetting } from "$lib/i18n/i18n.svelte";
   import { updater } from "$lib/stores/updater.svelte";
   import { rowControl } from "./context";
@@ -52,5 +53,10 @@
       {/if}
     </SettingRow>
     <SettingSwitch id="general.autoCheck" field="updater_auto_check" />
+  </SettingSection>
+  <SettingSection title={t("settings.about")}>
+    <SettingRow id="general.licenses">
+      <button {@attach rowControl} class="btn small" onclick={() => void executeCommand("open-licenses")}>{t("settings.licensesOpen")}</button>
+    </SettingRow>
   </SettingSection>
 {/if}

@@ -252,6 +252,7 @@ pub fn run() {
             commands::path_delete,
             commands::file_open_system,
             commands::url_open_system,
+            commands::licenses_open,
             commands::resolve_link,
             commands::resolve_ref,
             commands::block_ensure_id,

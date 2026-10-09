@@ -198,7 +198,10 @@ mod imp {
             .item(&item_key(app, lang, CLOSE_WINDOW, "menu.closeWindow", "Cmd+W")?)
             .build()?;
 
-        let help = SubmenuBuilder::new(app, i18n::t(lang, "menu.help")).item(&item(app, lang, HELP_GITHUB, "menu.helpGithub")?).build()?;
+        let help = SubmenuBuilder::new(app, i18n::t(lang, "menu.help"))
+            .item(&item(app, lang, HELP_GITHUB, "menu.helpGithub")?)
+            .item(&item(app, lang, "open-licenses", "menu.licenses")?)
+            .build()?;
 
         let menu = MenuBuilder::new(app)
             .items(&[&app_menu, &file, &edit, &view, &research, &window, &help])
