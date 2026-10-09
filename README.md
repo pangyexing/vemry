@@ -342,6 +342,6 @@ installing always need your confirmation, and the startup check is off by defaul
 [Functional Source License 1.1, Apache-2.0 future license](LICENSE) (FSL-1.1-ALv2).
 
 You can use it, build it, modify it and deploy it inside your company. The one
-thing you may not do is offer it, or something substantially like it, as a
-competing commercial product or service. Two years after each version is released,
-that version becomes Apache-2.0 automatically.
+thing you may not do is offer it, or a modified version of it, in a commercial
+product or service that competes with vemry. Two years after each version is
+released, that version becomes Apache-2.0 automatically.
