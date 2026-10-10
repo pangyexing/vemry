@@ -1,10 +1,13 @@
 # Security
 
-vemry is a local-first desktop application: it has no server, no account and no
-telemetry. The security-relevant surface is the code that decides what the AI
-model is allowed to read and write — the privacy zones in `crates/vemry-core`,
-the permission gate in `crates/vemry-agent`, the script sandbox in
-`crates/vemry-script` — plus the update pipeline and the embedded browser.
+vemry is a local-first desktop application: it works without a server or an
+account, and has no telemetry. The security-relevant surface is the code that
+decides what the AI model is allowed to read and write — the privacy zones in
+`crates/vemry-core`, the permission gate in `crates/vemry-agent`, the script
+sandbox in `crates/vemry-script` — plus the update pipeline, the embedded
+browser, and the client side of the optional vemry account (sign-in, the device
+token, the hosted relay and the phone inbox, in `src-tauri/src/account.rs` and
+`src-tauri/src/inbox.rs`).
 
 ## Reporting
 
