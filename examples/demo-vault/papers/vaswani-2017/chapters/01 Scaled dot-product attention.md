@@ -15,10 +15,6 @@ Every query scores every key with a dot product; the scores are divided by $\sqr
 
 ![[papers/vaswani-2017/source#^s321fn4]]
 
-![[papers/vaswani-2017/source#^s321fn4]]
-
-![[papers/vaswani-2017/source#^s321fn4]]
-
 ## Notation
 
 | symbol | meaning |
