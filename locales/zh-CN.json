@@ -930,7 +930,7 @@
   "langName.zh-CN": "简体中文",
   "memoryFile.header": "# VEMRY.md — 本知识库的约定\n\n这份文件会注入 AI agent 的 system prompt，是它理解这个知识库的「宪法」。",
   "memoryFile.section": "约定",
-  "memoryFile.template": "用你自己的话描述组织结构与偏好，例如：## 结构\n- `inbox.md`：速记收集箱，未整理的想法先进这里\n- `projects/`：进行中的项目，每个项目一个 MOC 笔记\n- `daily/`：日记\n\n## 约定\n- 标签体系：#idea #reading #todo\n- 建链原则：概念第一次出现时建 [[链接]]\n- AI 行为偏好：修改笔记前先说明意图；综述放在 `reviews/` 目录\n\n## 资料组织约定\n- 落点：剪藏进 `clips/`，附件进 `attachments/<笔记路径>/`，每个项目文件夹一篇枢纽笔记\n- 命名：笔记按主题命名，日期写 YYYY-MM-DD，文件名不带版本号\n- 属于某个项目的笔记带 `project:`，整理时补齐\n- 迭代是块上的字段：任务与需求写 `iteration:: v0.8`，看板按它分组就是迭代视图\n",
+  "memoryFile.template": "用你自己的话描述组织结构与偏好，例如：\n\n## 结构\n- `inbox.md`：速记收集箱，未整理的想法先进这里\n- `projects/`：进行中的项目，每个项目一个 MOC 笔记\n- `daily/`：日记\n\n## 约定\n- 标签体系：#idea #reading #todo\n- 建链原则：概念第一次出现时建 [[链接]]\n- AI 行为偏好：修改笔记前先说明意图；综述放在 `reviews/` 目录\n\n## 资料组织约定\n- 落点：剪藏进 `clips/`，附件进 `attachments/<笔记路径>/`，每个项目文件夹一篇枢纽笔记\n- 命名：笔记按主题命名，日期写 YYYY-MM-DD，文件名不带版本号\n- 属于某个项目的笔记带 `project:`，整理时补齐\n- 迭代是块上的字段：任务与需求写 `iteration:: v0.8`，看板按它分组就是迭代视图\n",
   "memoryPrompt.draft": "请为这个 vault 起草 VEMRY.md——它是注入你 system prompt 的「宪法」，以后每轮对话你都会先读到它。先调研再动笔：浏览目录结构与标签的实际用法，抽样读几篇有代表性的笔记，归纳命名、链接与组织的真实习惯（不确定的不要编造）。然后用 write_note 创建 VEMRY.md，要求：- 简短（50 行以内），只写约定与偏好；文件夹清单和标签统计已自动注入 system prompt，不要重复罗列\n- 建议分节：结构（各目录/关键笔记的用途）、约定（标签、链接、命名习惯）、AI 行为偏好\n- 拿不准的习惯，在文末「待确认」一节用问句列出，我来补充",
   "memoryPrompt.review": "请审阅 VEMRY.md：先读它，再用工具对照 vault 现状抽查——描述是否过时、有没有新形成的习惯值得补记、有没有冗长可精简的内容。需要修改就用 edit_note 提出（保持简短）；没有问题就说明它仍然准确。",
   "menu.checkUpdates": "检查更新…",

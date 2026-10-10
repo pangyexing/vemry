@@ -2538,7 +2538,7 @@ add("memoryFile.", {
         "- Naming: notes by topic, dates as YYYY-MM-DD, no version numbers in file names\n"
         "- Every note carries `project:` when it belongs to one; tidy-ups fill it in\n"
         "- Iterations are a field on the block: `iteration:: v0.8` on tasks and requirements; the board grouped by it is the iteration view\n",
-        "用你自己的话描述组织结构与偏好，例如："
+        "用你自己的话描述组织结构与偏好，例如：\n\n"
         "## 结构\n"
         "- `inbox.md`：速记收集箱，未整理的想法先进这里\n"
         "- `projects/`：进行中的项目，每个项目一个 MOC 笔记\n"
