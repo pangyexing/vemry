@@ -938,8 +938,11 @@ mod tests {
         assert_eq!((l.landed.len(), l.already.len(), l.failed.len()), (2, 0, 0));
         assert_eq!(l.target, "inbox.md");
         let inbox = std::fs::read_to_string(dir.join("inbox.md")).unwrap();
-        assert!(inbox.contains("- a thought *(2026-09-22 "), "{inbox}");
-        assert!(inbox.contains("- [Example](https://example.org) *(2026-09-22 "), "{inbox}");
+        // The stamp is the phone's moment on this machine's clock, so the expected
+        // text is worked out in the local zone rather than written down
+        let at = stamp_time(&items[0]).format("%Y-%m-%d %H:%M");
+        assert!(inbox.contains(&format!("- a thought *({at})*")), "{inbox}");
+        assert!(inbox.contains(&format!("- [Example](https://example.org) *({at})*")), "{inbox}");
         let ledger = ledger_read(&dir.join(".vemry").join(LEDGER_FILE));
         assert_eq!(ledger.ids, vec!["a".to_string(), "b".to_string()]);
         let prov = std::fs::read_to_string(dir.join(".vemry/provenance.jsonl")).unwrap();
