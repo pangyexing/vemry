@@ -30,6 +30,11 @@ Tone per language:
 | `fr` | vous |
 | `es` | tú, not usted; neutral Spanish, no regional forms |
 
+Beyond the register, each language's settled conventions — punctuation and
+spacing, how a button or an error is phrased, and the interface words the glossary
+does not cover — are in `<tag>.md` next to its overlay (`ja.md`, `ko.md`, `fr.md`,
+`de.md`, `es.md`). A new string follows them.
+
 A language is offered in the settings picker once its high-exposure groups (`app.`,
 `chat.`, `settings.`, `menu.`, `cmd.`, `permission.`, `skill.`) are complete and a
 native speaker has read them; the generator prints that count.

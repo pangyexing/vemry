@@ -290,8 +290,7 @@ Timeline, Graph, Claims, Evidence, Review and Session Replay views, the block in
 and query API, the agent with its tools behind the write gate, privacy zones, the
 scripting sandbox, the built-in browser with clipping, side-by-side translation of a
 note, a web page or a PDF, the optional vemry account with hosted AI credit, and an
-interface in English and Chinese (Japanese, Korean, French, German and Spanish
-follow as their translations land).
+interface in English, Chinese, Japanese, Korean, French, German and Spanish.
 
 Next, in the order the study loop needs them: PDF annotation that lands in the
 source note, reference management on source notes (DOI, BibTeX export), and reading

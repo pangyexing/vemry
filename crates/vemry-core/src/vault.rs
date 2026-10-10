@@ -55,7 +55,7 @@ const MAX_PREVIEW_FILE_BYTES: u64 = 50 * 1024 * 1024;
 /// only creating the section uses the caller's current-language name.
 /// The wording itself lives in `locales/*.json` (`memoryFile.*`); this list is
 /// a fact about the file format, which is why it stays in core.
-pub const MEMORY_SECTIONS: &[&str] = &["约定", "Conventions"];
+pub const MEMORY_SECTIONS: &[&str] = &["约定", "Conventions", "約束事", "규칙", "Konventionen", "Convenciones"];
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BacklinkEntry {

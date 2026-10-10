@@ -1,0 +1,49 @@
+# French (`fr`) translation conventions
+
+The rules `fr.json` is written to. Concept words come from
+[docs/GLOSSARY.md](../../docs/GLOSSARY.md); these settle everything else two
+translators would otherwise do differently. A new string follows them, and a
+changed rule changes the catalog with it.
+
+## Style
+
+- Register and mood: vous everywhere; never tu, never « Veuillez » or « s'il vous plaît ». Buttons, menu items, command titles, tabs and tooltips that name an action take the infinitive (« Enregistrer », « Ouvrir une note… », « Arrêter ce tour »). Instructions to the user take the vous imperative (« Ouvrez d'abord un coffre »). Command descriptions (cmd.*.desc) and behaviour hints take the present indicative, third person (« Ferme le document ou la projection en cours »).
+- Sentence case for every label, heading, button, menu item, tab and window title, also where English uses title case (menu.*: « Vérifier les mises à jour… »). Capitals keep their accents: « Édition », « État », « À faire ».
+- Spacing: never a plain space before two-part punctuation. U+00A0 NO-BREAK SPACE before the colon; U+202F NARROW NO-BREAK SPACE before the semicolon, the exclamation mark and the question mark, and inside guillemets (after the opening one, before the closing one). No space before the comma, full stop, ellipsis or closing parenthesis. Either the raw character or the JSON escape (\u00a0, \u202f) is fine. Apostrophes are the straight ASCII ' (so typed searches match the labels), never ’.
+- Quotation marks: guillemets « … » wherever English has “…” or "…" around a name, a title or a quoted phrase: Create “{title}” becomes Créer « {title} ». Code spans in backticks, typed syntax (`key:: value`, [[note#^id]], ![[…]], supports:[[…]]), query-block keywords (field, group, sort, kind, limit, asc, desc, today, due_before, task_state), file and folder names (VEMRY.md, .vemry/, inbox.md, clips/, journal/YYYY-MM-DD.md) and the YYYY-MM-DD pattern stay byte-identical.
+- Ellipsis: the single character … (U+2026) exactly where English has it (an item that opens a dialog or picker, a progress state such as « Chargement… »); never three dots, no space before it.
+- Em dash: do not mirror the English « — » by reflex. Use a colon for an explanation or consequence (« Cette note est dans une zone privée : l'IA ne peut pas la lire »), a semicolon or comma for a loose continuation, parentheses for an aside. Keep a spaced « — » only where none of these reads naturally, and never in a button or chip.
+- The AI is a tool: « l'IA » (feminine, elided: « de l'IA », never « du IA », never « AI »), « le modèle », « l'agent ». No verbs of thought, will or feeling (pense, veut, sait, comprend, se souvient) and no « je »/« nous » for the software. Progress lines are noun phrases (« Lecture de {x} », « Recherche sur le Web… », « Rédaction de la réponse… »), not « L'IA lit… ». The model's reasoning feature is the noun « réflexion » (« Réflexion · {level} », « Profondeur de réflexion »).
+- Plurals: French CLDR _one covers 0 and 1 (« 0 note », « 1 note »); _many is only for exact millions and takes « de » (« {n} de notes »); _other is the rest. In a key without plural forms never write « (s) »: put the count after a colon (« Non relus : {n} ») or choose a wording that needs no agreement.
+- Placeholders of unknown gender or initial letter ({name}, {path}, {note}, {title}, {file}, {vault}, {target}, {field}, {model}…): nothing may agree with them or elide before them. Write « de {path} », never « d'{path} »; report a result as masculine-singular participle + colon + placeholder (« Enregistré : {path} », « Créé : {path} »), not « {path} créé(e) ». Task date labels arrive in {field} as bare nouns without article (échéance, date planifiée, date de début…), so build around them: « Modifier : {field} », « Aucune tâche avec {field}. ».
+- Status words: a standalone state (column or group heading, callout name, result label) is masculine singular: « Terminé », « Annulé », « En retard », « En cours ». A state that qualifies a task (task chips, « Marquer comme… » items) agrees with « tâche »: « terminée », « annulée », « bloquée », « supprimée une fois terminée ». A cancelled subscription is « Résilié ».
+- Keys: key.ctrl « Ctrl », key.shift « Maj », key.alt « Alt », key.backspace « Retour arrière », key.super « Win »; in prose also « Entrée » (Enter), « Échap » (Esc), « Tab », « Espace », « Suppr ». Combinations join with + and no spaces (« Alt+Entrée », « Ctrl+Maj+P »). Glyphs (⌘ ⌥ ⇧ ↵ ⇥ ⌫ ↑↓) stay; in key-hint rows that write a key in lower case (« esc close ») write « échap ».
+- Errors are factual, with no apology and no « Oups »: a short failure label is « Échec de … » (« Échec de la copie »), a sentence is « Impossible de … » + infinitive (« Impossible d'extraire la page »); the cause follows a colon and the remedy is a vous imperative (« réessayez dans un instant »). Confirmations ask an infinitive question (« Supprimer la tâche ? La ligne est effacée de la note. ») and the button names the action (« Supprimer »), never « Oui »/« Non ». Success toasts are a participle (« Copié », « Lien copié »).
+- Reserved words: « retirer » only for reverting AI changes (« Retirer la modification de l'IA », « {n} modifications retirées »); otherwise remove is « supprimer » when something is destroyed (task, field, file, rule) and « enlever » when it only leaves a list or the context (« Enlever du contexte »). « Annuler » is both Cancel and Undo (system convention) and never means revert; « Rétablir » is Redo, so restore is « Restaurer ». « Rechercher » (verb) and compounds (« recherche web », « résultats de recherche ») mean search; « Recherche » alone, capitalised, is the research panel and menu. « journal » alone is the daily journal note; the log is always « journal d'audit ».
+- Homonyms in the ui table: Review is « Révision » for the flashcard view but « Relire » for the button that reviews AI changes (whose state words are « relu » / « non relu »); Plan is the AI's plan, a subscription plan is « Formule »; Edit is « Modifier » as a button but « Édition » as the menu-bar menu (File « Fichier », View « Affichage », Window « Fenêtre », Help « Aide »); Clip is « Clipper » as a button, « Clip » as a noun label (palette group, block origin); Back/Forward are « Précédent » / « Suivant » for history navigation, « Retour à … » for going back to a place; Quote is « Citation », written « bloc de citation » in running text so it cannot be taken for a citation in an AI answer.
+- Names in running text: view names (Agenda, Tableau, Chronologie, Graphe, Affirmations, Preuves, Déroulé de session, Traduction, Révision), « Lecteur » and the « Recherche » panel keep their capital and take « la vue » / « le panneau » where the bare word could read as a common noun (« la vue Tableau », « dans le Lecteur », « le panneau Recherche »). Settings references use the exact tab labels joined by « › »: Paramètres › Général / IA / Compte / Capture rapide / Zones privées / Compétences et scripts / Édition et lecture / Navigateur et clips.
+- Recurring words outside the glossary: session « session », turn « tour », context « contexte », write (noun) « écriture », diff « diff » (masc.), model tokens « tokens » (« jeton » is reserved for « jeton d'appareil »), system prompt « prompt système », working note « note de travail », action items « actions à mener », file tree « arborescence », built-in browser « navigateur intégré », trash « corbeille », inbox « boîte de réception » (the file inbox.md stays), frontmatter « frontmatter » (masc.), block type « type de bloc », card « carte », excerpt « extrait », #tag « tag », pin / unpin « épingler » / « désépingler », fork « bifurquer », allow / deny « autoriser » / « refuser », approve / reject « approuver » / « rejeter », discard « écarter », API key « clé API », endpoint « point d'accès », e-mail « e-mail », URL (feminine), view « vue ».
+- Product name: « vemry » is always lower case and untranslated, even at the start of a sentence (reorder so a sentence does not open with it where you can); masculine if an agreement is unavoidable (« vemry hébergé ») but never with an article (« vemry lit… », not « le vemry »). Plan names, model names and brands (Pro, DeepSeek, Ollama, Markdown, PDF) stay as in English.
+- Numbers and units: a U+00A0 no-break space between a number or count placeholder and its unit (« {n} min », « {n} h », « 16 Mo »); MB is « Mo », px stays. Relative time: « à l'instant », « il y a {n} min », « il y a {n} h ».
+- Concision: buttons, chips, column headings and tabs take the shortest correct wording; drop possessives and articles where French allows (« Copier le lien », « Nouvelle session », not « Copier votre lien »), and keep English's separators (·, ›, →, /) as they are rather than spelling them out.
+
+## Words decided outside the glossary
+
+Interface words the glossary does not cover, fixed while the catalog was written
+so that every string uses the same one.
+
+| English | French |
+|---|---|
+| follow (the note the AI works in), working note | note de travail (« Ne plus utiliser comme note de travail », « Note de travail désactivée ») |
+| file (a capture) | classer |
+| jot (a convention into VEMRY.md) | consigner |
+| template | gabarit |
+| type (text) | saisir |
+| fork (a session) | bifurcation (« Bifurcation vers une nouvelle session ») |
+| method (a skill, as the picker calls it); applying a skill | méthode; appliquer |
+| make a block not private / unmark a note | Rendre non privé / Ne plus marquer (retirer is reserved for reverting AI changes) |
+| AI blocks / AI chat | blocs d'IA / discussion IA |
+| clip target | cible du clip |
+| thinking levels (feminine, agreeing with réflexion) | Élevée / Faible / Max / Désactivée |
+| Settings, named on its own | les Paramètres |
+| a count in a key without plural forms | « libellé : {n} » |
