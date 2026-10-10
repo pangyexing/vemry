@@ -232,13 +232,14 @@ can step around it.
 
 **Five network exits, each one triggered by you, and a sixth only if you sign in.**
 Without an account, vemry reaches the network for the AI endpoint you configured, a
-web page you opened, images in the Reader, ad-blocking rules you subscribed to and
-an update check; with your own key, a request goes straight from your computer to
-the vendor you chose. Signing in adds the vemry account: its relay for hosted AI,
-which forwards each request unchanged and stores neither prompts nor answers, and
-the phone inbox. The exits are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
-what the server keeps is in the [privacy policy](https://vemry.app/privacy), and
-everything else works with the network off.
+web page you opened, images in the Reader or ones you load in a note, ad-blocking
+rules you subscribed to and an update check; with your own key, a request goes
+straight from your computer to the vendor you chose. Signing in adds the vemry
+account: its relay for hosted AI, which forwards each request unchanged and stores
+neither prompts nor answers, and the phone inbox. The exits are listed in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), what the server keeps is in the
+[privacy policy](https://vemry.app/privacy), and everything else works with the
+network off.
 
 **Arbitrary code never runs by itself.** Opening a note is not running it. Every
 execution starts from something you did, and the agent has no tool that can run

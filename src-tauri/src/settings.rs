@@ -63,11 +63,16 @@ pub struct Settings {
     #[serde(default = "default_true")]
     pub provenance_marks: bool,
     /// Load images in the reading projection through the vemry-asset proxy (no
-    /// cookies, with the page's Referer). It affects the projection alone; a note on
-    /// disk always makes zero network requests (a tracking pixel cannot leak reading
-    /// behaviour).
+    /// cookies, with the page's Referer). It affects the projection alone; a note's
+    /// own remote images follow `note_remote_images`.
     #[serde(default = "default_true")]
     pub reading_images_enabled: bool,
+    /// Load a note's remote images (`![](https://…)`) without asking, through the same
+    /// proxy. Off, the default, one waits as a placeholder until the user loads it, so
+    /// opening a note makes no network request (a tracking pixel cannot leak reading
+    /// behaviour); an image already in the proxy's cache shows either way, offline.
+    #[serde(default)]
+    pub note_remote_images: bool,
     /// After a whole-page clip, download the body's images into the vault
     /// (clips/assets/, deduplicated by content hash) and rewrite the note to
     /// reference them locally. The download happens only at the moment of clipping
@@ -358,6 +363,7 @@ impl Default for Settings {
             plan_confirm: true,
             provenance_marks: true,
             reading_images_enabled: true,
+            note_remote_images: false,
             clip_localize_images: true,
             format_agent_writes: true,
             format_clips: true,

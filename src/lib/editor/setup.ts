@@ -25,6 +25,7 @@ import { wikilinkExtension, type WikilinkHost } from "./wikilink";
 import { mdlinkExtension } from "./mdlink";
 import { linkAt } from "./linkat";
 import { livePreview, type AssetLoader, type ImageCopier, type FieldChipHandler, type LivePreviewOptions, deleteTaskMarkerBackward } from "./livepreview";
+import { allowPastedRemoteImages } from "./remoteimages";
 import { tagCompletions, calloutCompletions, atCompletions, attrIconOption, fieldCompletions, imeCompletionGuard, acceptWithTab } from "./completions";
 import { refCompletions } from "./blockref";
 import { slashCompletions } from "./slash";
@@ -250,6 +251,8 @@ export interface EditorOptions {
   copyImage?: ImageCopier;
   /** A remote image that did not load: its placeholder opens the URL in the browser window. */
   openUrl?: (url: string) => void;
+  /** note mode: a remote image not loaded yet — the note's Referer and the placeholder's note-wide choices */
+  remoteImages?: LivePreviewOptions["remoteImages"];
   /** note mode: vault tag universe for `#` completion (kept fresh by caller) */
   tags?: () => string[];
   /** note mode: inline-field keys and values for `key::` completion (kept fresh by the caller) */
@@ -406,7 +409,15 @@ function buildState(opts: EditorOptions): EditorState {
       markdown({ base: markdownLanguage, extensions: [Highlight, TaskStates], addKeymap: false }),
       listKeymap,
       syntaxHighlighting(mdHighlight),
-      livePreview({ loadAsset: opts.loadAsset, copyImage: opts.copyImage, onFieldChip: opts.onFieldChip, fieldState: opts.fieldState, openUrl: opts.openUrl }),
+      livePreview({
+        loadAsset: opts.loadAsset,
+        copyImage: opts.copyImage,
+        onFieldChip: opts.onFieldChip,
+        fieldState: opts.fieldState,
+        openUrl: opts.openUrl,
+        remoteImages: opts.remoteImages,
+      }),
+      allowPastedRemoteImages,
       foldExtension(),
       blockSelection(),
       flashField,

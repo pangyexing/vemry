@@ -36,7 +36,9 @@
   import { privacyMenuItem } from "$lib/privacyMenu";
   import FilePreview from "./FilePreview.svelte";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
-  import { clearImageDims, fitImagePlaceholders, primeImageDims } from "$lib/editor/livepreview";
+  import { clearImageDims, fitImagePlaceholders, primeImageDims, type RemoteImageHost } from "$lib/editor/livepreview";
+  import { allowRemote, remoteImageTargets } from "$lib/editor/remoteimages";
+  import { openSettings } from "$lib/stores/settingsUi.svelte";
   import { clearEmbedCaches, type EmbedHost } from "$lib/editor/embed";
   import {
     isPending,
@@ -716,6 +718,22 @@
     },
   };
 
+  // A remote image not loaded yet (remoteimages.ts): it loads with the note's source page
+  // as its Referer, when there is one, and its placeholder's ⋯ holds the note-wide choices
+  const remoteImages: RemoteImageHost = {
+    referer: () => {
+      const src = docPath ? (vault.noteById.get(docPath)?.source ?? "") : "";
+      return /^https?:\/\//i.test(src) ? src : "";
+    },
+    menu: (e, view) =>
+      contextMenu.open(e, [
+        { label: t("editor.remoteImagesLoadAll"), action: () => allowRemote(remoteImageTargets(view.state.doc.toString())) },
+        { label: t("cmd.clip-localize-images.title"), action: () => void executeCommand("clip-localize-images") },
+        { separator: true },
+        { label: t("editor.remoteImagesAlways"), action: () => openSettings("editing.noteRemoteImages") },
+      ]),
+  };
+
   const embedHost: EmbedHost = {
     resolve: (target: string) => api.resolveRef(target, docPath ?? undefined),
     follow: (target: string) => void vault.followLink(target),
@@ -1242,6 +1260,7 @@
       loadAsset,
       copyImage,
       openUrl: (url: string) => openMdLink(url, false),
+      remoteImages,
       tags: () => tagList,
       fieldStats: currentFieldStats,
       blockTypes: () => types.enabled,

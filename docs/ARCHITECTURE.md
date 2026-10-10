@@ -2056,13 +2056,19 @@ still allowing only http(s)) renders it into `mainView = "reading"`.
   protection), and a disk LRU cache**. Image URLs come from web content and are not
   trusted, so Rust validates against SSRF (http(s) only; every resolved IP must be
   public; the resolution is pinned into the request against DNS rebinding; each
-  redirect hop is rechecked). The main webview therefore never connects to a remote
-  host directly — the exit converges into this one Rust channel, and only after the
-  user explicitly opened the projection (the reader window has just genuinely loaded
-  the same page, so the privacy delta is minimal). A failed load falls back to a
-  placeholder chip, and `reading_images_enabled` can turn it off. **A clipped note on
-  disk does not go through the proxy**: opening an old note must stay at zero network,
-  or a tracking pixel would leak reading behaviour. Lazy loading takes two moves:
+  redirect hop is rechecked). The main webview never connects to a remote host
+  directly, and its CSP (an `img-src` with no `http:` or `https:`) makes that a rule
+  rather than a habit — the exit converges into this one Rust channel, here only after
+  the user explicitly opened the projection (the reader window has just genuinely
+  loaded the same page, so the privacy delta is minimal). A failed load falls back to a
+  placeholder chip, and `reading_images_enabled` can turn it off. **Opening a note on
+  disk stays at zero network**, or a tracking pixel would leak reading behaviour: the
+  editor asks the proxy's cache alone (`c=1`) for a note's remote image and shows it
+  only if it is there; otherwise the image waits as a placeholder until the user loads
+  it — that one, the whole note, or every one with `note_remote_images` — and then it
+  comes through the same proxy (`k=note`, which the projection's switch does not
+  govern; `src/lib/editor/remoteimages.ts`). An image pasted into a note loads at once,
+  the user's own act. Lazy loading takes two moves:
   GRAB_PAGE first does a fixLazyImages-style attribute restore (data-src and
   friends); the deeper kind, where the real URL lives only in JS state and an
   IntersectionObserver callback writes it back to src, is handled by an
@@ -2149,12 +2155,18 @@ still allowing only http(s)) renders it into `mainView = "reading"`.
    reader page of the run opens with nothing cached (once per run, riding on an exit
    the user just took at 2), and whenever the user clicks "update now" in settings.
    Importing rule files by hand skips this exit altogether.
-4. The projection image proxy (`vemry-asset://`, browser/assets.rs) — only for images
-   inside a projected page, without cookies, SSRF-validated, disk-cached, and
-   switchable off in settings. Rendering a note on disk does not go through it
-   (opening a note is zero network). Clip image localisation reuses the same fetch
-   pipeline and downloads once, at the moment the user clips (a trust level equal to
-   looking at that page), after which the note references local files.
+4. The image proxy (`vemry-asset://`, browser/assets.rs) — without cookies,
+   SSRF-validated, disk-cached. It fetches images inside a projected page (switchable
+   off in settings), and a note's remote images only once the user lets them load: a
+   click on the placeholder, "load every image in this note", or the
+   `note_remote_images` setting; an image pasted into a note counts as let. Opening a
+   note asks the cache alone, so it makes no request. Clip image localisation reuses
+   the same fetch pipeline and downloads once, at the moment the user clips (a trust
+   level equal to looking at that page), after which the note references local files.
+   The same localisation runs when the user asks for it on a note (the "save this
+   note's remote images" command, with the note's `source:` as the Referer when it has
+   one) and when an agent write lands a note whose `source:` is a web address with
+   images still remote (`localize_agent_figures`).
 5. App updates (tauri-plugin-updater, v0.6) — by default the check happens only when
    the user clicks "check for updates"; turning on "check at startup" in settings adds
    one silent query for `latest.json` at launch (`dl.vemry.app` first, GitHub Releases

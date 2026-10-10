@@ -68,6 +68,7 @@ import { openImageLightbox } from "$lib/lightbox";
 import { copyText } from "$lib/copytext";
 import { scanInlineMath } from "$lib/math";
 import { domainOf } from "$lib/markdown";
+import { allowRemote, mayLoadRemote, noteImageUrl, onRemoteAllowed } from "./remoteimages";
 import { MathWidget, mathBlockField, mathBlocksOf } from "./math";
 
 /** An image target inside the vault → a displayable URL (a blob); http(s) does not go through it */
@@ -669,7 +670,12 @@ export function fitImagePlaceholders(view: EditorView): void {
   if (fitted) view.requestMeasure();
 }
 
-/** An inline image; a vault file becomes a blob URL through loadAsset, and http(s) is used directly */
+/** A mounted remote-image placeholder's subscription (remoteimages.ts), dropped when the widget is. */
+const remoteSubs = new WeakMap<HTMLElement, () => void>();
+
+/** An inline image; a vault file becomes a blob URL through loadAsset, and an http(s)
+ *  one goes through the vemry-asset proxy — from its cache alone until the user lets it
+ *  load, so that opening a note makes no network request (remoteimages.ts) */
 class ImageWidget extends WidgetType {
   constructor(
     readonly target: string,
@@ -678,11 +684,16 @@ class ImageWidget extends WidgetType {
     readonly load?: AssetLoader,
     readonly copy?: ImageCopier,
     readonly openUrl?: (url: string) => void,
+    readonly remote?: RemoteImageHost,
   ) {
     super();
   }
   eq(other: ImageWidget) {
     return other.target === this.target && other.alt === this.alt && other.width === this.width;
+  }
+  destroy(dom: HTMLElement) {
+    remoteSubs.get(dom)?.();
+    remoteSubs.delete(dom);
   }
   toDOM(view: EditorView) {
     const wrap = document.createElement("span");
@@ -787,9 +798,88 @@ class ImageWidget extends WidgetType {
       if (img.src) openImageLightbox(img.src, this.alt);
     };
     wrap.appendChild(zoom);
-    const url = remote ? Promise.resolve(this.target) : (this.load?.(this.target) ?? Promise.resolve(null));
-    void url.then((u) => (u ? (img.src = u) : missing()));
+    if (!remote) {
+      const url = this.load?.(this.target) ?? Promise.resolve(null);
+      void url.then((u) => (u ? (img.src = u) : missing()));
+      return wrap;
+    }
+    // A remote image: the proxy's cache first, which makes no request; an image that is
+    // not there waits as a placeholder until it may load (a click, the whole note, or the
+    // setting), and only then is it fetched — through the proxy, never by the webview
+    const referer = this.remote?.referer() ?? "";
+    let ask: HTMLElement | null = null;
+    const fetchIt = () => {
+      remoteSubs.get(wrap)?.();
+      remoteSubs.delete(wrap);
+      ask?.remove();
+      ask = null;
+      wrap.classList.remove("cm-lp-image-ask");
+      img.classList.add("cm-lp-loading");
+      img.onerror = missing;
+      img.src = noteImageUrl(this.target, referer, false);
+    };
+    if (mayLoadRemote(this.target)) {
+      fetchIt();
+      return wrap;
+    }
+    img.onerror = () => {
+      // Allowed while the cache answered (a paste lands its images in the same update
+      // that built this widget): fetch rather than ask
+      if (mayLoadRemote(this.target)) return fetchIt();
+      img.classList.remove("cm-lp-loading");
+      wrap.classList.add("cm-lp-image-ask");
+      ask = this.placeholder(view);
+      wrap.appendChild(ask);
+      remoteSubs.set(
+        wrap,
+        onRemoteAllowed(() => {
+          if (mayLoadRemote(this.target)) fetchIt();
+        }),
+      );
+      view.requestMeasure();
+    };
+    img.src = noteImageUrl(this.target, referer, true);
     return wrap;
+  }
+
+  /** A remote image not loaded: what it is, a Load button (the whole chip loads it too),
+   *  and the note-wide choices under ⋯ and on a right-click. A mousedown is swallowed, as
+   *  on the image itself, so the cursor does not land in the source and reveal it. */
+  private placeholder(view: EditorView): HTMLElement {
+    const box = document.createElement("span");
+    box.className = "cm-lp-remote";
+    box.title = t("editor.remoteImageAsk", { url: this.target });
+    const label = document.createElement("span");
+    label.textContent = `⧉ ${this.alt || domainOf(this.target)}`;
+    const load = document.createElement("button");
+    load.className = "cm-lp-remote-btn";
+    load.textContent = t("editor.remoteImageLoad");
+    box.append(label, load);
+    box.onmousedown = (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      allowRemote([this.target]);
+    };
+    const host = this.remote;
+    if (host) {
+      const more = document.createElement("button");
+      more.className = "cm-lp-remote-btn";
+      more.textContent = "⋯";
+      more.dataset.tip = t("common.more");
+      more.onmousedown = (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        host.menu(e, view);
+      };
+      box.append(more);
+      box.oncontextmenu = (e) => {
+        e.stopPropagation();
+        host.menu(e, view);
+      };
+    }
+    return box;
   }
 }
 
@@ -1070,7 +1160,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
               from: n.from,
               to: n.to,
               deco: Decoration.replace({
-                widget: new ImageWidget(target, alt, width, opts.loadAsset, opts.copyImage, opts.openUrl),
+                widget: new ImageWidget(target, alt, width, opts.loadAsset, opts.copyImage, opts.openUrl, opts.remoteImages),
               }),
             });
             break;
@@ -1345,7 +1435,7 @@ function buildDecorations(view: EditorView, opts: LivePreviewOptions = {}): Deco
             from: start - 1,
             to: end,
             deco: Decoration.replace({
-              widget: new ImageWidget(target, target, width, opts.loadAsset, opts.copyImage, opts.openUrl),
+              widget: new ImageWidget(target, target, width, opts.loadAsset, opts.copyImage, opts.openUrl, opts.remoteImages),
             }),
           });
         }
@@ -1659,11 +1749,23 @@ const frontmatterField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+/** What a remote image in the note needs from its host (remoteimages.ts). */
+export interface RemoteImageHost {
+  /** The note's source page (frontmatter `source:`), sent as the Referer when one of its
+   *  remote images loads, or "" for none. */
+  referer: () => string;
+  /** The note-wide choices behind a placeholder's ⋯ and its right-click: load every
+   *  remote image in the note, save them into the vault, always load them. */
+  menu: (e: MouseEvent, view: EditorView) => void;
+}
+
 export interface LivePreviewOptions {
   loadAsset?: AssetLoader;
   copyImage?: ImageCopier;
   /** A remote image that did not load: its placeholder opens the URL in the browser window. */
   openUrl?: (url: string) => void;
+  /** A remote image not loaded yet: its placeholder's note-wide choices. */
+  remoteImages?: RemoteImageHost;
   /** A click on a chip: a task's due/scheduled date, or any inline `key:: value` field. */
   onFieldChip?: FieldChipHandler;
   /** The step of a field's value when its key is a state field (fields.ts's stateStepOf

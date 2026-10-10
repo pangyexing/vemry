@@ -73,6 +73,7 @@ export const SETTINGS: SettingEntry[] = [
   { id: "editing.clickOpensLinks", page: "editing", label: "settings.clickOpensLinks", hint: "settings.clickOpensLinksHint", hintParams: () => ({ modClick: k("Mod+click") }), keywords: "链接 link click" },
   { id: "editing.openLinksIn", page: "editing", label: "settings.openLinksIn", hint: "settings.openLinksHint", hintParams: () => ({ key: k("Mod+click") }), keywords: "链接 link reader browser 浏览器" },
   { id: "editing.readingImages", page: "editing", label: "settings.readingImages", hint: "settings.readingImagesHint", keywords: "图片 image reader" },
+  { id: "editing.noteRemoteImages", page: "editing", label: "settings.noteRemoteImages", hint: "settings.noteRemoteImagesHint", keywords: "图片 远程 image remote network 联网" },
   { id: "editing.formatClips", page: "editing", label: "settings.formatClips", hint: "settings.formatClipsHint", keywords: "格式化 format paste 粘贴" },
   { id: "editing.cjkSpacing", page: "editing", label: "settings.formatCjkSpacing", hint: "settings.formatCjkSpacingHint", keywords: "空格 space 格式化 format" },
   { id: "editing.punctuation", page: "editing", label: "settings.formatPunctuation", hint: "settings.formatPunctuationHint", keywords: "标点 全角 punctuation 格式化 format" },

@@ -286,8 +286,8 @@ CMD = {
         ("Mark every unreviewed AI block of the current note as reviewed", "把当前笔记所有未审阅的 AI 块标为已审阅"),
     ),
     "clip-localize-images": (
-        ("Save this clip's remote images into the vault", "把这篇剪藏的远程图片存进知识库"),
-        ("Download the images a clipped note still loads from the web into clips/assets and point the note at them — for clips made before localisation, or whose images did not load", "把剪藏笔记里仍从网上加载的图片下载到 clips/assets 并改写引用——适合本地化之前的旧剪藏，或图片加载失败的情况"),
+        ("Save this note's remote images into the vault", "把这篇笔记的远程图片存进知识库"),
+        ("Download the images a note still loads from the web into clips/assets and point the note at them — a clip from before localisation, a clip whose images did not load, or text pasted from the web", "把笔记里仍从网上加载的图片下载到 clips/assets 并改写引用——适合本地化之前的旧剪藏、图片加载失败的剪藏，或从网页粘贴的内容"),
     ),
     "provenance-accept-vault": (
         ("Mark all AI blocks in the vault as reviewed", "全库 AI 块全部标为已审阅"),
@@ -718,7 +718,6 @@ add("palette.", {
     "why.pendingHere": ("No unreviewed AI changes in this note", "这篇笔记没有未审阅的 AI 修改"),
     "why.tabs": ("No tab is open", "没有打开的标签页"),
     "why.oneTab": ("Only one tab is open", "只开着一个标签页"),
-    "why.clip": ("This note is not a clip", "这篇笔记不是剪藏"),
     "why.reader": ("Reader has not opened a page yet", "阅读投影还没打开过网页"),
     "why.alreadyPrivate": ("It is already private", "它已经是隐私的"),
     "why.notPrivate": ("It is not marked private", "它没有标记为隐私"),
@@ -1877,6 +1876,11 @@ add("settings.", {
     "readingImages": ("Load images in Reader", "阅读投影加载图片"),
     "readingImagesHint": ("Off, images show as placeholders; click one to see it in the browser.",
                           "关闭后显示为占位，点一下在浏览窗里看。"),
+    "noteRemoteImages": ("Load remote images in notes", "加载笔记中的远程图片"),
+    "noteRemoteImagesHint": ("Off, a remote image waits as a placeholder until you load it, so opening a note makes no network request. "
+                             "On, every one loads — through vemry's proxy, without cookies. Either way, an image loaded once shows from the cache, offline.",
+                             "关闭时，远程图片先显示为占位，点了才加载，打开笔记不联网；开启后全部自动加载，经 vemry 的代理、不带 cookie。"
+                             "无论哪种，加载过一次的图片都从缓存显示，无需联网。"),
     "formatSection": ("Formatting on save", "落盘格式"),
     "formatAgentWrites": ("Format what the AI writes", "AI 写入时格式化"),
     "formatAgentWritesHint": ("Only what the AI writes; your own lines are never touched.",
@@ -2231,6 +2235,11 @@ add("editor.", {
     "image": ("image", "图片"),
     "imageNotLoaded": ("Image not loaded in Reader — click to view it in the browser · {url}",
                        "图片未在投影中加载，点击在浏览器查看 · {url}"),
+    # A note's remote image waits as a placeholder until it may load (remoteimages.ts)
+    "remoteImageAsk": ("Not loaded, so opening this note makes no network request · {url}", "未加载，打开笔记不联网 · {url}"),
+    "remoteImageLoad": ("Load", "加载"),
+    "remoteImagesLoadAll": ("Load every image in this note", "加载本篇的所有图片"),
+    "remoteImagesAlways": ("Always load remote images…", "总是加载远程图片…"),
     "closeEsc": ("Close (Esc)", "关闭（Esc）"),
     "badDate": ("Unparseable date — this date marker is ignored; the format is YYYY-MM-DD",
                 "日期解析失败，这个日期标记会被忽略 — 格式应为 YYYY-MM-DD"),
@@ -2593,7 +2602,6 @@ add("clip.", {
     # the vault, so it follows the interface language at the moment of clipping.
     "sourceLabel": ("Source", "来源"),
     "localizeStarted": ("Fetching the images into clips/assets — the note updates when they land", "正在把图片存进 clips/assets，存好后笔记自动更新"),
-    "localizeNoSource": ("This note has no source: URL to fetch its images with", "这篇笔记没有 source：来源地址，无法取图"),
     "localizeOff": ("Image localisation is off in Settings", "设置里关闭了剪藏图片本地化"),
 })
 

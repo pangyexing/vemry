@@ -94,8 +94,8 @@ VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt 
    `PermissionGate`; the frontend only renders the decision.
 4. **Offline first**: exactly six controlled network exits — the LLM channel
    (server-side search included), a browser window the user opened, a
-   blocking-rule download, the image proxy for the reader and the clipper
-   (`vemry-asset://`), the update check and download (user-triggered by
+   blocking-rule download, the image proxy for the reader, the clipper and the
+   remote images the user loads in a note (`vemry-asset://`), the update check and download (user-triggered by
    default), and the hosted account and relay (only after signing in or switching
    the provider to vemry hosted; see ARCHITECTURE's "The network-exit list"). No
    other network calls, and no telemetry.

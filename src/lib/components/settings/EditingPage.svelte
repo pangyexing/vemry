@@ -36,6 +36,7 @@
       </select>
     </SettingRow>
     <SettingSwitch id="editing.readingImages" field="reading_images_enabled" />
+    <SettingSwitch id="editing.noteRemoteImages" field="note_remote_images" />
   </SettingSection>
   <SettingSection title={t("settings.formatSection")}>
     <SettingSwitch id="editing.formatClips" field="format_clips" />

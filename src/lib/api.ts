@@ -389,6 +389,7 @@ export interface SettingsView {
   /** AI blocks awaiting review show an amber bar in the editor. */
   provenance_marks: boolean;
   reading_images_enabled: boolean;
+  note_remote_images: boolean;
   clip_localize_images: boolean;
   format_agent_writes: boolean;
   format_clips: boolean;
@@ -453,6 +454,7 @@ export interface SettingsUpdate {
   plan_confirm?: boolean;
   provenance_marks?: boolean;
   reading_images_enabled?: boolean;
+  note_remote_images?: boolean;
   clip_localize_images?: boolean;
   format_agent_writes?: boolean;
   format_clips?: boolean;

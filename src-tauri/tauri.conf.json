@@ -12,7 +12,7 @@
     "macOSPrivateApi": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https: http: vemry-asset:; font-src 'self' data:; connect-src ipc: http://ipc.localhost; media-src 'self' blob:; frame-src blob:"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: vemry-asset: http://vemry-asset.localhost; font-src 'self' data:; connect-src ipc: http://ipc.localhost; media-src 'self' blob:; frame-src blob:"
     }
   },
   "bundle": {

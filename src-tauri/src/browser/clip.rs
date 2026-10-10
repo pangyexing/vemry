@@ -608,7 +608,9 @@ async fn localize_clip_images(app: AppHandle, rel: String, page_url: String) {
         let (app, url, referer, sem) = (app.clone(), url.clone(), page_url.clone(), sem.clone());
         set.spawn(async move {
             let _permit = sem.acquire().await;
-            (idx, super::assets::fetch_image(&app, &url, Some(&referer)).await)
+            // A note with no source page (pasted text) sends no Referer rather than an empty one
+            let referer = (!referer.is_empty()).then_some(referer.as_str());
+            (idx, super::assets::fetch_image(&app, &url, referer).await)
         });
     }
     let mut fetched: Vec<Option<Vec<u8>>> = vec![None; groups.len()];

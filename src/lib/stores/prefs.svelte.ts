@@ -4,6 +4,7 @@
 // at startup, and the settings dialog refreshes it after every field it writes
 // (settings/form.svelte.ts) — outside those two there is no writer.
 import { api, type CaptureTarget, type ProviderSetting, type SettingsView } from "$lib/api";
+import { setAlwaysLoadRemote } from "$lib/editor/remoteimages";
 
 /** settings.rs default_capture_hotkey, in the shortcut plugin's grammar; the settings page's "reset" puts it back. */
 export const CAPTURE_HOTKEY_DEFAULT = "Alt+Shift+Space";
@@ -65,6 +66,8 @@ class PrefsStore {
       this.applyReadableLineWidth(s.readable_line_width);
       this.provenanceMarks = s.provenance_marks;
       this.formatClips = s.format_clips;
+      // A note's remote images: the editor's placeholders read it there (remoteimages.ts)
+      setAlwaysLoadRemote(s.note_remote_images);
       this.reasoningEffort = s.reasoning_effort;
       this.reasoningEffortActive = s.reasoning_effort_active;
       this.imagesUnsupported = s.images_unsupported;

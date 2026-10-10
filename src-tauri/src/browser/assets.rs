@@ -10,11 +10,13 @@
 //! earlier, so the request has already happened once and the privacy increment is
 //! minimal).
 //!
-//! A clip note on disk does **not** come through here: opening an old note must
+//! A note on disk comes through here only with the user's leave: opening a note must
 //! stay free of network traffic — a tracking pixel in the page reached disk with its
-//! `![](url)`, and if rendering a note proxied it too, every open would leak "who is
-//! still reading this, and when" back to the original site. On the note side a
-//! placeholder chip stands in (the editor does not render inline images anyway).
+//! `![](url)`, and if rendering a note fetched it, every open would leak "who is still
+//! reading this, and when" back to the original site. So the editor asks with `c=1`,
+//! the disk cache alone, and an image that is not there waits as a placeholder until
+//! the user loads it (`k=note`: a click, the whole note, or the `note_remote_images`
+//! setting; src/lib/editor/remoteimages.ts).
 //! Clip localisation (clip.rs) reuses `fetch_image` to download once **at the moment
 //! of clipping** and write into the vault — a trust level equal to the user looking
 //! at the page right then, after which reading stays free of network traffic.
@@ -76,23 +78,45 @@ fn plain(status: u16, msg: &str) -> Response<Vec<u8>> {
         .unwrap_or_default()
 }
 
-async fn serve_inner(app: &AppHandle, uri: &str) -> Result<(Vec<u8>, String), (u16, String)> {
+/// What a `vemry-asset://` request asks for: `u` the image, `r` the page to name as
+/// its Referer (absent or empty: none). `k=note` marks an image in a note on disk,
+/// shown by the editor, which the reading projection's switch does not govern — the
+/// editor asks only after its own rule allowed it (a click, or `note_remote_images`).
+/// `c=1` asks the disk cache and nothing else, so an image seen before shows with no
+/// network request and an unseen one answers 404 and stays a placeholder.
+#[derive(Debug, PartialEq)]
+struct AssetRequest {
+    target: String,
+    referer: Option<String>,
+    note: bool,
+    cache_only: bool,
+}
+
+fn parse_request(uri: &str) -> Result<AssetRequest, (u16, String)> {
     let parsed = url::Url::parse(uri).map_err(|_| (400, "could not parse the protocol URL".to_string()))?;
-    let mut target = None;
-    let mut referer = None;
+    let (mut target, mut referer, mut note, mut cache_only) = (None, None, false, false);
     for (k, v) in parsed.query_pairs() {
         match k.as_ref() {
             "u" => target = Some(v.into_owned()),
-            "r" => referer = Some(v.into_owned()),
+            "r" if !v.is_empty() => referer = Some(v.into_owned()),
+            "k" => note = v == "note",
+            "c" => cache_only = v == "1",
             _ => {}
         }
     }
     let target = target.ok_or((400, "the image URL is missing".to_string()))?;
-    if !crate::settings::load(app).reading_images_enabled {
+    Ok(AssetRequest { target, referer, note, cache_only })
+}
+
+async fn serve_inner(app: &AppHandle, uri: &str) -> Result<(Vec<u8>, String), (u16, String)> {
+    let req = parse_request(uri)?;
+    if !req.note && !crate::settings::load(app).reading_images_enabled {
         return Err((403, "loading projection images is turned off in the settings".to_string()));
     }
-
-    fetch_image(app, &target, referer.as_deref()).await.map_err(|e| (502, e))
+    if req.cache_only {
+        return cache_read(app, &cache_key(&req.target)).ok_or((404, "not in the cache".to_string()));
+    }
+    fetch_image(app, &req.target, req.referer.as_deref()).await.map_err(|e| (502, e))
 }
 
 /// A cache-first image fetch: cache → fetch_validated → cache. Shared by the
@@ -403,6 +427,20 @@ mod tests {
         for good in ["1.1.1.1", "93.184.216.34", "2606:4700:4700::1111", "2400:3200::1"] {
             assert!(!blocked_ip(ip(good)), "{good} must be allowed");
         }
+    }
+
+    /// The editor's two kinds of request — a cache-only look and a load — and the
+    /// projection's, which carries neither mark and so stays under its own switch.
+    #[test]
+    fn requests_parse_their_marks() {
+        let base = "vemry-asset://localhost/";
+        let note = parse_request(&format!("{base}?u=https%3A%2F%2Fex.com%2Fa%20b.png&k=note&c=1")).unwrap();
+        assert_eq!(note, AssetRequest { target: "https://ex.com/a b.png".into(), referer: None, note: true, cache_only: true });
+        let load = parse_request(&format!("{base}?u=https%3A%2F%2Fex.com%2Fa.png&r=https%3A%2F%2Fex.com%2Fpage&k=note")).unwrap();
+        assert_eq!((load.note, load.cache_only, load.referer.as_deref()), (true, false, Some("https://ex.com/page")));
+        let projection = parse_request(&format!("{base}?u=https%3A%2F%2Fex.com%2Fa.png&r=")).unwrap();
+        assert_eq!((projection.note, projection.cache_only, projection.referer), (false, false, None), "an empty r is no Referer");
+        assert_eq!(parse_request(&format!("{base}?r=x")).unwrap_err().0, 400);
     }
 
     #[test]

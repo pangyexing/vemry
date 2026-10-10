@@ -2174,6 +2174,36 @@ button:focus-visible,
   color: var(--fg-muted);
   font-size: var(--fs-sm);
 }
+/* A note's remote image not loaded yet (remoteimages.ts): the image and its floating
+   buttons step aside for a chip that names it, loads it on a click and keeps the
+   note-wide choices under ⋯ — opening a note makes no network request */
+.cm-lp-image-ask img,
+.cm-lp-image-ask .cm-lp-imgbtn {
+  display: none;
+}
+.cm-lp-remote {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 3px 1px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.cm-lp-remote-btn {
+  padding: 1px 7px;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.cm-lp-remote-btn:hover {
+  background: var(--bg-hover);
+}
 /* Zoomed image viewing (the lightbox, src/lib/lightbox.ts): an overlay in the current
    window with no second window opened. Wheel and pinch zooming, drag panning, and a double
    click toggling fit and actual pixels. The dark ground serves both themes; its z-index

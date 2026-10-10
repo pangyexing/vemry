@@ -1085,14 +1085,13 @@
   });
   registerCommand({
     id: "clip-localize-images", group: "note",
-    ...gate(() => !!vault.currentPath && !!vault.noteById.get(vault.currentPath)?.source, "palette.why.clip"),
+    ...gate(() => !!vault.currentPath && vault.currentIsNote, "palette.why.note"),
     run: async () => {
       const path = vault.currentPath;
-      const source = path ? (vault.notes.find((n) => n.id === path)?.source ?? null) : null;
-      if (!path || !source) {
-        toast.push(t("clip.localizeNoSource"), "error");
-        return;
-      }
+      if (!path) return;
+      // The source page, when the note has one, is the images' Referer; a note without one
+      // (pasted text) is localised all the same, with no Referer sent
+      const source = vault.notes.find((n) => n.id === path)?.source ?? "";
       try {
         if (!(await api.settingsGet()).clip_localize_images) {
           toast.push(t("clip.localizeOff"), "error");
