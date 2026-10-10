@@ -284,8 +284,9 @@ impl ActionsGate for ChannelActionsGate {
 }
 
 /// The channel implementation of the read gate: the user's answer comes back through
-/// `agent_read_respond`; then the gate fetches the allowed pages through the reader
-/// window's extraction (`page_read`, the same pipeline a clip uses) and hands them to
+/// `agent_read_respond`; then the gate fetches the allowed pages through the reader's
+/// extraction in its isolated window (`page_read_for_agent`, the same pipeline a clip
+/// uses, with none of the user's cookies) and hands them to
 /// the runner. With the session's standing consent (the card's checkbox, cleared with
 /// the session) every proposed URL is fetched without the card's buttons — the card
 /// still lists them. Page bodies travel only to the model; the ledger records URLs.
@@ -319,7 +320,8 @@ impl ReadGate for ChannelReadGate {
         let mut failed = Vec::new();
         for url in allowed {
             let state = self.app.state::<crate::AppState>();
-            match crate::browser::reader::page_read(self.app.clone(), state, url.clone()).await {
+            // The isolated reader: the page loads with none of the browser's cookies or logins
+            match crate::browser::reader::page_read_for_agent(self.app.clone(), state, url.clone()).await {
                 Ok(Some(page)) if !page.markdown.trim().is_empty() => {
                     // whole, up to the memory bound: the runner serves it to the model in parts
                     let markdown: String = page.markdown.chars().take(vemry_agent::READ_PAGE_MAX_CHARS).collect();

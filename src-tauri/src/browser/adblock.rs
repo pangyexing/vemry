@@ -560,7 +560,10 @@ pub async fn adblock_import_rules(app: AppHandle, paths: Vec<String>) -> Result<
 }
 
 #[cfg(target_os = "macos")]
-pub use imp::{ensure_reader_rules, install_rules, reader_webview_configuration, webview_configuration_with_rules};
+pub use imp::{
+    ensure_reader_rules, install_rules, isolated_reader_webview_configuration, reader_webview_configuration,
+    webview_configuration_with_rules,
+};
 
 #[cfg(not(target_os = "macos"))]
 pub fn ensure_reader_rules(_app: &AppHandle) {}
@@ -573,7 +576,7 @@ mod imp {
     use objc2::rc::Retained;
     use objc2::{MainThreadMarker, MainThreadOnly};
     use objc2_foundation::{NSError, NSString};
-    use objc2_web_kit::{WKContentRuleList, WKContentRuleListStore, WKWebView, WKWebViewConfiguration};
+    use objc2_web_kit::{WKContentRuleList, WKContentRuleListStore, WKWebView, WKWebViewConfiguration, WKWebsiteDataStore};
     use std::cell::RefCell;
     use tauri::{AppHandle, Manager};
 
@@ -712,13 +715,15 @@ mod imp {
         );
     }
 
-    /// The rules are ready: store them in the thread_local; should the reader window
-    /// have been built before the compilation finished, attach them at runtime
-    /// (effective from the next navigation).
+    /// The rules are ready: store them in the thread_local; should a reader window (the
+    /// user's or the agent's) have been built before the compilation finished, attach
+    /// them at runtime (effective from the next navigation).
     fn finish_reader_ready(app: &AppHandle, list: Retained<WKContentRuleList>) {
         READER_RULE_LIST.with(|c| c.replace(Some(list)));
-        if let Some(webview) = app.get_webview_window(crate::browser::reader::READER_LABEL) {
-            attach_list_to(webview.as_ref(), &READER_RULE_LIST);
+        for label in [crate::browser::reader::READER_LABEL, crate::browser::reader::READER_AGENT_LABEL] {
+            if let Some(webview) = app.get_webview_window(label) {
+                attach_list_to(webview.as_ref(), &READER_RULE_LIST);
+            }
         }
     }
 
@@ -767,6 +772,19 @@ mod imp {
             lists.extend(RULE_LIST.with(|c| c.borrow().clone()));
         }
         configuration_with(lists)
+    }
+
+    /// `reader_webview_configuration` for the agent's reader window, with a
+    /// non-persistent data store: the pages the agent proposes load with none of the
+    /// browser's cookies, logins or storage. It has to be set here — given a
+    /// configuration of its own, the webview takes that configuration's data store and
+    /// the builder's incognito switch goes unread. None (no rule ready yet) leaves the
+    /// builder's incognito switch to do it.
+    pub fn isolated_reader_webview_configuration(adblock_enabled: bool) -> Option<Retained<WKWebViewConfiguration>> {
+        let cfg = reader_webview_configuration(adblock_enabled)?;
+        let mtm = MainThreadMarker::new()?;
+        unsafe { cfg.setWebsiteDataStore(&WKWebsiteDataStore::nonPersistentDataStore(mtm)) };
+        Some(cfg)
     }
 
     /// A new browser window's build configuration: the adblock rules are pre-attached when ready (so the first frame already blocks).

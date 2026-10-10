@@ -107,6 +107,9 @@ objc2-web-kit = { version = "0.3", features = [
     "WKUserContentController",
     "WKWebViewConfiguration",
     "WKWebView",
+    # The agent's reader window gets a non-persistent data store of its own: none of
+    # the browser's cookies or logins (already compiled in through wry)
+    "WKWebsiteDataStore",
     "block2",
 ] }
 block2 = "0.6"

@@ -213,7 +213,8 @@ workflows cannot loop").
 | `browserbar` | the detached browser's chrome, a child of `browserwin` | our bundle | `browserbar.json`: core, window dragging | relays every clip action to `main` |
 | `browserwin` | the detached browser window | no webview of its own | — | holds `browserbar` and the tabs |
 | `browser-N` | a tab, a child of `main` or `browserwin`; the warm-up shell is one built ahead | remote pages | none | navigates under a guard, with the ad-block rules |
-| `reader` | the hidden reading window | remote pages | none | fetches pages for the reading projection and the read gate; no history hooks |
+| `reader` | the hidden reading window | remote pages | none | fetches pages for the reading projection, sharing the browser's web data (a login carries over); no history hooks |
+| `reader-agent` | the read gate's hidden reading window | remote pages | none | fetches the pages the agent reads, in a non-persistent data store of its own: no cookie or site storage of the user's goes out, and nothing outlives the run; its own extraction cache; no history hooks |
 
 Capabilities match **webviews** by exact label, never a wildcard: the main window hosts the
 docked tabs as child webviews, so a window-scoped capability would hand every remote page
@@ -403,10 +404,10 @@ Each boundary in a line or two; the section named after it holds the mechanism.
 - **No bash, no run_code.** Every capability the agent has is a typed domain tool —
   interceptable, renderable, auditable — and it can run neither a script nor a code block.
 - **Webviews and IPC.** Our four webviews are matched by exact label; remote pages (the tabs
-  and the reader) match no capability and get no IPC (see "Windows and webviews"). The
+  and both reader windows) match no capability and get no IPC (see "Windows and webviews"). The
   navigation guard: `on_navigation` allows only http(s) (and a tab's own `about:blank`) and
   refuses the app's own origin; `on_new_window` always denies — a tab reopens an http(s)
-  target in itself, the reader drops it. Clipping is a fixed extraction
+  target in itself, a reader window drops it. Clipping is a fixed extraction
   script the app evaluates on a user command, so a page cannot write notes.
 - **Our webviews never talk to a remote host.** The app's CSP limits `connect-src` to IPC
   and every other source to the bundle, and allows images only from
@@ -425,8 +426,10 @@ Each boundary in a line or two; the section named after it holds the mechanism.
 - **The read-consent trade-off.** Under a session's standing read consent, a page the agent
   read could steer it into fetching a URL it composed. What remains is the card listing
   every URL as it is fetched, the stop button beside it, and the consent ending with the
-  session. For the same reason an agent write localises only the images on its source page's
-  own site (exit 4).
+  session. The fetch carries none of the user's cookies or site storage (`reader-agent`), so
+  such a URL cannot act as the user on a site they are signed in to, nor read what only
+  their session would see. For the same reason an agent write localises only the images on
+  its source page's own site (exit 4).
 - **Our own renderer.** `lib/markdown.ts` escapes all text first and allows only http(s)
   links and wikilinks, so the XSS surface of chat answers, embeds and the reading projection
   is our own; KaTeX (`trust:false`, only on fragments identified as formulas) is its one
@@ -446,9 +449,10 @@ included, changes this list and is a design decision. There is no telemetry.
    assembled, already through the privacy gates. With your own key it goes straight to the
    vendor; in hosted mode, through exit 6.
 2. **The browser.** Tabs the user opened, isolated from IPC. The hidden `reader` window is
-   the headless form of the same exit, triggered by a click — or by the read gate: a page
-   the agent proposes (`open_for_reading`, `import_page`) is fetched there once the user
-   approves it on the card, or without a click under the session's standing consent. The DNS
+   the headless form of the same exit, triggered by a click. The read gate has a hidden
+   window of its own, `reader-agent`: a page the agent proposes (`open_for_reading`,
+   `import_page`) is fetched there once the user approves it on the card, or without a click
+   under the session's standing consent, with no cookie or site storage of the user's. The DNS
    prefetch (`browser/window.rs::prefetch_dns`) is a prelude: when ⌘L input pauses, a
    candidate row is highlighted, or `browser_open` runs, the host name goes to the system
    resolver (no HTTP; only names with a dot, once per host per 30 s), exposing which domain
@@ -820,9 +824,11 @@ Rules shared by the four:
 A write a standing grant let through stays **unreviewed** in the editor; one approved on the
 dialog is accepted, because the dialog was the review (see "Block provenance").
 
-The read gate fetches through the reader window's extraction (`page_read`: the tabs'
-navigation guard and ad-block rules, its own image, media and font blocking; no separate
-cookie store is configured, so it shares the browser's web data), a long page in parts of
+The read gate fetches through the reader's extraction in a window of its own
+(`page_read_for_agent`, label `reader-agent`: the tabs' navigation guard and ad-block rules,
+the reader's image, media and font blocking, and a non-persistent data store, so none of
+the user's cookies or site storage goes out with an agent's fetch and nothing it sets is
+kept; its own extraction cache, apart from the reading projection's), a long page in parts of
 about 20k characters; a later
 part, or a page already read this turn, is served from the turn's cache with no second fetch
 and no second card. A page read joins the source table as verified. An action list's
@@ -1301,8 +1307,8 @@ hands the keyboard back to the page after any chrome interaction.
 
 **History and bookmarks** live in the app-config directory, shared across vaults, outside
 `Settings` because `settings::load` is cloned on the navigation and image-proxy hot paths.
-History has one writer, the tab's build hooks; the reader window has none, so the reading
-projection stays out of history by construction.
+History has one writer, the tab's build hooks; the reader windows have none, so the reading
+projection and the agent's reads stay out of history by construction.
 
 ### Ad blocking
 

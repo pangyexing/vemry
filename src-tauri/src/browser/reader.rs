@@ -37,6 +37,13 @@ use super::window::{is_app_origin, normalize_url};
 use crate::AppState;
 
 pub const READER_LABEL: &str = "reader";
+/// The reader window the agent's read gate fetches through: the same hidden window,
+/// guard and blocking, but with a non-persistent data store of its own and its own
+/// extraction cache (`AppState::reader_agent`). A page the model proposes loads with
+/// none of the browser's cookies or logins, so it cannot have a signed-in page read
+/// into the conversation on the user's behalf — and a page the user read signed in,
+/// in the reading projection, is never handed to the agent out of the cache.
+pub const READER_AGENT_LABEL: &str = "reader-agent";
 
 /// How many projection pages are cached. Reopening the same URL is instant, and
 /// clipping or a quote block reads the cache directly: no refetch, and byte-identical
@@ -217,6 +224,22 @@ pub async fn page_read(
     state: State<'_, AppState>,
     url: String,
 ) -> Result<Option<ReadPage>, String> {
+    read_page(app, &state.reader, url, false).await
+}
+
+/// `page_read` for the agent's read gate: through the isolated reader window
+/// (`READER_AGENT_LABEL`), with its own cache and request generation, so an agent
+/// fetch and the user's reading neither share a page nor supersede each other.
+pub(crate) async fn page_read_for_agent(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<Option<ReadPage>, String> {
+    read_page(app, &state.reader_agent, url, true).await
+}
+
+async fn read_page(app: AppHandle, reader: &ReaderState, url: String, isolated: bool) -> Result<Option<ReadPage>, String> {
+    let label = if isolated { READER_AGENT_LABEL } else { READER_LABEL };
     let url = normalize_url(&url)?;
     // The hidden reader window gets the blocking rules too
     super::adblock::ensure_rules_soon(&app);
@@ -226,21 +249,21 @@ pub async fn page_read(
     // a non-fallback page counts as stable within the session, which matches the "no
     // refetch" semantics of the frontend's back and forward
     {
-        let inner = state.reader.0.lock().unwrap();
+        let inner = reader.0.lock().unwrap();
         if let Some(c) = inner.cache_get(url.as_str()).filter(|c| !c.page.fallback) {
             return Ok(Some(read_page_of(c.url.clone(), &c.title, &c.page)));
         }
     }
 
     let generation = {
-        let mut inner = state.reader.0.lock().unwrap();
+        let mut inner = reader.0.lock().unwrap();
         inner.generation += 1;
         inner.generation
     };
-    let superseded = || state.reader.0.lock().unwrap().generation != generation;
+    let superseded = || reader.0.lock().unwrap().generation != generation;
 
     // The old document's marker has to be settled before navigating (an awaited callback), or it might land on the new document instead
-    let old_url = if let Some(webview) = app.get_webview_window(READER_LABEL) {
+    let old_url = if let Some(webview) = app.get_webview_window(label) {
         let marked = eval_json(webview.as_ref(), MARK_PROBE).await.ok();
         marked.map(|v| str_field(&v, "url")).unwrap_or_default()
     } else {
@@ -262,14 +285,14 @@ pub async fn page_read(
         let result = (|| {
             let stale = app2
                 .try_state::<AppState>()
-                .map(|s| s.reader.0.lock().unwrap().generation != generation)
+                .map(|s| (if isolated { &s.reader_agent } else { &s.reader }).0.lock().unwrap().generation != generation)
                 .unwrap_or(true);
             if stale {
                 return Ok(()); // this request will return None at the polling point shortly
             }
-            match app2.get_webview_window(READER_LABEL) {
+            match app2.get_webview_window(label) {
                 Some(w) => w.navigate(url2).map_err(|e| e.to_string()),
-                None => build_reader_window(&app2, &url2),
+                None => build_reader_window(&app2, &url2, isolated),
             }
         })();
         let _ = btx.send(result);
@@ -291,7 +314,7 @@ pub async fn page_read(
         if superseded() {
             return Ok(None);
         }
-        let webview = app.get_webview_window(READER_LABEL).ok_or("the reading fetch window is closed")?;
+        let webview = app.get_webview_window(label).ok_or("the reading fetch window is closed")?;
         let Ok(probe) = eval_json(webview.as_ref(), PROBE).await else {
             // An eval can fail at the instant a navigation switches over, which is not fatal
             if timed_out {
@@ -352,7 +375,7 @@ pub async fn page_read(
     }
     // The backstop: nothing was ever grabbed before the timeout, but the new document is confirmed — force one last grab
     if best.is_none() && saw_new_doc {
-        if let Some(webview) = app.get_webview_window(READER_LABEL) {
+        if let Some(webview) = app.get_webview_window(label) {
             if let Ok(grabbed) = grab(&webview).await {
                 merge_best(&mut best, grabbed);
             }
@@ -364,17 +387,21 @@ pub async fn page_read(
     }
 
     let read = read_page_of(final_url.clone(), &doc_title, &page);
-    state.reader.0.lock().unwrap().cache_insert(url.to_string(), final_url, doc_title, page);
+    reader.0.lock().unwrap().cache_insert(url.to_string(), final_url, doc_title, page);
     Ok(Some(read))
 }
 
 /// Build the hidden window on the main thread: the same navigation guard as a visible
 /// browser window, with the adblock rules plus the reader's own heavy-resource
 /// blocking pre-attached (see adblock::reader_webview_configuration); it is never
-/// shown.
-fn build_reader_window(app: &AppHandle, url: &tauri::Url) -> Result<(), String> {
+/// shown. The agent's (`isolated`) gets a non-persistent data store: incognito on the
+/// builder, and on macOS on the configuration too, which is what the webview reads
+/// when it is given one.
+fn build_reader_window(app: &AppHandle, url: &tauri::Url, isolated: bool) -> Result<(), String> {
+    let label = if isolated { READER_AGENT_LABEL } else { READER_LABEL };
     #[allow(unused_mut)]
-    let mut builder = WebviewWindowBuilder::new(app, READER_LABEL, WebviewUrl::External(url.clone()))
+    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url.clone()))
+        .incognito(isolated)
         .title(crate::i18n::t(crate::i18n::current(), "window.readerTitle"))
         .inner_size(1080.0, 900.0)
         .visible(false)
@@ -387,7 +414,12 @@ fn build_reader_window(app: &AppHandle, url: &tauri::Url) -> Result<(), String> 
     #[cfg(target_os = "macos")]
     {
         let adblock = crate::settings::load(app).adblock_enabled;
-        if let Some(cfg) = super::adblock::reader_webview_configuration(adblock) {
+        let cfg = if isolated {
+            super::adblock::isolated_reader_webview_configuration(adblock)
+        } else {
+            super::adblock::reader_webview_configuration(adblock)
+        };
+        if let Some(cfg) = cfg {
             builder = builder.with_webview_configuration(cfg);
         }
     }
@@ -519,5 +551,30 @@ mod tests {
         assert!(inner.cache_get("https://e.com/final").is_some());
         assert!(inner.cache_get("http://e.com/short").is_some());
         assert!(inner.cache_get("https://nowhere.example/x").is_none());
+    }
+
+    #[test]
+    fn reader_windows_have_no_ipc() {
+        // Both reader windows hold remote pages: no capability may name them, match them
+        // by a pattern, or open IPC to a remote origin.
+        let capabilities = [
+            include_str!("../../capabilities/default.json"),
+            include_str!("../../capabilities/agent.json"),
+            include_str!("../../capabilities/browserbar.json"),
+            include_str!("../../capabilities/capture.json"),
+        ];
+        for text in capabilities {
+            let cap: serde_json::Value = serde_json::from_str(text).unwrap();
+            assert!(cap.get("remote").is_none(), "{}", cap["identifier"]);
+            for key in ["windows", "webviews"] {
+                for label in cap.get(key).and_then(|v| v.as_array()).into_iter().flatten() {
+                    let label = label.as_str().unwrap();
+                    assert!(!label.contains('*'), "{}: {label}", cap["identifier"]);
+                    assert_ne!(label, READER_LABEL);
+                    assert_ne!(label, READER_AGENT_LABEL);
+                }
+            }
+        }
+        assert_eq!(std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities")).unwrap().count(), capabilities.len(), "a new capability file is checked here too");
     }
 }

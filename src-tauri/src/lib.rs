@@ -43,6 +43,8 @@ pub struct AppState {
     /// The reading projection's fetch state: the request generation of the hidden
     /// reader window plus the projection page cache.
     pub reader: browser::reader::ReaderState,
+    /// The agent's read gate fetches through its own isolated reader (cache and window).
+    pub reader_agent: browser::reader::ReaderState,
     /// A mirror of the ad-blocking state (the Send-safe side; the rule list itself
     /// lives in a main-thread thread_local).
     pub adblock: browser::adblock::AdblockState,
@@ -107,6 +109,7 @@ pub fn run() {
             script_bridge: Arc::new(script_bridge::ScriptBridgeState::default()),
             browser: browser::BrowserState::default(),
             reader: browser::reader::ReaderState::default(),
+            reader_agent: browser::reader::ReaderState::default(),
             adblock: browser::adblock::AdblockState::default(),
             agent_window: agent_window::AgentWindowState::default(),
             capture_window: capture_window::CaptureWindowState::default(),
