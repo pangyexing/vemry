@@ -313,15 +313,46 @@ mod tests {
         }
     }
 
+    /// The English keys a translated key answers to: the key itself, or for a
+    /// plural form the English `_other` (and `_one` for a language's `one`, which
+    /// may spell out "1" as the English does). A form English lacks, such as
+    /// French `_many`, still belongs to an English plural family.
+    fn english_refs(key: &str) -> Vec<&'static String> {
+        let en = catalog(Lang::En);
+        let plural = key
+            .rsplit_once('_')
+            .filter(|(base, form)| ["zero", "one", "two", "few", "many", "other"].contains(form) && en.contains_key(&format!("{base}_other")));
+        let Some((base, form)) = plural else { return en.get(key).into_iter().collect() };
+        let mut refs = vec![&en[&format!("{base}_other")]];
+        if form == "one" {
+            refs.extend(en.get(&format!("{base}_one")));
+        }
+        refs
+    }
+
     /// Every overlay parses, and carries no key English does not — a stale key
     /// in an overlay would be dead weight the generator already refuses.
     #[test]
     fn overlays_are_subsets_of_english() {
-        let en = catalog(Lang::En);
         for lang in LANGS {
             for key in catalog(lang).keys() {
-                assert!(en.contains_key(key), "{key} in {lang:?} is not an English key");
+                assert!(!english_refs(key).is_empty(), "{key} in {lang:?} is not an English key");
             }
+        }
+    }
+
+    /// The VEMRY.md section a language scaffolds is one `memory_append` can find
+    /// again, and the scaffold's own template opens that same section.
+    #[test]
+    fn every_language_scaffolds_a_memory_section_core_knows() {
+        for lang in LANGS {
+            let section = t(lang, "memoryFile.section");
+            assert!(
+                vemry_core::vault::MEMORY_SECTIONS.contains(&section.as_str()),
+                "{lang:?}: memoryFile.section {section:?} is missing from vault.rs MEMORY_SECTIONS"
+            );
+            let template = t(lang, "memoryFile.template");
+            assert!(template.contains(&format!("\n## {section}\n")), "{lang:?}: the template has no \"## {section}\" heading");
         }
     }
 
@@ -357,12 +388,13 @@ mod tests {
             }
             out
         }
-        let en = catalog(Lang::En);
         for lang in LANGS {
-            let other = catalog(lang);
-            for (key, en_text) in en {
-                let Some(text) = other.get(key) else { continue };
-                assert_eq!(names(en_text), names(text), "placeholder mismatch in {key} ({lang:?})");
+            for (key, text) in catalog(lang) {
+                let refs = english_refs(key);
+                assert!(
+                    refs.iter().any(|en_text| names(en_text) == names(text)),
+                    "placeholder mismatch in {key} ({lang:?})"
+                );
             }
         }
     }

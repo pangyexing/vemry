@@ -1416,7 +1416,7 @@
   "settings.readableLineWidthHint": "Keeps lines to a comfortable length; off, text fills the pane.",
   "settings.readingImages": "Load images in Reader",
   "settings.readingImagesHint": "Off, images show as placeholders; click one to see it in the browser.",
-  "settings.reasoningDefaultSuffix": "(default)",
+  "settings.reasoningDefaultSuffix": " (default)",
   "settings.reasoningEffort": "Thinking depth",
   "settings.reasoningHint": "The chat can change it per session. Higher is deeper and slower.",
   "settings.reasoningInactive": "Only the DeepSeek endpoint uses it; this one ignores it.",

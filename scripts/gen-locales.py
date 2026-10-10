@@ -1825,7 +1825,8 @@ add("settings.", {
     "planConfirmHint": ("At high or max thinking, a multi-step request shows its plan and waits for you. From the next session.",
                         "思考为高／最高时，多步请求先给计划，等你确认。从新会话生效。"),
     "reasoningEffort": ("Thinking depth", "思考深度"),
-    "reasoningDefaultSuffix": ("(default)", "（默认）"),
+    # Appended straight to a level's name, so a language that spaces it says so here
+    "reasoningDefaultSuffix": (" (default)", "（默认）"),
     # Short name plus an optional parenthetical. An empty hint means the level
     # needs no explanation — the UI renders the parenthesis only when non-empty.
     "effort.none": ("Off", "无"),
@@ -2705,8 +2706,9 @@ PLURAL_FORMS = {
 PLURAL_SUFFIXES = ("_zero", "_one", "_two", "_few", "_many", "_other")
 
 # The groups a language must translate completely before it is offered in the
-# settings picker; the rest may fall back to English for a while.
-SHIP_GROUPS = ("app.", "chat.", "settings.", "menu.", "cmd.", "permission.", "skill.", "langName.", "key.")
+# settings picker; the rest may fall back to English for a while. `langName.` is not
+# among them: an overlay never carries it (the autonyms fall back unchanged).
+SHIP_GROUPS = ("app.", "chat.", "settings.", "menu.", "cmd.", "permission.", "skill.", "key.")
 
 
 def placeholders(text):
@@ -2765,17 +2767,22 @@ for lang in LANGS[2:]:
             if form not in forms:
                 errors.append(f"{lang}: {key} — {lang} has no '{form}' plural form (needs {', '.join(forms)})")
                 continue
-            ref = en_data.get(f"{base}_one", en_data.get(f"{base}_other"))
+            # Every form matches the English _other; a language's `one` may instead match
+            # the English _one, which can spell out "1" (French `one` also covers 0, so it
+            # needs the {n} the English _one leaves out)
+            refs = [en_data[f"{base}_other"]]
+            if form == "one" and f"{base}_one" in en_data:
+                refs.append(en_data[f"{base}_one"])
         elif key in en_data:
-            ref = en_data[key]
+            refs = [en_data[key]]
         else:
             errors.append(f"{lang}: unknown key {key}")
             continue
         if not isinstance(text, str):
             errors.append(f"{lang}: {key} is not a string")
             continue
-        if ref is not None and placeholders(ref) != placeholders(text):
-            errors.append(f"{lang}: {key} — placeholders {sorted(placeholders(text))} != {sorted(placeholders(ref))}")
+        if all(placeholders(ref) != placeholders(text) for ref in refs):
+            errors.append(f"{lang}: {key} — placeholders {sorted(placeholders(text))} != {sorted(placeholders(refs[0]))}")
             continue
         data[key] = text
     # every plural base an overlay touches must carry every form the language needs

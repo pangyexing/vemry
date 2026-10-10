@@ -29,14 +29,18 @@ export type MessageKey = keyof typeof en;
 const EN: Record<MessageKey, string> = en;
 const ZH: Record<MessageKey, string> = zhCN;
 
-// …and so is a stale key left behind in any catalog but gone from en.
+// …and so is a stale key left behind in any catalog but gone from en. A plural
+// form English has no key for (the `_many` of French and Spanish) belongs to the
+// family whose `_other` English carries.
 type Assert<T extends never> = T;
-export type _NoStaleZhKeys = Assert<Exclude<keyof typeof zhCN, MessageKey>>;
-export type _NoStaleJaKeys = Assert<Exclude<keyof typeof ja, MessageKey>>;
-export type _NoStaleKoKeys = Assert<Exclude<keyof typeof ko, MessageKey>>;
-export type _NoStaleFrKeys = Assert<Exclude<keyof typeof fr, MessageKey>>;
-export type _NoStaleDeKeys = Assert<Exclude<keyof typeof de, MessageKey>>;
-export type _NoStaleEsKeys = Assert<Exclude<keyof typeof es, MessageKey>>;
+type ManyForm<K> = K extends `${infer B}_many` ? (`${B}_other` extends MessageKey ? K : never) : never;
+type Stale<K> = Exclude<K, MessageKey | ManyForm<K>>;
+export type _NoStaleZhKeys = Assert<Stale<keyof typeof zhCN>>;
+export type _NoStaleJaKeys = Assert<Stale<keyof typeof ja>>;
+export type _NoStaleKoKeys = Assert<Stale<keyof typeof ko>>;
+export type _NoStaleFrKeys = Assert<Stale<keyof typeof fr>>;
+export type _NoStaleDeKeys = Assert<Stale<keyof typeof de>>;
+export type _NoStaleEsKeys = Assert<Stale<keyof typeof es>>;
 
 const CATALOGS: Record<Lang, Partial<Record<MessageKey, string>>> = { en: EN, "zh-CN": ZH, ja, ko, fr, de, es };
 
