@@ -95,7 +95,7 @@ The interface uses the word that reads best (**Reader**); architecture prose use
 | 受阻 | blocked | 着手不可 | 막힘 | bloquée | blockiert | bloqueada | waiting, locked, dependent |
 | 估时 | estimate | 見積もり | 예상 시간 | estimation | Schätzung | estimación | effort, duration, time box |
 
-## The seven projections
+## The eight projections
 
 | Chinese | English | Japanese | Korean | French | German | Spanish |
 |---|---|---|---|---|---|---|
@@ -105,6 +105,7 @@ The interface uses the word that reads best (**Reader**); architecture prose use
 | 图谱 | Graph | グラフ | 그래프 | Graphe | Graph | Grafo |
 | 断言 | Claims | 主張 | 주장 | Affirmations | Thesen | Afirmaciones |
 | 证据 | Evidence | 根拠 | 근거 | Preuves | Belege | Evidencia |
+| 复习 | Review | 復習 | 복습 | Révision | Wiederholen | Repaso |
 | 会话回放 | Session Replay | セッション再生 | 세션 다시 보기 | Déroulé de session | Sitzungswiedergabe | Reproducción de sesión |
 
 ## Clipping and browsing

@@ -36,5 +36,8 @@ does not cover — are in `<tag>.md` next to its overlay (`ja.md`, `ko.md`, `fr.
 `de.md`, `es.md`). A new string follows them.
 
 A language is offered in the settings picker once its high-exposure groups (`app.`,
-`chat.`, `settings.`, `menu.`, `cmd.`, `permission.`, `skill.`) are complete and a
-native speaker has read them; the generator prints that count.
+`chat.`, `settings.`, `menu.`, `cmd.`, `permission.`, `skill.`, `key.`) are complete;
+the generator prints that count. The five overlays were translated and then
+cross-reviewed against the English and the glossary rather than read by a native
+speaker: a native speaker's correction is welcome, lands in the overlay like any
+other edit, and follows that language's `<tag>.md`.
