@@ -67,7 +67,7 @@ impl Vault {
                 continue;
             }
             for edge in self.index().edges(id) {
-                let gone = edge.resolved.as_ref().is_none_or(&hidden);
+                let gone = edge.resolved.as_ref().is_none_or(hidden);
                 if gone && !edge.raw_target.is_empty() {
                     report.unresolved.push((id.clone(), edge.from_block.clone(), edge.raw_target.clone()));
                 }
