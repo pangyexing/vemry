@@ -732,6 +732,7 @@
   "err.notFound": "存在しません：{path}",
   "err.notUtf8": "UTF-8 テキストではありません：{path}",
   "err.reservedName": "{path}：Windows で使用できない文字または予約語が名前に含まれています",
+  "err.symlink": "パスがシンボリックリンクを経由しています（保管庫はシンボリックリンクをたどりません）：{path}",
   "err.tooLarge": "ファイルが大きすぎます：{path}",
   "evidence.count_other": "{n} 件",
   "evidenceView.broken": "リンク切れ {n} 件",

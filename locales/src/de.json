@@ -735,6 +735,7 @@
   "err.notFound": "Existiert nicht: {path}",
   "err.notUtf8": "Kein UTF-8-Text: {path}",
   "err.reservedName": "{path} – der Name enthält Zeichen oder ein reserviertes Wort, das Windows nicht erlaubt",
+  "err.symlink": "Pfad führt über einen symbolischen Link, dem die Wissensbasis nicht folgt: {path}",
   "err.tooLarge": "Datei zu groß: {path}",
   "evidence.count_one": "{n} Beleg",
   "evidence.count_other": "{n} Belege",

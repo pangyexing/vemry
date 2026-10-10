@@ -415,9 +415,13 @@ and image types are all intercepted) and, when the async answer turns out not to
 a file paste, the clipboard's plain text is inserted manually instead.
 ## Security boundaries
 
-- **Paths**: every path handed in by the agent or the frontend goes through
-  `Vault::note_id()`, which rejects absolute paths and `../` escapes — the agent
-  cannot read or write any file outside the vault.
+- **Paths**: every path handed in by the agent or the frontend goes through the
+  vault's path check (`Vault::note_id()` for a note, the same rule inside every file
+  method), which rejects absolute paths and `../` escapes and refuses a path that
+  passes through a symbolic link inside the vault (`refuse_links` in vault.rs). The
+  index, the file listings and the watcher never follow a link, so one reaches
+  neither a file outside the vault nor a note in a privacy zone under a public name —
+  the agent cannot read or write any file outside the vault.
 - **Write permission**: the gate is in Rust, right next to the ability to write
   files.
 - **Privacy zones**: a folder or note marked private does not exist as far as the

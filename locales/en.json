@@ -735,6 +735,7 @@
   "err.notFound": "Does not exist: {path}",
   "err.notUtf8": "Not UTF-8 text: {path}",
   "err.reservedName": "{path} — the name uses characters or a reserved word Windows forbids",
+  "err.symlink": "Path goes through a symbolic link, which the vault does not follow: {path}",
   "err.tooLarge": "File too large: {path}",
   "evidence.count_one": "{n} item",
   "evidence.count_other": "{n} items",

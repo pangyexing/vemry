@@ -249,6 +249,7 @@ impl Vault {
 
     pub fn create_folder(&self, path: &str) -> Result<String> {
         let rel = validate_portable_rel(path)?;
+        refuse_links(&self.root, rel)?;
         fs::create_dir_all(self.root.join(rel))?;
         Ok(rel.to_string())
     }
@@ -272,6 +273,7 @@ impl Vault {
     /// extension you type is what you get). `.md` files are indexed as notes.
     pub fn create_file(&mut self, path: &str) -> Result<String> {
         let rel = validate_portable_rel(path)?.to_string();
+        refuse_links(&self.root, &rel)?;
         let abs = self.root.join(&rel);
         if abs.exists() {
             return Err(reject(PathReject::Exists, rel));
@@ -332,6 +334,7 @@ impl Vault {
         if rel.ends_with(".md") {
             return Err(reject(PathReject::AttachmentIsMd, rel));
         }
+        refuse_links(&self.root, rel)?;
         let candidate = self.dedup_rel(rel);
         let abs = self.root.join(&candidate);
         if let Some(parent) = abs.parent() {
@@ -371,7 +374,9 @@ impl Vault {
         let dest_prefix = if dest.trim().trim_matches('/').is_empty() {
             String::new()
         } else {
-            format!("{}/", validate_rel(dest)?)
+            let rel = validate_rel(dest)?;
+            refuse_links(&self.root, rel)?;
+            format!("{rel}/")
         };
         let root_canon = dunce::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
         let mut created = Vec::new();
@@ -422,6 +427,7 @@ impl Vault {
         if rel.ends_with(".md") {
             return Err(reject(PathReject::MdNeedsNoteApi, rel));
         }
+        refuse_links(&self.root, rel)?;
         let abs = self.root.join(rel);
         if !abs.exists() {
             validate_portable_rel(rel)?;
@@ -440,6 +446,8 @@ impl Vault {
     pub fn rename_path(&mut self, from: &str, to: &str) -> Result<String> {
         let from_rel = validate_rel(from)?.to_string();
         let to_rel = validate_rel(to)?.to_string();
+        refuse_links(&self.root, &from_rel)?;
+        refuse_links(&self.root, &to_rel)?;
         if from_rel == to_rel {
             return Ok(to_rel);
         }
@@ -485,6 +493,7 @@ impl Vault {
     /// rebuild the index.
     pub fn delete_path(&mut self, path: &str) -> Result<()> {
         let rel = validate_rel(path)?;
+        refuse_links(&self.root, rel)?;
         let abs = self.root.join(rel);
         if !abs.exists() {
             return Err(reject(PathReject::NotFound, rel));
@@ -519,6 +528,7 @@ impl Vault {
     }
 
     pub fn read_note(&self, id: &NoteId) -> Result<String> {
+        refuse_links(&self.root, id.as_str())?;
         let path = self.abs_path(id);
         fs::read_to_string(&path).map_err(|_| VemryError::NoteNotFound(id.to_string()))
     }
@@ -664,6 +674,7 @@ impl Vault {
         if is_meta_id(id) {
             return Err(reject(PathReject::MetaNotANote, id.as_str()));
         }
+        refuse_links(&self.root, id.as_str())?;
         let existed = self.index.contains(id);
         if let Ok(previous) = fs::read_to_string(self.abs_path(id)) {
             if previous != content {
@@ -714,6 +725,7 @@ impl Vault {
     /// over; a hard link to it, or a tag an OS stores on the file rather than in
     /// its own database, is not.
     fn write_bytes(&self, id: &NoteId, content: &str) -> Result<()> {
+        refuse_links(&self.root, id.as_str())?;
         let path = self.abs_path(id);
         if !path.exists() {
             validate_portable_rel(id.as_str())?;
@@ -1031,6 +1043,7 @@ impl Vault {
     }
 
     pub fn delete_note(&mut self, id: &NoteId) -> Result<VaultEvent> {
+        refuse_links(&self.root, id.as_str())?;
         let path = self.abs_path(id);
         fs::remove_file(&path).map_err(|_| VemryError::NoteNotFound(id.to_string()))?;
         self.index.remove(id);
@@ -1114,7 +1127,11 @@ impl Vault {
                 continue;
             }
             let id = NoteId::from_rel_path(rel);
-            if path.exists() {
+            // A note reached through a link is not part of the vault (`refuse_links`):
+            // opening and rescanning never index one, and a link that appears later
+            // must not slip its target in here either
+            let linked = refuse_links(&self.root, id.as_str()).is_err();
+            if path.exists() && !linked {
                 let existed = self.index.contains(&id);
                 let previous = self.search.note_text(&id).map(str::to_string);
                 let Ok(raw) = fs::read_to_string(path) else { continue };
@@ -1567,12 +1584,35 @@ pub fn sanitize_filename(title: &str) -> String {
 /// `Vault::checked_file` against a root.
 fn checked_file_in<'a>(root: &Path, path: &'a str) -> Result<(&'a str, PathBuf, fs::Metadata)> {
     let rel = validate_rel(path)?;
+    refuse_links(root, rel)?;
     let abs = root.join(rel);
     let meta = fs::metadata(&abs).map_err(|_| reject(PathReject::NotFound, rel))?;
     if !meta.is_file() {
         return Err(reject(PathReject::NotAFile, rel));
     }
     Ok((rel, abs, meta))
+}
+
+/// Refuse a path that passes through a symbolic link below the vault root. The
+/// index, the file listings and the watcher never follow one, so a link is not part
+/// of the vault; read or written through, it would reach whatever it points at — a
+/// file outside the vault, or a note in a privacy zone under a public name — and
+/// both reach the agent through the same reads every other path takes. A component
+/// that does not exist yet (a note about to be created) ends the check: nothing past
+/// it can be a link. The root itself is canonical, so a vault opened through a
+/// link to its folder is unaffected.
+fn refuse_links(root: &Path, rel: &str) -> Result<()> {
+    let mut at = root.to_path_buf();
+    for part in Path::new(rel).components() {
+        let std::path::Component::Normal(seg) = part else { continue };
+        at.push(seg);
+        match fs::symlink_metadata(&at) {
+            Ok(meta) if meta.file_type().is_symlink() => return Err(reject(PathReject::Symlink, rel)),
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    Ok(())
 }
 
 /// Reject empty, absolute, `~` and `..`-escaping paths; return trimmed rel path.
@@ -2731,5 +2771,71 @@ later still ^b2
         let again = vault.migrate_attachment_buckets(false).unwrap();
         assert!(again.moved.is_empty());
         assert_eq!(again.rewritten_notes, 0);
+    }
+
+    /// A symbolic link inside the vault reaches nothing: not a file outside the
+    /// vault, not a folder outside it, not a note in a privacy zone under a public
+    /// name, and not the index through the watcher. Every read and write path
+    /// refuses it, and nothing outside the vault is touched.
+    #[cfg(unix)]
+    #[test]
+    fn a_symbolic_link_reaches_nothing_through_the_vault() {
+        use std::os::unix::fs::symlink;
+        fn is_link_reject<T>(r: Result<T>) -> bool {
+            matches!(r, Err(VemryError::InvalidPath { reason: PathReject::Symlink, .. }))
+        }
+        let (_d, mut vault) = fixture_vault();
+        let root = vault.root().to_path_buf();
+        let outside = tempfile::tempdir().unwrap();
+        let out = outside.path();
+        fs::write(out.join("creds.txt"), "OUTSIDE-SECRET").unwrap();
+        fs::write(out.join("Target.md"), "# outside OUTSIDE-NOTE
+").unwrap();
+        fs::create_dir_all(root.join("secret")).unwrap();
+        fs::write(root.join("secret/Hidden.md"), "# hidden HIDDEN-TEXT
+").unwrap();
+        fs::create_dir_all(root.join("pub")).unwrap();
+        symlink(out.join("creds.txt"), root.join("pub/creds.txt")).unwrap();
+        symlink(out, root.join("door")).unwrap();
+        symlink(root.join("secret/Hidden.md"), root.join("pub/Peek.md")).unwrap();
+        vault.add_privacy_rule("secret/").unwrap();
+        vault.rescan().unwrap();
+
+        // reads
+        assert!(is_link_reject(vault.read_file("pub/creds.txt")));
+        assert!(is_link_reject(vault.read_file_bytes("pub/creds.txt")));
+        assert!(Vault::open_in(&root, "door/creds.txt").is_err());
+        assert!(is_link_reject(vault.read_note(&NoteId::new("door/Target.md"))));
+        assert!(is_link_reject(vault.read_note(&NoteId::new("pub/Peek.md"))));
+        assert!(vault.read_note_for_agent(&NoteId::new("pub/Peek.md")).is_err(), "a public name must not open a private note");
+        // never listed or indexed in the first place
+        assert!(!vault.list_files().iter().any(|f| f.starts_with("door") || f == "pub/creds.txt" || f == "pub/Peek.md"));
+        assert!(!vault.list_folders().iter().any(|f| f == "door"));
+        assert!(!vault.index().contains(&NoteId::new("pub/Peek.md")));
+
+        // writes, creations, moves and deletions through the linked folder
+        assert!(is_link_reject(vault.write_note(&NoteId::new("door/New.md"), "x")));
+        assert!(is_link_reject(vault.write_note(&NoteId::new("door/Target.md"), "overwritten")));
+        assert!(is_link_reject(vault.append_note(&NoteId::new("door/Target.md"), "more")));
+        assert!(is_link_reject(vault.write_file("door/x.txt", "x")));
+        assert!(is_link_reject(vault.save_attachment("door/shot.png", b"png")));
+        assert!(is_link_reject(vault.create_folder("door/sub")));
+        assert!(is_link_reject(vault.create_file("door/new.txt")));
+        assert!(is_link_reject(vault.import_files(&[root.join("Sleep.md")], "door", false)));
+        assert!(is_link_reject(vault.rename_path("door/Target.md", "Moved.md")));
+        assert!(is_link_reject(vault.rename_path("Sleep.md", "door/Sleep.md")));
+        assert!(is_link_reject(vault.delete_path("door/Target.md")));
+        assert!(is_link_reject(vault.delete_note(&NoteId::new("door/Target.md"))));
+        let mut left: Vec<String> = fs::read_dir(out).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["Target.md", "creds.txt"], "nothing outside the vault was created, moved or deleted");
+        assert_eq!(fs::read_to_string(out.join("Target.md")).unwrap(), "# outside OUTSIDE-NOTE\n");
+        assert!(root.join("Sleep.md").exists(), "the refused move left the note in place");
+
+        // a link that appears while the vault is open is not indexed by the watcher
+        symlink(out.join("Target.md"), root.join("Late.md")).unwrap();
+        assert!(vault.handle_fs_change(&[root.join("Late.md")]).is_empty());
+        assert!(!vault.index().contains(&NoteId::new("Late.md")));
+        assert!(vault.search_for_agent("OUTSIDE-NOTE", 10).is_empty());
     }
 }

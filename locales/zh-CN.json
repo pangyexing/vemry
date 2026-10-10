@@ -735,6 +735,7 @@
   "err.notFound": "不存在：{path}",
   "err.notUtf8": "不是 UTF-8 文本：{path}",
   "err.reservedName": "{path}（文件名含 Windows 不允许的字符或保留名）",
+  "err.symlink": "路径经过符号链接，知识库不跟随符号链接：{path}",
   "err.tooLarge": "文件过大：{path}",
   "evidence.count_one": "{n} 条",
   "evidence.count_other": "{n} 条",

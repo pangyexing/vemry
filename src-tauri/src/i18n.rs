@@ -295,6 +295,7 @@ mod tests {
         "err.folderIntoItself",
         "err.reservedName",
         "err.escapes",
+        "err.symlink",
         "err.empty",
         "err.blockNotFound",
         "err.blockChanged",

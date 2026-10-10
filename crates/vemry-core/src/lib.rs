@@ -102,6 +102,7 @@ pub enum PathReject {
     FolderIntoItself,
     ReservedName,
     Escapes,
+    Symlink,
     Empty,
 }
 
@@ -122,6 +123,7 @@ impl PathReject {
             PathReject::FolderIntoItself => "err.folderIntoItself",
             PathReject::ReservedName => "err.reservedName",
             PathReject::Escapes => "err.escapes",
+            PathReject::Symlink => "err.symlink",
             PathReject::Empty => "err.empty",
         }
     }
@@ -143,6 +145,7 @@ impl std::fmt::Display for PathReject {
             PathReject::FolderIntoItself => "cannot copy a folder into itself",
             PathReject::ReservedName => "the name uses characters or a reserved word Windows forbids",
             PathReject::Escapes => "path escapes the vault",
+            PathReject::Symlink => "path goes through a symbolic link, which the vault does not follow",
             PathReject::Empty => "empty",
         })
     }

@@ -738,6 +738,7 @@
   "err.notFound": "Introuvable : {path}",
   "err.notUtf8": "Ce n'est pas du texte UTF-8 : {path}",
   "err.reservedName": "{path} : le nom contient des caractères ou un mot réservé interdits par Windows",
+  "err.symlink": "Le chemin passe par un lien symbolique, que le coffre ne suit pas : {path}",
   "err.tooLarge": "Fichier trop volumineux : {path}",
   "evidence.count_many": "{n} d'éléments",
   "evidence.count_one": "{n} élément",

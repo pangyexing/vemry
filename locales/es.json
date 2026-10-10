@@ -738,6 +738,7 @@
   "err.notFound": "No existe: {path}",
   "err.notUtf8": "No es texto UTF-8: {path}",
   "err.reservedName": "{path}: el nombre usa caracteres o una palabra reservada que Windows no permite",
+  "err.symlink": "La ruta pasa por un enlace simbólico, que la bóveda no sigue: {path}",
   "err.tooLarge": "Archivo demasiado grande: {path}",
   "evidence.count_many": "{n} elementos",
   "evidence.count_one": "{n} elemento",

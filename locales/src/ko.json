@@ -732,6 +732,7 @@
   "err.notFound": "존재하지 않아요: {path}",
   "err.notUtf8": "UTF-8 텍스트가 아니에요: {path}",
   "err.reservedName": "{path}: Windows에서 금지된 문자나 예약어가 이름에 들어 있어요",
+  "err.symlink": "경로가 심볼릭 링크를 거쳐요(보관소는 심볼릭 링크를 따라가지 않아요): {path}",
   "err.tooLarge": "파일이 너무 커요: {path}",
   "evidence.count_other": "근거 {n}개",
   "evidenceView.broken": "링크 깨짐 {n}개",
