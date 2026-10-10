@@ -2227,7 +2227,9 @@ waiting on that turn) and a `User-Agent` naming the client version; none of thes
 is a body field, and none is sent to a custom provider. The stream-idle limit is 600 s through the relay (the vendor's
 peak-time queue sends only comment lines for up to ten minutes, and the read loop
 counts events) and 120 s otherwise. The development override `VEMRY_API_BASE`
-replaces the relay's origin and is never persisted.
+replaces the relay's origin in a debug build only — a release build always talks to
+`api.vemry.app`, so no environment variable can point this exit, or the device
+token it carries, anywhere else — and is never persisted.
 
 ## The rest of the app shell (implemented)
 

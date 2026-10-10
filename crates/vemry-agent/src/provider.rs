@@ -19,12 +19,18 @@ pub const DEEPSEEK_PRO_MODEL: &str = "deepseek-v4-pro";
 /// day one, and a move later is a DNS change rather than a release.
 pub const HOSTED_API_BASE: &str = "https://api.vemry.app";
 
-/// The relay's origin: `HOSTED_API_BASE`, unless the `VEMRY_API_BASE` environment
-/// variable names another one (a local server during development). Never
-/// persisted — the override is read every time, so a shell without it goes back
-/// to the real host.
+/// The relay's origin: `HOSTED_API_BASE`, unless — in a debug build only — the
+/// `VEMRY_API_BASE` environment variable names another one (a local server during
+/// development). A release build always talks to the real host: the network-exit
+/// list is closed, and no environment variable may send exit 6, with the device
+/// token it carries, anywhere else. Never persisted — the override is read every
+/// time, so a shell without it goes back to the real host.
 pub fn hosted_base_url() -> String {
-    hosted_base_from(std::env::var("VEMRY_API_BASE").ok().as_deref())
+    if cfg!(debug_assertions) {
+        hosted_base_from(std::env::var("VEMRY_API_BASE").ok().as_deref())
+    } else {
+        HOSTED_API_BASE.to_string()
+    }
 }
 
 /// The origin an override resolves to: the override with its trailing slash
