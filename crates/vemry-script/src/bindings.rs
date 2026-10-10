@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use vemry_core::{reject, PathReject, Vault, VaultEvent, VemryError};
 
-use crate::grants::ScriptStates;
+use crate::grants::{ScriptStates, StateStore};
 use crate::{audit, CommandInfo, Perspective, ScriptUiEvent, UiBridge};
 
 /// What kind of execution the context is currently running — set by the
@@ -61,6 +61,8 @@ pub struct BindEnv {
     pub script: String,
     pub meta: Rc<RefCell<ScriptMeta>>,
     pub grants: Rc<RefCell<ScriptStates>>,
+    /// Where a grant the user gives is recorded — outside the vault (grants.rs).
+    pub store: Rc<StateStore>,
     pub bridge: Arc<dyn UiBridge>,
     /// The execution deadline cell shared with the runtime's interrupt
     /// handler. Paused while blocking on the user (grant/prompt dialogs).
@@ -326,8 +328,8 @@ fn call_write(env: &BindEnv, p: Value, append: bool) -> String {
     let Some(content) = p[content_key].as_str().map(str::to_string) else {
         return err(format!("{what}: missing `{content_key}`"));
     };
-    // host state stays out of reach: no writes into hidden directories
-    // (`.vemry/scripts.json` tampering would be self-granting)
+    // the vault's own configuration stays out of reach: no writes into hidden
+    // directories (`.vemry/` holds the privacy rules, the types and the skills)
     if path.split('/').any(|seg| seg.starts_with('.')) {
         return err(format!("{what}: cannot write into a hidden directory: {path}"));
     }
@@ -349,7 +351,7 @@ fn call_write(env: &BindEnv, p: Value, append: bool) -> String {
             return err(format!("write not granted: the user has not allowed script {} to write to this vault", env.script));
         }
         env.grants.borrow_mut().set_write_grant(&env.script, true);
-        if let Err(e) = env.grants.borrow().save(&root) {
+        if let Err(e) = env.store.save(&root, &env.grants.borrow()) {
             return err(format!("could not save the grant: {e}"));
         }
         audit::append(&root, "grant_given", json!({ "script": env.script }));

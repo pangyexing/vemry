@@ -136,8 +136,12 @@ pub(crate) fn broadcast(app: &AppHandle, event: &VaultEvent) {
         }
     }
     // The block types are snapshotted into the system prompt like the skills: a
-    // change under `.vemry/types/` applies from the next turn
-    if matches!(event, VaultEvent::TypesChanged) {
+    // change under `.vemry/types/` applies from the next turn. So does a change to
+    // what is private — the rules file edited outside the app, or a note whose
+    // `private:` flag flipped or that moved across a zone's edge (the vault raises
+    // PrivacyChanged for each): the overview in the prompt must not keep a note that
+    // has just become private
+    if matches!(event, VaultEvent::TypesChanged | VaultEvent::PrivacyChanged) {
         let state: State<'_, AppState> = app.state();
         state.agent.invalidate_prompt_snapshot();
     }
@@ -267,7 +271,12 @@ pub fn vault_open(app: AppHandle, state: State<'_, AppState>, path: String, name
                 Arc::clone(&state.vault),
                 Arc::new(bridge),
                 vemry_script::Perspective::default(), // the user's perspective: a script has the same rights as the UI
-                vemry_script::HostConfig::default(),
+                // The scripts' enabled and write-grant flags live with the app, not in
+                // the vault: a vault from elsewhere cannot arrive already granted
+                vemry_script::HostConfig {
+                    state_file: app.path().app_config_dir().ok().map(|d| d.join("script-state.json")),
+                    ..Default::default()
+                },
             ));
         }
         scripts.as_ref().unwrap().reload();

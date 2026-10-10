@@ -149,6 +149,12 @@ pub struct Vault {
     times: BlockTimes,
     /// The text of every note before each write (see history.rs).
     history: History,
+    /// A note became private or stopped being so (its frontmatter flag flipped, or a
+    /// move took it into or out of a privacy zone) since the watcher last reported:
+    /// the next `handle_fs_change` raises `PrivacyChanged` for it. A note's own write
+    /// always comes back to the watcher as an echo, so the vault's writes are
+    /// covered as well as an outside program's.
+    privacy_flipped: bool,
 }
 
 impl Vault {
@@ -190,6 +196,7 @@ impl Vault {
             index: BlockIndex::new(),
             search: Box::new(InMemorySearch::new()),
             self_file_writes: HashMap::new(),
+            privacy_flipped: false,
         };
         vault.history.prune_old();
         // Stamped but not saved: opening leaves no trace in a directory that is
@@ -474,6 +481,8 @@ impl Vault {
         if !from_abs.exists() {
             return Err(reject(PathReject::NotFound, from_rel));
         }
+        let is_dir = from_abs.is_dir();
+        let was_private = self.is_private_rel(&from_rel, is_dir);
         if to_abs.exists() {
             return Err(reject(PathReject::Exists, to_rel));
         }
@@ -485,6 +494,9 @@ impl Vault {
         self.times.rename(&from_rel, &to_rel);
         self.history.rename(&from_rel, &to_rel);
         self.rescan()?;
+        if self.is_private_rel(&to_rel, is_dir) != was_private {
+            self.privacy_flipped = true;
+        }
         Ok(to_rel)
     }
 
@@ -1068,8 +1080,12 @@ impl Vault {
         let rel = PathBuf::from(id.as_str());
         let mut note = note_from_raw(&self.root, &rel, raw)?;
         self.times.stamp(&mut note);
+        let was_private = self.index.summary_ref(id).map(|s| s.private);
         self.search.index_note(&note.id, note.effective_title(), &note.raw);
         self.index.upsert(&note);
+        if was_private.is_some_and(|was| Some(was) != self.index.summary_ref(id).map(|s| s.private)) {
+            self.privacy_flipped = true;
+        }
         Ok(())
     }
 
@@ -1175,6 +1191,9 @@ impl Vault {
         }
         if types_changed {
             events.push(VaultEvent::TypesChanged);
+        }
+        if std::mem::take(&mut self.privacy_flipped) {
+            events.push(VaultEvent::PrivacyChanged);
         }
         events
     }
@@ -1432,18 +1451,42 @@ impl Vault {
     }
 
     /// Privacy check for an arbitrary vault-relative path (any file type or
-    /// folder). Normalizes like `NoteId` so agent-supplied spellings match.
+    /// folder). Normalizes like `NoteId` so agent-supplied spellings match. A file
+    /// in a note's attachment bucket shares that note's privacy (`in_private_bucket`).
     pub fn is_private_rel(&self, rel: &str, is_dir: bool) -> bool {
         let normalized = NoteId::new(rel);
         if self.privacy.matches_rel(normalized.as_str(), is_dir) {
             return true;
         }
-        !is_dir
+        if !is_dir
             && self
                 .index
                 .canonical_id(&normalized)
                 .and_then(|cid| self.index.summary(&cid))
                 .is_some_and(|s| s.private)
+        {
+            return true;
+        }
+        self.in_private_bucket(normalized.as_str(), is_dir)
+    }
+
+    /// Is this path inside (or, for a folder, itself) the attachment bucket of a
+    /// private note — `attachments/<note path minus .md>/` (attach_migrate's
+    /// `bucket_for`)? The bucket's name spells the note's path and its files are the
+    /// note's own pictures, so a note marked private by its frontmatter keeps them
+    /// out of list_files, read_file and `@` as it keeps itself. Every enclosing
+    /// folder is tried: a bucket may hold folders of its own.
+    fn in_private_bucket(&self, rel: &str, is_dir: bool) -> bool {
+        const PREFIX: &str = "attachments/";
+        // `get`, not indexing: the 12th byte of a path that starts with CJK text is not
+        // a character boundary
+        if !rel.get(..PREFIX.len()).is_some_and(|head| head.eq_ignore_ascii_case(PREFIX)) {
+            return false;
+        }
+        let segs: Vec<&str> = rel[PREFIX.len()..].split('/').filter(|s| !s.is_empty()).collect();
+        // A file's own name is not a bucket; a folder may be one
+        let folders = if is_dir { segs.len() } else { segs.len().saturating_sub(1) };
+        (1..=folders).any(|k| self.is_private(&NoteId::new(&format!("{}.md", segs[..k].join("/")))))
     }
 
     /// Set/clear the frontmatter `private` flag in place, preserving every
@@ -2679,7 +2722,7 @@ later still ^b2
             root.join(".vemry/scripts/two.js"),
         ]);
         assert!(matches!(events[..], [VaultEvent::ScriptsChanged]));
-        // non-js files under the dir (scripts.json is host-written state) stay silent
+        // a non-js file beside the scripts (an earlier version's scripts.json) stays silent
         let events = vault.handle_fs_change(&[root.join(".vemry/scripts.json")]);
         assert!(events.is_empty());
         let events = vault.handle_fs_change(&[root.join(".vemry/scripts/state.json")]);
@@ -2771,6 +2814,59 @@ later still ^b2
         let again = vault.migrate_attachment_buckets(false).unwrap();
         assert!(again.moved.is_empty());
         assert_eq!(again.rewritten_notes, 0);
+    }
+
+    /// A note's attachment bucket shares its privacy, by frontmatter flag or by rule,
+    /// nested buckets and a case-folded spelling included; a public note's does not.
+    #[test]
+    fn a_private_notes_attachments_are_private() {
+        let (_d, mut vault) = fixture_vault();
+        let root = vault.root().to_path_buf();
+        fs::write(root.join("Diary.md"), "---\nprivate: true\n---\ndear diary\n").unwrap();
+        fs::write(root.join("projects/Plan.md"), "# plan\n").unwrap();
+        for f in ["attachments/Diary/a.png", "attachments/projects/Plan/sub/b.png", "attachments/Sleep/c.png", "attachments/中文笔记/d.png"] {
+            fs::create_dir_all(root.join(f).parent().unwrap()).unwrap();
+            fs::write(root.join(f), b"png").unwrap();
+        }
+        vault.rescan().unwrap();
+        vault.add_privacy_rule("projects/Plan.md").unwrap();
+        assert!(vault.is_private_rel("attachments/Diary/a.png", false), "frontmatter flag");
+        assert!(vault.is_private_rel("attachments/Diary", true), "the bucket folder itself");
+        assert!(vault.is_private_rel("Attachments/diary/a.png", false), "case-folded spelling");
+        assert!(vault.is_private_rel("attachments/projects/Plan/sub/b.png", false), "a rule, and a folder inside the bucket");
+        assert!(!vault.is_private_rel("attachments/Sleep/c.png", false), "a public note's bucket");
+        assert!(!vault.is_private_rel("attachments/中文笔记/d.png", false), "a path starting with CJK text is safe to test");
+        assert!(!vault.is_private_rel("attachments/Diary.png", false), "a file named like the note is not its bucket");
+    }
+
+    /// A note that becomes private, or stops being so — its flag edited in the app or
+    /// outside it, or a move across a zone's edge — makes the watcher's next batch
+    /// raise PrivacyChanged once; an edit that leaves privacy alone does not.
+    #[test]
+    fn a_privacy_flip_is_reported_by_the_watcher() {
+        let (_d, mut vault) = fixture_vault();
+        let root = vault.root().to_path_buf();
+        let changed = |events: &[VaultEvent]| events.iter().filter(|e| matches!(e, VaultEvent::PrivacyChanged)).count();
+        let sleep = NoteId::new("Sleep.md");
+        // the vault's own write: reported with the echo
+        let raw = vault.read_note(&sleep).unwrap().replacen("---\n", "---\nprivate: true\n", 1);
+        vault.write_note(&sleep, &raw).unwrap();
+        assert_eq!(changed(&vault.handle_fs_change(&[root.join("Sleep.md")])), 1);
+        assert_eq!(changed(&vault.handle_fs_change(&[])), 0, "reported once");
+        // a body edit that keeps the flag: nothing
+        vault.write_note(&sleep, &format!("{raw}more\n")).unwrap();
+        assert_eq!(changed(&vault.handle_fs_change(&[root.join("Sleep.md")])), 0);
+        // an outside program clears the flag
+        fs::write(root.join("Sleep.md"), "# public again\n").unwrap();
+        assert_eq!(changed(&vault.handle_fs_change(&[root.join("Sleep.md")])), 1);
+        // a move into a private folder
+        vault.add_privacy_rule("secret/").unwrap();
+        fs::create_dir_all(root.join("secret")).unwrap();
+        vault.rename_path("projects/Alpha.md", "secret/Alpha.md").unwrap();
+        assert_eq!(changed(&vault.handle_fs_change(&[])), 1);
+        // a move that stays public
+        vault.rename_path("Sleep.md", "projects/Sleep.md").unwrap();
+        assert_eq!(changed(&vault.handle_fs_change(&[])), 0);
     }
 
     /// A symbolic link inside the vault reaches nothing: not a file outside the

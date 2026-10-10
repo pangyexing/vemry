@@ -76,7 +76,7 @@ Three constraints follow:
 |---|---|
 | `engine.rs` | A dedicated OS thread owns a QuickJS `Runtime` (64 MB memory cap, interrupt-based fuse), one `Context` per script. `ScriptHost` is a cloneable handle and tasks are strictly serialised through an mpsc channel — single-threaded execution makes concurrent writes and re-entrancy structurally impossible. The main loop doubles as the scheduler (`recv_timeout` drives both the coalesced event flush and cron firing) |
 | `bindings.rs` | The `vemry.*` API surface: one `__vemry_call(method, json)` dispatch function crosses the JS boundary (a JSON envelope both ways), and JS glue builds the ergonomic API on top of it while keeping callbacks (commands, events, schedules) on the JS side. Every vault read and write goes through existing `Vault` methods, so path validation, self-write suppression and incremental indexing all come for free |
-| `grants.rs` | `.vemry/scripts.json`: two state bits per script, `enabled` and `write_grant`, travelling with the vault |
+| `grants.rs` | Two state bits per script, `enabled` and `write_grant`, kept outside the vault in the app's `script-state.json` (`StateStore`, one entry per vault by its canonical root), so a vault from elsewhere cannot arrive already granted |
 | `audit.rs` | `.vemry/script-log.jsonl`: write/grant_*/error/console/schedule_missed appended line by line (the same JSONL style as sessions, but one file per vault — a script is a long-lived resident, unlike the agent's per-session logs) |
 | `scheduler.rs` | Cron timing, pure logic: POSIX 5-field expressions (the host supplies the seconds field, and weekday 0/7 = Sunday maps onto the cron crate's 1–7), fired in local time. A missed trigger is skipped rather than replayed, and a run of them coalesces into one `schedule_missed`. Unit-tested against a synthetic clock |
 
@@ -723,8 +723,11 @@ Saving the file hot-reloads it: the watcher catches a change under
 special case as `.vemry/privacy`) → the host drops every Context and reloads
 wholesale. Simple semantics, no stale state. A broken script only gets a
 `last_error` (visible in settings, plus an error toast) and does not drag the
-others down. `.vemry/scripts.json` stores `enabled` and `write_grant` per script
-and travels with the vault.
+others down. `enabled` and `write_grant` per script live with the app, not the
+vault (`script-state.json` in the app's config directory, one entry per vault by
+its canonical root): the scripts travel with a vault, their grants do not, so a
+script that arrives in a copied or cloned vault still asks before its first write,
+and a `.vemry/scripts.json` an earlier version left in a vault is not read.
 
 Commands enter the palette through the existing registry (namespaced
 `script:<script>:<command>`) and execute through the `script_command_run` IPC back
@@ -746,12 +749,13 @@ hang on a dialog nobody is looking at.
 
 The first time a script calls `vemry.write`/`append` it blocks on a one-time
 "allow this script to write" grant (a denial throws, and the script can catch it).
-Allowing persists it into `scripts.json` and subsequent writes go straight through;
+Allowing persists it in the app's `script-state.json` and subsequent writes go straight through;
 settings can revoke it, after which the next write asks again. Every write — plus
 grant_asked/given/denied/revoked, error, console and schedule_missed — is appended
 line by line to `.vemry/script-log.jsonl` with its trigger (`command`,
 `event:note_modified`, `cron`, `load`). A script cannot write to any dot-prefixed
-path: if `.vemry/scripts.json` were writable, that would be self-granting.
+path: `.vemry/` holds the vault's privacy rules, block types and skills, and a script
+rewriting them would widen its own reach.
 
 ### Why workflows cannot loop (a structural guarantee, plus fuses)
 
@@ -1327,7 +1331,11 @@ model endpoint. Per-note marking with frontmatter `private: true` is also suppor
 (surfaced as `NoteSummary.private`). `Vault::is_private()` is the union of glob
 matches and frontmatter markings, and any path segment starting with `.` is private
 by construction (which covers `.vemry/privacy` itself, the session logs, and
-`.obsidian`). The fourth marker is a block: a `> [!private]` callout is
+`.obsidian`). A note's attachment bucket (`attachments/<note path minus .md>/`)
+shares the note's privacy (`Vault::in_private_bucket`, behind `is_private_rel`): the
+bucket's name spells the note's path and its files are the note's own pictures, so a
+note marked private by its frontmatter keeps them out of `list_files`, `read_file`
+and `@` as it keeps itself. The fourth marker is a block: a `> [!private]` callout is
 `BlockKind::Private`, and the parser indexes none of its tags, links or fields
 (so no aggregate — tag counts, backlinks, the graph — can carry a trace of it).
 
@@ -1415,6 +1423,7 @@ paths):
    | `search_notes` | `search_for_agent` | a hit in a note with private blocks is re-matched over a blanked copy: the snippet cannot come from a private line, and a query satisfied only together with private text drops out (the AND matcher would otherwise confirm private words one term at a time) |
    | `query_blocks` | the tool's `retain` | private blocks (a `kind: private` query finds nothing); positional ids are **not** renumbered around the gap — one id space for the UI, the editor and id minting |
    | `get_links` | the index | nothing to do: a private block's links were never indexed |
+   | `audit_links` | `audit_links_for_agent` | a private note itself: a link to it is unresolved, a backlink from it does not count against an orphan, and an anchor or a `supports::` into it is missing — no section can say the note is there |
    | an `@selection` | `gate_selection`, two layers | lines equal to a line of one of the note's private blocks on disk (by content, not line number, so an unsaved edit above cannot shift the cut and a selection starting mid-callout is caught), then the private blocks the selection text itself contains |
    | history envelopes, every turn | `scrub_private_refs` | a note envelope whose note now holds private blocks is rebuilt from the same read; a selection envelope with a line equal to a private line becomes "unavailable" |
    | the system prompt | `memory_file_for_agent` | VEMRY.md's private blocks; a VEMRY.md write also invalidates the prompt snapshot, so the change applies from the next turn |
@@ -1458,7 +1467,14 @@ file); marking a directory or a non-md file writes a rule line into
 `.vemry/privacy`. IPC: `privacy_list` / `privacy_mark` / `privacy_unmark` /
 `privacy_rules` / `privacy_rule_add` / `privacy_rule_remove`; editing
 `.vemry/privacy` externally is caught by the watcher (a `PrivacyChanged` event) and
-takes effect immediately. Marking or unmarking a note re-emits `note_modified` (the
+takes effect immediately. So is a note whose privacy flips without the marking
+commands — `private: true` typed into its frontmatter, by the editor or an outside
+program, or a move across a zone's edge: the vault notices the flip when it reindexes
+the note or makes the move (`privacy_flipped`) and the watcher's next batch, the echo
+of its own write included, raises `PrivacyChanged`. `broadcast` drops the agent's
+prompt snapshot on it, so a note that has just become private leaves the vault
+overview from the next turn; an edit that leaves privacy alone keeps the snapshot,
+and with it the provider's prompt cache. Marking or unmarking a note re-emits `note_modified` (the
 write goes through self_writes, which silences the watcher, so the direct emit is
 the compensating channel), and an open editor immediately re-reads the new
 frontmatter rather than swallowing the marking on its next save; switching the

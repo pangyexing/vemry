@@ -987,7 +987,7 @@ pub fn execute_read_tool(vault: &Vault, name: &str, args: &Value) -> Result<Read
         }
         "audit_links" => {
             let folder = args.get("folder").and_then(|v| v.as_str()).map(|f| f.trim_matches('/')).filter(|f| !f.is_empty());
-            let report = vault.audit_links(folder);
+            let report = vault.audit_links_for_agent(folder);
             let mut filtered = 0usize;
             let mut out = String::new();
             let strip = |id: &NoteId| id.as_str().strip_suffix(".md").unwrap_or(id.as_str()).to_string();
@@ -2270,7 +2270,11 @@ mod tests {
         assert!(!out.text.contains(".md"));
         let out = read(&vault, "audit_links", json!({})).unwrap();
         assert!(out.text.contains("## Unresolved links") && out.text.contains("## Orphan notes"), "{}", out.text);
-        assert!(!out.text.contains("secret/") && !out.text.contains("Diary"), "private notes stay out of the report: {}", out.text);
+        // A private note is never a row's source, never an orphan and never "exists"; a
+        // link a public note spells to one reads as unresolved, as get_links shows it
+        assert!(!out.text.contains("TOPSECRET") && !out.text.contains("[[Diary#") && !out.text.contains("[[secret/Plan#"), "{}", out.text);
+        assert!(!out.text.lines().any(|l| l == "[[Diary]]" || l == "[[secret/Plan]]"), "private notes are not orphans: {}", out.text);
+        assert!(out.text.contains("→ [[Diary]] unresolved") && out.text.contains("→ [[secret/Plan]] unresolved"), "{}", out.text);
     }
 
     /// restructure_note: blocks move under the outline byte for byte (ids kept), a

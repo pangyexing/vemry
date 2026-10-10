@@ -2,8 +2,9 @@
 //! (nothing links to them), evidence whose `supports::` points at no claim, and
 //! clips of the same page. Everything but the anchor checks is read off the index;
 //! `[[note#heading]]` / `[[note#^id]]` go through `resolve_ref`, which reads the
-//! target note. The agent's `audit_links` tool filters private notes out of the
-//! report before the model sees it.
+//! target note. The agent's `audit_links` tool reads `audit_links_for_agent`, where a
+//! private note does not exist, and filters the rows whose source is private out of
+//! the report before the model sees it.
 
 use std::collections::HashMap;
 
@@ -29,6 +30,29 @@ impl Vault {
     /// The link health of the vault, or of one folder (the notes under it as sources;
     /// orphans are judged against the whole vault's backlinks).
     pub fn audit_links(&self, folder: Option<&str>) -> AuditReport {
+        self.audit(folder, false)
+    }
+
+    /// `audit_links` as the agent may see it: a private note does not exist. A link
+    /// to one is unresolved (what get_links calls it), a backlink from one does not
+    /// save a note from being an orphan, and an anchor or a `supports::` is resolved as
+    /// the agent resolves it (`resolve_ref_for_agent`, a private note counting as
+    /// missing) — so no section can tell the model that a private note is there. The
+    /// rows whose own source is private stay in, for the tool to filter and count like
+    /// every other read.
+    pub fn audit_links_for_agent(&self, folder: Option<&str>) -> AuditReport {
+        self.audit(folder, true)
+    }
+
+    fn audit(&self, folder: Option<&str>, hide_private: bool) -> AuditReport {
+        let hidden = |id: &NoteId| hide_private && self.is_private(id);
+        let resolve = |target: &str, from: &NoteId| {
+            if hide_private {
+                self.resolve_ref_for_agent(target, Some(from))
+            } else {
+                self.resolve_ref(target, Some(from))
+            }
+        };
         let prefix = folder.map(|f| f.trim_matches('/')).filter(|f| !f.is_empty()).map(|f| format!("{f}/"));
         let in_scope = |id: &NoteId| match &prefix {
             Some(p) => id.as_str().starts_with(p.as_str()),
@@ -43,11 +67,17 @@ impl Vault {
                 continue;
             }
             for edge in self.index().edges(id) {
-                if edge.resolved.is_none() && !edge.raw_target.is_empty() {
+                let gone = edge.resolved.as_ref().is_none_or(&hidden);
+                if gone && !edge.raw_target.is_empty() {
                     report.unresolved.push((id.clone(), edge.from_block.clone(), edge.raw_target.clone()));
                 }
             }
-            if !self.index().has_backlinks(id) && id.as_str() != "VEMRY.md" {
+            let linked = if hide_private {
+                self.index().backlinks_of(id).iter().any(|src| !self.is_private(src))
+            } else {
+                self.index().has_backlinks(id)
+            };
+            if !linked && id.as_str() != "VEMRY.md" {
                 report.orphans.push(id.clone());
             }
             if let Some(blocks) = self.index().blocks(id) {
@@ -57,15 +87,18 @@ impl Vault {
                             continue;
                         }
                         let target = l.ref_target();
-                        if matches!(self.resolve_ref(&target, Some(id)), Ok(RefResolution::AnchorMissing { .. })) {
+                        // An anchor into a private note: that note is not there, which the
+                        // unresolved section already says
+                        if matches!(resolve(&target, id), Ok(RefResolution::AnchorMissing { note, .. }) if !hidden(&note)) {
                             report.dangling_anchors.push((id.clone(), b.handle(), target));
                         }
                     }
                     let BlockKind::Evidence { supports } = &b.kind else { continue };
                     for target in supports {
                         let ok = matches!(
-                            self.resolve_ref(target, Some(id)),
-                            Ok(RefResolution::Resolved(hit)) if matches!(hit.target, RefTarget::Block { block_kind: BlockKind::Claim, .. })
+                            resolve(target, id),
+                            Ok(RefResolution::Resolved(hit))
+                                if matches!(hit.target, RefTarget::Block { block_kind: BlockKind::Claim, .. }) && !hidden(&hit.note)
                         );
                         if !ok {
                             report.dangling_supports.push((id.clone(), b.handle(), target.clone()));
@@ -122,4 +155,30 @@ mod tests {
         let scoped = v.audit_links(Some("clips"));
         assert!(scoped.unresolved.is_empty() && scoped.duplicate_clips.len() == 1);
     }
+
+    /// The agent's report cannot tell a private note is there: a link to one is
+    /// unresolved, a backlink from one does not count, and an anchor or a support into
+    /// one is judged missing rather than "the note exists, the anchor does not". The
+    /// full report, for the user, still sees everything.
+    #[test]
+    fn the_agents_audit_does_not_reveal_private_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = |p: &str, c: &str| std::fs::write(dir.path().join(p), c).unwrap();
+        w("Secret.md", "---\nprivate: true\n---\n> [!claim] hidden claim ^c1\n\nlinks to [[Lonely]]\n");
+        w("Lonely.md", "only a private note links here\n");
+        w("Public.md", "see [[Secret]] and [[Secret#^gone]]\n\n> [!evidence] e supports:[[Secret#^c1]]\n");
+        let v = Vault::open(dir.path()).unwrap();
+        let full = v.audit_links(None);
+        let agent = v.audit_links_for_agent(None);
+        let names = |rows: &[(NoteId, String, String)]| rows.iter().map(|r| r.2.clone()).collect::<Vec<_>>();
+        assert!(!full.orphans.contains(&NoteId::new("Lonely.md")), "the user sees the private backlink");
+        assert!(agent.orphans.contains(&NoteId::new("Lonely.md")), "the agent sees an orphan");
+        assert!(!names(&full.unresolved).contains(&"Secret".to_string()));
+        assert!(names(&agent.unresolved).contains(&"Secret".to_string()), "a link to a private note is unresolved");
+        assert!(names(&full.dangling_anchors).iter().any(|t| t.contains("gone")));
+        assert!(agent.dangling_anchors.is_empty(), "no 'the note exists' for a private note");
+        assert!(full.dangling_supports.is_empty());
+        assert_eq!(agent.dangling_supports.len(), 1, "a support into a private claim reaches no claim");
+    }
+
 }

@@ -17,7 +17,7 @@ use vemry_core::vault::SCRIPTS_DIR;
 use vemry_core::{Vault, VaultEvent};
 
 use crate::bindings::{self, BindEnv, ExecKind, ScriptMeta};
-use crate::grants::ScriptStates;
+use crate::grants::{ScriptStates, StateStore};
 use crate::scheduler::{CronEntry, Due};
 use crate::{audit, lab, BlockEvalResult, Perspective, ScriptInfo, ScriptUiEvent, UiBridge};
 
@@ -26,9 +26,10 @@ use crate::{audit, lab, BlockEvalResult, Perspective, ScriptInfo, ScriptUiEvent,
 /// an unbounded queue.
 const EVENT_QUEUE_CAP: usize = 100;
 
-/// Wall-clock budgets per execution kind. Scripts that block on the user
-/// (grant/prompt dialogs) have the clock paused while waiting.
-#[derive(Clone, Copy, Debug)]
+/// Wall-clock budgets per execution kind (scripts that block on the user — grant and
+/// prompt dialogs — have the clock paused while waiting), and where the script state
+/// is kept.
+#[derive(Clone, Debug)]
 pub struct HostConfig {
     pub load_timeout: Duration,
     pub exec_timeout: Duration,
@@ -38,6 +39,9 @@ pub struct HostConfig {
     /// workflow fire (the 1 s autosave would otherwise machine-gun
     /// note_modified).
     pub event_merge: Duration,
+    /// The file the scripts' `enabled` and `write_grant` flags are kept in, outside
+    /// every vault (grants.rs); None keeps them in memory for the host's lifetime.
+    pub state_file: Option<PathBuf>,
 }
 
 impl Default for HostConfig {
@@ -48,6 +52,7 @@ impl Default for HostConfig {
             block_timeout: Duration::from_secs(2),
             memory_limit: 64 * 1024 * 1024,
             event_merge: Duration::from_millis(500),
+            state_file: None,
         }
     }
 }
@@ -243,6 +248,7 @@ struct Worker {
     runtime: Runtime,
     deadline: Arc<Mutex<Option<Instant>>>,
     grants: Rc<RefCell<ScriptStates>>,
+    store: Rc<StateStore>,
     slots: Vec<Slot>,
     /// Root the current slots were loaded from. Audit lines for these scripts
     /// go here — after a vault switch (Reload still queued) they must not
@@ -279,11 +285,13 @@ fn worker_main(
         })));
     }
 
+    let store = Rc::new(StateStore::new(config.state_file.clone()));
     let mut worker = Worker {
         vault,
         bridge,
         perspective,
         config,
+        store,
         runtime,
         deadline,
         grants: Rc::new(RefCell::new(ScriptStates::default())),
@@ -542,6 +550,7 @@ impl Worker {
             // empty grant table on purpose — blocks have no stable identity to
             // grant against, and call_write refuses Block contexts anyway
             grants: Rc::new(RefCell::new(ScriptStates::default())),
+            store: Rc::clone(&self.store),
             bridge: Arc::clone(&self.bridge),
             deadline: Arc::clone(&self.deadline),
         };
@@ -627,7 +636,7 @@ impl Worker {
             self.publish();
             return;
         };
-        *self.grants.borrow_mut() = ScriptStates::load(&root);
+        *self.grants.borrow_mut() = self.store.load(&root);
 
         let dir = root.join(SCRIPTS_DIR);
         let mut files: Vec<(String, String)> = std::fs::read_dir(&dir)
@@ -677,6 +686,7 @@ impl Worker {
             script: name.to_string(),
             meta,
             grants: Rc::clone(&self.grants),
+            store: Rc::clone(&self.store),
             bridge: Arc::clone(&self.bridge),
             deadline: Arc::clone(&self.deadline),
         };
@@ -702,18 +712,18 @@ impl Worker {
 
     fn set_enabled(&mut self, name: &str, enabled: bool) -> Result<(), String> {
         let root = self.current_root().ok_or("no vault open")?;
-        let mut grants = ScriptStates::load(&root);
+        let mut grants = self.store.load(&root);
         grants.set_enabled(name, enabled);
-        grants.save(&root)?;
+        self.store.save(&root, &grants)?;
         self.reload();
         Ok(())
     }
 
     fn revoke_write_grant(&mut self, name: &str) -> Result<(), String> {
         let root = self.current_root().ok_or("no vault open")?;
-        let mut grants = ScriptStates::load(&root);
+        let mut grants = self.store.load(&root);
         grants.set_write_grant(name, false);
-        grants.save(&root)?;
+        self.store.save(&root, &grants)?;
         *self.grants.borrow_mut() = grants;
         audit::append(&root, "grant_revoked", json!({ "script": name }));
         self.publish();
@@ -850,6 +860,7 @@ mod tests {
             block_timeout: Duration::from_millis(300),
             memory_limit: 32 * 1024 * 1024,
             event_merge: Duration::from_millis(100),
+            state_file: None,
         }
     }
 
@@ -1043,6 +1054,21 @@ mod tests {
         assert_eq!(bridge.grant_calls.lock().unwrap().len(), 1);
     }
 
+    /// A vault that arrives with a state file claiming a write grant (an earlier
+    /// version's, or one planted in a shared vault) grants nothing: the first write
+    /// still asks, and a refusal stops it.
+    #[test]
+    fn a_grant_inside_the_vault_is_not_honoured() {
+        let (_d, vault) = fixture(&[("planted", r#"vemry.write("out/Planted.md", "x");"#)]);
+        let root = { vault.lock().unwrap().as_ref().unwrap().root().to_path_buf() };
+        fs::write(root.join(".vemry/scripts.json"), r#"{"planted":{"enabled":true,"write_grant":true}}"#).unwrap();
+        let bridge = TestBridge::new(false);
+        let host = spawn_host(&vault, &bridge, false);
+        assert_eq!(bridge.grant_calls.lock().unwrap().len(), 1, "the first write asked");
+        assert!(!info(&host.list(), "planted").write_grant);
+        assert!(!root.join("out/Planted.md").exists(), "and the refused write did not land");
+    }
+
     #[test]
     fn write_denied_and_hidden_dirs_blocked() {
         let (_d, vault) = fixture(&[(
@@ -1105,8 +1131,11 @@ mod tests {
         let infos = host.list();
         assert!(!info(&infos, "s").enabled);
         assert!(info(&infos, "s").commands.is_empty(), "disabled script registers nothing");
+        // kept with the host, not written into the vault
         let root = { vault.lock().unwrap().as_ref().unwrap().root().to_path_buf() };
-        assert!(fs::read_to_string(root.join(".vemry/scripts.json")).unwrap().contains("\"enabled\": false"));
+        assert!(!root.join(".vemry/scripts.json").exists());
+        host.reload_blocking().unwrap();
+        assert!(!info(&host.list(), "s").enabled, "still disabled after a reload");
 
         host.set_enabled("s", true).unwrap();
         assert_eq!(info(&host.list(), "s").commands.len(), 1);
