@@ -35,6 +35,7 @@
   import PermissionDialog from "$lib/components/PermissionDialog.svelte";
   import ContextMenu from "$lib/components/ContextMenu.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
+  import { startProbe } from "$lib/probe";
 
   let ready = $state(false);
   const err = (e: unknown) => toast.push(String(e), "error");
@@ -116,6 +117,8 @@
     ready = true;
     await tick();
     agent.composer?.focus();
+    // A development probe run (VEMRY_PROBE, debug builds only) takes this window's part
+    void startProbe("agent");
   }
 
   let closing = false;

@@ -82,6 +82,24 @@ VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt 
 # optional: VEMRY_TEST_BASE_URL / VEMRY_TEST_MODEL (defaults to DeepSeek deepseek-flash)
 ```
 
+### In-app probe (optional, debug builds only)
+
+A probe drives the real app through one feature — its stores, IPC and DOM, in both
+windows — and prints a PASS/FAIL line per check to the terminal (`src/lib/probe/`,
+`src-tauri/src/probe.rs`). `models` covers the provider list, the current model and its
+pickers, the detached window following a switch, the translation model, and — when the
+first provider is DeepSeek with a key — two real turns that change model mid-session.
+It works in a scratch vault and puts the settings back before it ends; `exit` quits
+the app with the tally as its status, and `VEMRY_PROBE_SHOTS` collects a screenshot of
+each step (macOS).
+
+```bash
+VEMRY_PROBE=models,exit VEMRY_PROBE_SHOTS=/tmp/vemry-shots pnpm tauri dev
+```
+
+A debug build shares the app-config directory with an installed vemry, so back up its
+`settings.json` first if you go back and forth between the two.
+
 ## Principles (a PR is reviewed against these)
 
 1. **Disk is the single source of truth**: no database; the index must be fully

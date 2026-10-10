@@ -30,6 +30,10 @@ VEMRY_TEST_API_KEY=sk-... cargo test -p vemry-agent --test live -- --ignored
 
 # print the system prompt a vault gets (what the model is sent; the UI and the session log show none of it)
 VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt -- --ignored --nocapture
+
+# drive the real app through a feature (src/lib/probe/): PASS/FAIL per check on the terminal, a screenshot per step;
+# a debug build shares settings.json with an installed vemry — back it up first
+VEMRY_PROBE=models,exit VEMRY_PROBE_SHOTS=/tmp/vemry-shots pnpm tauri dev
 ```
 
 ## Architecture essentials

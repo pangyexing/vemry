@@ -58,6 +58,7 @@
   import ReviewView from "$lib/components/views/ReviewView.svelte";
   import ReadingView from "$lib/components/views/ReadingView.svelte";
   import TranslateView from "$lib/components/views/TranslateView.svelte";
+  import { startProbe } from "$lib/probe";
 
   let paletteMode = $state<PaletteMode | null>(null);
 
@@ -293,6 +294,8 @@
   void account.init();
   // A setting changed in another window (a model picked in the detached chat), or a sign-in bringing the hosted models
   void prefs.listen();
+  // A development probe run (VEMRY_PROBE, debug builds only) takes the main window's part
+  void startProbe("main");
 
   // ---- user scripts: palette sync + toasts + blocking dialogs ----
   function applyScripts(infos: ScriptInfo[]) {

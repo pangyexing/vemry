@@ -11,6 +11,7 @@ mod imagesize;
 mod inbox;
 mod menu;
 mod pasteboard;
+mod probe;
 mod script_bridge;
 mod settings;
 mod translate;
@@ -320,6 +321,12 @@ pub fn run() {
             capture_window::capture_to_main,
             capture_window::capture_reply,
             commands::clipboard_probe,
+            probe::probe_plan,
+            probe::probe_report,
+            probe::probe_settings_keys,
+            probe::probe_scratch_path,
+            probe::probe_done,
+            probe::probe_shot,
             commands::clipboard_image,
             commands::agent_session_delete,
             commands::agent_session_rename,

@@ -1523,6 +1523,16 @@ export const api = {
    *  copy), or an image's format as the extension it is saved under (the pasteboard type, as the editor's own
    *  paste names its file). Empty off macOS, where the DOM paste data is the fallback. */
   clipboardProbe: () => invoke<{ files: string[]; image: string | null }>("clipboard_probe"),
+  /** The development probe (probe.rs): the plan VEMRY_PROBE names in a debug build, null otherwise. */
+  probePlan: () => invoke<string | null>("probe_plan"),
+  probeReport: (line: string) => invoke<void>("probe_report", { line }),
+  /** settings.json's top-level key names on disk (never a value). */
+  probeSettingsKeys: () => invoke<string[]>("probe_settings_keys"),
+  /** A fresh path under the system temp directory for a scratch vault. */
+  probeScratchPath: () => invoke<string>("probe_scratch_path"),
+  probeDone: (passed: number, failed: number) => invoke<void>("probe_done", { passed, failed }),
+  /** Bring this window to the front and capture it as <name>.png into VEMRY_PROBE_SHOTS; the file written, if any. */
+  probeShot: (name: string) => invoke<string | null>("probe_shot", { name }),
   /** Raw image bytes on the system clipboard (a screenshot), once clipboardProbe said there is one. */
   clipboardImage: async () => new Uint8Array(await invoke<ArrayBuffer>("clipboard_image")),
   agentSessionDelete: (id: string) => invoke<void>("agent_session_delete", { id }),
@@ -1599,6 +1609,15 @@ export function onLanguageChange(handler: (lang: LangSetting) => void): Promise<
  *  the view holds keys, which an event never carries. */
 export function onSettingsChanged(handler: () => void): Promise<UnlistenFn> {
   return listen("settings://changed", () => handler());
+}
+
+/** The development probe's own channel between windows (probe://<topic>): one window's part of a
+ *  pass tells another's what it saw or asks it to act. Only a probe run sends anything on it. */
+export function emitProbe(topic: string, payload: unknown): Promise<void> {
+  return emit(`probe://${topic}`, payload);
+}
+export function onProbe<T>(topic: string, handler: (payload: T) => void): Promise<UnlistenFn> {
+  return listen<T>(`probe://${topic}`, (event) => handler(event.payload));
 }
 
 /** Every change of account state (sign-in, sign-out, a refresh, a revoked token noticed by any request). */
