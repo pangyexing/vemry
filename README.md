@@ -58,9 +58,10 @@ never do by hand, and every write still waits at a diff for your yes.
 
 Type `/` at the start of a line and headings, tasks, tables, code and callouts are in
 one menu that narrows as you type. ⌘P opens the command palette, where each of the
-app's eighty-odd commands, and every command your scripts add, can be found by name.
-Rich text copied from the web pastes in as clean Markdown; however you write it,
-what is saved is always standard Markdown.
+app's eighty-odd commands, and every command your scripts add, can be found by name,
+typed in the interface's language or in English. Rich text copied from the web pastes
+in as clean Markdown; however you write it, what is saved is always standard
+Markdown.
 
 | Key | Does |
 |---|---|
@@ -275,7 +276,7 @@ Semantics are ordinary Markdown that other tools already understand:
 > supports:[[Sleep and Memory#^c1]]             ← evidence, pointing at the claim
 
 ![[Sleep and Memory#^c1]]                        ← the block, embedded read-only
-- 再读 [author:: Le Guin] [status:: reading]    ← inline fields: queryable, groupable
+- Reread [author:: Le Guin] [status:: reading]  ← inline fields: queryable, groupable
 ```
 
 Every construct above renders as a list item or a blockquote anywhere else. The
@@ -283,14 +284,14 @@ complete dialect and each fallback: [docs/SYNTAX.md](docs/SYNTAX.md).
 
 ## Status
 
-The first release, 1.0.0, is on its way ([changelog](https://vemry.app/changelog)).
-It holds everything working on `main` as of September 2026: the editor and its live
-preview, quick capture from any app and from a paired phone, the Agenda, Board,
-Timeline, Graph, Claims, Evidence, Review and Session Replay views, the block index
-and query API, the agent with its tools behind the write gate, privacy zones, the
-scripting sandbox, the built-in browser with clipping, side-by-side translation of a
-note, a web page or a PDF, the optional vemry account with hosted AI credit, and an
-interface in English, Chinese, Japanese, Korean, French, German and Spanish.
+The first release is 1.0.0 ([changelog](https://vemry.app/changelog)). It holds
+the editor and its live preview, quick capture from any app and from a paired
+phone, the Agenda, Board, Timeline, Graph, Claims, Evidence, Review and Session
+Replay views, the block index and query API, the agent with its tools behind the
+write gate, privacy zones, the scripting sandbox, the built-in browser with
+clipping, side-by-side translation of a note, a web page or a PDF, the optional
+vemry account with hosted AI credit, and an interface in English, Chinese,
+Japanese, Korean, French, German and Spanish.
 
 Next, in the order the study loop needs them: PDF annotation that lands in the
 source note, reference management on source notes (DOI, BibTeX export), and reading

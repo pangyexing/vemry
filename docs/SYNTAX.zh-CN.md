@@ -315,6 +315,7 @@ const { d_k, scale } = vemry.lab.controls({
   d_k:   { slider: [4, 512], step: 4, value: 64, label: "d_k" },
   scale: { toggle: true, label: "除以 √d_k" },
   head:  { select: ["head 1", "head 2"] },
+  try:   { presets: { "不缩放": { scale: false, d_k: 512 }, "很小的 key": { d_k: 4 } } },
 });
 const Q = vemry.lab.matrix("Q", [[1, 0, 1], [0, 1, 0]]);   // 可编辑的数字网格
 vemry.lab.heatmap("attention", weights, { rows: tokens, cols: tokens, digits: 2 });

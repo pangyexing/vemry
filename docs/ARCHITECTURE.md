@@ -642,6 +642,8 @@ Then the rest:
 | Rewriting links when a note is renamed | `resolve_ref`'s note part is the only thing a rename changes — a minted `^id` never does |
 | Provenance by similarity ("yours, edited") and a per-session "what did it write" view | the ledger is keyed by hash and ordered by time; `pending_notes` is the entry point of the latter |
 | Git-blame-like block history | the ledger's lines are already timestamped and append-only |
+| Installable extensions and themes | user scripts already register palette commands (`registerCommand`), subscribe to vault events and run on a cron inside the QuickJS sandbox behind the first-write grant, so an extension is a packaged script installed behind that same boundary (the glossary keeps the word "extension" for it); every colour is a token in `src/app.css` (light on `:root`, dark under `prefers-color-scheme`), and `scripts/check-contrast.mjs` already measures every text ink on every ground in both themes, so a theme is a set of token values that has to pass that check |
+| Split-pane browsing in the main window | browser tabs are child webviews; docking already moves them into the main window by `reparent`, without a reload (`browser_set_docked`), and places them in the column the frontend reports (`browser_panel_layout`); a split pane is the same webviews placed in an editor pane's rectangle |
 
 ## How PDF and image Q&A would evolve (a design note)
 
@@ -2151,7 +2153,8 @@ still allowing only http(s)) renders it into `mainView = "reading"`.
    looking at that page), after which the note references local files.
 5. App updates (tauri-plugin-updater, v0.6) — by default the check happens only when
    the user clicks "check for updates"; turning on "check at startup" in settings adds
-   one silent query to GitHub Releases' `latest.json` at launch. Either way the whole
+   one silent query for `latest.json` at launch (`dl.vemry.app` first, GitHub Releases
+   as the fallback, the two endpoints in `tauri.conf.json`). Either way the whole
    flow runs in one dialog: the version found with skip / later / install, the
    download's progress, then the restart ("skip this version" only mutes the silent
    check; a check the user asks for shows the version again). Downloading and
@@ -2487,7 +2490,7 @@ the ones that failed to load — comes back as the `read_decided` event, so the
 card's badge reports what happened rather than what was clicked. Declining tells
 the model to work from what it has.
 
-### Side-by-side translation (v0.10, implemented)
+### Side-by-side translation (v1.0, implemented)
 
 Reading in another language is the one everyday task where the model is a tool
 rather than a collaborator: the text goes out, the translation comes back, and

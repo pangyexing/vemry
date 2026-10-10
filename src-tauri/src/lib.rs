@@ -79,8 +79,7 @@ pub fn run() {
         // on one silent check at startup), while downloading and installing always
         // need the user's confirmation in the update dialog; the installer is
         // verified by a minisign signature.
-        // Rule 5 of the controlled network egress, see "Network egress list" in
-        // docs/ARCHITECTURE.md.
+        // Exit 5 of "The network-exit list" in docs/ARCHITECTURE.md.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         // The quick capture window's global shortcut (one combination, registered
