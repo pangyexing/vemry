@@ -865,7 +865,7 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
         let _ = ev_webview.eval(progress_js(done, total));
         emit(&ev_app, &BrowserEvent::Translate { label: ev_label.clone(), active: true, done, total, tokens: ev_tokens.load(Ordering::Relaxed) as u64 });
     });
-    let effort = s.reasoning_active().then(|| s.reasoning_effort.clone());
+    let effort = provider.reasoning_supported().then(|| s.reasoning_effort.clone());
     let job = TranslateJob::new(job_id, doc, target, s.translate_addendum.clone(), provider, effort, Arc::new(HttpTransport::new()), Some(cache), on_event);
     // Cache hits land in the pane at once
     for (id, text) in job.translations() {

@@ -55,6 +55,8 @@
       onAgentWindowCloseRequested(() => void closeWindow()),
       onAgentWindowCommand(handleCommand),
       onBrowserEvent((e) => browser.handle(e)),
+      // A model picked in the main window (or a sign-in there) reaches this window's chip without a reload
+      prefs.listen(),
     ];
     void boot();
     return () => {

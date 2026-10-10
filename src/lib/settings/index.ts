@@ -33,7 +33,6 @@ export const pageAvailable = (p: SettingsPage, hasVault: boolean): boolean => ha
 export interface SettingsState {
   hasVault: boolean;
   signedIn: boolean;
-  provider: "hosted" | "custom";
   captureTarget: string;
 }
 /** Whether a search may offer the setting: its page can be shown and the row is on it now. */
@@ -78,10 +77,9 @@ export const SETTINGS: SettingEntry[] = [
   { id: "editing.cjkSpacing", page: "editing", label: "settings.formatCjkSpacing", hint: "settings.formatCjkSpacingHint", keywords: "空格 space 格式化 format" },
   { id: "editing.punctuation", page: "editing", label: "settings.formatPunctuation", hint: "settings.formatPunctuationHint", keywords: "标点 全角 punctuation 格式化 format" },
 
-  { id: "ai.provider", page: "ai", label: "settings.provider", hint: "settings.providerHint", keywords: "托管 hosted key provider 提供方" },
-  { id: "ai.model", page: "ai", label: "settings.model", keywords: "模型 model glm deepseek" },
-  { id: "ai.endpoint", page: "ai", shownWhen: (st) => st.provider === "custom", label: "settings.endpoint", hint: "settings.endpointHint", keywords: "端点 endpoint url openai ollama" },
-  { id: "ai.apiKey", page: "ai", shownWhen: (st) => st.provider === "custom", label: "settings.apiKey", hint: "settings.apiKeyNote", keywords: "key 密钥 api" },
+  { id: "ai.model", page: "ai", label: "settings.currentModel", hint: "settings.currentModelHint", keywords: "模型 model 当前 current 切换 switch glm deepseek" },
+  { id: "ai.hosted", page: "ai", label: "settings.providerHosted", hint: "settings.hostedHint", keywords: "托管 hosted 登录 sign in account 账户" },
+  { id: "ai.providers", page: "ai", label: "settings.providers", hint: "settings.providersHint", keywords: "提供方 provider 端点 endpoint url openai ollama deepseek key 密钥 api 自带", jump: true },
   { id: "ai.effort", page: "ai", label: "settings.reasoningEffort", hint: "settings.reasoningHint", keywords: "思考 thinking reasoning effort 深度" },
   { id: "ai.webSearch", page: "ai", label: "settings.webSearch", hint: "settings.webSearchHint", keywords: "搜索 联网 search web" },
   { id: "ai.planConfirm", page: "ai", label: "settings.planConfirm", hint: "settings.planConfirmHint", keywords: "计划 plan" },
@@ -89,7 +87,7 @@ export const SETTINGS: SettingEntry[] = [
   { id: "ai.formatAgentWrites", page: "ai", label: "settings.formatAgentWrites", hint: "settings.formatAgentWritesHint", keywords: "格式化 format" },
   { id: "ai.writeGrant", page: "ai", shownWhen: () => false, label: "settings.writeGrant", hint: "settings.writeGrantHint", keywords: "免审 授权 permission allow" },
   { id: "ai.translateTarget", page: "ai", label: "settings.translate.target", keywords: "翻译 translate 语言 language" },
-  { id: "ai.translateModel", page: "ai", label: "settings.translate.model", hint: "settings.translate.modelHint", keywords: "翻译 translate 模型 model" },
+  { id: "ai.translateModel", page: "ai", label: "settings.translate.model", hint: "settings.translate.modelPickHint", keywords: "翻译 translate 模型 model" },
   { id: "ai.translateAddendum", page: "ai", label: "settings.translate.addendum", hint: "settings.translate.addendumHint", keywords: "翻译 translate" },
 
   { id: "account.panel", page: "account", label: "account.title", hint: "settings.accountHint", keywords: "登录 邮箱 额度 配额 档位 算力包 积分 订阅 体验 sign in email quota credit subscription trial", jump: true },

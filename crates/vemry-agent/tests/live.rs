@@ -371,6 +371,73 @@ async fn live_history_moves_between_the_lines() {
     );
 }
 
+/// The current model can change between turns (the composer's model menu): a session
+/// begun on a model that returns no thinking text, with tool calls in its history,
+/// continues on a DeepSeek thinking model. Its contract wants `reasoning_content` back
+/// on an assistant turn that carries tool calls — this asserts the endpoint accepts
+/// earlier turns that never had any (the first leg runs with thinking off, and its
+/// history is stripped of thinking text as another vendor's would have none).
+#[tokio::test]
+#[ignore]
+async fn live_a_session_moves_to_a_thinking_model() {
+    let Some(api_key) = std::env::var("VEMRY_TEST_API_KEY").ok().filter(|k| !k.is_empty()) else {
+        eprintln!("VEMRY_TEST_API_KEY not set — skipping live test");
+        return;
+    };
+    let provider = ProviderConfig {
+        base_url: std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
+        model: test_model(),
+        api_key,
+        kind: ProviderKind::Custom,
+        catalog: None,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Apples.md"), "# Apples\n\nApples keep best in a cool, dark place.\n").unwrap();
+    std::fs::write(dir.path().join("Pears.md"), "# Pears\n\nPears ripen at room temperature.\n").unwrap();
+    let vault = Arc::new(Mutex::new(Some(Vault::open(dir.path()).unwrap())));
+    let meta_dir = dir.path().join(".vemry");
+    std::fs::create_dir_all(&meta_dir).unwrap();
+    let log = SessionLog::create(&meta_dir).unwrap();
+    let runner = AgentRunner {
+        transport: Arc::new(HttpTransport::new()),
+        gate: Arc::new(AutoAllow),
+        plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
+        actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
+        read_gate: Arc::new(vemry_agent::permission::DenyReads),
+        vault: Arc::clone(&vault),
+        sources: Arc::new(Mutex::new(vec![])),
+        journal: Arc::new(Mutex::new(vec![])),
+    };
+    let mut history: Vec<vemry_agent::types::ChatMessage> = vec![];
+    let legs = [("none", "Read Apples.md and tell me in one sentence how to store apples."), ("high", "Now read Pears.md and say in one sentence how pears differ.")];
+    for (i, (effort, message)) in legs.into_iter().enumerate() {
+        if i == 1 {
+            for m in &mut history {
+                m.reasoning_content = None;
+            }
+            assert!(history.iter().any(|m| m.tool_calls.is_some()), "the first leg made no tool call, so nothing was exercised");
+        }
+        tokio::time::timeout(
+            Duration::from_secs(240),
+            runner.run(
+                &provider,
+                &RunnerConfig { max_iterations: 6, write_policy: WritePolicy::Ask, reasoning_effort: Some(effort.into()), ..Default::default() },
+                &mut history,
+                Some(message.into()),
+                None,
+                vec![],
+                None,
+                &|_e| {},
+                &AtomicBool::new(false),
+                &log,
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("the {effort} leg timed out"))
+        .unwrap_or_else(|e| panic!("the {effort} leg failed: {e}"));
+    }
+}
+
 /// Probe whether the search tool honours the Anthropic-style `allowed_domains`
 /// parameter on this endpoint. Three outcomes are possible: refused with a 400 /
 /// accepted and ignored / accepted and effective — the first is decided by the

@@ -763,7 +763,10 @@ impl AgentRunner {
                 }
             }
             let assistant_text = if text.is_empty() { None } else { Some(text.clone()) };
-            log.append("assistant", json!({ "content": &text, "tool_calls": tool_calls.len() }));
+            // Which model answered: the current model can change between turns (the
+            // composer's model menu), so each response names its own. The id alone —
+            // the log lives in the vault and travels with it; the endpoint does not
+            log.append("assistant", json!({ "content": &text, "tool_calls": tool_calls.len(), "model": &provider.model }));
             let mut assistant = ChatMessage::assistant(
                 assistant_text,
                 if tool_calls.is_empty() { None } else { Some(tool_calls.clone()) },
@@ -1815,6 +1818,9 @@ mod tests {
         let jsonl = crate::session::read_session(f.log_dir.path(), &log.id).unwrap();
         let user_line = jsonl.lines().find(|l| l.contains(r#""kind":"user""#)).unwrap();
         assert!(user_line.contains(&format!(r#""turn":"{event_turn}""#)), "the audit line carries the same id: {user_line}");
+        // Each response names the model that gave it (the current model can change between turns)
+        let assistant_line = jsonl.lines().find(|l| l.contains(r#""kind":"assistant""#)).unwrap();
+        assert!(assistant_line.contains(r#""model":"glm-4.7-flash""#), "the assistant line names its model: {assistant_line}");
 
         // Regenerate: the glue layer cuts the assistant tail off and replays with None
         history.truncate(1);

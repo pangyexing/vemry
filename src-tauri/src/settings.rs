@@ -3,20 +3,30 @@
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use vemry_agent::provider::{ModelCap, ProviderKind, DEFAULT_MODEL, ZHIPU_BASE_URL};
+use vemry_agent::ProviderConfig;
 
 use crate::config_store;
 
 const FILE: &str = "settings.json";
 
+/// Emitted (with no payload) after `settings_set` saves, so every window refreshes
+/// its mirror; `onSettingsChanged` in api.ts listens.
+pub const CHANGED_EVENT: &str = "settings://changed";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
-    #[serde(default = "default_base_url")]
-    pub base_url: String,
-    #[serde(default = "default_model")]
-    pub model: String,
-    /// Stored key; the ZHIPU_API_KEY env var takes precedence.
+    /// The providers the user brings their own key for, in the order the settings
+    /// page lists them. vemry hosted is built in and never stored here.
     #[serde(default)]
-    pub api_key: String,
+    pub providers: Vec<CustomProvider>,
+    /// The current model: what the next chat message is sent to, switched from the
+    /// composer's model menu, the palette or the settings page, and the same for
+    /// every window. None only in a file from before the provider list existed —
+    /// `load` migrates that, so every reader after it sees Some (and reads it
+    /// through `chat_ref`, which repairs a choice whose provider has gone).
+    #[serde(default)]
+    pub chat_model: Option<ModelRef>,
     #[serde(default)]
     pub recent_vaults: Vec<String>,
     /// The vaults whose agent writes the user pre-authorised ("always allow in this
@@ -158,25 +168,14 @@ pub struct Settings {
     /// zh-CN, en, ja…); empty = the interface language.
     #[serde(default)]
     pub translate_target: String,
-    /// The model translations are sent to; empty = the chat model. The endpoint and
-    /// key are always the chat's.
+    /// The model translations are sent to, from the same list as the chat's; None =
+    /// the current chat model.
     #[serde(default)]
-    pub translate_model: String,
+    pub translation_model: Option<ModelRef>,
     /// One line of the user's own instruction appended to the translation prompt's
     /// rules ("keep technical terms in English", say).
     #[serde(default)]
     pub translate_addendum: String,
-    /// Which provider the AI talks to: the user's own endpoint and key (`custom`,
-    /// the fields above — the default, and what every config from before the
-    /// field existed means), or vemry's hosted access (`hosted`: the relay, the
-    /// account's device token, the catalog's models). The bring-your-own-key
-    /// fields are untouched by the switch, so going back finds them as they were.
-    #[serde(default)]
-    pub provider: ProviderSetting,
-    /// The hosted model ("" = the catalog's default); kept apart from `model` so
-    /// switching between the two providers loses neither choice.
-    #[serde(default)]
-    pub hosted_model: String,
     /// The quick capture window's global shortcut, in the shortcut plugin's grammar
     /// (`Alt+Shift+Space`; the frontend renders it as ⌥⇧Space or Alt+Shift+Space).
     /// One combination for every application, vemry itself included — a registered
@@ -216,6 +215,23 @@ pub struct Settings {
     /// prompted about it; the settings hint says what closing means.
     #[serde(default = "default_true")]
     pub tray_resident: bool,
+    /// The single-provider fields of a file from before the provider list: one
+    /// endpoint, key and model, a hosted/custom switch with its own hosted model,
+    /// and the translation model as a bare name. Read once by `migrate_models`,
+    /// never written again (new keys carry the new shapes, so an old file never
+    /// meets a type it cannot parse — a parse failure would reset every setting).
+    #[serde(default, rename = "base_url", skip_serializing)]
+    legacy_base_url: Option<String>,
+    #[serde(default, rename = "model", skip_serializing)]
+    legacy_model: Option<String>,
+    #[serde(default, rename = "api_key", skip_serializing)]
+    legacy_api_key: Option<String>,
+    #[serde(default, rename = "provider", skip_serializing)]
+    legacy_provider: Option<ProviderKind>,
+    #[serde(default, rename = "hosted_model", skip_serializing)]
+    legacy_hosted_model: Option<String>,
+    #[serde(default, rename = "translate_model", skip_serializing)]
+    legacy_translate_model: Option<String>,
 }
 
 /// One landing of captures from a phone, for the settings page (mirrored as
@@ -243,13 +259,133 @@ pub enum CaptureTarget {
     Pinned,
 }
 
-/// The provider setting's wire values, mirrored as `ProviderSetting` in api.ts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ProviderSetting {
-    #[default]
-    Custom,
-    Hosted,
+
+/// The provider id of vemry hosted in a `ModelRef`. A custom provider's id is
+/// always `p<N>` (`set_providers` assigns it), so the two never meet.
+pub const HOSTED: &str = "hosted";
+
+/// One provider the user brings their own key for: an endpoint, its key, and the
+/// model ids it serves. Mirrored as `CustomProvider` in api.ts.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomProvider {
+    /// Stable within this file (`p1`, `p2`, …): a model choice names its provider
+    /// by it, so renaming a provider or changing its endpoint keeps the choice.
+    #[serde(default)]
+    pub id: String,
+    /// The user's name for it; empty = named after the endpoint (`display_name`).
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub base_url: String,
+    /// Plaintext, like the rest of this owner-only file. A Zhipu endpoint with this
+    /// empty takes ZHIPU_API_KEY from the environment (`takes_env_key`).
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
+impl CustomProvider {
+    /// What the interface calls it: the user's name, else the vendor for the
+    /// endpoints the settings page offers, else the endpoint's host, else the endpoint
+    /// as typed (empty for a row with nothing in it yet).
+    pub fn display_name(&self) -> String {
+        let name = self.name.trim();
+        if !name.is_empty() {
+            return name.to_string();
+        }
+        vendor_name(&self.probe()).or_else(|| self.probe().host()).unwrap_or_else(|| self.base_url.trim().to_string())
+    }
+
+    /// Whether ZHIPU_API_KEY stands in for this provider's key: a Zhipu endpoint
+    /// with no key of its own. The variable is never sent to any other host, and a
+    /// key the user typed — which they can see — wins over it.
+    pub fn takes_env_key(&self) -> bool {
+        self.api_key.trim().is_empty() && self.probe().is_zhipu()
+    }
+
+    /// The endpoint alone, for the host predicates `ProviderConfig` owns.
+    fn probe(&self) -> ProviderConfig {
+        ProviderConfig::custom(self.base_url.clone(), "", "")
+    }
+}
+
+/// A model choice: a provider (`HOSTED` or a custom provider's id) and one of its
+/// model ids. For vemry hosted an empty model means the catalog's default.
+/// Mirrored as `ModelRef` in api.ts.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelRef {
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub model: String,
+}
+
+impl ModelRef {
+    pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
+        ModelRef { provider: provider.into(), model: model.into() }
+    }
+
+    pub fn is_hosted(&self) -> bool {
+        self.provider == HOSTED
+    }
+}
+
+/// A model choice resolved into what a request is built from.
+#[derive(Clone, Debug)]
+pub struct Resolved {
+    pub config: ProviderConfig,
+    /// The choice as it resolved: for vemry hosted, the catalog's default spelled
+    /// out when the choice left the model empty (or named one the catalog dropped).
+    pub model_ref: ModelRef,
+    /// Why no request can be built from it, when none can.
+    pub unready: Option<Unready>,
+}
+
+/// Why a model choice cannot be sent to yet; `message` is the user's wording.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unready {
+    /// vemry hosted while signed out.
+    SignIn,
+    /// No provider with a model, and vemry hosted not signed in.
+    NoModel,
+    /// The provider (named) has no endpoint.
+    NoEndpoint(String),
+    /// The provider (named) has no key, nor an environment key standing in.
+    NoKey(String),
+}
+
+impl Unready {
+    pub fn message(&self) -> String {
+        let lang = crate::i18n::current();
+        match self {
+            Unready::SignIn => crate::i18n::t(lang, "ipc.hosted.signIn"),
+            Unready::NoModel => crate::i18n::t(lang, "ipc.noModel"),
+            Unready::NoEndpoint(name) => crate::i18n::tf(lang, "ipc.noEndpointFor", &[("provider", name)]),
+            Unready::NoKey(name) => crate::i18n::tf(lang, "ipc.noApiKeyFor", &[("provider", name)]),
+        }
+    }
+}
+
+/// One provider's models as the pickers list them (the composer's model menu, the
+/// palette, the settings page), computed here so a window without the account
+/// store — the detached chat window — gets the hosted catalog too. Mirrored as
+/// `ModelGroup` in api.ts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ModelGroup {
+    /// `HOSTED` or the custom provider's id.
+    pub provider: String,
+    /// The custom provider's display name; empty for vemry hosted, which the
+    /// frontend names from the catalog.
+    pub name: String,
+    pub models: Vec<ModelChoice>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ModelChoice {
+    pub id: String,
+    /// The catalog's default (vemry hosted only).
+    pub default: bool,
 }
 
 impl Settings {
@@ -319,14 +455,6 @@ pub enum LinkOpenMode {
     System,
 }
 
-fn default_base_url() -> String {
-    vemry_agent::provider::ZHIPU_BASE_URL.into()
-}
-
-fn default_model() -> String {
-    vemry_agent::provider::DEFAULT_MODEL.into()
-}
-
 fn default_true() -> bool {
     true
 }
@@ -352,10 +480,17 @@ fn default_rule_urls() -> Vec<String> {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings {
-            base_url: default_base_url(),
-            model: default_model(),
+        // A first start talks to Zhipu's free model, as before the provider list
+        let zhipu = CustomProvider {
+            id: "p1".into(),
+            name: String::new(),
+            base_url: ZHIPU_BASE_URL.into(),
             api_key: String::new(),
+            models: vec![DEFAULT_MODEL.into()],
+        };
+        Settings {
+            chat_model: Some(ModelRef::new("p1", DEFAULT_MODEL)),
+            providers: vec![zhipu],
             recent_vaults: vec![],
             write_allow_vaults: vec![],
             language: LangSetting::default(),
@@ -384,50 +519,35 @@ impl Default for Settings {
             browser_docked: true,
             browser_window: None,
             translate_target: String::new(),
-            translate_model: String::new(),
+            translation_model: None,
             translate_addendum: String::new(),
-            provider: ProviderSetting::default(),
-            hosted_model: String::new(),
             capture_hotkey: default_capture_hotkey(),
             capture_target: CaptureTarget::default(),
             inbox_vault: None,
             inbox_last_landed: None,
             tray_resident: true,
+            legacy_base_url: None,
+            legacy_model: None,
+            legacy_api_key: None,
+            legacy_provider: None,
+            legacy_hosted_model: None,
+            legacy_translate_model: None,
         }
     }
 }
 
 impl Settings {
-    /// The bring-your-own key: the ZHIPU_API_KEY environment variable wins over the
-    /// stored one. Custom provider only — hosted mode's key is the device token.
-    pub fn effective_api_key(&self) -> String {
-        std::env::var("ZHIPU_API_KEY").ok().filter(|k| !k.is_empty()).unwrap_or_else(|| self.api_key.clone())
+    /// The provider every chat request is built from: the current model, resolved.
+    /// `run_agent_turn` and every predicate below read it, so what the settings page
+    /// and the composer show is what is sent.
+    pub fn provider_config(&self) -> ProviderConfig {
+        self.chat().config
     }
 
+    /// Whether the current model is a vemry hosted one (the account gate before a
+    /// turn, the relay's error wording).
     pub fn hosted(&self) -> bool {
-        self.provider == ProviderSetting::Hosted
-    }
-
-    /// The provider every request is built from. Hosted: the relay, the account's
-    /// device token as the key and the snapshot's catalog (from the account
-    /// module's in-process copy; signed out, the key is empty and run_agent_turn
-    /// says so). Custom: the three fields as stored.
-    pub fn provider_config(&self) -> vemry_agent::ProviderConfig {
-        match self.provider {
-            ProviderSetting::Custom => {
-                vemry_agent::ProviderConfig::custom(self.base_url.clone(), self.model.clone(), self.effective_api_key())
-            }
-            ProviderSetting::Hosted => {
-                let (token, catalog) = crate::account::hosted_credentials().unwrap_or_default();
-                vemry_agent::ProviderConfig::hosted(token, &self.hosted_model, catalog)
-            }
-        }
-    }
-
-    /// The model requests actually name (the research panel's header shows it): the
-    /// hosted choice or the catalog's default in hosted mode, the custom field otherwise.
-    pub fn active_model(&self) -> String {
-        self.provider_config().model
+        self.chat_ref().is_hosted()
     }
 
     /// Whether web search is actually in effect: the switch is on and the provider
@@ -447,6 +567,225 @@ impl Settings {
     pub fn reasoning_active(&self) -> bool {
         self.provider_config().reasoning_supported()
     }
+
+    /// The current model, resolved against the providers and the account as they
+    /// are now.
+    pub fn chat(&self) -> Resolved {
+        let creds = crate::account::hosted_credentials();
+        let r = self.chat_ref_with(creds.is_some());
+        self.resolve_with(&r, creds, env_zhipu_key().as_deref())
+    }
+
+    /// The translation model, resolved; the chat's when none is chosen (or the
+    /// chosen one's provider has gone).
+    pub fn translation(&self) -> Resolved {
+        match self.translation_model.as_ref().and_then(|r| self.normalize_ref(r)) {
+            Some(r) => self.resolve_with(&r, crate::account::hosted_credentials(), env_zhipu_key().as_deref()),
+            None => self.chat(),
+        }
+    }
+
+    /// The current model choice, repaired: see `normalize_ref` and `fallback_ref`.
+    pub fn chat_ref(&self) -> ModelRef {
+        self.chat_ref_with(crate::account::hosted_credentials().is_some())
+    }
+
+    fn chat_ref_with(&self, signed_in: bool) -> ModelRef {
+        self.chat_model.as_ref().and_then(|r| self.normalize_ref(r)).unwrap_or_else(|| self.fallback_ref(signed_in))
+    }
+
+    /// A choice made valid against the provider list: a vemry hosted one stands as
+    /// it is (the catalog is checked when it resolves, and signed out it resolves to
+    /// "sign in" — the user chose hosted, so that is the right answer); a custom one
+    /// keeps its model when the provider still lists it, or takes the provider's
+    /// first. None when the provider is gone or lists no model.
+    pub fn normalize_ref(&self, r: &ModelRef) -> Option<ModelRef> {
+        if r.is_hosted() {
+            return Some(ModelRef::new(HOSTED, r.model.trim()));
+        }
+        let p = self.providers.iter().find(|p| p.id == r.provider)?;
+        let model = r.model.trim();
+        let model = if p.models.iter().any(|m| m == model) { model } else { p.models.first()? };
+        Some(ModelRef::new(&p.id, model))
+    }
+
+    /// The choice that stands in when there is none: the first provider with a
+    /// model, else vemry hosted when signed in, else nothing (which resolves to
+    /// "no model").
+    fn fallback_ref(&self, signed_in: bool) -> ModelRef {
+        if let Some(p) = self.providers.iter().find(|p| !p.models.is_empty()) {
+            return ModelRef::new(&p.id, &p.models[0]);
+        }
+        if signed_in {
+            return ModelRef::new(HOSTED, "");
+        }
+        ModelRef::default()
+    }
+
+    /// The pure half of resolving: the account's token and catalog, and the
+    /// environment's key, are passed in.
+    fn resolve_with(&self, r: &ModelRef, creds: Option<(String, Vec<ModelCap>)>, env_key: Option<&str>) -> Resolved {
+        if r.is_hosted() {
+            let (token, catalog) = creds.unwrap_or_default();
+            // A model the catalog no longer offers is not sent (the relay would answer
+            // model_unknown): the catalog's default stands in
+            let listed = catalog.is_empty() || catalog.iter().any(|m| m.id == r.model);
+            let config = ProviderConfig::hosted(token, if listed { &r.model } else { "" }, catalog);
+            let unready = config.api_key.is_empty().then_some(Unready::SignIn);
+            return Resolved { model_ref: ModelRef::new(HOSTED, &config.model), config, unready };
+        }
+        let Some(p) = self.providers.iter().find(|p| p.id == r.provider) else {
+            return Resolved { config: ProviderConfig::custom("", "", ""), model_ref: r.clone(), unready: Some(Unready::NoModel) };
+        };
+        let key = if p.takes_env_key() { env_key.unwrap_or_default() } else { p.api_key.trim() };
+        let config = ProviderConfig::custom(p.base_url.trim(), r.model.trim(), key);
+        let unready = if config.model.is_empty() {
+            Some(Unready::NoModel)
+        } else if config.base_url.is_empty() {
+            Some(Unready::NoEndpoint(p.display_name()))
+        } else if config.api_key.is_empty() {
+            Some(Unready::NoKey(p.display_name()))
+        } else {
+            None
+        };
+        Resolved { config, model_ref: r.clone(), unready }
+    }
+
+    /// Whether the environment's key is what this provider would send (the settings
+    /// page says so under its key field).
+    pub fn env_key_applies(p: &CustomProvider) -> bool {
+        p.takes_env_key() && env_zhipu_key().is_some()
+    }
+
+    /// Replace the provider list with what the settings page sends: fields trimmed,
+    /// model ids trimmed with blanks and repeats dropped, and ids kept only for rows
+    /// that already had them — a new row, an id this file never issued and a second
+    /// row claiming the same id each get a fresh one. A blank row stays (adding a
+    /// provider saves at once, before anything is typed). The two model choices are
+    /// repaired in the same write, so neither can point at a provider just removed
+    /// (nor, later, at a new provider that reuses its id).
+    pub fn set_providers(&mut self, rows: Vec<CustomProvider>, signed_in: bool) {
+        let old: Vec<String> = self.providers.iter().map(|p| p.id.clone()).collect();
+        let mut next = old.iter().filter_map(|id| id.strip_prefix('p')?.parse::<u32>().ok()).max().unwrap_or(0);
+        let mut taken: Vec<String> = Vec::new();
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut models: Vec<String> = Vec::new();
+            for m in &row.models {
+                let m = m.trim();
+                if !m.is_empty() && !models.iter().any(|x| x == m) {
+                    models.push(m.to_string());
+                }
+            }
+            let id = if old.contains(&row.id) && !taken.contains(&row.id) {
+                row.id
+            } else {
+                next += 1;
+                format!("p{next}")
+            };
+            taken.push(id.clone());
+            out.push(CustomProvider {
+                id,
+                name: row.name.trim().to_string(),
+                base_url: row.base_url.trim().to_string(),
+                api_key: row.api_key.trim().to_string(),
+                models,
+            });
+        }
+        self.providers = out;
+        self.chat_model = Some(self.chat_ref_with(signed_in));
+        self.translation_model = self.translation_model.take().and_then(|r| self.normalize_ref(&r));
+    }
+
+    /// Every model the pickers offer, grouped by provider: vemry hosted first when
+    /// signed in with a catalog, then each provider that lists a model.
+    pub fn model_groups(&self) -> Vec<ModelGroup> {
+        self.model_groups_with(crate::account::hosted_credentials().map(|(_, c)| c))
+    }
+
+    fn model_groups_with(&self, catalog: Option<Vec<ModelCap>>) -> Vec<ModelGroup> {
+        let mut groups = Vec::new();
+        if let Some(catalog) = catalog.filter(|c| !c.is_empty()) {
+            // The default is the flagged row, or the first when none is (ProviderConfig::hosted's rule)
+            let default = catalog.iter().find(|m| m.default).unwrap_or(&catalog[0]).id.clone();
+            let models = catalog.iter().map(|m| ModelChoice { id: m.id.clone(), default: m.id == default }).collect();
+            groups.push(ModelGroup { provider: HOSTED.into(), name: String::new(), models });
+        }
+        for p in self.providers.iter().filter(|p| !p.models.is_empty()) {
+            let models = p.models.iter().map(|m| ModelChoice { id: m.clone(), default: false }).collect();
+            groups.push(ModelGroup { provider: p.id.clone(), name: p.display_name(), models });
+        }
+        groups
+    }
+
+    /// A file from before the provider list becomes one: its endpoint, key and model
+    /// the first provider, its hosted/custom switch the current model, its bare
+    /// translation model a choice on the same side. Runs on load while `chat_model`
+    /// is unset — a file written since always has it — and is deterministic, so
+    /// loading again before anything is saved gives the same result; the next save
+    /// writes the new shape and none of the old keys.
+    fn migrate_models(&mut self) {
+        if self.chat_model.is_some() {
+            return;
+        }
+        let trimmed = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let base_url = trimmed(self.legacy_base_url.take());
+        let model = trimmed(self.legacy_model.take());
+        let api_key = trimmed(self.legacy_api_key.take());
+        let hosted = self.legacy_provider.take() == Some(ProviderKind::Hosted);
+        let hosted_model = trimmed(self.legacy_hosted_model.take()).unwrap_or_default();
+        let translate_model = trimmed(self.legacy_translate_model.take());
+        if !self.providers.is_empty() {
+            // A list with no choice (a hand edit): the first model
+            self.chat_model = Some(self.fallback_ref(false));
+            return;
+        }
+        // A hosted user who never typed a key had only the untouched Zhipu default
+        // behind the switch: nothing of theirs to carry over
+        if !hosted || api_key.is_some() {
+            let base_url = base_url.unwrap_or_else(|| ZHIPU_BASE_URL.into());
+            self.providers.push(CustomProvider {
+                id: "p1".into(),
+                name: String::new(),
+                base_url,
+                api_key: api_key.unwrap_or_default(),
+                models: vec![model.unwrap_or_else(|| DEFAULT_MODEL.into())],
+            });
+        }
+        let chat = if hosted {
+            ModelRef::new(HOSTED, hosted_model)
+        } else {
+            ModelRef::new("p1", &self.providers[0].models[0])
+        };
+        if let Some(tm) = translate_model.filter(|tm| *tm != chat.model) {
+            self.translation_model = Some(if hosted {
+                ModelRef::new(HOSTED, tm)
+            } else {
+                self.providers[0].models.push(tm.clone());
+                ModelRef::new("p1", tm)
+            });
+        }
+        self.chat_model = Some(chat);
+    }
+}
+
+/// The ZHIPU_API_KEY environment variable, when set and not blank.
+fn env_zhipu_key() -> Option<String> {
+    std::env::var("ZHIPU_API_KEY").ok().filter(|k| !k.is_empty())
+}
+
+/// The vendor behind the three endpoints the settings page offers (an
+/// interoperability fact, decided on the host), which names a provider the user left
+/// unnamed. Not copy: a vendor's name reads the same in every language.
+fn vendor_name(endpoint: &ProviderConfig) -> Option<String> {
+    if endpoint.is_zhipu() {
+        return Some("Zhipu".into());
+    }
+    if endpoint.is_deepseek() {
+        return Some("DeepSeek".into());
+    }
+    let host = endpoint.host()?;
+    (host == "localhost:11434" || host == "127.0.0.1:11434").then(|| "Ollama".into())
 }
 
 /// The valid thinking levels. Both entry points (settings_set persisting, and
@@ -471,6 +810,7 @@ pub fn load(app: &AppHandle) -> Settings {
     }
     let mut s: Settings = config_store::read(app, FILE);
     clean_vault_paths(&mut s);
+    s.migrate_models();
     *CACHE.write().unwrap() = Some(s.clone());
     s
 }
@@ -665,34 +1005,227 @@ mod tests {
         assert!(!s.browser_docked);
     }
 
-    /// The provider is a field added later: an old config missing it is the custom
-    /// (bring-your-own-key) one, and a stored hosted must be kept — along with the
-    /// custom fields, which the switch never touches.
-    #[test]
-    fn provider_defaults_custom_keeps_stored() {
-        let s: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(s.provider, ProviderSetting::Custom);
-        assert!(!s.hosted() && s.hosted_model.is_empty());
-        let s: Settings = serde_json::from_str(r#"{"provider":"hosted","hosted_model":"deepseek-v4-pro","model":"glm-4.7","api_key":"k"}"#).unwrap();
-        assert!(s.hosted());
-        assert_eq!(s.hosted_model, "deepseek-v4-pro");
-        assert_eq!((s.model.as_str(), s.api_key.as_str()), ("glm-4.7", "k"));
+    /// A file as `load` sees it: parsed, then migrated.
+    fn loaded(json: &str) -> Settings {
+        let mut s: Settings = serde_json::from_str(json).unwrap();
+        s.migrate_models();
+        s
     }
 
-    /// Hosted with no account in the process (signed out, or a test): the relay's
-    /// URLs and an empty key — the turn is refused with "sign in", never sent bare.
+    fn catalog() -> Vec<ModelCap> {
+        vec![
+            ModelCap { id: "deepseek-flash".into(), default: true, search: true, images: true, max_tokens: None },
+            ModelCap { id: "deepseek-v4-pro".into(), default: false, search: true, images: false, max_tokens: None },
+        ]
+    }
+
+    fn provider(id: &str, base_url: &str, key: &str, models: &[&str]) -> CustomProvider {
+        CustomProvider {
+            id: id.into(),
+            name: String::new(),
+            base_url: base_url.into(),
+            api_key: key.into(),
+            models: models.iter().map(|m| m.to_string()).collect(),
+        }
+    }
+
+    /// A first start and an empty file land on the same thing: Zhipu's free model,
+    /// no key yet.
     #[test]
-    fn hosted_provider_without_an_account_has_no_key() {
-        let s = Settings { provider: ProviderSetting::Hosted, hosted_model: "deepseek-flash".into(), api_key: "own".into(), ..Default::default() };
-        let p = s.provider_config();
-        assert!(p.is_hosted() && p.api_key.is_empty());
-        assert_eq!(p.model, "deepseek-flash");
-        assert!(p.chat_completions_url().ends_with("/v1/chat/completions"));
-        assert!(s.reasoning_active());
-        assert_eq!(s.active_model(), "deepseek-flash");
-        // The custom fields are untouched and come back when the switch goes back
-        let back = Settings { provider: ProviderSetting::Custom, ..s };
-        assert_eq!(back.provider_config().api_key, "own");
+    fn a_fresh_file_is_the_default_zhipu_provider() {
+        let fresh = loaded("{}");
+        let default = Settings::default();
+        assert_eq!(fresh.providers, default.providers);
+        assert_eq!(fresh.chat_model, default.chat_model);
+        assert_eq!(fresh.providers[0].display_name(), "Zhipu");
+        assert_eq!(fresh.chat_model, Some(ModelRef::new("p1", DEFAULT_MODEL)));
+        assert_eq!(fresh.translation_model, None);
+    }
+
+    /// A bring-your-own-key file keeps its endpoint, key and model as the first
+    /// provider, named after the vendor, and the choice points at it.
+    #[test]
+    fn a_custom_file_migrates_to_one_provider() {
+        let s = loaded(r#"{"base_url":" https://api.deepseek.com ","model":"deepseek-v4-pro","api_key":"sk-1"}"#);
+        assert_eq!(s.providers, vec![provider("p1", "https://api.deepseek.com", "sk-1", &["deepseek-v4-pro"])]);
+        assert_eq!(s.providers[0].display_name(), "DeepSeek");
+        assert_eq!(s.chat_model, Some(ModelRef::new("p1", "deepseek-v4-pro")));
+        let p = s.resolve_with(&s.chat_ref_with(false), None, None);
+        assert_eq!((p.config.base_url.as_str(), p.config.model.as_str(), p.config.api_key.as_str()), ("https://api.deepseek.com", "deepseek-v4-pro", "sk-1"));
+        assert_eq!(p.unready, None);
+        // Any other host names the provider after itself
+        let s = loaded(r#"{"base_url":"http://192.168.1.5:8000/v1","model":"qwen"}"#);
+        assert_eq!(s.providers[0].display_name(), "192.168.1.5:8000");
+        let s = loaded(r#"{"base_url":"http://localhost:11434/v1","model":"qwen3:14b"}"#);
+        assert_eq!(s.providers[0].display_name(), "Ollama");
+    }
+
+    /// A hosted file keeps hosted as the current model, and the key typed behind the
+    /// switch as a provider — or no provider when nothing was typed.
+    #[test]
+    fn a_hosted_file_migrates_to_the_hosted_choice() {
+        let s = loaded(r#"{"provider":"hosted","hosted_model":"deepseek-v4-pro","model":"glm-4.7","api_key":"k"}"#);
+        assert_eq!(s.chat_model, Some(ModelRef::new(HOSTED, "deepseek-v4-pro")));
+        assert_eq!(s.providers, vec![provider("p1", ZHIPU_BASE_URL, "k", &["glm-4.7"])]);
+        let s = loaded(r#"{"provider":"hosted"}"#);
+        assert_eq!(s.chat_model, Some(ModelRef::new(HOSTED, "")));
+        assert!(s.providers.is_empty());
+    }
+
+    /// The old bare translation model becomes a choice on the same side.
+    #[test]
+    fn the_translation_model_migrates_beside_the_chat() {
+        let s = loaded(r#"{"base_url":"https://api.deepseek.com","model":"deepseek-v4-pro","api_key":"k","translate_model":"deepseek-flash"}"#);
+        assert_eq!(s.providers[0].models, vec!["deepseek-v4-pro", "deepseek-flash"]);
+        assert_eq!(s.translation_model, Some(ModelRef::new("p1", "deepseek-flash")));
+        let s = loaded(r#"{"provider":"hosted","translate_model":"deepseek-flash"}"#);
+        assert_eq!(s.translation_model, Some(ModelRef::new(HOSTED, "deepseek-flash")));
+        // The same as the chat's: nothing to choose
+        let s = loaded(r#"{"model":"glm-4.7","translate_model":"glm-4.7"}"#);
+        assert_eq!(s.translation_model, None);
+        assert_eq!(s.providers[0].models, vec!["glm-4.7"]);
+    }
+
+    /// The migrated file is written in the new shape alone and is not migrated
+    /// again; an emptied list stays empty.
+    #[test]
+    fn a_migrated_file_carries_no_old_keys() {
+        let s = loaded(r#"{"provider":"hosted","base_url":"x","model":"m","api_key":"k","hosted_model":"h","translate_model":"t"}"#);
+        let json = serde_json::to_value(&s).unwrap();
+        for key in ["base_url", "model", "api_key", "provider", "hosted_model", "translate_model"] {
+            assert!(json.get(key).is_none(), "{key} written back");
+        }
+        let again = loaded(&json.to_string());
+        assert_eq!((again.providers, again.chat_model, again.translation_model), (s.providers, s.chat_model, s.translation_model));
+        let s = loaded(r#"{"providers":[],"chat_model":{"provider":"","model":""}}"#);
+        assert!(s.providers.is_empty());
+        assert_eq!(s.resolve_with(&s.chat_ref_with(false), None, None).unready, Some(Unready::NoModel));
+    }
+
+    /// The list the settings page sends is cleaned, and ids are kept only for rows
+    /// that already had them.
+    #[test]
+    fn set_providers_cleans_rows_and_assigns_ids() {
+        let mut s = Settings::default();
+        s.set_providers(
+            vec![
+                CustomProvider { name: " Mine ".into(), ..provider("p1", " https://open.bigmodel.cn/api/paas/v4 ", " k ", &[" glm-4.7 ", "", "glm-4.7", "glm-4.7-flash"]) },
+                provider("", "", "", &[]),
+                provider("p9", "https://api.deepseek.com", "k2", &["deepseek-flash"]),
+                provider("p1", "http://localhost:11434/v1", "", &["qwen3:14b"]),
+            ],
+            false,
+        );
+        let ids: Vec<&str> = s.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["p1", "p2", "p3", "p4"]);
+        assert_eq!(s.providers[0], CustomProvider { name: "Mine".into(), ..provider("p1", ZHIPU_BASE_URL, "k", &["glm-4.7", "glm-4.7-flash"]) });
+        // The blank row stays, named after nothing; a typed name wins over the vendor's
+        assert_eq!(s.providers[1].display_name(), "");
+        assert_eq!(s.providers[0].display_name(), "Mine");
+        assert_eq!(s.providers[3].display_name(), "Ollama");
+    }
+
+    /// Removing the chosen model or its provider moves the choice; the translation
+    /// choice goes back to "same as chat" when its provider goes.
+    #[test]
+    fn removing_a_provider_repairs_the_choices() {
+        let mut s = Settings::default();
+        s.set_providers(
+            vec![provider("p1", ZHIPU_BASE_URL, "k", &["glm-4.7-flash"]), provider("", "https://api.deepseek.com", "k2", &["deepseek-flash", "deepseek-v4-pro"])],
+            false,
+        );
+        s.chat_model = Some(ModelRef::new("p2", "deepseek-v4-pro"));
+        s.translation_model = Some(ModelRef::new("p2", "deepseek-flash"));
+        // The model goes: the provider's first takes its place
+        s.set_providers(vec![provider("p1", ZHIPU_BASE_URL, "k", &["glm-4.7-flash"]), provider("p2", "https://api.deepseek.com", "k2", &["deepseek-flash"])], false);
+        assert_eq!(s.chat_model, Some(ModelRef::new("p2", "deepseek-flash")));
+        // The provider goes: the first provider with a model, and translation follows the chat
+        s.set_providers(vec![provider("p1", ZHIPU_BASE_URL, "k", &["glm-4.7-flash"])], false);
+        assert_eq!(s.chat_model, Some(ModelRef::new("p1", "glm-4.7-flash")));
+        assert_eq!(s.translation_model, None);
+        // Nothing left: vemry hosted when signed in, nothing otherwise
+        s.set_providers(vec![], true);
+        assert_eq!(s.chat_model, Some(ModelRef::new(HOSTED, "")));
+        s.set_providers(vec![], false);
+        assert_eq!(s.chat_model, Some(ModelRef::new(HOSTED, "")), "a hosted choice stands; resolving it asks to sign in");
+        s.chat_model = None;
+        s.set_providers(vec![], false);
+        assert_eq!(s.chat_model, Some(ModelRef::default()));
+    }
+
+    /// A dangling choice (a hand edit) reads as the fallback without being written.
+    #[test]
+    fn a_dangling_choice_reads_as_the_fallback() {
+        let s = Settings { chat_model: Some(ModelRef::new("p7", "x")), ..Default::default() };
+        assert_eq!(s.chat_ref_with(false), ModelRef::new("p1", DEFAULT_MODEL));
+        let s = Settings { chat_model: Some(ModelRef::new("p1", "gone")), ..Default::default() };
+        assert_eq!(s.chat_ref_with(false), ModelRef::new("p1", DEFAULT_MODEL));
+    }
+
+    /// vemry hosted: the relay with the device token; signed out, an empty key and
+    /// "sign in" — never sent bare. A model the catalog dropped gives way to its
+    /// default.
+    #[test]
+    fn a_hosted_choice_resolves_against_the_account() {
+        let s = Settings { chat_model: Some(ModelRef::new(HOSTED, "deepseek-v4-pro")), ..Default::default() };
+        let r = s.resolve_with(&s.chat_ref_with(true), Some(("tok".into(), catalog())), None);
+        assert!(r.config.is_hosted() && r.unready.is_none());
+        assert_eq!((r.config.api_key.as_str(), r.config.model.as_str()), ("tok", "deepseek-v4-pro"));
+        assert!(r.config.chat_completions_url().ends_with("/v1/chat/completions"));
+        let r = s.resolve_with(&ModelRef::new(HOSTED, "retired"), Some(("tok".into(), catalog())), None);
+        assert_eq!(r.config.model, "deepseek-flash");
+        assert_eq!(r.model_ref, ModelRef::new(HOSTED, "deepseek-flash"));
+        let r = s.resolve_with(&ModelRef::new(HOSTED, ""), Some(("tok".into(), catalog())), None);
+        assert_eq!(r.model_ref, ModelRef::new(HOSTED, "deepseek-flash"));
+        let r = s.resolve_with(&s.chat_ref_with(false), None, None);
+        assert!(r.config.is_hosted() && r.config.api_key.is_empty());
+        assert_eq!(r.unready, Some(Unready::SignIn));
+        // No account in the process (a test): the predicates read the hosted choice
+        assert!(s.hosted() && s.reasoning_active());
+    }
+
+    /// The environment's key fills a blank Zhipu key and goes nowhere else.
+    #[test]
+    fn the_env_key_fills_only_a_blank_zhipu_key() {
+        let s = Settings {
+            providers: vec![provider("p1", ZHIPU_BASE_URL, "", &["glm-4.7-flash"]), provider("p2", "https://api.deepseek.com", "", &["deepseek-flash"]), provider("p3", ZHIPU_BASE_URL, "mine", &["glm-4.7"])],
+            ..Default::default()
+        };
+        let key = |r: &str, m: &str| s.resolve_with(&ModelRef::new(r, m), None, Some("env")).config.api_key;
+        assert_eq!(key("p1", "glm-4.7-flash"), "env");
+        assert_eq!(key("p2", "deepseek-flash"), "");
+        assert_eq!(key("p3", "glm-4.7"), "mine");
+        assert_eq!(s.resolve_with(&ModelRef::new("p2", "deepseek-flash"), None, Some("env")).unready, Some(Unready::NoKey("DeepSeek".into())));
+    }
+
+    /// Why a choice cannot be sent, in order: no model, no endpoint, no key.
+    #[test]
+    fn unready_names_what_is_missing() {
+        let s = Settings {
+            providers: vec![CustomProvider { name: "Home".into(), ..provider("p1", "", "k", &["m"]) }, provider("p2", "https://api.deepseek.com", "", &["deepseek-flash"])],
+            ..Default::default()
+        };
+        let unready = |r: ModelRef| s.resolve_with(&r, None, None).unready;
+        assert_eq!(unready(ModelRef::new("p1", "m")), Some(Unready::NoEndpoint("Home".into())));
+        assert_eq!(unready(ModelRef::new("p2", "deepseek-flash")), Some(Unready::NoKey("DeepSeek".into())));
+        assert_eq!(unready(ModelRef::new("p9", "m")), Some(Unready::NoModel));
+        assert_eq!(unready(ModelRef::new("p1", "")), Some(Unready::NoModel));
+    }
+
+    /// The pickers list vemry hosted first (signed in, with a catalog), then every
+    /// provider that has a model, in the settings page's order.
+    #[test]
+    fn model_groups_put_hosted_first() {
+        let s = Settings {
+            providers: vec![provider("p1", ZHIPU_BASE_URL, "", &["glm-4.7-flash"]), provider("p2", "", "", &[]), provider("p3", "http://192.168.1.5:8000/v1", "", &["qwen3:14b"])],
+            ..Default::default()
+        };
+        let groups = s.model_groups_with(Some(catalog()));
+        let shape: Vec<(&str, &str, usize)> = groups.iter().map(|g| (g.provider.as_str(), g.name.as_str(), g.models.len())).collect();
+        assert_eq!(shape, [(HOSTED, "", 2), ("p1", "Zhipu", 1), ("p3", "192.168.1.5:8000", 1)]);
+        assert!(groups[0].models[0].default && !groups[0].models[1].default);
+        assert_eq!(s.model_groups_with(None).len(), 2);
+        assert_eq!(s.model_groups_with(Some(vec![])).len(), 2);
     }
 
     /// The capture fields are added later: an old config missing them takes the

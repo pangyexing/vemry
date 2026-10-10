@@ -31,6 +31,7 @@
   import { account } from "$lib/stores/account.svelte";
   import { executeCommand } from "$lib/commands/registry";
   import { contextMenu, type MenuEntry } from "$lib/stores/contextMenu.svelte";
+  import { groupName, modelLabel, providerName, sameRef, selectModel } from "$lib/models";
   import { t, i18n } from "$lib/i18n/i18n.svelte";
   import { PLAN_GLYPH, toolLabel } from "$lib/views/session";
   import {
@@ -1705,8 +1706,12 @@
     const cur = agent.effortOverride ?? prefs.reasoningEffort;
     return `${t("chat.effortLabel", { level: effortName(cur) })}${agent.effortOverride ? t("chat.effortThisSession") : ""}`;
   });
-  /** The model chip's hover: the model (changed in Settings) and the thinking level; without a model, the level alone. */
-  const modelChipHint = $derived(prefs.model ? t("chat.modelChipHint", { model: prefs.model }) : t("chat.effortHint"));
+  /** The model chip's hover: what keeps the current model from being sent to, when something does;
+   *  otherwise the model with its provider and what a click offers. */
+  const modelChipHint = $derived(
+    prefs.chatUnready ??
+      (prefs.model ? t("chat.modelChipTip", { model: prefs.model, provider: providerName(prefs.chatModel) }) : t("chat.effortHint")),
+  );
 
   /** ---- The web search switch: one item of the model menu (the settings page writes the same
    *  field), read afresh by every send, so a click takes effect from the next message. The item
@@ -1723,17 +1728,29 @@
       toast.push(String(err));
     }
   }
-  /** The model chip's menu: the model with the way to Settings (the main window's — the
-   *  detached window has no settings dialog to open), then the thinking level's quick switch. */
+  /** The model chip's menu: every model the settings list, by provider (a click makes it the
+   *  current model, for both windows and from the next message), the way to Settings (the main
+   *  window's — the detached window has no settings dialog to open), then the thinking level's
+   *  quick switch and the web search switch. */
   function modelMenu(e: MouseEvent) {
     const entries: MenuEntry[] = [];
-    if (prefs.model) {
-      entries.push({ title: prefs.model });
-      // The detached window has no settings of its own: hostDispatch relays it to the main window, brought to the front
-      entries.push({ label: t("chat.changeModel"), action: () => void hostDispatch({ kind: "settings", id: "ai.model" }) });
+    if (prefs.chatUnready) entries.push({ label: prefs.chatUnready, disabled: true }, { separator: true });
+    for (const g of prefs.modelChoices) {
+      entries.push({ title: groupName(g) });
+      for (const m of g.models) {
+        const ref = { provider: g.provider, model: m.id };
+        entries.push({
+          label: m.default ? t("settings.hostedModelDefault", { model: m.id }) : m.id,
+          checked: sameRef(ref, prefs.chatModel),
+          action: () => void selectModel(ref),
+        });
+      }
     }
+    if (entries.length) entries.push({ separator: true });
+    // The detached window has no settings of its own: hostDispatch relays it to the main window, brought to the front
+    entries.push({ label: t("chat.manageModels"), action: () => void hostDispatch({ kind: "settings", id: "ai.providers" }) });
     if (prefs.reasoningEffortActive) {
-      if (entries.length) entries.push({ separator: true });
+      entries.push({ separator: true });
       entries.push(
         { title: t("chat.effortMenuTitle") },
         {
@@ -1752,7 +1769,7 @@
         }),
       );
     }
-    if (entries.length) entries.push({ separator: true });
+    entries.push({ separator: true });
     entries.push(
       prefs.webSearchAvailable
         ? { label: t("chat.searchMenuItem"), checked: prefs.webSearchEnabled, action: () => void toggleSearch() }
@@ -2545,29 +2562,29 @@
       </button>
       <!-- The model chip: the model's name and the thinking level together, next to the input
            where the request is composed, rather than a label crowding the session title out of
-           the header -->
-      {#if prefs.model || prefs.reasoningEffortActive}
-        <button class="tool-btn model" title={modelChipHint} onclick={modelMenu}>
-          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
-            <path d="M3.5 6.5h7M14.5 6.5h2M3.5 13.5h2M9.5 13.5h7" />
-            <circle cx="12.5" cy="6.5" r="1.8" />
-            <circle cx="7.5" cy="13.5" r="1.8" />
-          </svg>
-          {#if prefs.model}<span class="model-name">{prefs.model}</span>{/if}
-          {#if prefs.model && prefs.reasoningEffortActive}<span class="model-sep" aria-hidden="true">·</span>{/if}
-          {#if prefs.reasoningEffortActive}<span class="model-effort">{effortLabel}</span>{/if}
-          {#if searchOn}
-            <!-- The globe: the search switch is on, so this message may leave the machine -->
-            <span class="model-sep" aria-hidden="true">·</span>
-            <span class="model-web" title={t("chat.searchOnHint")}>
-              <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-                <circle cx="10" cy="10" r="7" />
-                <path d="M3 10h14M10 3c-2.5 2.3-2.5 11.7 0 14M10 3c2.5 2.3 2.5 11.7 0 14" />
-              </svg>
-            </span>
-          {/if}
-        </button>
-      {/if}
+           the header. Always there, so the models are one click away even before one is set up -->
+      <button class="tool-btn model" class:unready={!!prefs.chatUnready} title={modelChipHint} onclick={modelMenu}>
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+          <path d="M3.5 6.5h7M14.5 6.5h2M3.5 13.5h2M9.5 13.5h7" />
+          <circle cx="12.5" cy="6.5" r="1.8" />
+          <circle cx="7.5" cy="13.5" r="1.8" />
+        </svg>
+        <span class="model-name">{prefs.model ? modelLabel(prefs.chatModel) : t("settings.noModels")}</span>
+        {#if prefs.reasoningEffortActive}
+          <span class="model-sep" aria-hidden="true">·</span>
+          <span class="model-effort">{effortLabel}</span>
+        {/if}
+        {#if searchOn}
+          <!-- The globe: the search switch is on, so this message may leave the machine -->
+          <span class="model-sep" aria-hidden="true">·</span>
+          <span class="model-web" title={t("chat.searchOnHint")}>
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+              <circle cx="10" cy="10" r="7" />
+              <path d="M3 10h14M10 3c-2.5 2.3-2.5 11.7 0 14M10 3c2.5 2.3 2.5 11.7 0 14" />
+            </svg>
+          </span>
+        {/if}
+      </button>
       {#if summonHint}
         <span class="ctx url-hint">{t("chat.popOutHint", { key: k("Mod+J") })}</span>
       {:else if modeInfo.hint}
@@ -3310,9 +3327,14 @@
   }
   .model-name {
     min-width: 0;
-    max-width: 130px;
+    /* Room for "deepseek-v4-pro · DeepSeek": the provider is what tells your own key from the relay */
+    max-width: 210px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* The current model cannot be sent to yet (no key, signed out): the name says so before a send fails */
+  .tool-btn.model.unready .model-name {
+    color: var(--warning);
   }
   .model-sep {
     color: var(--fg-faint);

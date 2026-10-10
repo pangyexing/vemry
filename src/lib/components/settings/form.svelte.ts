@@ -20,6 +20,17 @@ class SettingsForm {
    *  fast second toggle is not flipped back by the first one's read. */
   #seq = 0;
   #last: Promise<unknown> = Promise.resolve();
+  /** Writes started and not yet read back: a change made elsewhere is taken only while
+   *  this is zero, so it cannot overwrite what the user just typed here. */
+  #pending = 0;
+
+  constructor() {
+    // A model picked in the chat, a setting changed in another window, a sign-in: an open
+    // dialog shows it without being reopened
+    prefs.onExternal((s) => {
+      if (this.s && this.#pending === 0) this.s = s;
+    });
+  }
 
   /** Settles once every write started so far has: an action that reads a setting back
    *  from disk (updating the rule sources) waits on it after blurring the field. */
@@ -45,6 +56,7 @@ class SettingsForm {
 
   async #write(patch: SettingsUpdate, row: string | undefined, saved: boolean): Promise<boolean> {
     const seq = ++this.#seq;
+    this.#pending++;
     if (this.s) this.s = { ...this.s, ...(patch as Partial<SettingsView>) };
     if (row && this.errors[row]) {
       const { [row]: _, ...rest } = this.errors;
@@ -57,6 +69,7 @@ class SettingsForm {
       failed = String(e);
     }
     const s = await prefs.refresh();
+    this.#pending--;
     if (s && seq === this.#seq) this.s = s;
     if (s) {
       if ("language" in patch) setLanguage(s.language);

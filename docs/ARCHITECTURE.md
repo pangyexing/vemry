@@ -78,7 +78,7 @@ Neither is data. Three constraints follow:
 | `.vemry/history/<note path>/` | the vault, before every write | state — what each write replaced | yes | no |
 | `.vemry/script-log.jsonl`, `.vemry/inbox-seen.json` | the script host; the phone inbox | state — audit, seen-list | yes | no |
 | `.vemry/block-times.json`, `.vemry/cache/pdf/`, `.vemry/cache/translate/` | the vault; PDF extraction; translation | cache | yes | change dates; PDF text |
-| app config: `settings.json` | Settings: preferences, your own API key, recent vaults, `write_allow_vaults`, `inbox_vault`, window geometry | configuration, consent, a secret (the key; not 0600) | no | no |
+| app config: `settings.json` | Settings: preferences, your providers with their API keys, the current chat and translation models, recent vaults, `write_allow_vaults`, `inbox_vault`, window geometry | configuration, consent, secrets (the keys; mode 0600) | no | no |
 | app config: `session-consents.json`, `script-state.json` | the gates' standing consents; script flags and grants | consent | no | no |
 | app config: `account.json` (0600) | the device token, the entitlement snapshot | secret | no | no |
 | app config: `browser_history.json`, `bookmarks.json`, `adblock/*.txt` | the browser | state, rules | no | no |
@@ -134,7 +134,7 @@ tested without a window and core can be reused on its own.
 
 | Module | Responsibility |
 |---|---|
-| `provider.rs` | `ProviderConfig` and `ProviderKind`: `Custom`, the default (Zhipu `glm-4.7-flash`, swappable for any OpenAI-compatible endpoint), or `Hosted` with the account's model catalog; predicates for search and image support |
+| `provider.rs` | `ProviderConfig` and `ProviderKind`: one endpoint and one model per request — `Custom` (any OpenAI-compatible endpoint; Zhipu `glm-4.7-flash` on a first start), or `Hosted` with the account's model catalog; predicates for search and image support, and the host checks (`host`, `is_deepseek`, `is_zhipu`) |
 | `client.rs` / `anthropic.rs` / `types.rs` | The `ChatTransport` trait — **the LLM channel boundary**: Chat Completions over SSE, and DeepSeek's Anthropic-format line, which carries web search. One read loop, one connection pool, a stream-idle timeout |
 | `runner.rs` | The agent loop, at most 25 iterations; session-level tools execute here. See "An agent turn" |
 | `prompt.rs` | The system prompt, frozen per session; the user envelope and turn tail; the one untrusted-page envelope (`page_envelope_part`) |
@@ -180,7 +180,7 @@ output is in `[..](url)` or `<url>` form: a bare URL's `#fragment` would be pars
 | `agent_window.rs` / `capture_window.rs` / `tray.rs` | The chat window, quick capture, the resident state; each header walks through its handshakes |
 | `menu.rs` | The macOS menu bar. See "Everything is a command" |
 | `account.rs` / `inbox.rs` | The hosted account and the phone inbox — network exit 6 |
-| `settings.rs` | The preferences, in the app-config directory, never in a vault |
+| `settings.rs` | The preferences, in the app-config directory, never in a vault. Holds the provider list and the two model choices (`ModelRef`: a provider and one of its model ids), and resolves a choice into the `ProviderConfig` a request is built from (`chat`, `translation`) — the one builder, repaired when a provider has gone; migrates a file from before the list |
 | `pasteboard.rs`, helpers | macOS NSPasteboard (file paths, image bytes, text); `i18n.rs`, `window_geom.rs`, `imagesize.rs`, `config_store.rs`, `type_templates.rs` |
 
 `broadcast(app, event)` is the single fan-out for vault events: the frontend always receives
@@ -234,8 +234,9 @@ returns None, so Rust reaches it through `browser::window::main_window`.
 agent_send (commands.rs)
   → the session log: the open session's, or a new one
   → the prompt snapshot (SessionSetup: system prompt + plan switch), reused until dropped
-  → per-turn inputs: web search (read afresh; it picks the transport), thinking level,
-    working note, formatter, standing grants (consents.rs)
+  → per-turn inputs: the current model (read afresh: a provider and model id, resolved to an
+    endpoint and key), web search (it picks the transport), thinking level, working note,
+    formatter, standing grants (consents.rs)
   → runner.run, holding the vault lock: the open and working notes dropped when private;
     @ references resolved through the privacy gate; the history scrubbed (scrub_private_refs)
   → the session log's user row (kind and path of each reference, never a body), then the
@@ -397,10 +398,12 @@ Each boundary in a line or two; the section named after it holds the mechanism.
   script's write grant (`script-state.json`) live in the app-config directory, so a
   `write_policy` key in a vault's `.vemry/config.json`, or an `allow_session` line in a
   session log, grants nothing. See "What lives where" and "Gates and grants".
-- **Secrets.** Every request carrying your API key or the hosted device token is made in
-  Rust. The key reaches a webview only in `settings_get`'s reply, to our own bundle; the
-  token never reaches one; neither is stored in a vault. `VEMRY_API_BASE` redirects the
-  relay in a debug build only.
+- **Secrets.** Every request carrying one of your API keys or the hosted device token is
+  made in Rust. A key reaches a webview only in `settings_get`'s reply, to our own bundle
+  (`settings://changed`, which tells every window to read the settings again, carries no
+  payload); the token never reaches one; neither is stored in a vault. `ZHIPU_API_KEY` from
+  the environment fills only a Zhipu provider's blank key, so it is never sent to another
+  host. `VEMRY_API_BASE` redirects the relay in a debug build only.
 - **No bash, no run_code.** Every capability the agent has is a typed domain tool —
   interceptable, renderable, auditable — and it can run neither a script nor a code block.
 - **Webviews and IPC.** Our four webviews are matched by exact label; remote pages (the tabs
@@ -446,8 +449,8 @@ included, changes this list and is a design decision. There is no telemetry.
 1. **The LLM channel** (`vemry-agent`: Chat Completions, or the Anthropic-format line with
    the provider's server-side search). A request goes out only for something the user asked
    of the model — a turn sent, a translation started — and carries what the runner
-   assembled, already through the privacy gates. With your own key it goes straight to the
-   vendor; in hosted mode, through exit 6.
+   assembled, already through the privacy gates. A model from one of your providers is
+   reached straight at that provider's endpoint; a vemry hosted model, through exit 6.
 2. **The browser.** Tabs the user opened, isolated from IPC. The hidden `reader` window is
    the headless form of the same exit, triggered by a click. The read gate has a hidden
    window of its own, `reader-agent`: a page the agent proposes (`open_for_reading`,
@@ -484,7 +487,7 @@ included, changes this list and is a design decision. There is no telemetry.
    package's minisign signature is verified against the public key compiled into the app
    (see [RELEASING.md](RELEASING.md)).
 6. **The hosted account and relay** (`api.vemry.app`, `src-tauri/src/account.rs`), taken
-   only when the user signs in or switches the provider to *vemry hosted*. What leaves: at
+   only after the user signs in. What leaves: at
    sign-in, the e-mail address, the device's name, platform and app version (for the
    account's device list) and the language of the sign-in mail; while signed in, the
    entitlement snapshot's refresh (`GET /v1/me` with its ETag: before a hosted turn when
@@ -492,12 +495,12 @@ included, changes this list and is a design decision. There is no telemetry.
    sign-in link for the account pages (`POST /v1/auth/web-link`) when the user opens one,
    and the phone inbox — a long-poll of `GET /v1/inbox/pull`, each held up to 25 s and
    renewed at once for as long as the app runs, paired phone or not, the acks of items
-   written, and pairing, listing and revoking phones when the settings page asks; in hosted
-   mode, the model requests themselves, **byte for byte what bring-your-own-key mode would
+   written, and pairing, listing and revoking phones when the settings page asks; while the
+   chosen chat or translation model is a vemry hosted one, the model requests themselves, **byte for byte what bring-your-own-key mode would
    send to the vendor**, plus four headers. The relay is not a new read path: privacy zones,
    the gate and the session log are unchanged and client-side. Signing out closes the exit
-   (its last request, `POST /v1/auth/logout`, revokes the device); switching back to your
-   own key closes the relay but not the refresh and the inbox, which follow the sign-in. A
+   (its last request, `POST /v1/auth/logout`, revokes the device); picking one of your own
+   models closes the relay but not the refresh and the inbox, which follow the sign-in. A
    release build always talks to `api.vemry.app`: no environment variable can point this
    exit, or the token it carries, anywhere else.
 
@@ -986,7 +989,8 @@ never builds a path from caller input, so it is immune to traversal by construct
 ### The session log, forks and evals
 
 The session log (`.vemry/sessions/<id>.jsonl`, the interface's audit log) records every
-message, tool call, diff and gate decision; it is immutable — a retry, an edit-and-resend, a
+message, tool call, diff and gate decision, and on each answer the model id that gave it (the
+current model can change between turns; the endpoint is not recorded); it is immutable — a retry, an edit-and-resend, a
 compaction and a fork are markers the presentation folds on. `fork_session` copies the log's
 prefix up to a turn id; the fork command (`agent_session_fork`) writes the matching cut of the
 sidecar (`history_fork_cut`).
@@ -1402,11 +1406,17 @@ becomes a note only when the user saves it.
 
 ### The hosted account
 
-The user's own endpoint and key stay as they are (`ProviderKind::Custom`, the default).
-*vemry hosted* (`ProviderKind::Hosted`) is a second provider kind, not a special host name:
-the relay speaks the two shapes the transports already speak, so the hosted `ProviderConfig`
-is the relay's `/v1` as base URL, the account's **device token** as the key, and the **model
-catalog** the account snapshot carries, which the provider predicates read.
+The user's own providers are a list in `settings.json`, each an endpoint, a key and the model
+ids it serves (`ProviderKind::Custom`). *vemry hosted* (`ProviderKind::Hosted`) is one more
+provider, built in rather than listed, and not a special host name: the relay speaks the two
+shapes the transports already speak, so the hosted `ProviderConfig` is the relay's `/v1` as
+base URL, the account's **device token** as the key, and the **model catalog** the account
+snapshot carries, which the provider predicates read. One picker lists both (`model_choices`,
+computed in Rust so the detached window, which has no account store, gets the catalog too):
+the current model is a `ModelRef` — a provider id (`hosted` or a custom provider's `p<N>`) and
+a model id — resolved per request, so choosing a model is what decides whether a request goes
+through the relay. Translation may name a model of its own from the same list; otherwise it
+follows the chat's.
 
 The account lives in `account.json` (mode 0600, apart from `settings.json` so an exported
 settings file never carries the token). Sign-in is an e-mail address and a 6-digit code.

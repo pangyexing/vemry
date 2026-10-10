@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { api, EFFORT_OPTIONS } from "$lib/api";
+  import { api, EFFORT_OPTIONS, HOSTED, type CustomProvider, type ModelGroup, type ModelRef, type ProviderView } from "$lib/api";
   import { t } from "$lib/i18n/i18n.svelte";
+  import { isImeKeydown } from "$lib/ime";
+  import { groupName, modelLabel, sameRef } from "$lib/models";
   import { account } from "$lib/stores/account.svelte";
   import { openSettings } from "$lib/stores/settingsUi.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -39,6 +41,69 @@
   let pickingCustom = $state(false);
   const targetChoice = $derived(customTarget || pickingCustom ? "custom" : (s?.translate_target ?? ""));
 
+  /** A model choice as a <select> value, and back. */
+  const refKey = (r: ModelRef) => JSON.stringify([r.provider, r.model]);
+  function refOf(key: string): ModelRef {
+    const [provider, model] = JSON.parse(key) as [string, string];
+    return { provider, model };
+  }
+  const listed = (groups: ModelGroup[], r: ModelRef) => groups.some((g) => g.models.some((m) => sameRef({ provider: g.provider, model: m.id }, r)));
+  /** An option's text: a closed <select> shows the option alone, not its group, so a model id two
+   *  providers serve names its provider (modelLabel), and vemry hosted's default says so. */
+  const choiceLabel = (g: ModelGroup, m: { id: string; default: boolean }) => {
+    const label = modelLabel({ provider: g.provider, model: m.id }, s?.model_choices ?? []);
+    return m.default ? t("settings.hostedModelDefault", { model: label }) : label;
+  };
+
+  /** The providers as shown: every edit sends the whole list back with one row changed, and
+   *  Rust cleans it and keeps the ids. The view's derived fields ride along — Rust ignores
+   *  them, and the dialog's immediate update keeps each card's name until the read-back. */
+  function rows(): CustomProvider[] {
+    return form.s?.providers ?? [];
+  }
+  function withRow(i: number, change: Partial<CustomProvider>): CustomProvider[] {
+    return rows().map((p, j) => (j === i ? { ...p, ...change } : p));
+  }
+  const saveRows = (list: CustomProvider[]) => void form.set({ providers: list }, "ai.providers");
+
+  /** What is typed in each provider's "add a model id" field, by provider id. */
+  let modelDrafts = $state<Record<string, string>>({});
+  function addModel(i: number, p: ProviderView) {
+    const id = (modelDrafts[p.id] ?? "").trim();
+    if (!id) return;
+    if (!p.models.includes(id)) saveRows(withRow(i, { models: [...p.models, id] }));
+    modelDrafts[p.id] = "";
+  }
+
+  /** The provider whose Remove was clicked once: a second click within a few seconds removes
+   *  it with its key. (A timer, not the button's blur: a click does not focus a button on macOS.) */
+  let removing = $state<string | null>(null);
+  let removingTimer: ReturnType<typeof setTimeout> | undefined;
+  function removeProvider(i: number, p: ProviderView) {
+    clearTimeout(removingTimer);
+    if (removing !== p.id) {
+      removing = p.id;
+      removingTimer = setTimeout(() => (removing = null), 3000);
+      return;
+    }
+    removing = null;
+    saveRows(rows().filter((_, j) => j !== i));
+  }
+
+  /** The endpoints "Add a provider…" offers, with the model ids each is known to serve. The
+   *  name is left empty: Rust names an unnamed provider after its vendor or host. */
+  const PRESETS: Record<string, { base_url: string; models: string[] }> = {
+    zhipu: { base_url: "https://open.bigmodel.cn/api/paas/v4", models: ["glm-4.7-flash", "glm-4.7"] },
+    deepseek: { base_url: "https://api.deepseek.com", models: ["deepseek-flash", "deepseek-v4-pro"] },
+    ollama: { base_url: "http://localhost:11434/v1", models: [] },
+    other: { base_url: "", models: [] },
+  };
+  function addProvider(kind: string) {
+    const preset = PRESETS[kind];
+    if (!preset) return;
+    saveRows([...rows(), { id: "", name: "", api_key: "", base_url: preset.base_url, models: [...preset.models] }]);
+  }
+
   const effortLabel = (value: string, isDefault: boolean) => {
     const name = t(`settings.effort.${value as "none"}`);
     const hint = t(`settings.effort.${value as "none"}Hint`);
@@ -48,40 +113,96 @@
 
 {#if s}
   <SettingSection title={t("settings.sec.model")}>
-    <SettingRow id="ai.provider">
-      <div class="segmented" role="radiogroup" aria-label={t("settings.provider")}>
-        <button {@attach rowControl} role="radio" aria-checked={s.provider === "hosted"} class:active={s.provider === "hosted"} onclick={() => void form.set({ provider: "hosted" })}
-          >{t("settings.providerHosted")}</button
+    <!-- The current model: every model the providers below list, vemry hosted's first when signed in -->
+    {@const chatListed = listed(s.model_choices, s.chat_model)}
+    <SettingRow id="ai.model" hint={s.chat_unready ?? undefined}>
+      <select {@attach rowControl} value={refKey(s.chat_model)} onchange={(e) => void form.set({ chat_model: refOf(e.currentTarget.value) })}>
+        {#if !chatListed}
+          <!-- vemry hosted while signed out, or nothing at all: said as its own row, which cannot be picked -->
+          <option value={refKey(s.chat_model)} disabled>{s.chat_model.provider === HOSTED ? t("settings.hostedSignedOutOption") : t("settings.noModels")}</option>
+        {/if}
+        {#each s.model_choices as g (g.provider)}
+          <optgroup label={groupName(g)}>
+            {#each g.models as m (m.id)}
+              <option value={refKey({ provider: g.provider, model: m.id })}>{choiceLabel(g, m)}</option>
+            {/each}
+          </optgroup>
+        {/each}
+      </select>
+    </SettingRow>
+    <SettingRow id="ai.hosted" hint={account.loggedIn ? t("settings.hostedReadyHint") : undefined}>
+      {#if !account.loggedIn}
+        <button {@attach rowControl} class="link" onclick={() => openSettings("account.panel")}>{t("settings.signIn")} →</button>
+      {/if}
+    </SettingRow>
+    <SettingRow id="ai.providers" block>
+      {#if s.providers.length}
+        <ul class="providers">
+          <!-- A row added a moment ago has no id until Rust reads it back -->
+          {#each s.providers as p, i (p.id || `new-${i}`)}
+            <li>
+              <div class="head">
+                <span class="name">{p.display_name || t("settings.providerUnnamed")}</span>
+                <span class="spring"></span>
+                <button class="del" class:armed={removing === p.id} onclick={() => removeProvider(i, p)}
+                  >{removing === p.id ? t("settings.providerRemoveConfirm") : t("settings.providerRemove")}</button
+                >
+              </div>
+              <div class="fields">
+                <span class="field-label">{t("settings.providerName")}</span>
+                <SettingText label={t("settings.providerName")} value={p.name} placeholder={p.display_name} patch={(v) => ({ providers: withRow(i, { name: v.trim() }) })} />
+                <span class="field-label">{t("settings.endpoint")}</span>
+                <SettingText label={t("settings.endpoint")} value={p.base_url} list="base-url-presets" mono placeholder="https://…" patch={(v) => ({ providers: withRow(i, { base_url: v.trim() }) })} />
+                <span class="field-label">{t("settings.apiKey")}</span>
+                <SettingText label={t("settings.apiKey")} value={p.api_key} type="password" placeholder={t("settings.apiKeyPlaceholder")} patch={(v) => ({ providers: withRow(i, { api_key: v.trim() }) })} />
+                {#if p.env_key}<small class="field-note">{t("settings.apiKeyEnvFallback")}</small>{/if}
+                <span class="field-label">{t("settings.providerModels")}</span>
+                <div class="models">
+                  {#each p.models as m (m)}
+                    <span class="model">
+                      {m}
+                      <button title={t("settings.providerModelRemove", { model: m })} aria-label={t("settings.providerModelRemove", { model: m })} onclick={() => saveRows(withRow(i, { models: p.models.filter((x) => x !== m) }))}>✕</button>
+                    </span>
+                  {:else}
+                    <small>{t("settings.providerNoModels")}</small>
+                  {/each}
+                </div>
+                <span></span>
+                <div class="add">
+                  <input
+                    class="mono"
+                    list="model-presets"
+                    aria-label={t("settings.providerModelPlaceholder")}
+                    placeholder={t("settings.providerModelPlaceholder")}
+                    spellcheck="false"
+                    bind:value={() => modelDrafts[p.id] ?? "", (v) => (modelDrafts[p.id] = v)}
+                    onkeydown={(e) => e.key === "Enter" && !isImeKeydown(e) && addModel(i, p)}
+                  />
+                  <button class="btn small" onclick={() => addModel(i, p)}>{t("settings.providerModelAdd")}</button>
+                </div>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <div class="add-provider">
+        <select
+          {@attach rowControl}
+          value=""
+          onchange={(e) => {
+            addProvider(e.currentTarget.value);
+            e.currentTarget.value = "";
+          }}
         >
-        <button role="radio" aria-checked={s.provider === "custom"} class:active={s.provider === "custom"} onclick={() => void form.set({ provider: "custom" })}
-          >{t("settings.providerCustom")}</button
-        >
+          <option value="" disabled>{t("settings.providerAdd")}</option>
+          <option value="zhipu">{t("settings.endpointZhipu")}</option>
+          <option value="deepseek">{t("settings.endpointDeepseek")}</option>
+          <option value="ollama">{t("settings.endpointOllama")}</option>
+          <option value="other">{t("settings.providerPresetOther")}</option>
+        </select>
+        <small>{t("settings.apiKeyNote")}</small>
       </div>
     </SettingRow>
-    {#if s.provider === "hosted"}
-      {@const catalogDefault = account.models.find((m) => m.default)?.id}
-      <SettingRow id="ai.model" hint={account.loggedIn ? t("settings.hostedModelHint") : t("settings.hostedSignedOut")}>
-        {#if !account.loggedIn}
-          <button class="link" onclick={() => openSettings("account.panel")}>{t("settings.signIn")} →</button>
-        {/if}
-        <select {@attach rowControl} value={s.hosted_model} disabled={!account.loggedIn} onchange={(e) => void form.set({ hosted_model: e.currentTarget.value })}>
-          <option value="">{catalogDefault ? t("settings.hostedModelDefault", { model: catalogDefault }) : t("settings.hostedModelDefaultSignedOut")}</option>
-          {#each account.models as m (m.id)}
-            <option value={m.id}>{m.id}</option>
-          {/each}
-        </select>
-      </SettingRow>
-    {:else}
-      <SettingRow id="ai.model" hint={t("settings.modelHint")}>
-        <SettingText value={s.model} list="model-presets" placeholder="glm-4.7-flash" width="220px" patch={(v) => ({ model: v.trim() })} />
-      </SettingRow>
-      <SettingRow id="ai.endpoint" block>
-        <SettingText value={s.base_url} list="base-url-presets" placeholder="https://open.bigmodel.cn/api/paas/v4" patch={(v) => ({ base_url: v.trim() })} />
-      </SettingRow>
-      <SettingRow id="ai.apiKey" block hint={s.env_key_present ? t("settings.apiKeyEnv") : undefined}>
-        <SettingText value={s.api_key} type="password" placeholder={t("settings.apiKeyPlaceholder")} patch={(v) => ({ api_key: v.trim() })} />
-      </SettingRow>
-    {/if}
     <SettingRow id="ai.effort" hint={s.reasoning_effort_active ? undefined : t("settings.reasoningInactive")}>
       <select {@attach rowControl} value={s.reasoning_effort} onchange={(e) => void form.set({ reasoning_effort: e.currentTarget.value })}>
         {#each EFFORT_OPTIONS as o (o.value)}
@@ -124,7 +245,27 @@
       </select>
     </SettingRow>
     <SettingRow id="ai.translateModel">
-      <SettingText value={s.translate_model} list="model-presets" placeholder={s.active_model || "glm-4.7-flash"} width="220px" patch={(v) => ({ translate_model: v.trim() })} />
+      {@const tr = s.translation_model?.provider ? s.translation_model : null}
+      <select
+        {@attach rowControl}
+        value={tr ? refKey(tr) : ""}
+        onchange={(e) => {
+          const v = e.currentTarget.value;
+          void form.set({ translation_model: v ? refOf(v) : { provider: "", model: "" } });
+        }}
+      >
+        <option value="">{t("settings.translate.modelSameAsChat", { model: s.active_model || t("settings.noModels") })}</option>
+        {#if tr && !listed(s.model_choices, tr)}
+          <option value={refKey(tr)} disabled>{t("settings.hostedSignedOutOption")}</option>
+        {/if}
+        {#each s.model_choices as g (g.provider)}
+          <optgroup label={groupName(g)}>
+            {#each g.models as m (m.id)}
+              <option value={refKey({ provider: g.provider, model: m.id })}>{choiceLabel(g, m)}</option>
+            {/each}
+          </optgroup>
+        {/each}
+      </select>
     </SettingRow>
     <SettingRow id="ai.translateAddendum" block>
       <SettingText value={s.translate_addendum} patch={(v) => ({ translate_addendum: v.trim() })} />
@@ -145,25 +286,101 @@
 {/if}
 
 <style>
-  /* two states side by side, the chosen one filled */
-  .segmented {
-    display: inline-flex;
+  /* One card per provider: its name and Remove on top, the fields in a two-column grid */
+  .providers {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .providers li {
     border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
+    border-radius: 8px;
+    padding: 8px 10px 10px;
   }
-  .segmented button {
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .name {
     font-size: var(--fs-sm);
-    padding: 4px 12px;
-    color: var(--fg-muted);
-    white-space: nowrap;
-  }
-  .segmented button + button {
-    border-left: 1px solid var(--border);
-  }
-  .segmented button.active {
-    background: var(--accent-soft);
-    color: var(--accent);
     font-weight: 600;
+  }
+  .spring {
+    flex: 1;
+  }
+  .del {
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .del:hover,
+  .del.armed {
+    color: var(--danger);
+    background: var(--bg-hover);
+  }
+  .fields {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px 10px;
+  }
+  .field-label {
+    font-size: var(--fs-xs);
+    color: var(--fg-muted);
+  }
+  .field-note {
+    grid-column: 2;
+    margin-top: -2px;
+  }
+  .models {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .model {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1px 4px 1px 8px;
+  }
+  .model button {
+    color: var(--fg-muted);
+    font-size: var(--fs-xs);
+    padding: 0 3px;
+    border-radius: 6px;
+  }
+  .model button:hover {
+    color: var(--danger);
+    background: var(--bg-hover);
+  }
+  .add {
+    display: flex;
+    gap: 6px;
+  }
+  .add input {
+    flex: 1;
+  }
+  .mono {
+    font-family: var(--font-mono);
+  }
+  .add-provider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .add-provider small {
+    color: var(--fg-muted);
+    font-size: var(--fs-xs);
   }
 </style>

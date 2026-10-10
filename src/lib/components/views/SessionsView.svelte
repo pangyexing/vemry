@@ -39,6 +39,18 @@
   let query = $state("");
   let selected = $state<string | null>(null);
   let entries = $state<SessionEntry[]>([]);
+  /** The answers whose model differs from the previous answer's, the first one included: the
+   *  replay names the model there, where it changed, rather than on every row. */
+  const modelShifts = $derived.by(() => {
+    const shifts = new Set<number>();
+    let last: string | undefined;
+    entries.forEach((e, i) => {
+      if (e.kind !== "assistant" || !e.model) return;
+      if (e.model !== last) shifts.add(i);
+      last = e.model;
+    });
+    return shifts;
+  });
   let expanded = $state<Record<number, boolean>>({});
   let replay = $state<HTMLDivElement | null>(null);
   /** The sessions the list held when it was first read or last looked at: one started since
@@ -276,6 +288,7 @@
             <div class="msg assistant md-body" {...view.lang}>
               {@html view.html}
               {#if e.tool_calls > 0}<span class="faint">{t("sessionsView.calledTools", { n: e.tool_calls })}</span>{/if}
+              {#if modelShifts.has(i)}<span class="faint model">{e.model}</span>{/if}
             </div>
           </div>
         {:else if e.kind === "tool_call"}
@@ -687,6 +700,10 @@
   .faint {
     color: var(--fg-muted);
     font-size: var(--fs-xs);
+  }
+  .faint.model {
+    display: block;
+    font-family: var(--font-mono);
   }
   /* The audit stream's mono ledger rows — the same signature element as AgentPanel's */
   .ledger {

@@ -29,5 +29,5 @@ export function openSettings(target: string = "general") {
  *  mirror (every write in the dialog refreshes it): what the dialog's search and the
  *  palette's Settings rows filter by. */
 export function currentSettingsState(): SettingsState {
-  return { hasVault: !!vault.root, signedIn: account.loggedIn, provider: prefs.provider, captureTarget: prefs.captureTarget };
+  return { hasVault: !!vault.root, signedIn: account.loggedIn, captureTarget: prefs.captureTarget };
 }

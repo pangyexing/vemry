@@ -153,23 +153,16 @@ pub fn target_of(s: &settings::Settings) -> String {
     crate::i18n::current().tag().to_string()
 }
 
-/// The provider for a translation: the chat endpoint and key, with the
-/// translation model when one is set.
+/// The provider for a translation: the translation model when one is chosen, the
+/// chat's otherwise — each resolved against its own provider, so a translation can
+/// go to another endpoint than the chat (or through vemry hosted while the chat
+/// does not).
 pub(crate) fn provider_of(s: &settings::Settings) -> Result<vemry_agent::ProviderConfig, String> {
-    let mut p = s.provider_config();
-    if p.api_key.is_empty() {
-        // Hosted: the key is the account's device token, so an empty one means signed out (the same split as run_agent_turn)
-        return Err(t(if s.hosted() { "ipc.hosted.signIn" } else { "ipc.noApiKey" }));
+    let r = s.translation();
+    match r.unready {
+        Some(u) => Err(u.message()),
+        None => Ok(r.config),
     }
-    let m = s.translate_model.trim();
-    // The translation model names one of the user's own endpoint's models; on the hosted
-    // provider it applies only when the catalog offers it, so a name left over from
-    // bring-your-own-key use does not make every translation fail with model_unknown
-    let offered = !p.is_hosted() || p.catalog.as_ref().is_some_and(|c| c.iter().any(|cap| cap.id == m));
-    if !m.is_empty() && offered {
-        p.model = m.to_string();
-    }
-    Ok(p)
 }
 
 fn t(key: &str) -> String {
@@ -243,7 +236,7 @@ pub async fn translate_open(
     let job_id = format!("t{}", state.translate.next.fetch_add(1, Ordering::Relaxed) + 1);
     let emit_app = app.clone();
     let emit_id = job_id.clone();
-    let hosted = s.hosted();
+    let hosted = provider.is_hosted();
     let on_event: Box<dyn Fn(TranslateEvent) + Send + Sync> = Box::new(move |event| {
         // A relay error in the user's words (and a 401 clearing the token), as for a chat turn
         let event = match event {
@@ -255,7 +248,7 @@ pub async fn translate_open(
         };
         let _ = emit_app.emit("translate://event", EventView { job: emit_id.clone(), event });
     });
-    let effort = s.reasoning_active().then(|| s.reasoning_effort.clone());
+    let effort = provider.reasoning_supported().then(|| s.reasoning_effort.clone());
     let title = doc.title.clone();
     let segments: Vec<Segment> = doc.segments.clone();
     let job = TranslateJob::new(

@@ -18,6 +18,7 @@
     mono = false,
     rows = 0,
     width,
+    label,
   }: {
     value: string;
     /** The write for the typed text, made when it differs from the stored value. */
@@ -30,6 +31,9 @@
     rows?: number;
     /** A fixed width for a short field that sits at the row's end. */
     width?: string;
+    /** For one of several fields in a row (a provider's card): the field names itself
+     *  rather than taking the row's control id, which only one control can hold. */
+    label?: string;
   } = $props();
 
   let draft = $state("");
@@ -52,7 +56,8 @@
 
 {#if rows > 0}
   <textarea
-    {@attach rowControl}
+    {@attach !label && rowControl}
+    aria-label={label}
     class:mono
     {rows}
     {placeholder}
@@ -63,7 +68,8 @@
   ></textarea>
 {:else}
   <input
-    {@attach rowControl}
+    {@attach !label && rowControl}
+    aria-label={label}
     class:mono
     {type}
     {list}

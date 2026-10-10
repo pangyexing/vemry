@@ -306,9 +306,48 @@ export type LinkOpenMode = "reading" | "internal" | "system";
  *  of tags is LANGS in i18n.svelte.ts and the Lang enum in src-tauri/src/i18n.rs. */
 export type LangSetting = "auto" | "en" | "zh-CN" | "ja" | "ko" | "fr" | "de" | "es";
 
-/** Which provider the AI talks to (Rust's settings::ProviderSetting): the user's own endpoint
- *  and key, or vemry hosted (the relay, the account's device token, the catalog's models). */
-export type ProviderSetting = "custom" | "hosted";
+/** Which kind of provider the current model belongs to (vemry_agent::provider::ProviderKind): one
+ *  of the user's own (custom), or vemry hosted (the relay, the account's device token, the catalog's models). */
+export type ProviderKind = "custom" | "hosted";
+
+/** The provider id of vemry hosted in a ModelRef (settings.rs HOSTED); a custom provider's is `p<N>`. */
+export const HOSTED = "hosted";
+
+/** A model choice (settings.rs ModelRef): a provider (HOSTED or a custom provider's id) and one of its
+ *  model ids; for vemry hosted an empty model means the catalog's default. */
+export interface ModelRef {
+  provider: string;
+  model: string;
+}
+
+/** One provider the user brings their own key for (settings.rs CustomProvider). */
+export interface CustomProvider {
+  /** Assigned by Rust (`p1`, `p2`, …); a new row is sent with "". */
+  id: string;
+  /** "" = named after the endpoint's host. */
+  name: string;
+  base_url: string;
+  api_key: string;
+  models: string[];
+}
+
+/** A provider as SettingsView serves it: the stored row, plus two derived, read-only fields — the
+ *  name the interface calls it by (the vendor or the host when none was typed; "" for an empty row)
+ *  and whether ZHIPU_API_KEY from the environment stands in for its blank key. */
+export interface ProviderView extends CustomProvider {
+  display_name: string;
+  env_key: boolean;
+}
+
+/** One provider's models as the pickers list them (settings.rs ModelGroup), computed in Rust so the
+ *  detached window — which has no account store — lists the hosted catalog too. */
+export interface ModelGroup {
+  /** HOSTED or the custom provider's id. */
+  provider: string;
+  /** The custom provider's display name; "" for vemry hosted (named from the catalog). */
+  name: string;
+  models: { id: string; default: boolean }[];
+}
 
 /** One row of the hosted model catalog (mirroring vemry_agent::provider::ModelCap). */
 export interface ModelCap {
@@ -363,10 +402,16 @@ export interface AccountStatus {
 }
 
 export interface SettingsView {
-  base_url: string;
-  model: string;
-  api_key: string;
-  env_key_present: boolean;
+  /** The user's own providers (vemry hosted is built in and not listed). */
+  providers: ProviderView[];
+  /** The current model as it resolves now, so the checked row in a picker is what the next message goes to. */
+  chat_model: ModelRef;
+  /** The translation model; null = the chat's. */
+  translation_model: ModelRef | null;
+  /** Derived and read-only: every model the pickers offer, grouped by provider (vemry hosted first when signed in). */
+  model_choices: ModelGroup[];
+  /** Derived and read-only: why the current model cannot be sent to yet (no key, signed out…); null when it can. */
+  chat_unready: string | null;
   recent_vaults: string[];
   /** The interface language; auto = follow the system. */
   language: LangSetting;
@@ -406,14 +451,12 @@ export interface SettingsView {
   reasoning_effort_active: boolean;
   /** Derived and read-only: the selected model has no image understanding (DeepSeek's pro model; the composer warns once when an image is attached). */
   images_unsupported: boolean;
-  /** Side-by-side translation: the target language ("" = the interface language), the model ("" = the chat model), the user's extra rule. */
+  /** Side-by-side translation: the target language ("" = the interface language) and the user's extra rule. */
   translate_target: string;
-  translate_model: string;
   translate_addendum: string;
-  /** Which provider the AI talks to, and the hosted model choice ("" = the catalog's default). */
-  provider: ProviderSetting;
-  hosted_model: string;
-  /** Derived and read-only: the model requests actually name (the hosted choice or the catalog's default in hosted mode, `model` otherwise). */
+  /** Derived and read-only: whether the current model goes through vemry hosted. */
+  provider: ProviderKind;
+  /** Derived and read-only: the model id requests actually name. */
   active_model: string;
   /** Quick capture: the global shortcut in the shortcut plugin's grammar ("Alt+Shift+Space"; capture.ts renders it),
    *  the registration's failure (derived and read-only; null = the shortcut works), and where Enter lands a capture.
@@ -440,12 +483,13 @@ export type CaptureTarget = "inbox" | "journal" | "pinned";
 
 /** A partial update: a field left out keeps its value. */
 export interface SettingsUpdate {
-  base_url?: string;
-  provider?: ProviderSetting;
-  hosted_model?: string;
+  /** The whole list (one row edited); Rust trims it, drops blank and repeated model ids and keeps ids. */
+  providers?: CustomProvider[];
+  /** A choice naming nothing (a provider removed meanwhile) is ignored. */
+  chat_model?: ModelRef;
+  /** A provider of "" = the chat's. */
+  translation_model?: ModelRef;
   language?: LangSetting;
-  model?: string;
-  api_key?: string;
   adblock_enabled?: boolean;
   adblock_rule_urls?: string[];
   open_links_in?: LinkOpenMode;
@@ -467,7 +511,6 @@ export interface SettingsUpdate {
   readable_line_width?: boolean;
   reasoning_effort?: string;
   translate_target?: string;
-  translate_model?: string;
   translate_addendum?: string;
   /** Refused (nothing else in the update is lost) when the combination does not parse or another app holds it. */
   capture_hotkey?: string;
@@ -1550,6 +1593,12 @@ export function emitLanguage(lang: LangSetting) {
 
 export function onLanguageChange(handler: (lang: LangSetting) => void): Promise<UnlistenFn> {
   return listen<LangSetting>("settings://language", (event) => handler(event.payload));
+}
+
+/** settings_set saved (settings://changed, from Rust to every window): read the settings afresh. No payload —
+ *  the view holds keys, which an event never carries. */
+export function onSettingsChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("settings://changed", () => handler());
 }
 
 /** Every change of account state (sign-in, sign-out, a refresh, a revoked token noticed by any request). */

@@ -291,6 +291,8 @@
   });
   // The hosted account's snapshot (from disk, no network) and its change events
   void account.init();
+  // A setting changed in another window (a model picked in the detached chat), or a sign-in bringing the hosted models
+  void prefs.listen();
 
   // ---- user scripts: palette sync + toasts + blocking dialogs ----
   function applyScripts(infos: ScriptInfo[]) {
@@ -998,8 +1000,8 @@
       // error inside the panel), and the static template path must not become unreachable —
       // offline or without a key it falls back to v0.5's template behaviour
       const s = await api.settingsGet().catch(() => undefined);
-      // In hosted mode the credential is the account's sign-in, not the key fields (which the settings page hides there)
-      const noKey = s ? (s.provider === "hosted" ? !account.loggedIn : !s.api_key && !s.env_key_present) : false;
+      // Whatever the current model lacks — a key, a sign-in for vemry hosted, a model at all — Rust has already said
+      const noKey = s ? !!s.chat_unready : false;
       // A nearly empty vault has nothing to survey, so it falls back to the static template for the user to fill in
       if (!exists && (vault.notes.length < 3 || noKey)) {
         if (noKey) toast.push(t("app.noKeyStaticTemplate"));
@@ -1353,6 +1355,7 @@
   });
   registerCommand({ id: "settings", group: "system", run: () => openSettings("general") });
   registerCommand({ id: "settings-ai", group: "system", run: () => openSettings("ai") });
+  registerCommand({ id: "switch-model", group: "research", run: () => { paletteMode = "models"; } });
   registerCommand({ id: "settings-account", group: "system", run: () => openSettings("account") });
   // The whole flow (checking, the version found, download, restart) runs in the update dialog
   registerCommand({ id: "check-updates", group: "system", run: () => void updater.check(true) });

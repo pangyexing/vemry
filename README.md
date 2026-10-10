@@ -185,14 +185,15 @@ with no filesystem, no network and no processes.
    with its claims and evidence; a page clipped from the web and a handout to read
    in translation; an inbox of captures from a desktop and a phone; a journal, three
    recorded AI sessions and a private folder. Its *Start Here* note is the tour.
-3. **Choose how the AI runs** (optional). Settings → AI → Provider. With *Bring your
-   own key*, paste a key from any OpenAI-compatible provider: the default endpoint is
-   Zhipu, whose `glm-4.7-flash` is free and supports tool calls, and the *Ollama,
-   local* preset points it at a model on your own machine. With *vemry hosted*, sign
-   in with your e-mail address and there is no key to set up: a new account's first
-   sign-in from the desktop app comes with 600 credits to try, valid for 14 days, no
-   card needed, and after that hosted AI comes with [Pro](#free-and-pro). Either way,
-   a request reaches the model vendor unchanged.
+3. **Choose how the AI runs** (optional). Settings → AI. To bring your own key, add
+   providers under *Your providers*: any OpenAI-compatible endpoint, its key, and the
+   model ids it serves. Zhipu is there from the start, and its `glm-4.7-flash` is free
+   and supports tool calls; the *Ollama, local* preset points at a model on your own
+   machine. For *vemry hosted*, sign in with your e-mail address and its models join
+   the list, with no key to set up: a new account's first sign-in from the desktop app
+   comes with 600 credits to try, valid for 14 days, no card needed, and after that
+   hosted AI comes with [Pro](#free-and-pro). Pick the current model there or from the
+   chat's model menu. Either way, a request reaches the model vendor unchanged.
 4. **Study a paper.** Open the AI panel, pick *Study a paper* and paste an arXiv
    link, or drop in a PDF. The source note, the chapters and the cards arrive as
    diffs you approve.

@@ -27,7 +27,7 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | Editor behaviour | `src/lib/editor/` | CodeMirror 6 |
 | AI tools / prompts / skills | `crates/vemry-agent/src/{tools,prompt,skills}.rs` + the built-in skills in `crates/vemry-agent/skills/` | Rust |
 | LLM transport (Chat Completions / DeepSeek's Anthropic-format line + search) | `crates/vemry-agent/src/{client,anthropic}.rs` | Rust |
-| The provider (bring your own key / vemry hosted) and the hosted model catalog | `crates/vemry-agent/src/provider.rs` + `src-tauri/src/settings.rs` | Rust |
+| Providers and models (your own providers, vemry hosted's catalog, the current model and its pickers) | `crates/vemry-agent/src/provider.rs` + `src-tauri/src/settings.rs` + `src/lib/models.ts` + `src/lib/components/settings/AiPage.svelte` | Rust + Svelte |
 | The hosted account (sign-in, the device token, the entitlement snapshot, relay errors) | `src-tauri/src/account.rs` + `src/lib/components/AccountPanel.svelte` + `src/lib/stores/account.svelte.ts` | Rust + Svelte |
 | Script sandbox / `vemry.*` API / workflows | `crates/vemry-script/src/` | Rust |
 | Clipping (extraction / html→md / frontmatter) | `crates/vemry-clip/src/` | Rust |
@@ -96,8 +96,8 @@ VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt 
    (server-side search included), a browser window the user opened, a
    blocking-rule download, the image proxy for the reader, the clipper and the
    remote images the user loads in a note (`vemry-asset://`), the update check and download (user-triggered by
-   default), and the hosted account and relay (only after signing in or switching
-   the provider to vemry hosted; see ARCHITECTURE's "The network-exit list"). No
+   default), and the hosted account and relay (only after signing in, and for model
+   requests only while a vemry hosted model is chosen; see ARCHITECTURE's "The network-exit list"). No
    other network calls, and no telemetry.
 5. **Everything is a command**: a new capability registers in the command
    registry, not just as a button somewhere.

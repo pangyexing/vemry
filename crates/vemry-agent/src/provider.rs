@@ -161,14 +161,37 @@ impl ProviderConfig {
             .or_else(|| reqwest::Url::parse(&format!("https://{url}")).ok())
     }
 
+    /// base_url's host, with its port when one is spelled (`localhost:11434`); None
+    /// when the free text holds no host at all. The settings page names a provider
+    /// the user left unnamed after it.
+    pub fn host(&self) -> Option<String> {
+        let u = self.parsed_base()?;
+        let host = u.host_str()?;
+        Some(match u.port() {
+            Some(p) => format!("{host}:{p}"),
+            None => host.to_string(),
+        })
+    }
+
+    /// base_url's host name alone, without the port: what the vendor checks below
+    /// compare against.
+    fn host_name(&self) -> Option<String> {
+        self.parsed_base().and_then(|u| u.host_str().map(str::to_owned))
+    }
+
     /// Whether base_url points at the official DeepSeek endpoint (the only place
     /// the Anthropic-format line, and with it web search, is available on a custom
     /// provider). Decided on the host — a missing scheme must not silently flip the
     /// classification back to a plain endpoint.
     pub fn is_deepseek(&self) -> bool {
-        self.parsed_base()
-            .and_then(|u| u.host_str().map(str::to_owned))
-            .is_some_and(|host| host == "api.deepseek.com" || host.ends_with(".deepseek.com"))
+        self.host_name().is_some_and(|host| host == "api.deepseek.com" || host.ends_with(".deepseek.com"))
+    }
+
+    /// Whether base_url points at Zhipu's endpoint — the one host the
+    /// `ZHIPU_API_KEY` environment variable may be sent to. Decided on the host, like
+    /// `is_deepseek`.
+    pub fn is_zhipu(&self) -> bool {
+        self.host_name().is_some_and(|host| host == "open.bigmodel.cn" || host.ends_with(".bigmodel.cn"))
     }
 
     /// The official DeepSeek endpoint with the pro model selected (see
@@ -238,6 +261,21 @@ mod tests {
         assert!(!cfg("https://evil.com/api.deepseek.com").is_deepseek());
         assert!(!cfg("localhost:11434").is_deepseek());
         assert!(!cfg("").is_deepseek());
+    }
+
+    #[test]
+    fn host_keeps_the_port_and_is_zhipu_reads_the_host() {
+        let cfg = |base: &str| ProviderConfig::custom(base, "", "");
+        assert_eq!(cfg("https://api.deepseek.com/v1").host().as_deref(), Some("api.deepseek.com"));
+        assert_eq!(cfg("api.deepseek.com").host().as_deref(), Some("api.deepseek.com"));
+        assert_eq!(cfg("http://localhost:11434/v1").host().as_deref(), Some("localhost:11434"));
+        assert_eq!(cfg("").host(), None);
+        assert!(cfg(ZHIPU_BASE_URL).is_zhipu());
+        assert!(cfg("open.bigmodel.cn/api/paas/v4").is_zhipu());
+        // Decided on the host; the string appearing in the path does not count
+        assert!(!cfg("https://evil.com/open.bigmodel.cn").is_zhipu());
+        assert!(!cfg("https://api.deepseek.com").is_zhipu());
+        assert!(!cfg("").is_zhipu());
     }
 
     #[test]

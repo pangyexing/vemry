@@ -43,12 +43,22 @@ vous, tú). A concept word is decided here, never by the translator.
 | 块引用 | block citation | ブロック引用 | 블록 인용 | citation de bloc | blockgenaue Quellenangabe | cita de bloque | block reference, block link |
 | 位置 id | positional id | 位置 ID | 위치 ID | identifiant positionnel | Positions-ID | ID posicional | temporary id, transient id |
 
+## Models and providers
+
+| Chinese | English | Japanese | Korean | French | German | Spanish | Do not use |
+|---|---|---|---|---|---|---|---|
+| 提供方 | provider | プロバイダー | 제공자 | fournisseur | Anbieter | proveedor | vendor (in the interface), service, backend, platform |
+| 模型 | model | モデル | 모델 | modèle | Modell | modelo | engine, AI (the model is one thing the AI uses) |
+| 当前模型（下一条消息发给它） | current model | 現在のモデル | 현재 모델 | modèle actuel | aktuelles Modell | modelo actual | active model, default model, selected model |
+| API 端点 | API endpoint | API エンドポイント | API 엔드포인트 | point d'accès API | API-Endpunkt | endpoint de la API | base URL (the code's name), server, address |
+| 模型 ID | model id | モデル ID | 모델 ID | identifiant de modèle | Modell-ID | ID de modelo | model name, slug |
+
 ## The hosted account
 
 | Chinese | English | Japanese | Korean | French | German | Spanish | Do not use |
 |---|---|---|---|---|---|---|---|
 | vemry 托管 | vemry hosted | vemry ホスティング | vemry 호스팅 | vemry hébergé | vemry-Hosting | vemry alojado | cloud, managed, official API |
-| 自带 key | bring your own key | 自分のキー | 내 키 사용 | votre propre clé | eigener Schlüssel | tu propia clave | custom endpoint (that is the setting's internal name), own API |
+| 自带 key | bring your own key | 自分のキー | 내 키 사용 | votre propre clé | eigener Schlüssel | tu propia clave | custom provider (the code's internal name), custom endpoint, own API |
 | 账户 | account | アカウント | 계정 | compte | Konto | cuenta | membership, profile |
 | 算力包 | credit pack | クレジットパック | 크레딧 팩 | pack de crédits | Credit-Paket | paquete de créditos | top-up, balance (the pack has a balance; it is not one), tokens |
 | 积分 | credits | クレジット | 크레딧 | crédits | Credits | créditos | points, yuan or ¥, dollars (a credit is $0.001 of hosted use; the interface counts credits, never money) |

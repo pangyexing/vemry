@@ -1125,12 +1125,35 @@ pub fn resolve_link(state: State<'_, AppState>, target: String, from: Option<Str
     })
 }
 
+/// One of the user's providers as the settings page edits it: the stored row, plus
+/// two derived, read-only fields — the name the interface calls it by (the vendor or
+/// the host when the user typed none), and whether the environment's key stands in
+/// for a blank one.
+#[derive(Serialize)]
+pub struct ProviderView {
+    #[serde(flatten)]
+    pub provider: settings::CustomProvider,
+    pub display_name: String,
+    pub env_key: bool,
+}
+
 #[derive(Serialize)]
 pub struct SettingsView {
-    pub base_url: String,
-    pub model: String,
-    pub api_key: String,
-    pub env_key_present: bool,
+    /// The user's own providers (vemry hosted is built in and not listed).
+    pub providers: Vec<ProviderView>,
+    /// The current model, as it resolves now (a choice whose provider has gone reads
+    /// as its replacement, and vemry hosted's open default as the catalog's model),
+    /// so the checked row in a picker is what the next message is sent to.
+    pub chat_model: settings::ModelRef,
+    /// The translation model; None = the chat's.
+    pub translation_model: Option<settings::ModelRef>,
+    /// Derived and read-only: every model the pickers offer, grouped by provider —
+    /// served here so the detached window, which has no account store, lists the
+    /// hosted catalog too.
+    pub model_choices: Vec<settings::ModelGroup>,
+    /// Derived and read-only: why the current model cannot be sent to yet (no key,
+    /// signed out…), in the user's words; None when it can.
+    pub chat_unready: Option<String>,
     pub recent_vaults: Vec<String>,
     pub language: settings::LangSetting,
     pub adblock_enabled: bool,
@@ -1174,18 +1197,15 @@ pub struct SettingsView {
     /// (DeepSeek's pro model) — the frontend warns once when the composer attaches an
     /// image; the check is not reimplemented in TS.
     pub images_unsupported: bool,
-    /// Side-by-side translation: the target language ("" = the interface language),
-    /// the model ("" = the chat model) and the user's extra rule.
+    /// Side-by-side translation: the target language ("" = the interface language)
+    /// and the user's extra rule (the model is `translation_model`).
     pub translate_target: String,
-    pub translate_model: String,
     pub translate_addendum: String,
-    /// Which provider the AI talks to (custom = bring your own key, hosted = vemry
-    /// hosted) and the hosted model choice ("" = the catalog's default).
-    pub provider: settings::ProviderSetting,
-    pub hosted_model: String,
-    /// Derived and read-only: the model requests actually name (the research
-    /// panel's header) — the hosted choice or the catalog's default in hosted mode,
-    /// `model` otherwise.
+    /// Derived and read-only: whether the current model goes through vemry hosted
+    /// (the status bar's credits, the composer's balance warning).
+    pub provider: vemry_agent::provider::ProviderKind,
+    /// Derived and read-only: the model id requests actually name (the composer's
+    /// model chip).
     pub active_model: String,
     /// Quick capture: the global shortcut (the plugin's grammar), the registration's
     /// failure if any (derived and read-only — None means the shortcut works), and
@@ -1213,12 +1233,14 @@ pub struct SettingsView {
 /// everything with settingsGet and sends it back after editing.
 #[derive(Deserialize)]
 pub struct SettingsUpdate {
-    pub base_url: Option<String>,
-    pub provider: Option<settings::ProviderSetting>,
-    pub hosted_model: Option<String>,
+    /// The whole provider list (the settings page sends it back with one row edited);
+    /// see `Settings::set_providers` for what is cleaned and how ids are kept.
+    pub providers: Option<Vec<settings::CustomProvider>>,
+    pub chat_model: Option<settings::ModelRef>,
+    /// A provider of "" = the chat's (a partial update cannot say "clear" with a
+    /// nested Option).
+    pub translation_model: Option<settings::ModelRef>,
     pub language: Option<settings::LangSetting>,
-    pub model: Option<String>,
-    pub api_key: Option<String>,
     pub adblock_enabled: Option<bool>,
     pub adblock_rule_urls: Option<Vec<String>>,
     pub open_links_in: Option<settings::LinkOpenMode>,
@@ -1241,7 +1263,6 @@ pub struct SettingsUpdate {
     pub readable_line_width: Option<bool>,
     pub reasoning_effort: Option<String>,
     pub translate_target: Option<String>,
-    pub translate_model: Option<String>,
     pub translate_addendum: Option<String>,
     pub capture_hotkey: Option<String>,
     pub capture_target: Option<settings::CaptureTarget>,
@@ -1266,16 +1287,22 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
     let s = settings::load(&app);
     let state = app.state::<AppState>();
     let pin = state.vault.lock().unwrap().as_ref().map(capture_pin).unwrap_or_default();
-    let web_search_available = s.provider_config().web_search_available();
+    let chat = s.chat();
+    let web_search_available = chat.config.web_search_available();
     let web_search_active = s.web_search_active();
     let reasoning_effort_active = s.reasoning_active();
-    let images_unsupported = s.provider_config().images_unsupported();
-    let active_model = s.active_model();
+    let images_unsupported = chat.config.images_unsupported();
+    let providers = s
+        .providers
+        .iter()
+        .map(|p| ProviderView { display_name: p.display_name(), env_key: settings::Settings::env_key_applies(p), provider: p.clone() })
+        .collect();
     SettingsView {
-        base_url: s.base_url.clone(),
-        model: s.model.clone(),
-        api_key: s.api_key.clone(),
-        env_key_present: std::env::var("ZHIPU_API_KEY").map(|k| !k.is_empty()).unwrap_or(false),
+        providers,
+        chat_model: chat.model_ref.clone(),
+        translation_model: s.translation_model.as_ref().and_then(|r| s.normalize_ref(r)),
+        model_choices: s.model_groups(),
+        chat_unready: chat.unready.as_ref().map(settings::Unready::message),
         recent_vaults: s.recent_vaults,
         language: s.language,
         adblock_enabled: s.adblock_enabled,
@@ -1303,11 +1330,9 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
         reasoning_effort_active,
         images_unsupported,
         translate_target: s.translate_target,
-        translate_model: s.translate_model,
         translate_addendum: s.translate_addendum,
-        provider: s.provider,
-        hosted_model: s.hosted_model,
-        active_model,
+        provider: chat.config.kind,
+        active_model: chat.config.model,
         capture_hotkey: s.capture_hotkey,
         capture_hotkey_error: crate::capture_window::hotkey_error(&app),
         capture_target: s.capture_target,
@@ -1323,21 +1348,18 @@ pub fn settings_get(app: AppHandle) -> SettingsView {
 #[tauri::command]
 pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String> {
     let mut s = settings::load(&app);
-    if let Some(base_url) = update.base_url {
-        s.base_url =
-            if base_url.trim().is_empty() { vemry_agent::provider::ZHIPU_BASE_URL.into() } else { base_url };
+    // The list first, so a choice sent with it is checked against the new rows
+    if let Some(rows) = update.providers {
+        s.set_providers(rows, crate::account::hosted_credentials().is_some());
     }
-    if let Some(model) = update.model {
-        s.model = if model.trim().is_empty() { vemry_agent::provider::DEFAULT_MODEL.into() } else { model };
+    if let Some(r) = update.chat_model {
+        // A choice that names nothing (a provider removed in another window) keeps the current one
+        if let Some(r) = s.normalize_ref(&r) {
+            s.chat_model = Some(r);
+        }
     }
-    if let Some(api_key) = update.api_key {
-        s.api_key = api_key;
-    }
-    if let Some(v) = update.provider {
-        s.provider = v;
-    }
-    if let Some(v) = update.hosted_model {
-        s.hosted_model = v.trim().to_string();
+    if let Some(r) = update.translation_model {
+        s.translation_model = if r.provider.is_empty() { None } else { s.normalize_ref(&r) };
     }
     let language_changed = update.language.is_some_and(|v| v != s.language);
     if let Some(v) = update.language {
@@ -1408,9 +1430,6 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
     if let Some(v) = update.translate_target {
         s.translate_target = v.trim().to_string();
     }
-    if let Some(v) = update.translate_model {
-        s.translate_model = v.trim().to_string();
-    }
     if let Some(v) = update.translate_addendum {
         s.translate_addendum = v.trim().to_string();
     }
@@ -1478,6 +1497,10 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
         }
     }
     settings::save(&app, &s)?;
+    // Every window keeps a mirror of the settings (the detached chat window's model
+    // chip, an open settings dialog): each reads them afresh on this. No payload —
+    // the view holds keys, and an event is no place for those
+    let _ = app.emit(settings::CHANGED_EVENT, ());
     if adblock_toggled || adblock_urls_changed {
         // An edited source list has to be recompiled: dropping a subscription stops
         // its cached file from being read (rule_files goes by the current list), but
@@ -1772,10 +1795,12 @@ async fn run_agent_turn(
             return Err(crate::i18n::t(crate::i18n::current(), "ipc.hosted.hosted_not_allowed"));
         }
     }
-    let provider = settings.provider_config();
-    if provider.api_key.is_empty() {
-        return Err(crate::i18n::t(crate::i18n::current(), if hosted { "ipc.hosted.signIn" } else { "ipc.noApiKey" }));
+    // Resolved after the account gate: a refresh above may have brought a new catalog
+    let chat = settings.chat();
+    if let Some(unready) = &chat.unready {
+        return Err(unready.message());
     }
+    let provider = chat.config;
 
     let (root, meta_dir, write_policy) = {
         let guard = state.vault.lock().unwrap();

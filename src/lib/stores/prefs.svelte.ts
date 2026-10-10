@@ -1,9 +1,10 @@
 // The in-process mirror of behavioural preferences. Rust's settings.json is the single
 // source of truth; this only caches the fields the editor's click path has to read
 // synchronously (a click gesture cannot await an IPC round trip). App refreshes it once
-// at startup, and the settings dialog refreshes it after every field it writes
-// (settings/form.svelte.ts) — outside those two there is no writer.
-import { api, type CaptureTarget, type ProviderSetting, type SettingsView } from "$lib/api";
+// at startup, the settings dialog after every field it writes (settings/form.svelte.ts),
+// a model picked anywhere after its write, and `listen` whenever Rust says the settings
+// or the account changed — which is how a window keeps up with a change made in another.
+import { api, onAccountChanged, onSettingsChanged, type CaptureTarget, type ModelGroup, type ModelRef, type ProviderKind, type SettingsView } from "$lib/api";
 import { setAlwaysLoadRemote } from "$lib/editor/remoteimages";
 
 /** settings.rs default_capture_hotkey, in the shortcut plugin's grammar; the settings page's "reset" puts it back. */
@@ -14,12 +15,16 @@ class PrefsStore {
    *  ⌘/Ctrl+click does. The default matches Rust's default_true, so the behaviour is
    *  already right before the IPC returns. */
   clickOpensLinks = $state(true);
-  /** The model requests actually name (visible in the research panel's header): the hosted
-   *  choice or the catalog's default in hosted mode, the custom field otherwise — Rust's
-   *  active_model; updated by refresh after the settings are saved. */
+  /** The model id requests actually name (the composer's model chip) — Rust's active_model. */
   model = $state("");
-  /** Which provider the AI talks to; the status bar shows the hosted quota only in hosted mode. */
-  provider = $state<ProviderSetting>("custom");
+  /** The current model as a choice (provider and model id): the checked row in every picker. */
+  chatModel = $state<ModelRef>({ provider: "", model: "" });
+  /** Every model the pickers offer, grouped by provider (vemry hosted first when signed in). */
+  modelChoices = $state<ModelGroup[]>([]);
+  /** Why the current model cannot be sent to yet, in the user's words; null when it can. */
+  chatUnready = $state<string | null>(null);
+  /** Whether the current model goes through vemry hosted; the status bar shows the hosted quota only then. */
+  provider = $state<ProviderKind>("custom");
   /** The value of the "AI web search" switch — the composer's model menu and the settings page write the same field. */
   webSearchEnabled = $state(false);
   /** Whether the provider runs the search at all (the endpoint is DeepSeek) — derived on the Rust side, and the check is not reimplemented in the frontend; the menu item is disabled without it. */
@@ -58,6 +63,9 @@ class PrefsStore {
       const s = await api.settingsGet();
       this.clickOpensLinks = s.click_opens_links;
       this.model = s.active_model;
+      this.chatModel = s.chat_model;
+      this.modelChoices = s.model_choices;
+      this.chatUnready = s.chat_unready;
       this.provider = s.provider;
       this.webSearchEnabled = s.web_search_enabled;
       this.webSearchAvailable = s.web_search_available;
@@ -104,6 +112,27 @@ class PrefsStore {
     // first, so this one property switches every column off
     if (on) st.removeProperty("--content-width-off");
     else st.setProperty("--content-width-off", "none");
+  }
+
+  #external = new Set<(s: SettingsView) => void>();
+
+  /** Be told of a read caused by a change made elsewhere (another window, the account):
+   *  the open settings dialog takes it. Returns the unsubscribe. */
+  onExternal(cb: (s: SettingsView) => void): () => void {
+    this.#external.add(cb);
+    return () => this.#external.delete(cb);
+  }
+
+  /** Follow every change of the settings or the account, wherever it was made: Rust emits
+   *  settings://changed after each write and account://changed on sign-in, sign-out and
+   *  refresh (which bring or take away the hosted models). Each window calls it once. */
+  async listen(): Promise<() => void> {
+    const again = async () => {
+      const s = await this.refresh();
+      if (s) for (const cb of this.#external) cb(s);
+    };
+    const offs = await Promise.all([onSettingsChanged(() => void again()), onAccountChanged(() => void again())]);
+    return () => offs.forEach((off) => off());
   }
 }
 

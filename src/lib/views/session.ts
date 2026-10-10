@@ -18,7 +18,8 @@ export type SessionEntry =
        *  a selection), while the body lives in the model history's envelope. */
       refs?: RefTag[];
     }
-  | { kind: "assistant"; ts: string; content: string; tool_calls: number }
+  /** model: the model id that gave the response (since the provider list; older lines do not have one). */
+  | { kind: "assistant"; ts: string; content: string; tool_calls: number; model?: string }
   | { kind: "tool_call"; ts: string; tool: string; args: unknown }
   | { kind: "tool_result"; ts: string; tool: string; ok: boolean; output: string }
   /** to: move_note's destination (since v0.9; the lines of every other tool have no such key). */

@@ -29,11 +29,13 @@
   import { isImeKeydown } from "$lib/ime";
   import { k } from "$lib/shortcut";
 
-  export type PaletteMode = "commands" | "notes" | "new-note" | "pick-note" | "search" | "vaults" | "url" | "types";
+  export type PaletteMode = "commands" | "notes" | "new-note" | "pick-note" | "search" | "vaults" | "url" | "types" | "models";
 
   import { prettyUrl, webCandidates } from "$lib/urls";
   import { pageLabel, searchSettings, settingAvailable, settingHint, settingLabel } from "$lib/settings";
   import { currentSettingsState, openSettings } from "$lib/stores/settingsUi.svelte";
+  import { prefs } from "$lib/stores/prefs.svelte";
+  import { groupName, sameRef, selectModel } from "$lib/models";
 
   interface Item {
     id: string;
@@ -140,6 +142,7 @@
     "pick-note": t("palette.pickNote"),
     search: t("palette.search"),
     vaults: t("palette.vaults"),
+    models: t("palette.models"),
     url: t("palette.url"),
     types: t("palette.types"),
   });
@@ -519,6 +522,20 @@
       );
       return list;
     }
+    if (mode === "models") {
+      // Every model the composer's menu offers, its provider beside it; the current one says so
+      const q = query.trim();
+      const choices = prefs.modelChoices.flatMap((g) => g.models.map((m) => ({ ref: { provider: g.provider, model: m.id }, provider: groupName(g) })));
+      const list: Item[] = fuzzyFilter(choices, query, (c) => `${c.ref.model} ${c.provider}`).map((c) => ({
+        id: `${c.ref.provider}/${c.ref.model}`,
+        title: c.ref.model,
+        marks: fuzzyPositions(c.ref.model, q),
+        hint: sameRef(c.ref, prefs.chatModel) ? t("palette.currentModel", { provider: c.provider }) : c.provider,
+        run: () => void selectModel(c.ref),
+      }));
+      list.push({ id: "__manage__", title: t("chat.manageModels"), run: () => openSettings("ai.providers") });
+      return list;
+    }
     if (mode === "search") {
       // A hit opens where the index found it (its line and column); the words are drawn
       // in bold in the title and the snippet, and the folder tells two notes of one title apart
@@ -669,6 +686,7 @@
         return [...keys, { keys: "", label: t("palette.foot.typeNewToCreate") }, close];
       }
       case "vaults":
+      case "models":
         return [{ keys: ENTER, label: t("palette.foot.switch") }, close];
       default:
         return [];
