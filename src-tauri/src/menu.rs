@@ -10,7 +10,7 @@
 //! Accelerators fall into three classes (paired with the isMac gate on
 //! App.svelte's keydown chain):
 //! 1. Menu-only (the accelerator is set here, and the matching frontend branch
-//!    gets a !isMac gate so it cannot fire twice): ⌘, ⌘N ⌘O ⌘⇧F ⌘⇧S ⌘⇧T — the
+//!    gets a !isMac gate so it cannot fire twice): ⌘, ⌘N ⌘O ⌘L ⌘T ⌘R ⌘⇧F ⌘⇧S ⌘⇧T — the
 //!    application-level combinations WKWebView and CodeMirror do not claim;
 //!    quick capture's item shows the global shortcut from the settings as a hint
 //!    only — a registered hot key is consumed by the system before the menu sees
@@ -21,7 +21,7 @@
 //!    serves non-mac alone — on mac the menu takes it first, and the special case
 //!    puts the agent through the same close() handshake);
 //! 2. Frontend-only (the menu item sets no accelerator but is still clickable):
-//!    ⌘P ⌘L ⌘B ⌘. ⌘⌥←/→ — ⌘B may be claimed by WKWebView's contenteditable, so
+//!    ⌘P ⌘B ⌘. ⌘⌥←/→ — ⌘B may be claimed by WKWebView's contenteditable, so
 //!    handling it in the frontend is the most reliable;
 //! 3. Predefined-only: the edit menu's undo/redo/cut/copy/paste/selectAll go
 //!    through the native selector straight to the first responder (which is how

@@ -918,7 +918,7 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
             let Ok(c) = serde_json::from_value::<Collected>(data) else { continue };
             match c.wants.as_deref() {
                 Some("all") => poll_t.job.continue_background(None),
-                Some("more") => poll_t.job.continue_background(Some(vemry_agent::translate::BACKGROUND_BUDGET_CHARS)),
+                Some("more") => poll_t.job.continue_background(Some(vemry_agent::translate::BACKGROUND_BUDGET_BYTES)),
                 _ => {}
             }
             if !c.blocks.is_empty() {

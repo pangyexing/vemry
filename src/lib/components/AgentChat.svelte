@@ -696,8 +696,9 @@
   }
 
   /** ---- The read gate's card (open_for_reading): tick the pages to open, or decline. The
-   *  "from now on" checkbox is the session's standing consent for URLs already in its source
-   *  table (search results, cited pages) — a new URL still asks. */
+   *  "from now on" checkbox is the session's standing consent: every page the model proposes
+   *  afterwards is read without the card's buttons, for the rest of the session (kept by the
+   *  app, src-tauri's consents.rs, not in the vault). */
   type ReadCard = Extract<TimelineItem, { kind: "read" }>;
   let readChecks = $state<boolean[]>([]);
   let readAuto = $state(false);
@@ -712,7 +713,7 @@
     void agent.respondRead({ kind: "allow", urls, auto_sources: readAuto });
   }
   function declineRead() {
-    void agent.respondRead({ kind: "deny", reason: t("chat.readDeclined") });
+    void agent.respondRead({ kind: "deny", reason: "" });
   }
   function readBadge(d: NonNullable<ReadCard["decision"]>): string {
     if (d.kind === "pages") return d.urls.length ? t(d.auto ? "chat.readDoneAuto" : "chat.readDone", { n: d.urls.length }) : t("chat.readNone");

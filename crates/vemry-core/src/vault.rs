@@ -328,6 +328,19 @@ impl Vault {
         Ok(fs::File::open(&abs)?)
     }
 
+    /// An existing file or folder of the vault, by a path from outside (the frontend
+    /// asking the OS to open it): the same rules as every other path — relative, no
+    /// escape, no symbolic link on the way.
+    pub fn checked_path(&self, path: &str) -> Result<PathBuf> {
+        let rel = validate_rel(path)?;
+        refuse_links(&self.root, rel)?;
+        let abs = self.root.join(rel);
+        if !abs.exists() {
+            return Err(reject(PathReject::NotFound, rel));
+        }
+        Ok(abs)
+    }
+
     /// The path rules every whole-file read shares: a valid relative path naming an
     /// existing regular file. Returns the relative path, the absolute one and its metadata.
     fn checked_file<'a>(&self, path: &'a str) -> Result<(&'a str, PathBuf, fs::Metadata)> {
@@ -1436,18 +1449,20 @@ impl Vault {
         self.privacy = PrivacyScope::load(&self.root);
     }
 
-    /// Is this note in the privacy zone (glob rules or frontmatter flag)?
-    /// The frontmatter half resolves case-insensitively: a case-variant
-    /// spelling the filesystem folds onto a `private: true` note must not
-    /// slip past (the glob half is already case-insensitive by construction).
+    /// Is this note in the privacy zone (glob rules, frontmatter flag, or the
+    /// attachment bucket of a private note)? The frontmatter half resolves
+    /// case-insensitively: a case-variant spelling the filesystem folds onto a
+    /// `private: true` note must not slip past (the glob half is already
+    /// case-insensitive by construction). The bucket half matters for a `.md` file
+    /// dropped among a private note's attachments, which is indexed as a note.
     pub fn is_private(&self, id: &NoteId) -> bool {
         if self.privacy.matches_rel(id.as_str(), false) {
             return true;
         }
-        match self.index.canonical_id(id) {
-            Some(cid) => self.index.summary_ref(&cid).is_some_and(|s| s.private),
-            None => false,
+        if self.index.canonical_id(id).is_some_and(|cid| self.index.summary_ref(&cid).is_some_and(|s| s.private)) {
+            return true;
         }
+        self.in_private_bucket(id.as_str(), false)
     }
 
     /// Privacy check for an arbitrary vault-relative path (any file type or
@@ -1669,6 +1684,9 @@ fn validate_rel(path: &str) -> Result<&str> {
         || path.trim().starts_with('\\')
         || p.starts_with('~')
         || p.split(['/', '\\']).any(|seg| seg == "..")
+        // A drive or UNC prefix (`C:\x`, `C:x`): on Windows, joining it to the root
+        // replaces the root. On other systems the same text is an ordinary name
+        || Path::new(p).components().any(|c| matches!(c, std::path::Component::Prefix(_) | std::path::Component::RootDir))
     {
         return Err(reject(PathReject::Escapes, path));
     }
@@ -2837,6 +2855,12 @@ later still ^b2
         assert!(!vault.is_private_rel("attachments/Sleep/c.png", false), "a public note's bucket");
         assert!(!vault.is_private_rel("attachments/中文笔记/d.png", false), "a path starting with CJK text is safe to test");
         assert!(!vault.is_private_rel("attachments/Diary.png", false), "a file named like the note is not its bucket");
+        // a note dropped into the bucket is indexed like any note, and private like its owner
+        fs::write(root.join("attachments/Diary/scan notes.md"), "SECRET-SCAN [[Sleep]]\n").unwrap();
+        vault.rescan().unwrap();
+        let scan = NoteId::new("attachments/Diary/scan notes.md");
+        assert!(vault.index().contains(&scan));
+        assert!(vault.is_private(&scan), "the note gate every agent tool asks (is_private) keeps it out");
     }
 
     /// A note that becomes private, or stops being so — its flag edited in the app or
@@ -2927,6 +2951,12 @@ later still ^b2
         assert_eq!(left, ["Target.md", "creds.txt"], "nothing outside the vault was created, moved or deleted");
         assert_eq!(fs::read_to_string(out.join("Target.md")).unwrap(), "# outside OUTSIDE-NOTE\n");
         assert!(root.join("Sleep.md").exists(), "the refused move left the note in place");
+
+        // what the frontend asks the OS to open goes by the same rules
+        assert!(is_link_reject(vault.checked_path("door")));
+        assert!(is_link_reject(vault.checked_path("pub/creds.txt")));
+        assert!(vault.checked_path("Sleep.md").is_ok());
+        assert!(vault.checked_path("../escape").is_err());
 
         // a link that appears while the vault is open is not indexed by the watcher
         symlink(out.join("Target.md"), root.join("Late.md")).unwrap();

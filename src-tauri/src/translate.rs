@@ -331,7 +331,7 @@ pub async fn translate_request(state: State<'_, AppState>, job: String, ids: Vec
 /// or the whole document.
 #[tauri::command]
 pub async fn translate_continue(state: State<'_, AppState>, job: String, all: bool) -> Result<(), String> {
-    let more = if all { None } else { Some(vemry_agent::translate::BACKGROUND_BUDGET_CHARS) };
+    let more = if all { None } else { Some(vemry_agent::translate::BACKGROUND_BUDGET_BYTES) };
     current_job(&state, &job)?.continue_background(more);
     Ok(())
 }

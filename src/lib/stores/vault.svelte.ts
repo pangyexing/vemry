@@ -67,7 +67,7 @@ const UI_KEY = "vemry-ui";
 // browserW: the docked browser panel's width (px), absent = its default
 // swap: the two sidebars change sides
 // blOpen/outOpen: whether the outline panel's bottom "backlinks / outgoing links"
-// sections are expanded; collapsed by default and not persisted
+// sections are expanded; collapsed by default
 type UiState = {
   leftOpen?: boolean; rightOpen?: boolean; rightTab?: string;
   leftW?: number; rightW?: number; browserW?: number; swap?: boolean;
@@ -424,10 +424,9 @@ class VaultStore {
   /** Whether the outline panel's bottom link sections are expanded (rarely used, collapsed by default, with the count badge always visible). */
   backlinksOpen = $state(ui.blOpen === true);
   outgoingOpen = $state(ui.outOpen === true);
-  /** The sidebar widths (px), null = the default flexible width (the tree 220 / the panel
-   *  min(30%, 560)).
-   *  The minimums of 140/280 go with App.svelte's grid comment and Rust's
-   *  MIN_MAIN_VISIBLE.
+  /** The sidebar widths (px), null = the default flexible width.
+   *  The minimums of 140/280 go with App.svelte's grid comment and the main window's
+   *  minimum size (window_geom.rs).
    *  left always means the file tree and right always the links/research panel, whichever
    *  side each is docked on at the moment (swapping affects presentation alone, and the
    *  open/close shortcuts and the state's meaning do not change). */
@@ -1613,7 +1612,7 @@ class VaultStore {
     toast.push(t("vaultStore.created", { path: notePart }));
   }
 
-  /** Attachment bucket for the open note: attachments/<note stem>. */
+  /** Attachment bucket for the open note: attachments/<note path minus .md>. */
   get noteBucket(): string {
     return noteBucketOf(this.currentPath);
   }

@@ -1,7 +1,7 @@
 // localStorage persistence bucketed per vault (a root's absolute path → that vault's
-// own bucket). Shared by vemry-tree (the file tree's expanded set) and
-// vemry-clip-target (the pinned clip destination): the parse fallback, the write
-// through and the size trimming are maintained once. The restore ordering (on the
+// own bucket). Shared by the file tree's expanded set (vemry-tree), the pinned clip
+// destination (vemry-clip-target), the open tabs and the board: the parse fallback,
+// the write through and the size trimming are maintained once. The restore ordering (on the
 // first beat of a vault switch, restore before writing through, or the old vault's
 // leftovers would wipe the new vault's bucket) is each caller's to hold to its own
 // structure — the two stores work differently (a guard inside an effect versus one

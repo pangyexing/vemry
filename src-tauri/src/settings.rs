@@ -19,6 +19,11 @@ pub struct Settings {
     pub api_key: String,
     #[serde(default)]
     pub recent_vaults: Vec<String>,
+    /// The vaults whose agent writes the user pre-authorised ("always allow in this
+    /// vault"), by canonical root. Kept with the app rather than in the vault, so a
+    /// vault copied or cloned from elsewhere cannot arrive with its writes allowed.
+    #[serde(default)]
+    pub write_allow_vaults: Vec<String>,
     /// The interface language. Auto follows the system locale — the frontend
     /// resolves it from navigator.language and the Rust side from sys_locale (the
     /// native menu has to be built before the frontend loads, so it cannot borrow
@@ -46,9 +51,9 @@ pub struct Settings {
     /// the raw state (the line the cursor is on) a click always means editing.
     #[serde(default = "default_true")]
     pub click_opens_links: bool,
-    /// The agent's web search (the DeepSeek Responses API's server-side
-    /// web_search). Search is billed separately from the conversation, so it is off
-    /// by default.
+    /// The agent's web search (the server-side web_search of DeepSeek's
+    /// Anthropic-format endpoint). Search is billed separately from the conversation,
+    /// so it is off by default.
     #[serde(default)]
     pub web_search_enabled: bool,
     /// The agent's plan confirmation (the propose_plan tool plus a blocking gate):
@@ -304,12 +309,11 @@ pub enum LangSetting {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkOpenMode {
-    /// The reading projection in the main window's centre pane (the default since
-    /// v0.5 P2): the body is extracted and rendered, with a browser window as the
-    /// escape hatch.
+    /// The reading projection in the main window's centre pane (the default): the
+    /// body is extracted and rendered, with a browser tab as the escape hatch.
     #[default]
     Reading,
-    /// A built-in knowledge browser window.
+    /// A tab of the built-in browser (docked beside the editor unless detached).
     Internal,
     /// The system's default browser.
     System,
@@ -353,6 +357,7 @@ impl Default for Settings {
             model: default_model(),
             api_key: String::new(),
             recent_vaults: vec![],
+            write_allow_vaults: vec![],
             language: LangSetting::default(),
             last_vault: None,
             adblock_enabled: true,
@@ -426,8 +431,8 @@ impl Settings {
     }
 
     /// Whether web search is actually in effect: the switch is on and the provider
-    /// runs the search (the DeepSeek endpoint with the pro model; see
-    /// `ProviderConfig::web_search_available`). The settings page badge
+    /// runs the search (a DeepSeek endpoint, or the hosted relay where its catalog
+    /// row allows it; see `ProviderConfig::web_search_available`). The settings page badge
     /// (web_search_active) and the agent side's enablement check share this one
     /// implementation — writing the boolean expression twice would drift sooner or
     /// later.
@@ -502,7 +507,8 @@ fn strip_verbatim(p: &str) -> String {
 }
 
 pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
-    config_store::save(app, FILE, settings)?;
+    // Owner-only, like account.json: the file holds the user's own API key
+    config_store::save_private(app, FILE, settings)?;
     *CACHE.write().unwrap() = Some(settings.clone());
     Ok(())
 }

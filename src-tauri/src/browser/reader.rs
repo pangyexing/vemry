@@ -18,8 +18,8 @@
 //! rules pre-attached at build time (plus the reader's own image/media/font blocking —
 //! extracting a body needs no heavy resources). Fetching still goes through that same
 //! controlled network egress, "a browser window"; the window is merely invisible. It
-//! does **not** enter the `BrowserState` registry: the page card, the clip commands
-//! and magnetic docking cannot see it.
+//! does **not** enter the `BrowserState` registry: the tab strip, the clip commands
+//! and docking cannot see it.
 //!
 //! The projected content is only shown by the main window's frontend — it never
 //! reaches disk, the block index or a prompt; writing something down still goes

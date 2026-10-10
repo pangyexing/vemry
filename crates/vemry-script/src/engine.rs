@@ -639,9 +639,15 @@ impl Worker {
         *self.grants.borrow_mut() = self.store.load(&root);
 
         let dir = root.join(SCRIPTS_DIR);
+        // A script is a file in the vault: a symbolic link — the scripts folder itself,
+        // or one entry in it — is not followed, as no vault path follows one
+        let linked_dir = std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_symlink());
         let mut files: Vec<(String, String)> = std::fs::read_dir(&dir)
+            .ok()
+            .filter(|_| !linked_dir)
             .map(|rd| {
                 rd.filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
                     .filter(|e| e.path().extension().is_some_and(|x| x == "js"))
                     .filter_map(|e| {
                         let stem = e.path().file_stem()?.to_string_lossy().to_string();
@@ -1052,6 +1058,22 @@ mod tests {
         // reload: grant already persisted — no new dialog
         host.reload_blocking().unwrap();
         assert_eq!(bridge.grant_calls.lock().unwrap().len(), 1);
+    }
+
+    /// A script is a file in the vault: a symbolic link among the scripts, pointing at
+    /// code outside the vault, is not loaded.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_script_is_not_loaded() {
+        let (_d, vault) = fixture(&[("own", "vemry.commands.register({ id: 'c', title: 'T' }, () => {});")]);
+        let root = { vault.lock().unwrap().as_ref().unwrap().root().to_path_buf() };
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("far.js"), "vemry.commands.register({ id: 'far', title: 'Far' }, () => {});").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("far.js"), root.join(SCRIPTS_DIR).join("far.js")).unwrap();
+        let bridge = TestBridge::new(false);
+        let host = spawn_host(&vault, &bridge, false);
+        let names: Vec<String> = host.list().into_iter().map(|i| i.name).collect();
+        assert_eq!(names, vec!["own".to_string()]);
     }
 
     /// A vault that arrives with a state file claiming a write grant (an earlier

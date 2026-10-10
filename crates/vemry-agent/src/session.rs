@@ -126,29 +126,23 @@ fn default_true() -> bool {
     true
 }
 
-/// The session-scoped consents a reopened session gets back from its jsonl: the
-/// standing read consent (a `read_auto` line) and the write grants given for the
-/// session (`permission` lines decided allow_session / allow_scope, up to the last
-/// `grants_cleared` line — the user revoking them from the settings page). They used
-/// to live in memory only, so coming back to a session — or restarting — asked all
-/// over again while the buttons still said "this session".
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SessionScope {
-    pub read_auto: bool,
-    pub grants: crate::permission::WriteGrants,
-}
-
-/// Everything a reopened session gets back from its jsonl: the source table
-/// (`sources` lines with the retry / edit_resend markers applied — see
-/// `sources::read_sources`), the note it follows (the last `follow` line wins, a
-/// `path: null` line ends it) and its session-scoped consents. One read, because a
-/// session switch used to make three of them over a file that reaches a megabyte.
-/// Missing or unreadable → the empty state.
+/// What a reopened session gets back from its jsonl: the source table (`sources`
+/// lines with the retry / edit_resend markers applied — see `sources::read_sources`)
+/// and the note it follows (the last `follow` line wins, a `path: null` line ends it).
+/// One read, because a session switch used to make two of them over a file that
+/// reaches a megabyte. Missing or unreadable → the empty state.
+///
+/// No consent comes back from here. The jsonl lives in the vault, where a vault copied
+/// or cloned from elsewhere, or a collaborator's commit, could have written an
+/// `allow_session` or a `read_auto` line; the session's standing consents — its write
+/// grants, the read consent, a followed note's writing without asking — are kept by
+/// the host, outside the vault (src-tauri's consents.rs). The `permission`,
+/// `read_auto` and `grants_cleared` lines stay in the log as the record of what was
+/// decided.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SessionState {
     pub sources: Vec<crate::sources::Source>,
     pub follow: Option<Follow>,
-    pub scope: SessionScope,
 }
 
 pub fn read_session_state(meta_dir: &Path, id: &str) -> SessionState {
@@ -156,28 +150,13 @@ pub fn read_session_state(meta_dir: &Path, id: &str) -> SessionState {
     let mut st = SessionState { sources: crate::sources::read_sources(&text), ..Default::default() };
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        match v["kind"].as_str() {
-            Some("follow") => {
-                st.follow = match v["path"].as_str() {
-                    Some(path) if !path.is_empty() => Some(Follow { path: path.to_string(), auto: v["auto"].as_bool().unwrap_or(true) }),
-                    _ => None,
-                }
+        // The followed note, without its `auto`: writing without asking is a consent, and
+        // the host restores it from its own record
+        if v["kind"].as_str() == Some("follow") {
+            st.follow = match v["path"].as_str() {
+                Some(path) if !path.is_empty() => Some(Follow { path: path.to_string(), auto: false }),
+                _ => None,
             }
-            Some("read_auto") => st.scope.read_auto = true,
-            // The revocation: the grants given before it stay revoked on replay, a later allow line re-arms
-            Some("grants_cleared") => st.scope.grants = Default::default(),
-            Some("permission") => match v["decision"].as_str() {
-                Some("allow_session") => st.scope.grants.all = true,
-                Some("allow_scope") => {
-                    if let Some(p) = v["scope"].as_str().filter(|p| !p.is_empty()) {
-                        if !st.scope.grants.prefixes.iter().any(|x| x == p) {
-                            st.scope.grants.prefixes.push(p.to_string());
-                        }
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
         }
     }
     st
@@ -835,29 +814,19 @@ mod tests {
         assert!(!dir.path().parent().unwrap().join("x.history.json").exists());
     }
 
-    /// The consents a reopened session gets back: the standing read consent and the
-    /// session write grants come from the jsonl, nothing else does.
+    /// A reopened session gets its followed note back from the jsonl, but no consent:
+    /// lines a vault could have arrived with — a write grant for the session, a
+    /// standing read consent, a followed note's writing without asking — grant nothing.
     #[test]
-    fn session_scope_is_rebuilt_from_the_jsonl() {
+    fn no_consent_is_rebuilt_from_the_jsonl() {
         let dir = tempfile::tempdir().unwrap();
         let log = SessionLog::create(dir.path()).unwrap();
-        assert_eq!(read_session_state(dir.path(), &log.id).scope, SessionScope::default());
-        log.append("permission", json!({ "path": "a.md", "decision": "allow" }));
+        log.append("permission", json!({ "path": "b.md", "decision": "allow_session" }));
         log.append("permission", json!({ "path": "research/a.md", "decision": "allow_scope", "scope": "research/" }));
         log.append("read_auto", json!({ "id": "r1" }));
-        log.append("permission", json!({ "path": "b.md", "decision": "allow_session" }));
-        let scope = read_session_state(dir.path(), &log.id).scope;
-        assert!(scope.read_auto);
-        assert!(scope.grants.all);
-        assert_eq!(scope.grants.prefixes, vec!["research/".to_string()]);
-        assert_eq!(read_session_state(dir.path(), "20990101-000000.000").scope, SessionScope::default(), "a missing session has no scope");
-        // The revocation holds on replay; the read consent is not a write grant and stays
-        log.append("grants_cleared", json!({}));
-        let scope = read_session_state(dir.path(), &log.id).scope;
-        assert!(!scope.grants.all && scope.grants.prefixes.is_empty(), "{scope:?}");
-        assert!(scope.read_auto);
-        // …and a grant given after it re-arms
-        log.append("permission", json!({ "path": "c.md", "decision": "allow_scope", "scope": "c.md" }));
-        assert_eq!(read_session_state(dir.path(), &log.id).scope.grants.prefixes, vec!["c.md".to_string()]);
+        log.append("follow", json!({ "path": "Plan.md", "auto": true }));
+        let st = read_session_state(dir.path(), &log.id);
+        assert_eq!(st.follow, Some(Follow { path: "Plan.md".into(), auto: false }), "the note comes back, its writing without asking does not");
+        assert_eq!(read_session_state(dir.path(), "20990101-000000.000"), SessionState::default(), "a missing session is empty");
     }
 }

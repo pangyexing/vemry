@@ -2069,6 +2069,23 @@ mod tests {
         execute_read_tool(vault, name, &args)
     }
 
+    /// A note dropped among a frontmatter-private note's attachments is indexed like
+    /// any note, and is as absent to the agent as its owner: not listed, not found, not
+    /// read, and its file not listed either.
+    #[test]
+    fn a_note_in_a_private_notes_bucket_is_absent() {
+        let (dir, mut vault) = fixture();
+        std::fs::create_dir_all(dir.path().join("attachments/Diary")).unwrap();
+        std::fs::write(dir.path().join("attachments/Diary/scan.md"), "TOPSECRET scan notes\n").unwrap();
+        vault.rescan().unwrap();
+        for (tool, args) in [("list_notes", json!({})), ("search_notes", json!({"query": "TOPSECRET"})), ("list_files", json!({}))] {
+            let out = read(&vault, tool, args).unwrap();
+            // (search echoes its query, so the sentinel is the file's name)
+            assert!(!out.text.contains("scan"), "{tool}: {}", out.text);
+        }
+        assert!(matches!(read(&vault, "read_note", json!({"path": "attachments/Diary/scan.md"})), Err(ToolError::Privacy(_))));
+    }
+
     /// read_block: a handle hands over the block's slice with a citation header; a
     /// private note is worded like a missing one; an id no note holds is a miss.
     #[test]

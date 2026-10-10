@@ -33,10 +33,10 @@ use crate::AgentError;
 /// How much source text one request carries (in bytes of segment text). Small
 /// enough that a translation lands within seconds; large enough that a page is a
 /// handful of calls.
-pub const BATCH_CHARS: usize = 2000;
+pub const BATCH_BYTES: usize = 2000;
 /// The job's first batch is cut short: the first text the reader sees should land
 /// in a couple of seconds, and a full batch takes several.
-pub const FIRST_BATCH_CHARS: usize = 600;
+pub const FIRST_BATCH_BYTES: usize = 600;
 /// Requests in flight at once. Two keeps the model busy while the first batch's
 /// text is still streaming, without burning a rate limit on a long document.
 pub const MAX_IN_FLIGHT: usize = 2;
@@ -50,7 +50,7 @@ const PARTIAL_MS: Duration = Duration::from_millis(60);
 /// segment text). What the reader looks at is never limited; this bounds the
 /// background work on a long document — a book, a thread of five hundred
 /// comments — which stops here and says so, and goes on when asked.
-pub const BACKGROUND_BUDGET_CHARS: usize = 60_000;
+pub const BACKGROUND_BUDGET_BYTES: usize = 60_000;
 
 /// The document being translated: the cache key it is filed under, its title, and
 /// the segments (`vemry_core::segment_markdown`, or the PDF page cutter).
@@ -362,7 +362,7 @@ impl TranslateJob {
         cache: Option<TranslationCache>,
         on_event: Box<dyn Fn(TranslateEvent) + Send + Sync>,
     ) -> Arc<Self> {
-        let mut inner = Inner { budget: Some(BACKGROUND_BUDGET_CHARS), ..Inner::default() };
+        let mut inner = Inner { budget: Some(BACKGROUND_BUDGET_BYTES), ..Inner::default() };
         if let Some(c) = &cache {
             for seg in doc.segments.iter().filter(|s| s.translate && !s.private) {
                 if let Some(t) = c.get(&seg.text) {
@@ -572,7 +572,7 @@ impl TranslateJob {
                     break false;
                 }
                 let segs = self.segments.read().unwrap();
-                let limit = if inner.batches == 0 { FIRST_BATCH_CHARS } else { BATCH_CHARS };
+                let limit = if inner.batches == 0 { FIRST_BATCH_BYTES } else { BATCH_BYTES };
                 let mut ids = vec![];
                 let mut size = 0;
                 // the reader's rows: as many as fit

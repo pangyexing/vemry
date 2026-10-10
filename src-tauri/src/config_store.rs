@@ -48,7 +48,8 @@ pub fn save<T: Serialize + ?Sized>(app: &AppHandle, name: &str, value: &T) -> Re
 
 /// Write by name with the file readable by its owner alone (mode 0600 on Unix;
 /// Windows has no mode bits and the app-config directory is per user anyway).
-/// For the one file that holds a credential (account.json).
+/// For the files that hold a credential: account.json (the device token) and
+/// settings.json (the user's own API key).
 pub fn save_private<T: Serialize + ?Sized>(app: &AppHandle, name: &str, value: &T) -> Result<(), String> {
     let p = path(app, name).ok_or("no config dir")?;
     if let Some(parent) = p.parent() {

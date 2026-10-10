@@ -158,9 +158,9 @@ pub struct RunnerConfig {
     /// rebuilt every turn (the test path).
     pub system_prompt: Option<String>,
     /// The cross-turn carrier of the session's standing write grants: AllowSession/
-    /// AllowAlways set `all`, AllowScope adds a prefix, and the glue layer clears it
-    /// with the session's lifetime. With None the grants live only for the current
-    /// turn (the test path).
+    /// AllowAlways set `all`, AllowScope adds a prefix; the glue layer keeps it for the
+    /// session's lifetime, recorded outside the vault. With None the grants live only
+    /// for the current turn (the test path).
     pub session_allow: Option<Arc<Mutex<WriteGrants>>>,
     /// The soft context limit (in prompt tokens): crossing it triggers first-level
     /// compaction, and crossing 1.25× of it when the first level can squeeze out no
@@ -173,11 +173,13 @@ pub struct RunnerConfig {
     /// cache. At high/max in a plan-gated turn (`plan_confirm`), the calls before
     /// the plan is settled go at "low" — see the plan phase in `run`.
     pub reasoning_effort: Option<String>,
-    /// Plan confirmation (the propose_plan tool plus a blocking gate). Like
-    /// web_search, an addition to the tool table frozen per session — switching it
-    /// mid-session changes the tool table and throws the prefix cache away; the
-    /// glue layer pins it when it snapshots the session, so a settings change takes
-    /// effect from the next session. Default false, so tests are undisturbed.
+    /// Plan confirmation (the propose_plan tool plus a blocking gate). An addition to
+    /// the tool table frozen with the session's prompt snapshot (web_search, by
+    /// contrast, is read every turn) — switching it mid-session would change the tool
+    /// table and throw the prefix cache away. The glue layer pins it when it
+    /// snapshots the session, so a settings change takes effect from the next
+    /// session, or from the next turn after the snapshot is dropped (a privacy
+    /// flip, a VEMRY.md edit, a block type or skill change). Default false, so tests are undisturbed.
     pub plan_confirm: bool,
     /// The interface language's BCP 47 tag, named in the system prompt so a message
     /// without prose of its own is answered in it. Part of the session prefix.
@@ -578,8 +580,8 @@ impl AgentRunner {
             tools.push(open_for_reading_def());
             tools.push(import_page_def());
             if config.plan_confirm {
-                // Same shape as web_search: an addition to the tool table frozen per
-                // session, so the prefix stays stable
+                // An addition to the tool table frozen with the session's prompt
+                // snapshot, so the prefix stays stable
                 tools.push(propose_plan_def());
             }
             if config.web_search {
@@ -1394,8 +1396,9 @@ impl AgentRunner {
             request.auto = self.read_gate.standing(&request);
             on_event(AgentEvent::ReadRequest { request: request.clone() });
             let decision = self.read_gate.request(&request).await;
-            // The standing consent given on this card is a fact of the session: its own line,
-            // so a reopened session (or a restart) keeps it rather than asking again
+            // The standing consent given on this card: its own line in the session log, the
+            // record of the decision. The consent itself is kept by the app, outside the vault
+            // (src-tauri's consents.rs), which is what a reopened session or a restart restores
             if !request.auto && self.read_gate.standing(&request) {
                 log.append("read_auto", json!({ "id": &request.id }));
             }
@@ -1419,8 +1422,12 @@ impl AgentRunner {
                 }
                 ReadDecision::Deny { reason } => {
                     log.append("read_decision", json!({ "id": &request.id, "decision": "deny", "reason": &reason }));
+                    // A decline is one click and carries no reason; the model reads English
+                    // whatever the interface language, so the card's wording is not passed on
                     return Err(if reason == crate::permission::CANCELLED {
                         "(cancelled: the user stopped this turn while the pages awaited their decision; nothing was read)".into()
+                    } else if reason.trim().is_empty() {
+                        "The user declined to open these pages. Work from what you have, or ask.".into()
                     } else {
                         format!("The user declined to open these pages: {reason}. Work from what you have, or ask.")
                     });

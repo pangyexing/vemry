@@ -1,14 +1,15 @@
-//! The reading projection's image proxy protocol `vemry-asset://`.
+//! The image proxy protocol `vemry-asset://`: the reading projection's images, and a
+//! note's remote images once the user lets them load.
 //!
 //! The projection renderer emits `![..](url)` as
 //! `<img src="vemry-asset://localhost/?u=..&r=..">`, and this fetches it on its
 //! behalf: **no cookies**, a Referer of the page URL (to get past hotlink
 //! protection), and a UA on the scale of desktop Safari. That is how the main
-//! webview keeps its "never talks to a remote host directly" property — the egress
-//! narrows to this one Rust channel, and it only happens after the user explicitly
-//! opened the projection (the reader window really did load that same page a moment
-//! earlier, so the request has already happened once and the privacy increment is
-//! minimal).
+//! webview keeps its "never talks to a remote host directly" property (its CSP
+//! allows no remote image at all) — the egress narrows to this one Rust channel, and
+//! for the projection it only happens after the user explicitly opened it. The image
+//! host gets the request any browser showing that page would send, minus the
+//! cookies; the reader window itself blocks images, so this is the first one.
 //!
 //! A note on disk comes through here only with the user's leave: opening a note must
 //! stay free of network traffic — a tracking pixel in the page reached disk with its

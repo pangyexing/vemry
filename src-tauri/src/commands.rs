@@ -912,15 +912,7 @@ pub fn file_write(app: AppHandle, state: State<'_, AppState>, path: String, cont
 /// Open a non-Markdown vault file with the OS default application.
 #[tauri::command]
 pub fn file_open_system(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    let abs = with_vault(&state, |v| {
-        let id = v.note_id(&path); // reuses escape validation; ignore .md suffixing
-        let _ = id;
-        let rel = path.trim().trim_matches('/');
-        if rel.is_empty() || rel.split('/').any(|s| s == "..") || path.starts_with('/') {
-            return Err("invalid path".into());
-        }
-        Ok(v.root().join(rel))
-    })?;
+    let abs = with_vault(&state, |v| v.checked_path(&path).map_err(crate::i18n::err))?;
     opener::open(abs).map_err(|e| e.to_string())
 }
 
@@ -988,12 +980,13 @@ pub fn block_id_plan(source: String, selector: BlockSelector) -> Result<BlockIdP
 
 /// A note the agent wrote that quotes a page — `source:` in its frontmatter and
 /// images still pointing at that page (a paper's figures archived by the study
-/// skill) — gets the clip's image localisation: the figures are downloaded into
-/// clips/assets/ and the note rewritten to reference them, the way a clip's are
-/// at the moment of clipping. The user approved the write and, for the read, the
-/// page; fetching the page's figures is within that. It honours the localisation
-/// setting, and a note with nothing remote is left alone (the rewrite comes back
-/// through here once more and finds nothing to do).
+/// skill) — gets the clip's image localisation for those figures: downloaded into
+/// clips/assets/ and the note rewritten to reference them. The user approved the
+/// write and, for the read, the page; fetching the page's own figures is within that,
+/// and only those are fetched (`maybe_localize_page_figures`: the source page's site)
+/// — an image URL of the model's own making stays remote until the user loads it. It
+/// honours the localisation setting, and a note with nothing to fetch is left alone
+/// (the rewrite comes back through here once more and finds nothing to do).
 fn localize_agent_figures(app: &AppHandle, rel: &str) {
     if !rel.ends_with(".md") || !crate::settings::load(app).clip_localize_images {
         return;
@@ -1007,7 +1000,7 @@ fn localize_agent_figures(app: &AppHandle, rel: &str) {
         Ok(v.index().summary_ref(&id).and_then(|s| s.source.clone()).filter(|u| u.starts_with("http")))
     });
     if let Ok(Some(url)) = source {
-        crate::browser::clip::maybe_localize(app, rel.to_string(), url);
+        crate::browser::clip::maybe_localize_page_figures(app, rel.to_string(), url);
     }
 }
 
@@ -1524,8 +1517,9 @@ pub fn settings_set(app: AppHandle, update: SettingsUpdate) -> Result<(), String
 
 /// Read the whole object of .vemry/config.json (missing or broken JSON = None).
 /// Reading and writing share this one parse point — `skills::read_vault_config`,
-/// which the prompt side reads `skills_disabled` through: write_policy and
-/// skills_disabled live in the same file.
+/// which the prompt side reads `skills_disabled` through. What the file holds travels
+/// with the vault (the capture pin, the disabled skills, the vault's name); a consent
+/// never does — the write policy lives in the app's settings.
 fn vault_config_read(vault: &Vault) -> Option<serde_json::Value> {
     vemry_agent::skills::read_vault_config(&vault.meta_dir())
 }
@@ -1535,11 +1529,32 @@ fn vault_config_get(vault: &Vault, key: &str) -> Option<serde_json::Value> {
     vault_config_read(vault)?.get(key).cloned()
 }
 
-fn vault_write_policy(vault: &Vault) -> WritePolicy {
-    match vault_config_get(vault, "write_policy").and_then(|p| p.as_str().map(|p| p == "allow")) {
-        Some(true) => WritePolicy::Allow,
-        _ => WritePolicy::Ask,
+/// Whether the user pre-authorised the agent's writes in this vault ("always allow in
+/// this vault"). The answer lives in the app's settings, by the vault's canonical root,
+/// never in the vault: a `write_policy` key in a vault's `.vemry/config.json` — an
+/// earlier version's, or one planted in a shared vault — is not read.
+fn vault_write_policy(app: &AppHandle, vault: &Vault) -> WritePolicy {
+    policy_for(&settings::load(app).write_allow_vaults, vault.root())
+}
+
+/// `vault_write_policy` over the list the settings hold.
+fn policy_for(allowed: &[String], root: &std::path::Path) -> WritePolicy {
+    let root = root.to_string_lossy();
+    if allowed.iter().any(|r| *r == root) {
+        WritePolicy::Allow
+    } else {
+        WritePolicy::Ask
     }
+}
+
+fn set_vault_write_policy(app: &AppHandle, vault: &Vault, allow: bool) -> Result<(), String> {
+    let root = vault.root().to_string_lossy().into_owned();
+    let mut s = settings::load(app);
+    s.write_allow_vaults.retain(|r| *r != root);
+    if allow {
+        s.write_allow_vaults.push(root);
+    }
+    settings::save(app, &s)
 }
 
 /// Merge one key into the vault's .vemry/config.json — overwriting the whole file
@@ -1595,19 +1610,19 @@ fn capture_pin_set(vault: &Vault, pin: &CapturePin) -> Result<(), String> {
     vault_config_set(vault, CAPTURE_PIN_KEY, value)
 }
 
-fn persist_allow_always(state: &State<'_, AppState>) {
+fn persist_allow_always(app: &AppHandle, state: &State<'_, AppState>) {
     let guard = state.vault.lock().unwrap();
     if let Some(vault) = guard.as_ref() {
-        let _ = vault_config_set(vault, "write_policy", json!("allow"));
+        let _ = set_vault_write_policy(app, vault, true);
     }
 }
 
 /// The current vault's persistent write policy (the data behind the settings page's
 /// "writes pre-authorised" badge).
 #[tauri::command]
-pub fn vault_write_policy_get(state: State<'_, AppState>) -> Result<String, String> {
+pub fn vault_write_policy_get(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     with_vault(&state, |v| {
-        Ok(match vault_write_policy(v) {
+        Ok(match vault_write_policy(&app, v) {
             WritePolicy::Allow => "allow".into(),
             WritePolicy::Ask => "ask".into(),
         })
@@ -1617,19 +1632,28 @@ pub fn vault_write_policy_get(state: State<'_, AppState>) -> Result<String, Stri
 /// Change the persistent write policy: revoke allow_always (back to approving each
 /// write) or grant it explicitly.
 #[tauri::command]
-pub fn vault_write_policy_set(state: State<'_, AppState>, policy: String) -> Result<(), String> {
+pub fn vault_write_policy_set(app: AppHandle, state: State<'_, AppState>, policy: String) -> Result<(), String> {
     if policy != "allow" && policy != "ask" {
         return Err(format!("unknown policy: {policy}"));
     }
-    // A revocation takes effect at once: the cross-turn grant of a running session is
-    // withdrawn with it, and the session's ledger gets a `grants_cleared` line so the
-    // replay (a switch-and-back, the Resume button) does not rebuild the grants out
-    // of the earlier allow lines
+    // A revocation takes effect at once: the cross-turn grant of the open session is
+    // withdrawn with it and recorded so (consents.rs), and the session's log gets a
+    // `grants_cleared` line as the record of the decision
     if policy == "ask" {
         state.agent.session_grant.lock().unwrap().clear();
+        save_consents(&app, &state);
         append_session_line(&state, "grants_cleared", json!({}))?;
     }
-    with_vault(&state, |v| vault_config_set(v, "write_policy", json!(policy)))
+    with_vault(&state, |v| set_vault_write_policy(&app, v, policy == "allow"))
+}
+
+/// Record the open session's consents as they stand (consents.rs): after a turn, in
+/// which the user may have granted writes or reads for the session, and whenever a
+/// command changes one.
+fn save_consents(app: &AppHandle, state: &State<'_, AppState>) {
+    let Some(id) = state.agent.current_session.lock().unwrap().clone() else { return };
+    let Some(root) = state.vault.lock().unwrap().as_ref().map(|v| v.root().to_path_buf()) else { return };
+    crate::consents::save(app, &root, &id, &state.agent.consents_now());
 }
 
 /// A web page body the user handed over with "add to context", entering this turn
@@ -1756,7 +1780,7 @@ async fn run_agent_turn(
     let (root, meta_dir, write_policy) = {
         let guard = state.vault.lock().unwrap();
         let vault = guard.as_ref().ok_or("no vault open")?;
-        (vault.root().to_path_buf(), vault.meta_dir(), vault_write_policy(vault))
+        (vault.root().to_path_buf(), vault.meta_dir(), vault_write_policy(app, vault))
     };
 
     // Decide the cross-vault case before settling on a session file: on a vault switch the old session id must not follow into the new vault's sessions/
@@ -1768,7 +1792,7 @@ async fn run_agent_turn(
             *state.agent.current_session.lock().unwrap() = None;
             state.agent.reset_session_scope();
             state.agent.clear_session_data();
-            *owner = Some(root);
+            *owner = Some(root.clone());
         }
     }
     // Regenerate: truncate to the last user message (inclusive), discarding the assistant/tool tail after it
@@ -1903,6 +1927,8 @@ async fn run_agent_turn(
     // Persist the model context at the end of the turn (written on an error or a cancellation too: it stays consistent with the in-memory state, so a restart can resume)
     write_history(&meta_dir, &session_id, &history);
     drop(history);
+    // …and the consents the user may have given during it (a session write grant, the read consent)
+    crate::consents::save(app, &root, &session_id, &state.agent.consents_now());
     // A hosted turn moved the balance: the snapshot is refreshed once the turn is
     // over, whatever its outcome (with the ETag, so an unchanged one is a 304), and
     // the account panel and the status bar follow through the account event
@@ -1976,6 +2002,7 @@ pub struct ForkResult {
 /// session with no ids) it falls back to counting ordinals.
 #[tauri::command]
 pub fn agent_session_fork(
+    app: AppHandle,
     state: State<'_, AppState>,
     turn: Option<String>,
     before_user_turn: usize,
@@ -1984,7 +2011,7 @@ pub fn agent_session_fork(
         state.agent.history.try_lock().map_err(|_| crate::i18n::t(crate::i18n::current(), "ipc.runningNoFork"))?;
     let from_id =
         state.agent.current_session.lock().unwrap().clone().ok_or_else(|| crate::i18n::t(crate::i18n::current(), "ipc.noSessionToFork"))?;
-    let meta_dir = with_vault(&state, |v| Ok(v.meta_dir()))?;
+    let (root, meta_dir) = with_vault(&state, |v| Ok((v.root().to_path_buf(), v.meta_dir())))?;
     let (cut, summarized_context) =
         vemry_agent::session::history_fork_cut(&history, turn.as_deref(), before_user_turn);
     let forked: Vec<vemry_agent::types::ChatMessage> = history[..cut].to_vec();
@@ -1992,9 +2019,11 @@ pub fn agent_session_fork(
         .map_err(|e| e.to_string())?;
     write_history(&meta_dir, &log.id, &forked);
     *history = forked;
+    // The fork carries the consents of the session it branched from
+    crate::consents::save(&app, &root, &log.id, &crate::consents::load(&app, &root, &from_id));
     *state.agent.current_session.lock().unwrap() = Some(log.id.clone());
     state.agent.reset_session_scope();
-    state.agent.load_session(&meta_dir, &log.id); // the copied prefix carries the consents given before the cut
+    state.agent.load_session(&app, &root, &meta_dir, &log.id);
     Ok(ForkResult { id: log.id, summarized_context })
 }
 
@@ -2013,12 +2042,13 @@ fn append_session_line(state: &State<'_, AppState>, kind: &str, payload: serde_j
 
 #[tauri::command]
 pub fn agent_permission_respond(
+    app: AppHandle,
     state: State<'_, AppState>,
     request_id: String,
     decision: PermissionDecision,
 ) -> Result<(), String> {
     if matches!(decision, PermissionDecision::AllowAlways) {
-        persist_allow_always(&state);
+        persist_allow_always(&app, &state);
     }
     resolve(&state.agent.pending.writes, "permission", &request_id, decision)
 }
@@ -2094,7 +2124,7 @@ pub fn agent_actions_respond(
 /// runner snapshots it into its config at the head of the turn): a change made
 /// mid-turn applies from the next turn.
 #[tauri::command]
-pub fn agent_follow_set(state: State<'_, AppState>, path: Option<String>, auto: bool) -> Result<(), String> {
+pub fn agent_follow_set(app: AppHandle, state: State<'_, AppState>, path: Option<String>, auto: bool) -> Result<(), String> {
     let path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
     if let Some(p) = &path {
         // A private note is not followed: the runner would filter it out of the context anyway, and the chip must not pretend
@@ -2104,6 +2134,7 @@ pub fn agent_follow_set(state: State<'_, AppState>, path: Option<String>, auto: 
         }
     }
     *state.agent.follow.lock().unwrap() = path.clone().map(|p| vemry_agent::Follow { path: p, auto });
+    save_consents(&app, &state);
     append_session_line(&state, "follow", json!({ "path": path, "auto": auto }))
 }
 
@@ -2147,7 +2178,7 @@ pub fn agent_session_list(state: State<'_, AppState>) -> Result<Vec<SessionMeta>
 /// an empty context, while the record can still be read); returns the full jsonl for
 /// the frontend to rebuild the timeline from.
 #[tauri::command]
-pub fn agent_session_select(state: State<'_, AppState>, id: String) -> Result<String, String> {
+pub fn agent_session_select(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<String, String> {
     let (root, meta_dir) = {
         let guard = state.vault.lock().unwrap();
         let vault = guard.as_ref().ok_or("no vault open")?;
@@ -2157,9 +2188,9 @@ pub fn agent_session_select(state: State<'_, AppState>, id: String) -> Result<St
     let mut history =
         state.agent.history.try_lock().map_err(|_| crate::i18n::t(crate::i18n::current(), "ipc.runningNoSwitch"))?;
     *history = read_history(&meta_dir, &id).unwrap_or_default();
-    *state.agent.history_vault.lock().unwrap() = Some(root);
     state.agent.reset_session_scope();
-    state.agent.load_session(&meta_dir, &id);
+    state.agent.load_session(&app, &root, &meta_dir, &id);
+    *state.agent.history_vault.lock().unwrap() = Some(root);
     *state.agent.current_session.lock().unwrap() = Some(id);
     Ok(jsonl)
 }
@@ -2176,7 +2207,7 @@ pub fn agent_session_rename(state: State<'_, AppState>, id: String, title: Strin
 /// frontend must confirm).
 /// Deleting the current session is equivalent to starting a new one.
 #[tauri::command]
-pub fn agent_session_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub fn agent_session_delete(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let is_current = state.agent.current_session.lock().unwrap().as_deref() == Some(id.as_str());
     if is_current {
         let mut history =
@@ -2186,7 +2217,10 @@ pub fn agent_session_delete(state: State<'_, AppState>, id: String) -> Result<()
         state.agent.reset_session_scope();
         state.agent.clear_session_data();
     }
-    with_vault(&state, |v| delete_session(&v.meta_dir(), &id))
+    with_vault(&state, |v| {
+        crate::consents::save(&app, v.root(), &id, &crate::consents::Consents::default());
+        delete_session(&v.meta_dir(), &id)
+    })
 }
 
 /// The current session id (None = a new session awaiting its first send). The
@@ -2618,6 +2652,22 @@ mod tests {
     /// A vault is shown by its own name, else its folder's. Naming it after its folder,
     /// or nothing, leaves no key behind — the name then follows the folder again — and a
     /// vault that was never named gets no config file for it.
+    /// A vault that arrives with `"write_policy": "allow"` in its `.vemry/config.json`
+    /// (an earlier version's, or one planted in a shared vault) still asks before every
+    /// agent write: the pre-authorisation is the app's, by the vault's root.
+    #[test]
+    fn a_write_policy_inside_the_vault_allows_nothing() {
+        let dir = std::env::temp_dir().join(format!("vemry-policy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".vemry")).unwrap();
+        std::fs::write(dir.join(".vemry/config.json"), r#"{"write_policy":"allow"}"#).unwrap();
+        let vault = super::Vault::open(&dir).unwrap();
+        assert!(matches!(super::policy_for(&[], vault.root()), super::WritePolicy::Ask));
+        let root = vault.root().to_string_lossy().into_owned();
+        assert!(matches!(super::policy_for(&[root], vault.root()), super::WritePolicy::Allow), "the app's own record allows");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn vault_name_falls_back_to_the_folder() {
         let base = std::env::temp_dir().join(format!("vemry-name-test-{}", std::process::id()));

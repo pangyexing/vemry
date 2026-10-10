@@ -462,6 +462,39 @@ pub async fn clip_selection(
 /// All four clip landings (selection, whole page, projection, the frontend's later
 /// attachment) come through here, so the gating is maintained once.
 pub(crate) fn maybe_localize(app: &AppHandle, rel: String, url: String) {
+    localize_in_background(app, rel, url, Reach::Every);
+}
+
+/// `maybe_localize` for a note the agent wrote: only the images on the source page's
+/// own site are fetched (`same_site`). The user approved the write and the page, so the
+/// page's figures are within that; an image URL the model wrote itself is not — fetched
+/// without a click, a URL of the model's choosing could carry whatever it put in it to
+/// any host. Such an image stays remote, a placeholder in the editor until the user
+/// loads it or saves the note's images.
+pub(crate) fn maybe_localize_page_figures(app: &AppHandle, rel: String, url: String) {
+    localize_in_background(app, rel, url, Reach::SourceSite);
+}
+
+/// Which of a note's remote images a localisation fetches.
+#[derive(Clone, Copy)]
+enum Reach {
+    /// Every one: the user clipped the page, or asked for the note's images.
+    Every,
+    /// Only those on the source page's site: the agent wrote the note.
+    SourceSite,
+}
+
+/// The image's host is the page's, or one is a subdomain of the other (a site's
+/// `media.` or `www.`): the page's own figures, not a host the text points elsewhere.
+fn same_site(image: &str, page: &str) -> bool {
+    let host = |u: &str| url::Url::parse(u).ok().and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_ascii_lowercase()));
+    match (host(image), host(page)) {
+        (Some(i), Some(p)) => i == p || i.ends_with(&format!(".{p}")) || p.ends_with(&format!(".{i}")),
+        _ => false,
+    }
+}
+
+fn localize_in_background(app: &AppHandle, rel: String, url: String, reach: Reach) {
     if !crate::settings::load(app).clip_localize_images {
         return;
     }
@@ -482,7 +515,7 @@ pub(crate) fn maybe_localize(app: &AppHandle, rel: String, url: String) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            localize_clip_images(app.clone(), rel.clone(), url.clone()).await;
+            localize_clip_images(app.clone(), rel.clone(), url.clone(), reach).await;
             let again = {
                 let mut m = in_flight.lock().unwrap();
                 match m.get(&rel) {
@@ -565,7 +598,7 @@ const LOCALIZE_CONCURRENCY: usize = 4;
 /// disk cache). Before rewriting it rereads the note from disk and only substitutes
 /// literals — an edit the user made while the download ran is not overwritten.
 /// The only caller is `maybe_localize` (which holds the settings gate).
-async fn localize_clip_images(app: AppHandle, rel: String, page_url: String) {
+async fn localize_clip_images(app: AppHandle, rel: String, page_url: String, reach: Reach) {
     let state = app.state::<AppState>();
     let Ok(content) = with_vault(&state, |v| {
         let id = v.note_id(&rel).map_err(|e| e.to_string())?;
@@ -585,6 +618,9 @@ async fn localize_clip_images(app: AppHandle, rel: String, page_url: String) {
     let mut groups: Vec<(String, Vec<String>)> = Vec::new();
     for r in vemry_clip::image_refs(&content, &page_url) {
         if private.iter().any(|l| l.contains(&r.literal)) {
+            continue;
+        }
+        if matches!(reach, Reach::SourceSite) && !same_site(&r.resolved, &page_url) {
             continue;
         }
         match groups.iter_mut().find(|g| g.0 == r.resolved) {
@@ -785,4 +821,24 @@ pub fn clips_lookup(
     urls: Vec<String>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
     crate::commands::with_vault(&state, |v| Ok(v.clips_for_urls(&urls)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_site;
+
+    /// What an agent-written note may have fetched for it: the source page's own
+    /// figures, on its host or a subdomain either way — and nothing on another host,
+    /// whatever the URL says.
+    #[test]
+    fn only_the_source_sites_images_are_the_pages_own() {
+        let page = "https://arxiv.org/html/1706.03762v7";
+        assert!(same_site("https://arxiv.org/html/1706.03762v7/x1.png", page));
+        assert!(same_site("https://media.arxiv.org/fig.png", page));
+        assert!(same_site("https://arxiv.org/a.png", "https://www.arxiv.org/abs/1"));
+        assert!(!same_site("https://evil.example/p.png?d=vault-text", page));
+        assert!(!same_site("https://arxiv.org.evil.example/p.png", page), "a host that merely starts with the page's");
+        assert!(!same_site("https://notarxiv.org/p.png", page));
+        assert!(!same_site("not a url", page));
+    }
 }

@@ -38,7 +38,8 @@ pub struct WriteRequest {
     /// sent back.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_path: Option<String>,
-    /// Unified diff of the proposed change (empty for brand-new files and moves).
+    /// Unified diff of the proposed change (empty for a brand-new file, and for a move
+    /// that rewrites no link).
     pub diff: String,
     /// What kind of write this is. The wording lives in the UI catalog — this
     /// layer carries no copy, because it cannot know the user's language.
@@ -148,10 +149,11 @@ pub enum PermissionDecision {
 /// dialog. `all` is "allow for this session"; `prefixes` are the scoped grants (a
 /// folder with its trailing slash, or one note's exact path). A write is covered only
 /// when every note it touches is (`WriteRequest::paths`: a move's two ends, a block
-/// move's destination, the referrers relinked). The glue layer holds one per session and clears it
-/// with the session; the runner reads it at the start of a turn and adds to it as
-/// the user grants.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// move's destination, the referrers relinked). The glue layer holds one for the open
+/// session, records it with the app rather than in the vault (src-tauri's consents.rs)
+/// and restores it when the session is reopened; the runner reads it at the start of a
+/// turn and adds to it as the user grants.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WriteGrants {
     pub all: bool,
     pub prefixes: Vec<String>,

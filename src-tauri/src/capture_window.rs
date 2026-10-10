@@ -4,7 +4,7 @@
 //! target, and the window goes away again with the focus handed back to the
 //! application it was pressed in.
 //!
-//! The window is the third of our own webviews (after `agent` and `browserbar`):
+//! The window is the third of our own webviews besides the main one (after `agent` and `browserbar`):
 //! the same bundle, mounting the CaptureWindow root by label, with
 //! capabilities/capture.json matching the label exactly. It follows the chat
 //! window's skeleton (agent_window.rs) with two differences:

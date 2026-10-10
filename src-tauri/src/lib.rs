@@ -5,6 +5,7 @@ mod browser;
 mod capture_window;
 mod commands;
 mod config_store;
+mod consents;
 mod i18n;
 mod imagesize;
 mod inbox;

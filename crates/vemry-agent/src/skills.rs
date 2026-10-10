@@ -229,7 +229,7 @@ pub fn disabled_names(value: Option<&serde_json::Value>) -> Vec<String> {
 /// The whole object of `<meta_dir>/config.json` (`.vemry/config.json`); a missing
 /// file or broken JSON is `None`. The one parse point for the vault config: the
 /// prompt side reads `skills_disabled` through it, and the app's read-modify-write
-/// of `write_policy` and the same list goes through it too, so the two never
+/// of the file (the capture pin, the same list) goes through it too, so the two never
 /// interpret the file differently.
 pub fn read_vault_config(meta_dir: &Path) -> Option<serde_json::Value> {
     let s = fs::read_to_string(meta_dir.join("config.json")).ok()?;

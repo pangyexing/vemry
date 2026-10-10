@@ -845,9 +845,9 @@ pub fn scrub_private_refs(vault: &Vault, messages: &mut [ChatMessage]) {
                     replace.push((*kind, attr, replacement));
                 }
                 // image: inflate_images re-gates every turn, so nothing happens here
-                // An image has no envelope; a view's rows already went through the
-                // privacy-filtered query at resolution time and name no single note;
-                // a skill is outside the privacy domain altogether
+                // An image has no envelope; a view's rows are re-gated one by one in
+                // the block pass below (filter_view_block); a skill is outside the
+                // privacy domain altogether
                 RefKind::Image | RefKind::View | RefKind::Skill => {}
             }
         }
@@ -861,6 +861,7 @@ pub fn scrub_private_refs(vault: &Vault, messages: &mut [ChatMessage]) {
                 None if kind == RefKind::Note => rebuild_note_block(vault, &b.attr),
                 None if kind == RefKind::Selection => scrub_selection_block(vault, &text[b.start..b.end], &b.attr),
                 None if kind == RefKind::Block => rebuild_block_block(vault, &text[b.start..b.end], &b.attr),
+                None if kind == RefKind::View => filter_view_block(vault, &text[b.start..b.end]),
                 None => None,
             };
             if let Some(rep) = rep {
@@ -898,7 +899,7 @@ struct EnvBlock {
 /// and leaving an unpaired open tag in the request.
 fn scan_blocks(text: &str) -> Vec<EnvBlock> {
     let opens: Vec<(Option<RefKind>, String)> =
-        [RefKind::Note, RefKind::Folder, RefKind::File, RefKind::Selection, RefKind::Block]
+        [RefKind::Note, RefKind::Folder, RefKind::File, RefKind::Selection, RefKind::Block, RefKind::View]
         .into_iter()
         .map(|k| (Some(k), format!("<{} path=\"", k.tag())))
         .chain([(None, "<web-page-context ".to_string())])
@@ -982,6 +983,37 @@ fn filter_folder_block(vault: &Vault, block: &str, attr: &str) -> Option<String>
     }
     let body = if kept.is_empty() { crate::prompt::NO_NOTES.to_string() } else { kept.join("\n") };
     Some(crate::prompt::ref_envelope(RefKind::Folder.tag(), attr, "", crate::prompt::FOLDER_INTRO, &body))
+}
+
+/// A view envelope's rows each name a block (`[[note#handle]] …\t<first line>`, see
+/// resolve_view): a row whose note has turned private, or whose block has, leaves the
+/// request from the next turn on, as a folder's rows do (filter_folder_block). The
+/// query ran through `query_for_agent` at resolution time; this keeps what it handed
+/// over from outliving a marking. Read off the index, not the disk — it runs on every
+/// turn over the whole history. The rows that remain are kept byte for byte, and an
+/// envelope that loses none is left as it was.
+fn filter_view_block(vault: &Vault, block: &str) -> Option<String> {
+    let gone = |line: &str| -> bool {
+        let Some((target, _)) = line.strip_prefix("[[").and_then(|r| r.split_once("]]")) else { return false };
+        let Some((note, handle)) = target.split_once('#') else { return false };
+        let Ok(id) = vault.note_id(note) else { return false };
+        if vault.is_private(&id) {
+            return true;
+        }
+        let Some(blocks) = vault.index().blocks(&id) else { return false };
+        vemry_core::locate::find_block(blocks, handle.trim_start_matches('^'))
+            .is_some_and(|i| matches!(blocks[i].kind, vemry_core::BlockKind::Private))
+    };
+    let mut out = String::with_capacity(block.len());
+    let mut removed = false;
+    for line in block.split_inclusive('\n') {
+        if gone(line) {
+            removed = true;
+        } else {
+            out.push_str(line);
+        }
+    }
+    removed.then_some(out)
 }
 
 /// A note envelope whose note now holds private blocks is rebuilt from the
@@ -1811,6 +1843,33 @@ mod tests {
         let once = msgs[0].text().unwrap().to_string();
         scrub_private_refs(&vault, &mut msgs);
         assert_eq!(msgs[0].text().unwrap(), once);
+    }
+
+    /// A view envelope's rows are re-gated on every turn: a row whose note turned
+    /// private, or whose block did, leaves the history; the other rows stay byte for
+    /// byte, and an envelope that loses nothing is untouched.
+    #[test]
+    fn scrub_view_envelope_drops_rows_that_turned_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("A.md"), "- [ ] open task ^a1\n- [ ] SECRET-ROW task ^a2\n").unwrap();
+        std::fs::write(root.join("B.md"), "- [ ] SECRET-NOTE task ^b1\n").unwrap();
+        let mut vault = Vault::open(root).unwrap();
+        let refs = [ContextRef::View { path: "board".into(), label: "Board".into(), query: json!({ "kind": "task" }) }];
+        let ctx = crate::prompt::TurnContext::default();
+        let mut msgs = vec![envelope_msg(&vault, &refs, &ctx)];
+        let before = msgs[0].text().unwrap().to_string();
+        assert!(before.contains("SECRET-ROW") && before.contains("SECRET-NOTE"), "{before}");
+        scrub_private_refs(&vault, &mut msgs);
+        assert_eq!(msgs[0].text().unwrap(), before, "nothing turned private: untouched");
+
+        vault.set_note_private(&vault.note_id("B.md").unwrap(), true).unwrap();
+        std::fs::write(root.join("A.md"), "- [ ] open task ^a1\n\n> [!private]\n> - [ ] SECRET-ROW task ^a2\n").unwrap();
+        vault.rescan().unwrap();
+        scrub_private_refs(&vault, &mut msgs);
+        let after = msgs[0].text().unwrap();
+        assert!(!after.contains("SECRET-NOTE") && !after.contains("SECRET-ROW"), "{after}");
+        assert!(after.contains("open task"), "{after}");
     }
 
     /// A literal open tag left in a public envelope's body (a pasted agent

@@ -185,17 +185,29 @@ impl AgentState {
         self.journal.lock().unwrap().clear();
     }
 
-    /// Point the session-scoped state at an existing session, from one read of its
-    /// jsonl: the source table, the followed note, and the standing read consent and
-    /// write grants that `reset_session_scope` just cleared for the session being
-    /// left. Every place that sets `current_session` to an id calls it.
-    pub fn load_session(&self, meta_dir: &std::path::Path, id: &str) {
+    /// Point the session-scoped state at an existing session: the source table and
+    /// the followed note from one read of its jsonl, and the consents that
+    /// `reset_session_scope` just cleared — the write grants, the standing read
+    /// consent, the followed note's writing without asking — from the app's own record
+    /// (consents.rs), never from the jsonl, which lives in the vault. Every place that
+    /// sets `current_session` to an id calls it.
+    pub fn load_session(&self, app: &tauri::AppHandle, root: &std::path::Path, meta_dir: &std::path::Path, id: &str) {
         let st = vemry_agent::session::read_session_state(meta_dir, id);
+        let consents = crate::consents::load(app, root, id);
         *self.sources.lock().unwrap() = st.sources;
-        *self.follow.lock().unwrap() = st.follow;
+        *self.follow.lock().unwrap() = st.follow.map(|f| vemry_agent::Follow { auto: consents.follow_auto, ..f });
         self.journal.lock().unwrap().clear();
-        self.read_auto_sources_arc.store(st.scope.read_auto, std::sync::atomic::Ordering::Relaxed);
-        *self.session_grant.lock().unwrap() = st.scope.grants;
+        self.read_auto_sources_arc.store(consents.read_auto, std::sync::atomic::Ordering::Relaxed);
+        *self.session_grant.lock().unwrap() = consents.grants;
+    }
+
+    /// The open session's consents as they stand, for consents.rs to record.
+    pub fn consents_now(&self) -> crate::consents::Consents {
+        crate::consents::Consents {
+            grants: self.session_grant.lock().unwrap().clone(),
+            read_auto: self.read_auto_sources_arc.load(std::sync::atomic::Ordering::Relaxed),
+            follow_auto: self.follow.lock().unwrap().as_ref().is_some_and(|f| f.auto),
+        }
     }
 
     /// A change to the privacy zones invalidates the prompt snapshot alone: the
