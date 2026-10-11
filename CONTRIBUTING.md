@@ -26,8 +26,8 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | A new command | `src/lib/commands/registry.ts` + `App.svelte` | TS |
 | Editor behaviour | `src/lib/editor/` | CodeMirror 6 |
 | AI tools / prompts / skills | `crates/vemry-agent/src/{tools,prompt,skills}.rs` + the built-in skills in `crates/vemry-agent/skills/` | Rust |
-| LLM transport (Chat Completions / DeepSeek's Anthropic-format line + search) | `crates/vemry-agent/src/{client,anthropic}.rs` | Rust |
-| Providers and models (your own providers, vemry hosted's catalog, the current model and its pickers) | `crates/vemry-agent/src/provider.rs` + `src-tauri/src/settings.rs` + `src/lib/models.ts` + `src/lib/components/settings/AiPage.svelte` | Rust + Svelte |
+| LLM transport (Chat Completions; the Messages shape — DeepSeek's Anthropic-format line + search, and Anthropic's own API; the Responses API of OpenAI, xAI and Meta) | `crates/vemry-agent/src/{client,anthropic,responses}.rs` | Rust |
+| Providers and models (your own providers, what each vendor and model takes, vemry hosted's catalog, the current model and its pickers) | `crates/vemry-agent/src/provider.rs` + `src-tauri/src/settings.rs` + `src/lib/models.ts` + `src/lib/components/settings/AiPage.svelte` | Rust + Svelte |
 | The hosted account (sign-in, the device token, the entitlement snapshot, relay errors) | `src-tauri/src/account.rs` + `src/lib/components/AccountPanel.svelte` + `src/lib/stores/account.svelte.ts` | Rust + Svelte |
 | Script sandbox / `vemry.*` API / workflows | `crates/vemry-script/src/` | Rust |
 | Clipping (extraction / html→md / frontmatter) | `crates/vemry-clip/src/` | Rust |
@@ -79,7 +79,12 @@ VEMRY_TEST_API_KEY=sk-... cargo test -p vemry-agent --test live -- --ignored
 
 # print the system prompt a vault gets (what the model is sent; the UI and the session log show none of it)
 VEMRY_PROMPT_VAULT=/path/to/vault cargo test -p vemry-agent print_system_prompt -- --ignored --nocapture
-# optional: VEMRY_TEST_BASE_URL / VEMRY_TEST_MODEL (defaults to DeepSeek deepseek-flash)
+# optional: VEMRY_TEST_BASE_URL / VEMRY_TEST_MODEL (defaults to DeepSeek deepseek-flash; any
+# vendor the settings page offers runs the first test through the transport the app picks)
+# one session across two vendors and back: VEMRY_TEST_NEXT_BASE_URL / _MODEL / _API_KEY
+VEMRY_TEST_API_KEY=sk-... VEMRY_TEST_NEXT_BASE_URL=https://api.anthropic.com \
+  VEMRY_TEST_NEXT_MODEL=claude-sonnet-5-5 VEMRY_TEST_NEXT_API_KEY=sk-ant-... \
+  cargo test -p vemry-agent --test live live_a_session_moves_across_vendors -- --ignored
 ```
 
 ### In-app probe (optional, debug builds only)

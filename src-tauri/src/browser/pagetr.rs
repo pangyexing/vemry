@@ -28,7 +28,6 @@ use std::time::Duration;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, State};
 use vemry_agent::translate::{TranslateDoc, TranslateEvent, TranslateJob, TranslationCache};
-use vemry_agent::HttpTransport;
 use vemry_core::{SegKind, Segment};
 
 use super::clip::eval_json;
@@ -866,7 +865,8 @@ fn start(app: &AppHandle, state: &State<'_, AppState>, label: String, webview: t
         emit(&ev_app, &BrowserEvent::Translate { label: ev_label.clone(), active: true, done, total, tokens: ev_tokens.load(Ordering::Relaxed) as u64 });
     });
     let effort = provider.reasoning_supported().then(|| s.reasoning_effort.clone());
-    let job = TranslateJob::new(job_id, doc, target, s.translate_addendum.clone(), provider, effort, Arc::new(HttpTransport::new()), Some(cache), on_event);
+    let transport = vemry_agent::transport_for(&provider, false);
+    let job = TranslateJob::new(job_id, doc, target, s.translate_addendum.clone(), provider, effort, transport, Some(cache), on_event);
     // Cache hits land in the pane at once
     for (id, text) in job.translations() {
         let _ = webview.eval(apply_js(id, &text, true));

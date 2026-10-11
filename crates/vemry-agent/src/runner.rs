@@ -167,8 +167,9 @@ pub struct RunnerConfig {
     /// more room triggers the second-level summary.
     pub context_soft_limit: u64,
     /// The thinking level (none/low/high/max). None = send no effort field at all —
-    /// the glue layer only sets Some when the endpoint is DeepSeek (the same gating
-    /// as stream_options); it is a per-turn request parameter, stays out of the
+    /// the glue layer only sets Some when the model takes a level
+    /// (`ProviderConfig::reasoning_supported`), and the transport spells it for the
+    /// vendor at the wire; it is a per-turn request parameter, stays out of the
     /// prompt prefix, and changing it mid-session does not upend the provider's
     /// cache. At high/max in a plan-gated turn (`plan_confirm`), the calls before
     /// the plan is settled go at "low" — see the plan phase in `run`.
@@ -233,12 +234,13 @@ pub struct AgentRunner {
     pub journal: Arc<Mutex<Vec<WriteRecord>>>,
 }
 
-/// The two-field effort mapping on the Chat Completions line: the official Chat
-/// Completions shape has no "none" level, so turning thinking off goes through
-/// thinking:{"type":"disabled"} while every other level goes through the
-/// top-level reasoning_effort. The Responses line restores the same ChatRequest
-/// into reasoning:{effort} in responses_request_body (covering all four levels);
-/// both mappings have their own unit test.
+/// The two-field effort mapping the request carries, in DeepSeek's spelling: its
+/// Chat Completions shape has no "none" level, so turning thinking off goes through
+/// thinking:{"type":"disabled"} while every other level goes through the top-level
+/// reasoning_effort. Each transport reads the level back (`ChatRequest::thinking_level`)
+/// and spells it for its vendor: `ProviderConfig::chat_effort_fields` on Chat
+/// Completions, `reasoning.effort` on the Responses line, `output_config.effort` on
+/// the Messages line; each mapping has its own unit test.
 pub(crate) fn effort_fields(effort: Option<&str>) -> (Option<String>, Option<Value>) {
     match effort {
         None => (None, None),
@@ -490,9 +492,10 @@ impl AgentRunner {
         } else {
             config.session_allow.as_ref().map(|g| g.lock().unwrap().clone()).unwrap_or_default()
         };
-        // stream_options is sent where the usage tail has to be asked for — DeepSeek,
-        // and the relay in front of it (a Zhipu stream carries usage by default, and an
-        // unknown parameter risks a 400 there); the Responses shape ignores the field.
+        // stream_options is sent where the usage tail has to be asked for
+        // (ProviderConfig::include_usage: a Zhipu stream carries usage by default, and
+        // an unknown parameter risks a 400 elsewhere); the Messages and Responses
+        // shapes ignore the field.
         let stream_options = provider.include_usage().then(|| json!({ "include_usage": true }));
         // The metering category of this turn's calls: a skill the user chose names
         // the job (study, research); anything else is a chat turn. Decided from the
@@ -592,8 +595,9 @@ impl AgentRunner {
                 // worse than none
                 tools.push(ToolDef::Raw(json!({ "type": "web_search" })));
             }
-            // Thinking level → the two Chat Completions fields (the gating is already in
-            // the glue layer: config is None unless the endpoint is DeepSeek)
+            // Thinking level → the two fields in DeepSeek's spelling, re-spelled per vendor
+            // by the transport (the gating is in the glue layer: config is None unless
+            // the model takes a level)
             let (reasoning_effort, thinking) =
                 effort_fields(if planning { light_effort(config.reasoning_effort.as_deref()) } else { config.reasoning_effort.as_deref() });
             // A light response's text is held back until it is known to be kept
@@ -762,6 +766,13 @@ impl AgentRunner {
                     on_event(AgentEvent::TextDelta { text: text.clone() });
                 }
             }
+            // A refusal (the model, or a safety check in front of it, declined): what
+            // streamed is a fragment, not an answer, so it does not enter the history —
+            // the user's message stays the last one, to rephrase or regenerate
+            if finish_reason.as_deref() == Some("refusal") {
+                log.append("refusal", json!({ "model": &provider.model }));
+                return Err(AgentError::Api(format!("{} declined to answer this request (stop reason: refusal)", provider.model)));
+            }
             let assistant_text = if text.is_empty() { None } else { Some(text.clone()) };
             // Which model answered: the current model can change between turns (the
             // composer's model menu), so each response names its own. The id alone —
@@ -771,11 +782,19 @@ impl AgentRunner {
                 assistant_text,
                 if tool_calls.is_empty() { None } else { Some(tool_calls.clone()) },
             );
-            // The DeepSeek thinking contract: reasoning_content must go back with the history
+            // The thinking contract of DeepSeek, Moonshot and Zhipu: reasoning_content goes
+            // back with the history (the transport leaves it out for a vendor without the field)
             assistant.reasoning_content = (!reasoning.is_empty()).then(|| reasoning.clone());
             assistant.extra_items = extra_items;
+            assistant.blocks_line = provider.block_line();
             history.push(assistant);
 
+            // A server tool ran out of iterations mid-answer: sending the paused
+            // message back as the last one resumes it where it stopped
+            if tool_calls.is_empty() && finish_reason.as_deref() == Some("pause_turn") {
+                iteration += 1;
+                continue;
+            }
             if tool_calls.is_empty() {
                 // The span is taken afresh: a summary in this turn (do_summary) rebuilt
                 // the history as [summary, envelope, ...], so the index from the head of
@@ -1774,6 +1793,36 @@ mod tests {
         let reqs = transport.requests.lock().unwrap();
         assert_eq!(reqs[0].messages[0].role, "system");
         assert!(reqs[0].messages[0].text().unwrap().contains("Vault overview"));
+    }
+
+    /// A paused response (a server tool out of iterations) goes back as the last
+    /// message and the answer resumes within the same turn; a refusal ends the turn
+    /// with an error and keeps the streamed fragment out of the history.
+    #[tokio::test]
+    async fn pause_turn_resumes_and_a_refusal_keeps_its_fragment_out() {
+        let f = fixture();
+        let transport = Arc::new(MockTransport::new(vec![
+            vec![text_chunk("Searching"), finish_chunk("pause_turn")],
+            vec![text_chunk(" done."), finish_chunk("stop")],
+        ]));
+        let r = runner(&f, transport.clone(), Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, events) = run_turn(&r, &f, &mut history, "hi").await;
+        result.unwrap();
+        assert_eq!(history.len(), 3, "user, the paused message, the resumed one");
+        assert!(matches!(events.last(), Some(AgentEvent::TurnFinished { truncated: false })));
+        {
+            let reqs = transport.requests.lock().unwrap();
+            assert_eq!(reqs.len(), 2);
+            assert_eq!(reqs[1].messages.last().unwrap().role, "assistant", "the paused message goes back last");
+        }
+
+        let transport = Arc::new(MockTransport::new(vec![vec![text_chunk("I can"), finish_chunk("refusal")]]));
+        let r = runner(&f, transport, Arc::new(AutoAllow));
+        let mut history = vec![];
+        let (result, _) = run_turn(&r, &f, &mut history, "hi").await;
+        assert!(result.unwrap_err().to_string().contains("refusal"));
+        assert_eq!(history.len(), 1, "the user's message stays the last one");
     }
 
     /// The turn id in all three places: the TurnStarted event, the model history's

@@ -12,7 +12,7 @@ use vemry_agent::session::{
     delete_session, fork_session, read_history, read_session, rename_session, write_history,
     SessionLog, SessionMeta,
 };
-use vemry_agent::{HttpTransport, PermissionDecision};
+use vemry_agent::PermissionDecision;
 use vemry_core::{
     BacklinkEntry, BlockHit, BlockIdPlan, BlockProvenance, BlockQuery, BlockSelector, GraphData, InsertLanded, InsertOrigin, MigrationReport, NoteSummary, ProvenanceEntry, RefResolution, RevertPlan, SearchHit, Vault, VaultEvent,
 };
@@ -1166,8 +1166,9 @@ pub struct SettingsView {
     /// no switch in the settings page.
     pub browser_docked: bool,
     pub web_search_enabled: bool,
-    /// Derived and read-only: the provider runs the search (the DeepSeek endpoint;
-    /// decided next to the other provider predicates, not reimplemented in TS). The
+    /// Derived and read-only: the provider runs the search (a DeepSeek, Anthropic,
+    /// OpenAI, xAI or Meta endpoint, or Zhipu's GLM-5.3; decided next to the other provider predicates, not
+    /// reimplemented in TS). The
     /// composer's web search switch is enabled by it.
     pub web_search_available: bool,
     /// Derived and read-only: the switch is on and the provider runs the search (the
@@ -1190,11 +1191,11 @@ pub struct SettingsView {
     pub note_font_size: u8,
     pub readable_line_width: bool,
     pub reasoning_effort: String,
-    /// Derived and read-only: effort is sent only when the endpoint is DeepSeek (the
-    /// same "the check is not reimplemented in TS" as web_search_active).
+    /// Derived and read-only: effort is sent only when the current model takes a
+    /// level (the same "the check is not reimplemented in TS" as web_search_active).
     pub reasoning_effort_active: bool,
     /// Derived and read-only: the selected model has no image understanding
-    /// (DeepSeek's pro model) — the frontend warns once when the composer attaches an
+    /// (DeepSeek's pro model, Zhipu's text-only ones) — the frontend warns once when the composer attaches an
     /// image; the check is not reimplemented in TS.
     pub images_unsupported: bool,
     /// Side-by-side translation: the target language ("" = the interface language)
@@ -1872,14 +1873,11 @@ async fn run_agent_turn(
     // Web search is read afresh every turn: the composer's web search switch decides, and
     // the endpoint must still be one that runs the search (a base_url moved away
     // from DeepSeek mid-session falls back to Chat Completions, where the switch is
-    // disabled anyway). A turn that searches goes through the Anthropic-format line;
+    // disabled anyway). A turn that searches goes through the Anthropic-format line,
+    // Anthropic's own endpoint through its Messages API whatever the switch says;
     // everything else stays on Chat Completions.
     let use_web_search = settings.web_search_active();
-    let transport: Arc<dyn vemry_agent::ChatTransport> = if use_web_search {
-        Arc::new(vemry_agent::AnthropicTransport::new())
-    } else {
-        Arc::new(HttpTransport::new())
-    };
+    let transport = vemry_agent::transport_for(&provider, use_web_search);
     let runner = AgentRunner {
         transport,
         gate: Arc::new(ChannelGate { pending: Arc::clone(&state.agent.pending.writes) }),
@@ -1900,9 +1898,9 @@ async fn run_agent_turn(
     };
     // The thinking level: an in-session override (passed by the frontend, and by a
     // retry too — a regenerate keeps the override) wins, otherwise the setting's
-    // default applies; sent only to a DeepSeek endpoint (settings.reasoning_active
-    // decides, the same gate as stream_options). It is a per-turn request parameter
-    // and does not enter the frozen session snapshot.
+    // default applies; sent only to a model that takes a level (settings.reasoning_active
+    // decides), in its vendor's words. It is a per-turn request parameter and does
+    // not enter the frozen session snapshot.
     let effort = effort
         .filter(|e| settings::is_reasoning_effort(e))
         .unwrap_or_else(|| settings.reasoning_effort.clone());

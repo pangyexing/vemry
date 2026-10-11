@@ -39,16 +39,36 @@
 //! carry a `server_tool_use`, a function `tool_use` and the `web_search_tool_result`
 //! together, the stream ends with `stop_reason:"tool_use"`, and the signature of a
 //! thinking block is the message id.
+//!
+//! The same transport speaks to Anthropic's own Messages API (`BlockLine::Anthropic`),
+//! for every request to that endpoint rather than only a searching one. What differs
+//! there:
+//! - recorded blocks are replayed only to the line that wrote them
+//!   (`ChatMessage::blocks_line`): a thinking signature is the vendor's own, and a
+//!   foreign one is refused outright. A turn from elsewhere is composed without
+//!   its thinking (a block without a signature is refused too), and the tool-call
+//!   ids of other vendors are made to fit this API's id pattern;
+//! - thinking is adaptive with a summarised display (the composer shows it), and
+//!   the level travels as `output_config.effort`; "off" is the lowest effort, since
+//!   the newest models refuse to have thinking disabled;
+//! - a thinking block is bound to the conversation before it, and vemry's own
+//!   compaction rewrites old tool results, so a block a compaction invalidated is
+//!   dropped by the API (`prefix_mismatch_behavior: "drop_block"`) instead of
+//!   failing the request; that field needs `ANTHROPIC_THINKING_BINDING_BETA`;
+//! - the request asks for automatic prompt caching, the tool loop resending the
+//!   whole history every call;
+//! - a server tool that ran out of iterations ends the response with `pause_turn`,
+//!   which the runner continues by sending the paused message back.
 
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use std::sync::atomic::AtomicBool;
 
 use crate::client::{Auth, ChatTransport};
-use crate::provider::ProviderConfig;
+use crate::provider::{claude_adaptive, claude_dynamic_search, ProviderConfig};
 use crate::types::{
-    ChatRequest, Content, Delta, FunctionDelta, Part, StreamChoice, StreamChunk, ToolCallDelta, ToolDef, Usage,
-    WebSearchResult, WebSearchStatus,
+    BlockLine, ChatRequest, Content, Delta, FunctionDelta, Part, StreamChoice, StreamChunk, ToolCallDelta, ToolDef,
+    Usage, WebSearchResult, WebSearchStatus,
 };
 use crate::{AgentError, Result};
 
@@ -56,6 +76,10 @@ use crate::{AgentError, Result};
 /// this is the ceiling for one model call, high enough that a long note written
 /// in one go is not cut off, and only what is produced is billed.
 pub const MAX_OUTPUT_TOKENS: u64 = 65_536;
+
+/// The beta that lets a request say what happens to a thinking block whose
+/// conversation changed since it was produced (see the module comment).
+pub(crate) const ANTHROPIC_THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
 
 /// Searches one model call may run (the server tool's `max_uses`): a bound on the
 /// separately billed search requests, generous enough for a comparison across
@@ -66,6 +90,10 @@ pub const WEB_SEARCH_MAX_USES: u64 = 5;
 /// translates it into the Anthropic server tool.
 const WEB_SEARCH_TOOL_TYPE: &str = "web_search";
 const ANTHROPIC_WEB_SEARCH_TYPE: &str = "web_search_20250305";
+/// The search tool with dynamic filtering (it filters the results before they
+/// enter the context), on the Claude models that take it.
+const ANTHROPIC_WEB_SEARCH_DYNAMIC_TYPE: &str = "web_search_20260209";
+
 
 pub struct AnthropicTransport;
 
@@ -90,19 +118,22 @@ impl ChatTransport for AnthropicTransport {
         cancel: &AtomicBool,
         on_chunk: &mut (dyn FnMut(StreamChunk) -> bool + Send),
     ) -> Result<()> {
-        let body = messages_request_body(request);
+        // Anthropic's own endpoint, or the Anthropic-format line of DeepSeek and the relay
+        let line = if config.is_anthropic() { BlockLine::Anthropic } else { BlockLine::Deepseek };
+        let body = messages_request_body(request, line);
+        let beta = body.pointer("/thinking/block_binding").is_some().then_some(ANTHROPIC_THINKING_BINDING_BETA);
         let resp = crate::client::post_streaming(
             crate::client::shared_client(),
             config.anthropic_messages_url(),
             config,
             &body,
-            Auth::AnthropicKey,
+            Auth::AnthropicKey { beta },
             request.feature,
             request.priority,
         )
         .await?;
 
-        let mut parser = MessagesParser::default();
+        let mut parser = MessagesParser::for_line(line);
         crate::client::read_sse(resp, cancel, config.stream_idle_timeout(), &mut |event_name, data| {
             let Ok(data) = serde_json::from_str::<Value>(data) else {
                 return Ok(true); // tolerate an unknown event shape
@@ -117,7 +148,18 @@ impl ChatTransport for AnthropicTransport {
                     .pointer("/error/message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("stream error");
-                return Err(AgentError::Api(format!("error: {msg}")));
+                // An overload or a server error mid-stream is as transient as its HTTP
+                // twin: carried with that status, so the runner's retry classifies it
+                let code = match data.pointer("/error/type").and_then(|v| v.as_str()) {
+                    Some("overloaded_error") => Some(529),
+                    Some("api_error") => Some(500),
+                    Some("rate_limit_error") => Some(429),
+                    _ => None,
+                };
+                return Err(match code {
+                    Some(code) => AgentError::Status { code, message: format!("error: {msg}") },
+                    None => AgentError::Api(format!("error: {msg}")),
+                });
             }
             for chunk in parser.handle(&ty, &data) {
                 if !on_chunk(chunk) {
@@ -171,32 +213,46 @@ fn image_block(url: &str) -> Value {
     json!({ "type": "image", "source": { "type": "url", "url": url } })
 }
 
-/// Whether an `extra_items` entry is a block of this line (see the module
-/// comment: another line's items are left out).
+/// Whether an `extra_items` entry is a Messages content block (see the module
+/// comment: another line's items are left out). The results of every server tool
+/// end in `_tool_result` — the search, and the code execution a filtering search
+/// runs under the hood — and each must travel back beside its `server_tool_use`.
 fn is_anthropic_block(item: &Value) -> bool {
-    matches!(
-        item.get("type").and_then(|t| t.as_str()),
-        Some("thinking")
-            | Some("redacted_thinking")
-            | Some("text")
-            | Some("tool_use")
-            | Some("server_tool_use")
-            | Some("web_search_tool_result")
-    )
+    match item.get("type").and_then(|t| t.as_str()) {
+        Some("thinking" | "redacted_thinking" | "text" | "tool_use" | "server_tool_use") => true,
+        Some(t) => t.ends_with("_tool_result"),
+        None => false,
+    }
+}
+
+/// A tool-call id as Anthropic's API takes it (`[A-Za-z0-9_-]`, which another
+/// vendor's ids need not keep to: `functions.read_note:0`); applied to a call and
+/// to its result alike, so the pair still matches. Its own ids pass unchanged.
+fn tool_id(id: &str, line: BlockLine) -> String {
+    match line {
+        BlockLine::Anthropic => {
+            id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()
+        }
+        _ => id.to_string(),
+    }
 }
 
 /// An assistant turn → its content blocks: verbatim from `extra_items` when the
 /// turn ran on this line (see the module comment on why the order is kept), and
-/// otherwise composed — the thinking from `reasoning_content` with an empty
-/// signature, then the text, then the function calls.
-fn assistant_blocks(msg: &crate::types::ChatMessage) -> Vec<Value> {
-    let recorded: Vec<Value> = msg.extra_items.iter().filter(|i| is_anthropic_block(i)).cloned().collect();
-    if !recorded.is_empty() {
-        return recorded;
+/// otherwise composed — on DeepSeek's line the thinking from `reasoning_content`
+/// with an empty signature, then on either the text and the function calls.
+fn assistant_blocks(msg: &crate::types::ChatMessage, line: BlockLine) -> Vec<Value> {
+    if msg.blocks_line == line {
+        let recorded: Vec<Value> = msg.extra_items.iter().filter(|i| is_anthropic_block(i)).cloned().collect();
+        if !recorded.is_empty() {
+            return recorded;
+        }
     }
     let mut blocks = vec![];
-    if let Some(reasoning) = msg.reasoning_content.as_deref().filter(|r| !r.is_empty()) {
-        blocks.push(json!({ "type": "thinking", "thinking": reasoning, "signature": "" }));
+    if line == BlockLine::Deepseek {
+        if let Some(reasoning) = msg.reasoning_content.as_deref().filter(|r| !r.is_empty()) {
+            blocks.push(json!({ "type": "thinking", "thinking": reasoning, "signature": "" }));
+        }
     }
     if let Some(text) = msg.text().filter(|t| !t.is_empty()) {
         blocks.push(text_block(text));
@@ -206,7 +262,7 @@ fn assistant_blocks(msg: &crate::types::ChatMessage) -> Vec<Value> {
             .ok()
             .filter(|v| v.is_object())
             .unwrap_or_else(|| json!({}));
-        blocks.push(json!({ "type": "tool_use", "id": call.id, "name": call.function.name, "input": input }));
+        blocks.push(json!({ "type": "tool_use", "id": tool_id(&call.id, line), "name": call.function.name, "input": input }));
     }
     blocks
 }
@@ -215,7 +271,7 @@ fn assistant_blocks(msg: &crate::types::ChatMessage) -> Vec<Value> {
 /// `{"type":"web_search"}` → the server tool with `max_uses` (any further key on
 /// the Raw body, a probe's `allowed_domains` say, is carried over); another Raw
 /// tool passes through untouched.
-fn tool_value(tool: &ToolDef) -> Value {
+fn tool_value(tool: &ToolDef, line: BlockLine, model: &str) -> Value {
     match tool {
         ToolDef::Function { function, .. } => json!({
             "name": function.name,
@@ -224,7 +280,12 @@ fn tool_value(tool: &ToolDef) -> Value {
         }),
         ToolDef::Raw(v) if v.get("type").and_then(|t| t.as_str()) == Some(WEB_SEARCH_TOOL_TYPE) => {
             let mut out = Map::new();
-            out.insert("type".into(), json!(ANTHROPIC_WEB_SEARCH_TYPE));
+            let kind = if line == BlockLine::Anthropic && claude_dynamic_search(model) {
+                ANTHROPIC_WEB_SEARCH_DYNAMIC_TYPE
+            } else {
+                ANTHROPIC_WEB_SEARCH_TYPE
+            };
+            out.insert("type".into(), json!(kind));
             out.insert("name".into(), json!(WEB_SEARCH_TOOL_TYPE));
             out.insert("max_uses".into(), json!(WEB_SEARCH_MAX_USES));
             if let Some(extra) = v.as_object() {
@@ -240,11 +301,11 @@ fn tool_value(tool: &ToolDef) -> Value {
     }
 }
 
-/// `ChatRequest` → a Messages request body. A pure function, covered by offline
-/// tests. Messages of one role that follow each other are merged into one (the
-/// API wants user and assistant to alternate, and every tool result of one
-/// assistant turn in a single user message).
-pub fn messages_request_body(request: &ChatRequest) -> Value {
+/// `ChatRequest` → a Messages request body for one line. A pure function, covered
+/// by offline tests. Messages of one role that follow each other are merged into
+/// one (the API wants user and assistant to alternate, and every tool result of
+/// one assistant turn in a single user message).
+pub fn messages_request_body(request: &ChatRequest, line: BlockLine) -> Value {
     let mut system: Vec<String> = vec![];
     let mut messages: Vec<(String, Vec<Value>)> = vec![];
     let mut push = |role: &str, blocks: Vec<Value>| {
@@ -264,18 +325,19 @@ pub fn messages_request_body(request: &ChatRequest) -> Value {
                 }
             }
             "user" => push("user", user_blocks(msg.content.as_ref())),
-            "assistant" => push("assistant", assistant_blocks(msg)),
+            "assistant" => push("assistant", assistant_blocks(msg, line)),
             "tool" => push(
                 "user",
                 vec![json!({
                     "type": "tool_result",
-                    "tool_use_id": msg.tool_call_id.clone().unwrap_or_default(),
+                    "tool_use_id": tool_id(msg.tool_call_id.as_deref().unwrap_or_default(), line),
                     "content": msg.text().unwrap_or_default(),
                 })],
             ),
             _ => {}
         }
     }
+    let adaptive = line == BlockLine::Anthropic && claude_adaptive(&request.model);
     let mut body = json!({
         "model": request.model,
         "max_tokens": MAX_OUTPUT_TOKENS,
@@ -288,18 +350,41 @@ pub fn messages_request_body(request: &ChatRequest) -> Value {
     if !system.is_empty() {
         body["system"] = json!(system.join("\n\n"));
     }
-    // Thinking: the Chat Completions line's two fields restored into this line's
-    // shape — thinking:{"type":"disabled"} as is, a level as thinking enabled plus
-    // output_config.effort; nothing configured sends nothing (the provider's
-    // default applies)
-    if request.thinking.as_ref().and_then(|t| t.get("type")).and_then(|v| v.as_str()) == Some("disabled") {
-        body["thinking"] = json!({ "type": "disabled" });
-    } else if let Some(e) = &request.reasoning_effort {
-        body["thinking"] = json!({ "type": "enabled" });
-        body["output_config"] = json!({ "effort": e });
+    let thinking_off = request.thinking.as_ref().and_then(|t| t.get("type")).and_then(|v| v.as_str()) == Some("disabled");
+    match line {
+        // The Chat Completions line's two fields restored into this line's shape —
+        // thinking:{"type":"disabled"} as is, a level as thinking enabled plus
+        // output_config.effort; nothing configured sends nothing (the provider's
+        // default applies)
+        BlockLine::Deepseek | BlockLine::Openai | BlockLine::Xai | BlockLine::Meta => {
+            if thinking_off {
+                body["thinking"] = json!({ "type": "disabled" });
+            } else if let Some(e) = &request.reasoning_effort {
+                body["thinking"] = json!({ "type": "enabled" });
+                body["output_config"] = json!({ "effort": e });
+            }
+        }
+        // Adaptive thinking on the current generation, its text summarised for the
+        // composer, and a block a compaction invalidated dropped rather than refused;
+        // the level, when one is set, as the effort (off = the lowest). A model of an
+        // earlier generation is sent neither.
+        BlockLine::Anthropic => {
+            body["cache_control"] = json!({ "type": "ephemeral" });
+            if adaptive {
+                body["thinking"] = json!({
+                    "type": "adaptive",
+                    "display": "summarized",
+                    "block_binding": { "prefix_mismatch_behavior": "drop_block" },
+                });
+                let effort = if thinking_off { Some("low") } else { request.reasoning_effort.as_deref() };
+                if let Some(e) = effort {
+                    body["output_config"] = json!({ "effort": e });
+                }
+            }
+        }
     }
     if let Some(tools) = request.tools.as_ref().filter(|t| !t.is_empty()) {
-        body["tools"] = Value::Array(tools.iter().map(tool_value).collect());
+        body["tools"] = Value::Array(tools.iter().map(|t| tool_value(t, line, &request.model)).collect());
     }
     body
 }
@@ -327,6 +412,11 @@ enum BlockState {
 /// tested offline against a captured stream.
 #[derive(Default)]
 pub struct MessagesParser {
+    /// Keep a thinking block whose text is empty when it carries a signature:
+    /// Anthropic's line, where the reasoning travels in the signature whatever is
+    /// displayed, and where taking a block out of the middle of the history
+    /// invalidates every one after it.
+    keep_signed_thinking: bool,
     /// By content block index (the API numbers them from 0 in order).
     blocks: Vec<Option<BlockState>>,
     /// Function calls seen so far — the next one's slot.
@@ -338,6 +428,10 @@ pub struct MessagesParser {
 }
 
 impl MessagesParser {
+    pub fn for_line(line: BlockLine) -> Self {
+        MessagesParser { keep_signed_thinking: line == BlockLine::Anthropic, ..Default::default() }
+    }
+
     pub fn handle(&mut self, ty: &str, data: &Value) -> Vec<StreamChunk> {
         match ty {
             "message_start" => {
@@ -475,8 +569,9 @@ impl MessagesParser {
         let Some(slot) = self.blocks.get_mut(index) else { return vec![] };
         match slot.take() {
             // An empty block is not replayed: the API refuses an empty text block, and
-            // an empty thinking block says nothing
-            Some(BlockState::Thinking { text, .. }) if text.is_empty() => vec![],
+            // an empty thinking block says nothing — unless its signature carries the
+            // reasoning (see `keep_signed_thinking`)
+            Some(BlockState::Thinking { text, signature }) if text.is_empty() && !(self.keep_signed_thinking && !signature.is_empty()) => vec![],
             Some(BlockState::Text { text }) if text.is_empty() => vec![],
             Some(BlockState::Thinking { text, signature }) => vec![StreamChunk {
                 raw_items: Some(vec![json!({ "type": "thinking", "thinking": text, "signature": signature })]),
@@ -525,9 +620,13 @@ impl MessagesParser {
         // identical request moves the tokens from input into cache_read)
         usage.prompt_tokens = self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens;
         usage.prompt_cache_hit_tokens = Some(self.cache_read_tokens);
+        // pause_turn (a server tool out of iterations: the runner sends the message
+        // back to resume) and refusal (the model declined) keep their names
         let finish = match data.pointer("/delta/stop_reason").and_then(|v| v.as_str()) {
             Some("tool_use") => "tool_calls",
             Some("max_tokens") => "length",
+            Some("pause_turn") => "pause_turn",
+            Some("refusal") => "refusal",
             _ => "stop",
         };
         vec![StreamChunk {
@@ -565,14 +664,14 @@ fn search_results(block: &Value) -> Vec<WebSearchResult> {
     out
 }
 
-fn content_chunk(text: String) -> StreamChunk {
+pub(crate) fn content_chunk(text: String) -> StreamChunk {
     StreamChunk {
         choices: vec![StreamChoice { delta: Delta { content: Some(text), ..Default::default() }, finish_reason: None }],
         ..Default::default()
     }
 }
 
-fn reasoning_chunk(text: String) -> StreamChunk {
+pub(crate) fn reasoning_chunk(text: String) -> StreamChunk {
     StreamChunk {
         choices: vec![StreamChoice {
             delta: Delta { reasoning_content: Some(text), ..Default::default() },
@@ -582,7 +681,7 @@ fn reasoning_chunk(text: String) -> StreamChunk {
     }
 }
 
-fn tool_call_chunk(index: usize, id: Option<&str>, name: Option<&str>, args: Option<&str>) -> StreamChunk {
+pub(crate) fn tool_call_chunk(index: usize, id: Option<&str>, name: Option<&str>, args: Option<&str>) -> StreamChunk {
     StreamChunk {
         choices: vec![StreamChoice {
             delta: Delta {
@@ -656,7 +755,7 @@ mod tests {
                 ChatMessage::tool_result("call_2", "Mon"),
             ])
         };
-        let body = messages_request_body(&req);
+        let body = messages_request_body(&req, BlockLine::Deepseek);
         assert_eq!(body["system"], "Be terse.");
         assert_eq!(body["max_tokens"], MAX_OUTPUT_TOKENS);
         assert_eq!(body["thinking"], json!({ "type": "enabled" }));
@@ -683,16 +782,16 @@ mod tests {
     #[test]
     fn request_thinking_off_and_unconfigured_and_tool_extras() {
         let off = ChatRequest { thinking: Some(json!({ "type": "disabled" })), ..request(vec![ChatMessage::user("x")]) };
-        let body = messages_request_body(&off);
+        let body = messages_request_body(&off, BlockLine::Deepseek);
         assert_eq!(body["thinking"], json!({ "type": "disabled" }));
         assert!(body.get("output_config").is_none());
-        let plain = messages_request_body(&request(vec![ChatMessage::user("x")]));
+        let plain = messages_request_body(&request(vec![ChatMessage::user("x")]), BlockLine::Deepseek);
         assert!(plain.get("thinking").is_none() && plain.get("system").is_none() && plain.get("tools").is_none());
         let probe = ChatRequest {
             tools: Some(vec![ToolDef::Raw(json!({ "type": "web_search", "allowed_domains": ["a.b"] }))]),
             ..request(vec![ChatMessage::user("x")])
         };
-        assert_eq!(messages_request_body(&probe)["tools"][0]["allowed_domains"], json!(["a.b"]));
+        assert_eq!(messages_request_body(&probe, BlockLine::Deepseek)["tools"][0]["allowed_domains"], json!(["a.b"]));
     }
 
     /// A multi-modal user message: text → text block, a data URL → a base64 image
@@ -714,7 +813,7 @@ mod tests {
             ])),
             assistant,
         ]);
-        let body = messages_request_body(&req);
+        let body = messages_request_body(&req, BlockLine::Deepseek);
         let user = body["messages"][0]["content"].as_array().unwrap();
         assert_eq!(user[0], json!({ "type": "text", "text": "看图" }));
         assert_eq!(user[1], json!({ "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "AA==" } }));
@@ -722,6 +821,137 @@ mod tests {
         assert_eq!(assistant[0], json!({ "type": "thinking", "thinking": "why", "signature": "" }));
         assert_eq!(assistant[1], json!({ "type": "text", "text": "ok" }));
         assert_eq!(assistant[2], json!({ "type": "tool_use", "id": "c9", "name": "week", "input": {} }));
+    }
+
+    /// Anthropic's own line: a turn recorded on DeepSeek's line is composed without
+    /// its thinking and with its tool-call ids made to fit (the result keeps the
+    /// pair matched); a turn recorded here goes back verbatim, the signed empty
+    /// thinking block and the filtering search's code-execution result included.
+    /// Adaptive thinking with a summary and drop_block, the level as the effort,
+    /// automatic caching, the dynamic search tool on a model that takes it.
+    #[test]
+    fn anthropic_line_replays_its_own_blocks_and_composes_the_rest() {
+        let mut elsewhere = ChatMessage::assistant(
+            Some("Reading.".into()),
+            Some(vec![ToolCall { id: "functions.read_note:0".into(), kind: "function".into(), function: FunctionCall { name: "read_note".into(), arguments: r#"{"path":"A.md"}"#.into() } }]),
+        );
+        elsewhere.reasoning_content = Some("deepseek thoughts".into());
+        elsewhere.extra_items = vec![
+            json!({ "type": "thinking", "thinking": "deepseek thoughts", "signature": "msg-1" }),
+            json!({ "type": "text", "text": "Reading." }),
+            json!({ "type": "tool_use", "id": "functions.read_note:0", "name": "read_note", "input": { "path": "A.md" } }),
+        ];
+        let mut here = ChatMessage::assistant(Some("Found.".into()), None);
+        here.blocks_line = BlockLine::Anthropic;
+        here.extra_items = vec![
+            json!({ "type": "thinking", "thinking": "", "signature": "sig-claude" }),
+            json!({ "type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": { "query": "q" } }),
+            json!({ "type": "bash_code_execution_tool_result", "tool_use_id": "srvtoolu_2", "content": {} }),
+            json!({ "type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": [] }),
+            json!({ "type": "text", "text": "Found." }),
+        ];
+        let req = ChatRequest {
+            model: "claude-opus-5-5".into(),
+            reasoning_effort: Some("high".into()),
+            tools: Some(vec![ToolDef::Raw(json!({ "type": "web_search" }))]),
+            ..request(vec![
+                ChatMessage::system("Be terse."),
+                ChatMessage::user("hi"),
+                elsewhere,
+                ChatMessage::tool_result("functions.read_note:0", "# A"),
+                here,
+                ChatMessage::user("more"),
+            ])
+        };
+        let body = messages_request_body(&req, BlockLine::Anthropic);
+        let msgs = body["messages"].as_array().unwrap();
+        let composed = msgs[1]["content"].as_array().unwrap();
+        let kinds: Vec<&str> = composed.iter().map(|b| b["type"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["text", "tool_use"], "no thinking from another vendor, signed or composed");
+        assert_eq!(composed[1]["id"], "functions_read_note_0");
+        assert_eq!(msgs[2]["content"][0]["tool_use_id"], "functions_read_note_0", "the result follows its call");
+        let replayed = msgs[3]["content"].as_array().unwrap();
+        let kinds: Vec<&str> = replayed.iter().map(|b| b["type"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["thinking", "server_tool_use", "bash_code_execution_tool_result", "web_search_tool_result", "text"]);
+        assert_eq!(replayed[0]["signature"], "sig-claude");
+        assert_eq!(body["thinking"], json!({ "type": "adaptive", "display": "summarized", "block_binding": { "prefix_mismatch_behavior": "drop_block" } }));
+        assert_eq!(body["output_config"], json!({ "effort": "high" }));
+        assert_eq!(body["cache_control"], json!({ "type": "ephemeral" }));
+        assert_eq!(body["max_tokens"], MAX_OUTPUT_TOKENS);
+        assert_eq!(body["tools"][0]["type"], ANTHROPIC_WEB_SEARCH_DYNAMIC_TYPE);
+
+        // The same history on DeepSeek's line: the Anthropic turn is composed there
+        // (its reasoning text as a signatureless block), and nothing is cached
+        let body = messages_request_body(&req, BlockLine::Deepseek);
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs[1]["content"][0], json!({ "type": "thinking", "thinking": "deepseek thoughts", "signature": "msg-1" }));
+        assert_eq!(msgs[1]["content"][2]["id"], "functions.read_note:0", "ids pass unchanged on DeepSeek's line");
+        let kinds: Vec<&str> = msgs[3]["content"].as_array().unwrap().iter().map(|b| b["type"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["text"]);
+        assert!(body.get("cache_control").is_none());
+        assert_eq!(body["tools"][0]["type"], ANTHROPIC_WEB_SEARCH_TYPE);
+    }
+
+    /// Thinking off is the lowest effort (the newest models refuse to disable it);
+    /// a Claude model of an earlier generation is sent no thinking and no effort,
+    /// and the basic search tool.
+    #[test]
+    fn anthropic_line_thinking_off_and_older_models() {
+        let off = ChatRequest {
+            model: "claude-sonnet-5-5".into(),
+            thinking: Some(json!({ "type": "disabled" })),
+            ..request(vec![ChatMessage::user("x")])
+        };
+        let body = messages_request_body(&off, BlockLine::Anthropic);
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert_eq!(body["output_config"], json!({ "effort": "low" }));
+        let unset = ChatRequest { model: "claude-haiku-5-5".into(), ..request(vec![ChatMessage::user("x")]) };
+        let body = messages_request_body(&unset, BlockLine::Anthropic);
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert!(body.get("output_config").is_none(), "no level set: the model's default");
+        let old = ChatRequest {
+            model: "claude-haiku-4-5".into(),
+            reasoning_effort: Some("high".into()),
+            tools: Some(vec![ToolDef::Raw(json!({ "type": "web_search" }))]),
+            ..request(vec![ChatMessage::user("x")])
+        };
+        let body = messages_request_body(&old, BlockLine::Anthropic);
+        assert!(body.get("thinking").is_none() && body.get("output_config").is_none());
+        assert_eq!(body["tools"][0]["type"], ANTHROPIC_WEB_SEARCH_TYPE);
+        assert_eq!(body["cache_control"], json!({ "type": "ephemeral" }));
+    }
+
+    /// On Anthropic's line a thinking block with no text but a signature is kept
+    /// (the reasoning is in the signature); on DeepSeek's it is dropped as before.
+    /// pause_turn and refusal keep their names as finish reasons.
+    #[test]
+    fn parser_keeps_signed_thinking_on_anthropic_line_and_names_pause_and_refusal() {
+        let events = [
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "", "signature": "" } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "signature_delta", "signature": "sig" } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+        ];
+        let run = |mut parser: MessagesParser, stop: &str| {
+            let mut raw = vec![];
+            let mut finish = None;
+            let mut evs = events.to_vec();
+            evs.push(json!({ "type": "message_delta", "delta": { "stop_reason": stop }, "usage": { "output_tokens": 1 } }));
+            for ev in &evs {
+                for chunk in parser.handle(ev["type"].as_str().unwrap(), ev) {
+                    raw.extend(chunk.raw_items.unwrap_or_default());
+                    for c in chunk.choices {
+                        finish = c.finish_reason.or(finish);
+                    }
+                }
+            }
+            (raw, finish)
+        };
+        let (raw, finish) = run(MessagesParser::for_line(BlockLine::Anthropic), "pause_turn");
+        assert_eq!(raw, vec![json!({ "type": "thinking", "thinking": "", "signature": "sig" })]);
+        assert_eq!(finish.as_deref(), Some("pause_turn"));
+        let (raw, finish) = run(MessagesParser::for_line(BlockLine::Deepseek), "refusal");
+        assert!(raw.is_empty());
+        assert_eq!(finish.as_deref(), Some("refusal"));
     }
 
     /// The stream captured live on 2026-09-14 (deepseek-flash, thinking on, a

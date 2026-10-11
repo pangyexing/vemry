@@ -171,7 +171,7 @@ fn history_path(meta_dir: &Path, id: &str) -> PathBuf {
 /// conversation). `extra_items` is serde(skip) on ChatMessage (to keep it out of
 /// a Chat Completions request body), so it is added to the sidecar by hand here —
 /// otherwise the Responses search context could not be resumed after a restart.
-/// `turn` and `context_refs` are the same story (skip_serializing keeps them out
+/// `turn`, `context_refs` and `blocks_line` are the same story (skip_serializing keeps them out
 /// of the request body); reading back uses serde's default deserialisation, so no
 /// symmetric handwork is needed.
 pub fn write_history(meta_dir: &Path, id: &str, history: &[ChatMessage]) {
@@ -185,6 +185,9 @@ pub fn write_history(meta_dir: &Path, id: &str, history: &[ChatMessage]) {
             if let Some(obj) = v.as_object_mut() {
                 if !m.extra_items.is_empty() {
                     obj.insert("extra_items".into(), Value::Array(m.extra_items.clone()));
+                    if m.blocks_line != crate::types::BlockLine::default() {
+                        obj.insert("blocks_line".into(), json!(m.blocks_line));
+                    }
                 }
                 if let Some(t) = &m.turn {
                     obj.insert("turn".into(), json!(t));
@@ -580,6 +583,8 @@ mod tests {
         let mut assistant = ChatMessage::assistant(Some("there".into()), None);
         // A serde(skip) field must be added to the sidecar by hand, or the Responses search context is cut off
         assistant.extra_items = vec![json!({ "type": "web_search_call", "id": "ws_1" })];
+        // …and with them the line they came from, or a native Anthropic turn would be replayed to DeepSeek
+        assistant.blocks_line = crate::types::BlockLine::Anthropic;
         let mut user = ChatMessage::user("hi");
         user.turn = Some("t1".into()); // skip_serializing likewise: lose the turn id and forking degrades to counting ordinals
         // context_refs likewise: lose the metadata and scrub is left with the attribute-scan fallback
@@ -595,6 +600,8 @@ mod tests {
         assert!(loaded[1].context_refs.is_empty());
         assert_eq!(loaded[1].extra_items.len(), 1);
         assert_eq!(loaded[1].extra_items[0]["id"], "ws_1");
+        assert_eq!(loaded[1].blocks_line, crate::types::BlockLine::Anthropic);
+        assert_eq!(loaded[0].blocks_line, crate::types::BlockLine::Deepseek, "absent = the default line");
         // An existing old session has no sidecar → None, and no panic
         assert!(read_history(dir.path(), "20200101-000000.000").is_none());
     }

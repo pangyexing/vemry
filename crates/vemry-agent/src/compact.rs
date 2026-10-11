@@ -86,6 +86,11 @@ pub fn is_context_overflow(message: &str) -> bool {
     (m.contains("context") && (m.contains("length") || m.contains("window") || m.contains("exceed")))
         || m.contains("maximum context")
         || m.contains("input is too long")
+        || m.contains("prompt is too long")
+        || m.contains("prompt too long")
+        || m.contains("prompt 超长")
+        || m.contains("token length too long")
+        || m.contains("exceeds the model specification")
         || m.contains("too many tokens")
         || m.contains("exceeds the maximum")
 }
@@ -296,6 +301,13 @@ mod tests {
         assert!(is_context_overflow("HTTP 400: This model's maximum context length is 131072 tokens"));
         assert!(is_context_overflow("context_length_exceeded"));
         assert!(is_context_overflow("Input is too long for this model"));
+        // Zhipu's (code 1261, both sites) and Moonshot's wordings
+        assert!(is_context_overflow(r#"HTTP 400: {"error":{"code":"1261","message":"Prompt 超长"}}"#));
+        assert!(is_context_overflow(r#"HTTP 400: {"error":{"code":"1261","message":"Prompt too long"}}"#));
+        assert!(is_context_overflow("Invalid request: Input token length too long"));
+        assert!(is_context_overflow("prompt tokens + max_tokens exceeds the model specification"));
+        // Anthropic's wording
+        assert!(is_context_overflow(r#"HTTP 400 Bad Request: {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 1048577 tokens > 1000000 maximum"}}"#));
         assert!(!is_context_overflow("HTTP 401: invalid api key"));
         assert!(!is_context_overflow("rate limit exceeded"));
     }

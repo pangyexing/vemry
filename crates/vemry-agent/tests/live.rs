@@ -6,6 +6,12 @@
 //! Optional: VEMRY_TEST_BASE_URL (default DeepSeek), VEMRY_TEST_MODEL (default
 //! deepseek-flash; the Anthropic-format line searches on every DeepSeek model,
 //! measured 2026-09-14).
+//!
+//! Any vendor the settings page offers runs the first test, through the transport
+//! the app would pick for it — e.g. VEMRY_TEST_BASE_URL=https://api.anthropic.com
+//! VEMRY_TEST_MODEL=claude-sonnet-5-5. `live_a_session_moves_across_vendors` takes a
+//! second endpoint (VEMRY_TEST_NEXT_BASE_URL, VEMRY_TEST_NEXT_MODEL,
+//! VEMRY_TEST_NEXT_API_KEY) and moves one session onto it and back.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -15,7 +21,7 @@ use vemry_agent::permission::AutoAllow;
 use vemry_agent::runner::{AgentEvent, AgentRunner, RunnerConfig, WritePolicy};
 use vemry_agent::session::SessionLog;
 use vemry_agent::provider::ProviderKind;
-use vemry_agent::{AnthropicTransport, HttpTransport, ProviderConfig};
+use vemry_agent::{transport_for, AnthropicTransport, HttpTransport, ProviderConfig};
 use vemry_core::Vault;
 
 /// The chat model under test.
@@ -50,7 +56,7 @@ async fn live_agent_creates_note_via_tools() {
     let log = SessionLog::create(&meta_dir).unwrap();
 
     let runner = AgentRunner {
-        transport: Arc::new(HttpTransport::new()),
+        transport: transport_for(&provider, false),
         gate: Arc::new(AutoAllow),
         plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
         actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
@@ -184,14 +190,17 @@ async fn live_plan_phase_lightens_until_the_plan() {
     assert!(dir.path().join("Fruit.md").exists(), "Fruit.md was not created");
 }
 
-/// The search carrier end to end through the runner: the Anthropic-format line
-/// runs the server-side search, the results arrive structured (title and url,
-/// asserted — the Responses line never returned any) and the turn's usage counts
-/// the searches. Measured 2026-09-14 on deepseek-flash: two searches, eight results
-/// each, the sources in the answer among them.
+/// The search carrier end to end through the runner, on whichever vendor
+/// VEMRY_TEST_BASE_URL names, through the transport the app picks for it with search
+/// on: the provider runs the server-side search, the results arrive structured
+/// (title and url, asserted) and, where the line reports it (DeepSeek's and
+/// Anthropic's Messages lines), the turn's usage counts the searches. Measured
+/// 2026-09-14 on deepseek-flash: two searches, eight results each, the sources in the
+/// answer among them. For Zhipu, pick GLM-5.3 (VEMRY_TEST_MODEL=glm-5.3): its search
+/// sends no progress events, only the sources.
 #[tokio::test]
 #[ignore]
-async fn live_anthropic_web_search() {
+async fn live_web_search() {
     let Some(api_key) = std::env::var("VEMRY_TEST_API_KEY").ok().filter(|k| !k.is_empty()) else {
         eprintln!("VEMRY_TEST_API_KEY not set — skipping live test");
         return;
@@ -211,8 +220,9 @@ async fn live_anthropic_web_search() {
     std::fs::create_dir_all(&meta_dir).unwrap();
     let log = SessionLog::create(&meta_dir).unwrap();
 
+    assert!(provider.web_search_available(), "{} at {} runs no search", provider.model, provider.base_url);
     let runner = AgentRunner {
-        transport: Arc::new(AnthropicTransport::new()),
+        transport: transport_for(&provider, true),
         gate: Arc::new(AutoAllow),
         plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
         actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
@@ -264,8 +274,8 @@ async fn live_anthropic_web_search() {
     eprintln!("=== results ({}): {:#?}", results.len(), results);
     eprintln!("=== text: {text}");
     assert!(!text.is_empty(), "no answer text");
-    assert!(searched, "no web search activity observed — check the /anthropic/v1/messages path and the tool shape");
-    assert!(!results.is_empty(), "the search ran but returned no structured results — the web_search_tool_result block changed shape");
+    assert!(searched || !results.is_empty(), "no web search activity observed — check the endpoint path and the tool shape");
+    assert!(!results.is_empty(), "the search ran but returned no structured results — the result's shape changed");
     assert!(results.iter().all(|r| !r.url.is_empty()), "a result without a url: {results:?}");
     let titled = results.iter().filter(|r| !r.title.is_empty()).count();
     assert!(titled * 2 > results.len(), "most hits should carry a title, got {titled} of {}", results.len());
@@ -276,7 +286,9 @@ async fn live_anthropic_web_search() {
             _ => None,
         })
         .sum();
-    assert!(searches > 0, "the usage did not count the searches");
+    if provider.is_deepseek() || provider.is_anthropic() {
+        assert!(searches > 0, "the usage did not count the searches");
+    }
 }
 
 /// A session may move between lines when the composer's web search switch changes: a
@@ -443,7 +455,7 @@ async fn live_a_session_moves_to_a_thinking_model() {
 /// accepted and ignored / accepted and effective — the first is decided by the
 /// error itself, and for the other two the printed queries and the source domains
 /// in the answer are read by hand (the same "weak but honest" assertions as
-/// live_anthropic_web_search). **The prompt deliberately names no domain**: name
+/// live_web_search). **The prompt deliberately names no domain**: name
 /// one and the model writes its own site: query, which makes "the filter worked"
 /// indistinguishable from "it copied the prompt" (a confusion the first run on
 /// 2026-08-19 walked into). The criterion: queries that carry site:xinhuanet.com
@@ -739,4 +751,84 @@ async fn live_research_reads_the_skill_before_planning() {
     let plan_at = tools.iter().position(|t| t == "update_plan" || t == "propose_plan");
     assert!(plan_at.is_none_or(|p| skill_at < p), "the skill must be read before the plan: {tools:?}");
     assert!(events.lock().unwrap().iter().any(|e| matches!(e, AgentEvent::SkillActivated { name } if name == "research")));
+}
+
+/// One session across two vendors and back: a first leg on the first endpoint with
+/// thinking at high (its answers carry thinking text, and on DeepSeek's line its
+/// tool turns must), a second on another vendor's endpoint, a third back on the
+/// first. Each leg reads a note, so every leg replays tool turns another vendor
+/// wrote. Nothing is stripped by hand: the transports must send each endpoint what
+/// it takes — no thinking text where the vendor has no such field, no foreign
+/// thinking signature to Anthropic, tool-call ids in the shape it accepts.
+#[tokio::test]
+#[ignore]
+async fn live_a_session_moves_across_vendors() {
+    let key = |name: &str| std::env::var(name).ok().filter(|k| !k.is_empty());
+    let (Some(first_key), Some(next_key), Some(next_base), Some(next_model)) =
+        (key("VEMRY_TEST_API_KEY"), key("VEMRY_TEST_NEXT_API_KEY"), key("VEMRY_TEST_NEXT_BASE_URL"), key("VEMRY_TEST_NEXT_MODEL"))
+    else {
+        eprintln!("VEMRY_TEST_API_KEY and VEMRY_TEST_NEXT_{{API_KEY,BASE_URL,MODEL}} not all set — skipping live test");
+        return;
+    };
+    let first = ProviderConfig::custom(
+        std::env::var("VEMRY_TEST_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into()),
+        test_model(),
+        first_key,
+    );
+    let next = ProviderConfig::custom(next_base, next_model, next_key);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Apples.md"), "# Apples\n\nApples keep best in a cool, dark place.\n").unwrap();
+    std::fs::write(dir.path().join("Pears.md"), "# Pears\n\nPears ripen at room temperature.\n").unwrap();
+    std::fs::write(dir.path().join("Plums.md"), "# Plums\n\nPlums bruise easily and keep a few days.\n").unwrap();
+    let vault = Arc::new(Mutex::new(Some(Vault::open(dir.path()).unwrap())));
+    let meta_dir = dir.path().join(".vemry");
+    std::fs::create_dir_all(&meta_dir).unwrap();
+    let log = SessionLog::create(&meta_dir).unwrap();
+    let mut history: Vec<vemry_agent::types::ChatMessage> = vec![];
+    let legs = [
+        (&first, "Read Apples.md with the read_note tool and tell me in one sentence how to store apples."),
+        (&next, "Now read Pears.md with the read_note tool and say in one sentence how pears differ."),
+        (&first, "Finally read Plums.md with the read_note tool and say in one sentence what is special about plums."),
+    ];
+    for (i, (provider, message)) in legs.into_iter().enumerate() {
+        let runner = AgentRunner {
+            transport: transport_for(provider, false),
+            gate: Arc::new(AutoAllow),
+            plan_gate: Arc::new(vemry_agent::permission::AutoApprovePlan),
+            actions_gate: Arc::new(vemry_agent::permission::AutoApproveActions),
+            read_gate: Arc::new(vemry_agent::permission::DenyReads),
+            vault: Arc::clone(&vault),
+            sources: Arc::new(Mutex::new(vec![])),
+            journal: Arc::new(Mutex::new(vec![])),
+        };
+        let before = history.len();
+        tokio::time::timeout(
+            Duration::from_secs(240),
+            runner.run(
+                provider,
+                &RunnerConfig {
+                    max_iterations: 6,
+                    write_policy: WritePolicy::Ask,
+                    reasoning_effort: provider.reasoning_supported().then(|| "high".into()),
+                    ..Default::default()
+                },
+                &mut history,
+                Some(message.into()),
+                None,
+                vec![],
+                None,
+                &|_e| {},
+                &AtomicBool::new(false),
+                &log,
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("leg {} on {} timed out", i + 1, provider.model))
+        .unwrap_or_else(|e| panic!("leg {} on {} failed: {e}", i + 1, provider.model));
+        assert!(
+            history[before..].iter().any(|m| m.tool_calls.is_some()),
+            "leg {} made no tool call, so no foreign tool turn was exercised",
+            i + 1
+        );
+    }
 }

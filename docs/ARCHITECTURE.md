@@ -134,8 +134,8 @@ tested without a window and core can be reused on its own.
 
 | Module | Responsibility |
 |---|---|
-| `provider.rs` | `ProviderConfig` and `ProviderKind`: one endpoint and one model per request — `Custom` (any OpenAI-compatible endpoint; Zhipu `glm-4.7-flash` on a first start), or `Hosted` with the account's model catalog; predicates for search and image support, and the host checks (`host`, `is_deepseek`, `is_zhipu`) |
-| `client.rs` / `anthropic.rs` / `types.rs` | The `ChatTransport` trait — **the LLM channel boundary**: Chat Completions over SSE, and DeepSeek's Anthropic-format line, which carries web search. One read loop, one connection pool, a stream-idle timeout |
+| `provider.rs` | `ProviderConfig` and `ProviderKind`: one endpoint and one model per request — `Custom` (any OpenAI-compatible endpoint; Zhipu `glm-4.7-flash` on a first start), or `Hosted` with the account's model catalog. The `Vendor`, read off the host, and per-vendor tables of each vendor's current models decide what a request carries: usage on the stream, whether and how a thinking level is spelled (`chat_effort_fields`, `responses_scale`), whether earlier thinking text goes back, search and image support; a model of an earlier generation gets the common protocol and nothing more |
+| `client.rs` / `anthropic.rs` / `responses.rs` / `types.rs` | The `ChatTransport` trait — **the LLM channel boundary**: Chat Completions over SSE; the Messages shape, which is DeepSeek's Anthropic-format line (it carries web search) and Anthropic's own API (every request to it); the Responses API of OpenAI, xAI and Meta (every request to them: OpenAI's current models call tools while reasoning only there, xAI's Chat Completions is a legacy endpoint, and Meta's carries no reasoning across turns). `transport_for` is the one place a request's transport is chosen. One read loop, one connection pool, a stream-idle timeout |
 | `runner.rs` | The agent loop, at most 25 iterations; session-level tools execute here. See "An agent turn" |
 | `prompt.rs` | The system prompt, frozen per session; the user envelope and turn tail; the one untrusted-page envelope (`page_envelope_part`) |
 | `context.rs` | `@` references, resolved under the runner's vault lock; `inflate_images` and `scrub_private_refs`, which re-gate every request; `read_file`'s text and PDF reading |
@@ -262,8 +262,12 @@ regenerates locate by it, since counting messages falls out of step after a comp
 The loop is built to finish: a transient error backs off and retries while nothing has been
 produced; a context overflow compacts, then summarises, then retries; a wrap-up hint arrives
 with five iterations left; a tool result entering the history stops at 32k characters;
-`reasoning_content` is sent back (DeepSeek's thinking contract). The `ChatTransport` mock
-makes every branch testable.
+the thinking text goes back where the vendor reads it (DeepSeek's thinking contract) and
+nowhere a strict API would refuse the field; a recorded Messages block (a thinking signature,
+a search result) goes back only to the line that wrote it (`ChatMessage::blocks_line`), so a
+session can change vendor between any two messages; a response a server tool paused is sent
+back to resume, and a refusal ends the turn without entering the history. The
+`ChatTransport` mock makes every branch testable.
 
 ### The AI writes a note
 
@@ -446,8 +450,10 @@ Each boundary in a line or two; the section named after it holds the mechanism.
 with everything else usable offline. Adding any outbound request, a convenience fetch
 included, changes this list and is a design decision. There is no telemetry.
 
-1. **The LLM channel** (`vemry-agent`: Chat Completions, or the Anthropic-format line with
-   the provider's server-side search). A request goes out only for something the user asked
+1. **The LLM channel** (`vemry-agent`: Chat Completions, the Anthropic-format line with
+   the provider's server-side search, Anthropic's Messages API, or the Responses API of
+   OpenAI, xAI and Meta; the last with `store: false`, so nothing of a conversation is
+   kept on their side). A request goes out only for something the user asked
    of the model — a turn sent, a translation started — and carries what the runner
    assembled, already through the privacy gates. A model from one of your providers is
    reached straight at that provider's endpoint; a vemry hosted model, through exit 6.
@@ -713,7 +719,10 @@ language. `print_system_prompt` (an ignored test) prints it.
 
 The prompt is **frozen as a session-level snapshot** (`SessionSetup`): a prompt rebuilt
 between turns guarantees a miss of the provider's prefix cache, and on DeepSeek a hit costs
-roughly a thirtieth of a miss. It is dropped, and the next turn rebuilds it, by a change to
+roughly a thirtieth of a miss (Anthropic's cache is asked for on every request, and reads
+cost a tenth of the input price). A Claude thinking block is also bound to the conversation
+before it; vemry's own compaction rewrites old tool results, so a block that invalidated is
+dropped by the API (`drop_block`) rather than failing the request. It is dropped, and the next turn rebuilds it, by a change to
 what is private, a write to VEMRY.md, a block-type change, or a skill switched, copied or
 added — privacy outranks the cache. Volatile facts ride the turn tail. The plan-confirmation
 switch is frozen with the prompt, since it adds a tool. Web search is read afresh every turn
@@ -958,12 +967,16 @@ lines); a clip or a rich-text paste. Never on autosave.
 ### Web search
 
 Search is the **provider's server-side** `web_search` tool: no search vendor in the app, no
-second key, and search stays inside the LLM channel. The carrier is `AnthropicTransport`,
-because DeepSeek's Anthropic-format API is where the provider runs search (`ToolDef::Raw`
-passes the server tool through; `ChatMessage.extra_items` replays its blocks across turns).
-One predicate, `ProviderConfig::web_search_available` — a DeepSeek host on a custom
-provider, the catalog's `search` flag on the hosted one — drives the composer's switch (off by default), the
-per-turn check and the transport choice. The session log keeps queries and links, never page
+second key, and search stays inside the LLM channel. The carriers are `AnthropicTransport`,
+because DeepSeek's Anthropic-format API and Anthropic's own are where those providers run
+search, `ResponsesTransport` on OpenAI's, xAI's and Meta's, and Chat Completions on Zhipu's, which
+takes a search tool of its own for GLM-5.3 (`ToolDef::Raw` passes the server tool through —
+as the filtering variant on the Claude models that take it, in Zhipu's shape with a
+prompt that has it cite by link; `ChatMessage.extra_items` replays its blocks across turns,
+to the line that wrote them). One predicate, `ProviderConfig::web_search_available` — a
+DeepSeek, Anthropic, OpenAI, xAI or Meta host, or GLM-5.3 on a Zhipu one, on a custom
+provider, the catalog's `search` flag on the hosted one — drives the composer's switch (off
+by default), the per-turn check and the transport choice. The session log keeps queries and links, never page
 text. **A hit is not a source**: only the answer's citations settle. The tool body stays
 parameterless — whether a domain filter takes effect is unmeasured, and a control that does
 nothing is worse than none. Search passes no write gate: that boundary is the write path.
@@ -1553,4 +1566,5 @@ Then the rest:
 | A per-block authorship history | the ledger's lines are timestamped and append-only (compaction above 5000 lines keeps only live hashes, so a history would need superseded lines kept) |
 | Installable extensions and themes | an extension is a packaged user script behind the boundary scripts already have (the glossary keeps the word "extension" for it); a theme is a set of values for the colour tokens in `src/app.css` that passes `scripts/check-contrast.mjs` |
 | Split-pane browsing in the main window | docking already moves tabs into the main window by `reparent`, without a reload, and places them where the frontend reports (`browser_panel_layout`); a split pane is the same webviews in an editor pane's rectangle |
+| Search on Moonshot; thinking text from OpenAI's models | Moonshot's built-in search tool retires on 2026-10-20 and its successor is a set of search endpoints the client would call itself — a new kind of request on the network-exit list, so a design decision; OpenAI's reasoning summaries are one request field away, once an organisation that is not verified for them is not refused the whole request |
 | A password lock for privacy zones (a design note, unscheduled: [design/privacy-zone-password-lock.md](design/privacy-zone-password-lock.md)) | content enters the WebView only through a closed list of IPC commands; the agent's named reads in `vemry-core` (`*_for_agent`) and the scripts' `hide_private` switch are the read-only view a lock would reuse |

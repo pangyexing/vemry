@@ -79,7 +79,7 @@ export const SETTINGS: SettingEntry[] = [
 
   { id: "ai.model", page: "ai", label: "settings.currentModel", hint: "settings.currentModelHint", keywords: "模型 model 当前 current 切换 switch glm deepseek" },
   { id: "ai.hosted", page: "ai", label: "settings.providerHosted", hint: "settings.hostedHint", keywords: "托管 hosted 登录 sign in account 账户" },
-  { id: "ai.providers", page: "ai", label: "settings.providers", hint: "settings.providersHint", keywords: "提供方 provider 端点 endpoint url openai ollama deepseek key 密钥 api 自带", jump: true },
+  { id: "ai.providers", page: "ai", label: "settings.providers", hint: "settings.providersHint", keywords: "提供方 provider 端点 endpoint url openai anthropic claude xai grok meta muse moonshot kimi 月之暗面 zhipu glm 智谱 z.ai ollama deepseek key 密钥 api 自带", jump: true },
   { id: "ai.effort", page: "ai", label: "settings.reasoningEffort", hint: "settings.reasoningHint", keywords: "思考 thinking reasoning effort 深度" },
   { id: "ai.webSearch", page: "ai", label: "settings.webSearch", hint: "settings.webSearchHint", keywords: "搜索 联网 search web" },
   { id: "ai.planConfirm", page: "ai", label: "settings.planConfirm", hint: "settings.planConfirmHint", keywords: "计划 plan" },

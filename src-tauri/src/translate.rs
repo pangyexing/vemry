@@ -16,7 +16,6 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use vemry_agent::translate::{TranslateDoc, TranslateEvent, TranslateJob, TranslationCache};
-use vemry_agent::HttpTransport;
 use vemry_core::{sanitize_filename, Frontmatter, NoteId, SegKind, Segment, VemryMeta};
 use vemry_clip::CLIPS_DIR;
 
@@ -258,7 +257,7 @@ pub async fn translate_open(
         s.translate_addendum.clone(),
         provider.clone(),
         effort,
-        Arc::new(HttpTransport::new()),
+        vemry_agent::transport_for(&provider, false),
         Some(cache),
         on_event,
     );

@@ -633,7 +633,7 @@ impl TranslateJob {
         let segs: Vec<&Segment> = owned.iter().collect();
         // Thinking off: a translation is transcription, not reasoning, and on a
         // thinking model the thinking is most of the latency. Sent only where the
-        // level is sent at all (a DeepSeek endpoint); elsewhere nothing is sent
+        // level is sent at all (a model that takes one), as that model's lowest level
         let (reasoning_effort, thinking) = effort_fields(self.effort.as_deref().map(|_| "none"));
         let request = ChatRequest {
             feature: crate::types::Feature::Translate,
@@ -645,7 +645,7 @@ impl TranslateJob {
             ],
             tools: None,
             stream: true,
-            // usage rides on the stream's tail; DeepSeek (and the relay in front of it) sends it only when asked (the same gate the agent uses)
+            // usage rides on the stream's tail; some vendors send it only when asked (the same gate the agent uses)
             stream_options: self.provider.include_usage().then(|| serde_json::json!({ "include_usage": true })),
             reasoning_effort,
             thinking,

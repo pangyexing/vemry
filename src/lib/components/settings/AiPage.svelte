@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, EFFORT_OPTIONS, HOSTED, type CustomProvider, type ModelGroup, type ModelRef, type ProviderView } from "$lib/api";
-  import { t } from "$lib/i18n/i18n.svelte";
+  import { i18n, t, type MessageKey } from "$lib/i18n/i18n.svelte";
   import { isImeKeydown } from "$lib/ime";
   import { groupName, modelLabel, sameRef } from "$lib/models";
   import { account } from "$lib/stores/account.svelte";
@@ -91,18 +91,43 @@
   }
 
   /** The endpoints "Add a provider…" offers, with the model ids each is known to serve. The
-   *  name is left empty: Rust names an unnamed provider after its vendor or host. */
+   *  name is left empty: Rust names an unnamed provider after its vendor or host. Moonshot
+   *  runs a mainland and an international site with separate keys; the preset picks the one
+   *  the interface language suggests, and the endpoint list offers both. */
+  const MOONSHOT_CN = "https://api.moonshot.cn/v1";
+  const MOONSHOT_INTL = "https://api.moonshot.ai/v1";
   const PRESETS: Record<string, { base_url: string; models: string[] }> = {
-    zhipu: { base_url: "https://open.bigmodel.cn/api/paas/v4", models: ["glm-4.7-flash", "glm-4.7"] },
+    zhipu: { base_url: "https://open.bigmodel.cn/api/paas/v4", models: ["glm-4.7-flash", "glm-5.3-flash", "glm-5.3"] },
     deepseek: { base_url: "https://api.deepseek.com", models: ["deepseek-flash", "deepseek-v4-pro"] },
+    openai: { base_url: "https://api.openai.com/v1", models: ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"] },
+    anthropic: { base_url: "https://api.anthropic.com", models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"] },
+    xai: { base_url: "https://api.x.ai/v1", models: ["grok-4.7", "grok-4.3"] },
+    moonshot: { base_url: MOONSHOT_INTL, models: ["kimi-k3"] },
+    meta: { base_url: "https://api.meta.ai/v1", models: ["muse-spark-1.3"] },
+    zai: { base_url: "https://api.z.ai/api/paas/v4", models: ["glm-5.3-flash", "glm-5.3"] },
     ollama: { base_url: "http://localhost:11434/v1", models: [] },
     other: { base_url: "", models: [] },
   };
   function addProvider(kind: string) {
     const preset = PRESETS[kind];
     if (!preset) return;
-    saveRows([...rows(), { id: "", name: "", api_key: "", base_url: preset.base_url, models: [...preset.models] }]);
+    const base_url = kind === "moonshot" && i18n.locale.startsWith("zh") ? MOONSHOT_CN : preset.base_url;
+    saveRows([...rows(), { id: "", name: "", api_key: "", base_url, models: [...preset.models] }]);
   }
+  /** The model ids the presets name, for the "add a model id" suggestions, each labelled with
+   *  its vendor (the two flagship lines whose ids say nothing keep a label of their own). */
+  const MODEL_SUGGESTIONS: [string, MessageKey][] = [
+    ["glm-4.7-flash", "settings.modelZhipuFlash"],
+    ["glm-5.3-flash", "settings.endpointZhipu"],
+    ["glm-5.3", "settings.modelZhipu"],
+    ["deepseek-flash", "settings.modelDeepseekFlash"],
+    ["deepseek-v4-pro", "settings.modelDeepseekPro"],
+    ...PRESETS.openai.models.map((m): [string, MessageKey] => [m, "settings.endpointOpenai"]),
+    ...PRESETS.anthropic.models.map((m): [string, MessageKey] => [m, "settings.endpointAnthropic"]),
+    ...PRESETS.xai.models.map((m): [string, MessageKey] => [m, "settings.endpointXai"]),
+    ...PRESETS.moonshot.models.map((m): [string, MessageKey] => [m, "settings.endpointMoonshot"]),
+    ...PRESETS.meta.models.map((m): [string, MessageKey] => [m, "settings.endpointMeta"]),
+  ];
 
   const effortLabel = (value: string, isDefault: boolean) => {
     const name = t(`settings.effort.${value as "none"}`);
@@ -197,6 +222,12 @@
           <option value="" disabled>{t("settings.providerAdd")}</option>
           <option value="zhipu">{t("settings.endpointZhipu")}</option>
           <option value="deepseek">{t("settings.endpointDeepseek")}</option>
+          <option value="openai">{t("settings.endpointOpenai")}</option>
+          <option value="anthropic">{t("settings.endpointAnthropic")}</option>
+          <option value="xai">{t("settings.endpointXai")}</option>
+          <option value="moonshot">{t("settings.endpointMoonshot")}</option>
+          <option value="meta">{t("settings.endpointMeta")}</option>
+          <option value="zai">{t("settings.endpointZai")}</option>
           <option value="ollama">{t("settings.endpointOllama")}</option>
           <option value="other">{t("settings.providerPresetOther")}</option>
         </select>
@@ -273,15 +304,21 @@
   </SettingSection>
 
   <datalist id="base-url-presets">
-    <option value="https://open.bigmodel.cn/api/paas/v4">{t("settings.endpointZhipu")}</option>
-    <option value="https://api.deepseek.com">{t("settings.endpointDeepseek")}</option>
-    <option value="http://localhost:11434/v1">{t("settings.endpointOllama")}</option>
+    <option value={PRESETS.zhipu.base_url}>{t("settings.endpointZhipu")}</option>
+    <option value={PRESETS.deepseek.base_url}>{t("settings.endpointDeepseek")}</option>
+    <option value={PRESETS.openai.base_url}>{t("settings.endpointOpenai")}</option>
+    <option value={PRESETS.anthropic.base_url}>{t("settings.endpointAnthropic")}</option>
+    <option value={PRESETS.xai.base_url}>{t("settings.endpointXai")}</option>
+    <option value={MOONSHOT_CN}>{t("settings.endpointMoonshot")}</option>
+    <option value={MOONSHOT_INTL}>{t("settings.endpointMoonshot")}</option>
+    <option value={PRESETS.meta.base_url}>{t("settings.endpointMeta")}</option>
+    <option value={PRESETS.zai.base_url}>{t("settings.endpointZai")}</option>
+    <option value={PRESETS.ollama.base_url}>{t("settings.endpointOllama")}</option>
   </datalist>
   <datalist id="model-presets">
-    <option value="glm-4.7-flash">{t("settings.modelZhipuFlash")}</option>
-    <option value="glm-4.7">{t("settings.modelZhipu")}</option>
-    <option value="deepseek-flash">{t("settings.modelDeepseekFlash")}</option>
-    <option value="deepseek-v4-pro">{t("settings.modelDeepseekPro")}</option>
+    {#each MODEL_SUGGESTIONS as [id, label] (id)}
+      <option value={id}>{t(label)}</option>
+    {/each}
   </datalist>
 {/if}
 

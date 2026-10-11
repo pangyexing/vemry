@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
-use vemry_agent::provider::{ModelCap, ProviderKind, DEFAULT_MODEL, ZHIPU_BASE_URL};
+use vemry_agent::provider::{ModelCap, ProviderKind, Vendor, DEFAULT_MODEL, ZHIPU_BASE_URL};
 use vemry_agent::ProviderConfig;
 
 use crate::config_store;
@@ -61,9 +61,9 @@ pub struct Settings {
     /// the raw state (the line the cursor is on) a click always means editing.
     #[serde(default = "default_true")]
     pub click_opens_links: bool,
-    /// The agent's web search (the server-side web_search of DeepSeek's
-    /// Anthropic-format endpoint). Search is billed separately from the conversation,
-    /// so it is off by default.
+    /// The agent's web search (the provider's server-side web_search: DeepSeek's
+    /// Anthropic-format endpoint, Anthropic's, OpenAI's, xAI's, Meta's and Zhipu's). Search is billed
+    /// separately from the conversation, so it is off by default.
     #[serde(default)]
     pub web_search_enabled: bool,
     /// The agent's plan confirmation (the propose_plan tool plus a blocking gate):
@@ -139,8 +139,8 @@ pub struct Settings {
     #[serde(default = "default_true")]
     pub readable_line_width: bool,
     /// The thinking depth level (none/low/high/max; DeepSeek's official default is
-    /// high, and none turns thinking off). Sent to a DeepSeek endpoint only — Zhipu
-    /// does not know the parameter, and the enablement check is reasoning_active.
+    /// high, and none turns thinking off). Sent only to a model that takes a level,
+    /// in that vendor's words (the enablement check is reasoning_active).
     /// settings_set clamps an invalid value, so editing the JSON by hand cannot put
     /// it out of range.
     #[serde(default = "default_reasoning_effort")]
@@ -551,8 +551,8 @@ impl Settings {
     }
 
     /// Whether web search is actually in effect: the switch is on and the provider
-    /// runs the search (a DeepSeek endpoint, or the hosted relay where its catalog
-    /// row allows it; see `ProviderConfig::web_search_available`). The settings page badge
+    /// runs the search (a DeepSeek, Anthropic, OpenAI, xAI or Meta endpoint, Zhipu's GLM-5.3, or the hosted relay
+    /// where its catalog row allows it; see `ProviderConfig::web_search_available`). The settings page badge
     /// (web_search_active) and the agent side's enablement check share this one
     /// implementation — writing the boolean expression twice would drift sooner or
     /// later.
@@ -560,8 +560,8 @@ impl Settings {
         self.web_search_enabled && self.provider_config().web_search_available()
     }
 
-    /// Whether the thinking level is actually in effect: the endpoint is DeepSeek,
-    /// or the relay in front of it. The settings page hint, whether the composer's
+    /// Whether the thinking level is actually in effect: the current model takes one
+    /// (`ProviderConfig::reasoning_supported`). The settings page hint, whether the composer's
     /// quick switch is shown, and the agent side's send check share this one
     /// implementation (it is not reimplemented in TS).
     pub fn reasoning_active(&self) -> bool {
@@ -774,18 +774,23 @@ fn env_zhipu_key() -> Option<String> {
     std::env::var("ZHIPU_API_KEY").ok().filter(|k| !k.is_empty())
 }
 
-/// The vendor behind the three endpoints the settings page offers (an
-/// interoperability fact, decided on the host), which names a provider the user left
-/// unnamed. Not copy: a vendor's name reads the same in every language.
+/// The vendor behind an endpoint the settings page offers (an interoperability fact,
+/// decided on the host), which names a provider the user left unnamed. Not copy: a
+/// vendor's name reads the same in every language.
 fn vendor_name(endpoint: &ProviderConfig) -> Option<String> {
-    if endpoint.is_zhipu() {
-        return Some("Zhipu".into());
-    }
-    if endpoint.is_deepseek() {
-        return Some("DeepSeek".into());
-    }
-    let host = endpoint.host()?;
-    (host == "localhost:11434" || host == "127.0.0.1:11434").then(|| "Ollama".into())
+    let name = match endpoint.vendor() {
+        Vendor::DeepSeek => "DeepSeek",
+        Vendor::Zhipu if endpoint.is_zhipu() => "Zhipu",
+        Vendor::Zhipu => "Z.ai",
+        Vendor::OpenAi => "OpenAI",
+        Vendor::Anthropic => "Anthropic",
+        Vendor::XAi => "xAI",
+        Vendor::Moonshot => "Moonshot",
+        Vendor::Meta => "Meta",
+        Vendor::Ollama => "Ollama",
+        Vendor::Other => return None,
+    };
+    Some(name.into())
 }
 
 /// The valid thinking levels. Both entry points (settings_set persisting, and
@@ -1058,6 +1063,18 @@ mod tests {
         assert_eq!(s.providers[0].display_name(), "192.168.1.5:8000");
         let s = loaded(r#"{"base_url":"http://localhost:11434/v1","model":"qwen3:14b"}"#);
         assert_eq!(s.providers[0].display_name(), "Ollama");
+        // Every vendor the settings page offers names an unnamed provider
+        for (base, name) in [
+            ("https://api.openai.com/v1", "OpenAI"),
+            ("https://api.anthropic.com", "Anthropic"),
+            ("https://api.x.ai/v1", "xAI"),
+            ("https://api.moonshot.cn/v1", "Moonshot"),
+            ("https://api.z.ai/api/paas/v4", "Z.ai"),
+            ("https://api.meta.ai/v1", "Meta"),
+        ] {
+            let p = CustomProvider { base_url: base.into(), ..Default::default() };
+            assert_eq!(p.display_name(), name, "{base}");
+        }
     }
 
     /// A hosted file keeps hosted as the current model, and the key typed behind the
