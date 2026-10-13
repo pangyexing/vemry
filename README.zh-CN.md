@@ -191,11 +191,12 @@ Windows 和 Linux 上，把 ⌘ 读作 Ctrl，把 ⌥ 读作 Alt。
 **每次写入都停在一份 diff 上。** 允许、拒绝，或者改完再应用。这道门就在掌握文件访问能力的
 那一层 Rust 里，界面上没有任何东西能绕过它。
 
-**五个网络出口，每一个都由你触发；登录后才有第六个。** 不登录时，vemry 只在这几种情况下
+**五个网络出口，每一个都由你触发；登录或发反馈时才有第六个。** 不登录时，vemry 只在这几种情况下
 碰网络：你配的 AI 端点、你打开的网页、阅读投影里的图片或你在笔记里点开的远程图片、你订阅的
 去广告规则、检查更新；用你自己的 key 时，请求直接从你的电脑发往你选的厂商。登录之后多出
 vemry 账户这一个出口：托管算力的中继原样转发每一次请求，不保存提示词，也不保存回答；还有
-手机速记的收件箱。这些出口列在 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 里，服务器存什么写在
+手机速记的收件箱。你从应用里发的反馈也走这个服务，登录与否都可以：只有你写的内容，
+以及你勾选时它列出的那几行诊断信息。这些出口列在 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 里，服务器存什么写在
 [隐私政策](https://vemry.app/zh/privacy)里，其余一切断网照常。
 
 **任意代码永不自动执行。** 打开一篇笔记不等于运行它。每条执行路径都始于你的某个动作，
@@ -260,7 +261,7 @@ Pro 和创始会员可以加购算力包：$10 加 6,000 积分，永不过期�
 
 | 你想…… | 去哪里 |
 |---|---|
-| 报一个 bug 或提问 | [Discussions](https://github.com/pangyexing/vemry/discussions) |
+| 报 bug、提建议或提问 | 应用里的 **帮助 › 发送反馈…**（或命令面板里的「发送反馈…」），或 [Discussions](https://github.com/pangyexing/vemry/discussions) |
 | 问账户、付款或退款的事 | [support@vemry.app](mailto:support@vemry.app) |
 | 报告安全问题 | [security@vemry.app](mailto:security@vemry.app) |
 | 动手改 vemry 的什么 | 先在 Discussions 说一声，再看 [CONTRIBUTING.md](CONTRIBUTING.md) |

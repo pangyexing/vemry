@@ -199,6 +199,8 @@ mod imp {
             .build()?;
 
         let help = SubmenuBuilder::new(app, i18n::t(lang, "menu.help"))
+            .item(&item(app, lang, "send-feedback", "menu.sendFeedback")?)
+            .separator()
             .item(&item(app, lang, HELP_GITHUB, "menu.helpGithub")?)
             .item(&item(app, lang, "open-licenses", "menu.licenses")?)
             .build()?;

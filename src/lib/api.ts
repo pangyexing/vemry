@@ -401,6 +401,18 @@ export interface AccountStatus {
   hosted_ok: boolean;
 }
 
+export type FeedbackKind = "bug" | "idea" | "question";
+
+/** What the feedback dialog lists before sending, and what is sent while the box is ticked
+ *  (mirroring feedback.rs::Diagnostics): English data — a version, a platform, a language tag,
+ *  the vendor and model id — not copy. */
+export interface FeedbackDiagnostics {
+  app_version: string;
+  os: string;
+  lang: string;
+  model: string;
+}
+
 export interface SettingsView {
   /** The user's own providers (vemry hosted is built in and not listed). */
   providers: ProviderView[];
@@ -1435,6 +1447,15 @@ export const api = {
   accountRefresh: () => invoke<AccountStatus>("account_refresh"),
   /** A single-use link (two minutes) that opens `page` of the account pages in the browser already signed in. */
   accountWebLink: (page: string) => invoke<string>("account_web_link", { page }),
+  // ---- feedback (feedback.rs): the one request on the hosted exit that needs no sign-in ----
+  /** The lines "include diagnostics" attaches, computed the way the send computes them. */
+  feedbackDiagnostics: () => invoke<FeedbackDiagnostics>("feedback_diagnostics"),
+  /** Send it to api.vemry.app; `email` is read only while signed out (signed in, the account's address is the reply address). */
+  feedbackSend: (kind: FeedbackKind, text: string, email: string | null, diagnostics: boolean) =>
+    invoke<void>("feedback_send", { kind, text, email, diagnostics }),
+  /** The same feedback as a mail to support in the system's mail program (when the server cannot be reached). */
+  feedbackMailOpen: (kind: FeedbackKind, text: string, diagnostics: boolean) =>
+    invoke<void>("feedback_mail_open", { kind, text, diagnostics }),
   // ---- the phone inbox (inbox.rs): items arrive on onInboxItems; the main window lands them and acks ----
   /** The main window wrote these items into the vault (the ledger first, then the service); `target` is the
    *  spot's label (spotLabel), for the settings page's "last one filed". */

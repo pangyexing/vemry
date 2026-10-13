@@ -65,6 +65,7 @@ export const SETTINGS: SettingEntry[] = [
   { id: "general.resident", page: "general", label: residentLabel, hint: residentHint, hintParams: () => ({ quit: k("Mod+Q") }), keywords: "tray menu bar 托盘 菜单栏 后台" },
   { id: "general.version", page: "general", label: "settings.version", keywords: "update 更新 升级 version" },
   { id: "general.autoCheck", page: "general", label: "settings.autoCheck", hint: "settings.autoCheckHint", keywords: "update 更新" },
+  { id: "general.feedback", page: "general", label: "settings.feedback", hint: "settings.feedbackHint", keywords: "feedback bug problem idea suggestion question support contact 反馈 问题 建议 提问 支持 联系" },
   { id: "general.licenses", page: "general", label: "settings.licenses", hint: "settings.licensesHint", keywords: "license licence open source third-party notice 许可 开源 第三方 关于 about" },
 
   { id: "editing.fontSize", page: "editing", label: "settings.fontSize", hint: "settings.fontSizeHint", keywords: "字号 字体 font size 大小" },

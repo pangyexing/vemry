@@ -21,7 +21,8 @@
 //! address at sign-in and, from then on, the snapshot's refresh (`GET /v1/me`)
 //! and the requests the relay forwards — byte for byte what bring-your-own-key
 //! mode would send to the vendor. The phone inbox (inbox.rs) rides on the same
-//! token and exit.
+//! token and exit; feedback (feedback.rs) takes the same exit signed in or not,
+//! and only when the user sends one.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -240,7 +241,7 @@ fn emit(app: &AppHandle, st: &AccountStatus) {
 /// `text` — the transport wraps the body as `HTTP <status> <reason>: <body>`, and
 /// the runner wraps that again, so the JSON is located by its first brace rather
 /// than by position.
-fn error_code(text: &str) -> Option<String> {
+pub(crate) fn error_code(text: &str) -> Option<String> {
     let start = text.find('{')?;
     let v: Value = serde_json::from_str(text[start..].trim()).ok()?;
     v.pointer("/error/code").and_then(|c| c.as_str()).map(str::to_owned)
@@ -299,7 +300,7 @@ fn account_error(app: &AppHandle, status: u16, body: &str) -> String {
     }
 }
 
-fn on_unauthorized(app: &AppHandle) {
+pub(crate) fn on_unauthorized(app: &AppHandle) {
     if cached(app).token.is_empty() {
         return;
     }

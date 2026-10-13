@@ -34,6 +34,7 @@ Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The one-sentence versio
 | Browser tabs and panel / detached window / clip commands / ad blocking | `src-tauri/src/browser/` + `src/lib/components/BrowserPanel.svelte` | Rust + TS |
 | The detached AI chat window (creation / handoff / close handshake / relay) | `src-tauri/src/agent_window.rs` + `src/AgentWindow.svelte` + `src/lib/host.ts` | Rust + TS |
 | The quick capture window (the global shortcut / show and hide / the landing relay) | `src-tauri/src/capture_window.rs` + `src/CaptureWindow.svelte` + `src/lib/components/CaptureComposer.svelte` + `src/lib/capture.ts` | Rust + TS |
+| Feedback (the dialog, its diagnostics, the request and its mail fallback) | `src-tauri/src/feedback.rs` + `src/lib/components/FeedbackDialog.svelte` + `src/lib/stores/feedback.svelte.ts` | Rust + Svelte |
 | The phone inbox (the pull loop, the landing vault and the direct landing, the ledger, pairing) | `src-tauri/src/inbox.rs` + the phone section of `src/lib/components/settings/CapturePage.svelte` | Rust + TS |
 | The resident state (the close button hides the main window, the menu bar / tray icon) | `src-tauri/src/tray.rs` + the close hooks in `src-tauri/src/lib.rs` | Rust |
 | Parsing / indexing / search | `crates/vemry-core/src/` | Rust |
@@ -102,8 +103,16 @@ each step (macOS).
 VEMRY_PROBE=models,exit VEMRY_PROBE_SHOTS=/tmp/vemry-shots pnpm tauri dev
 ```
 
+`feedback` drives the feedback dialog — from the palette and the settings page, its kind,
+its draft, its diagnostics against what a send attaches — and sends nothing. Add
+`feedback-send` to send one, with `VEMRY_API_BASE` pointing at a local vemry-api (never at
+the real service), or `feedback-offline`, with it pointing at a port nobody listens on, to
+check the failure path and its mail fallback.
+
 A debug build shares the app-config directory with an installed vemry, so back up its
-`settings.json` first if you go back and forth between the two.
+`settings.json` first if you go back and forth between the two — and its `account.json`
+before pointing `VEMRY_API_BASE` anywhere: a server that does not know the device token
+answers 401, and the app then forgets the sign-in.
 
 ## Principles (a PR is reviewed against these)
 
@@ -119,8 +128,9 @@ A debug build shares the app-config directory with an installed vemry, so back u
    (server-side search included), a browser window the user opened, a
    blocking-rule download, the image proxy for the reader, the clipper and the
    remote images the user loads in a note (`vemry-asset://`), the update check and download (user-triggered by
-   default), and the hosted account and relay (only after signing in, and for model
-   requests only while a vemry hosted model is chosen; see ARCHITECTURE's "The network-exit list"). No
+   default), and the hosted account and relay (only after signing in — feedback the user
+   sends aside — and for model requests only while a vemry hosted model is chosen; see
+   ARCHITECTURE's "The network-exit list"). No
    other network calls, and no telemetry.
 5. **Everything is a command**: a new capability registers in the command
    registry, not just as a button somewhere.

@@ -576,6 +576,25 @@ impl Settings {
         self.resolve_with(&r, creds, env_zhipu_key().as_deref())
     }
 
+    /// The current model as feedback's diagnostics name it (feedback.rs): the vendor
+    /// and the model id. Never the endpoint nor the user's name for the provider —
+    /// either can be a private host or a word of their own — so an endpoint of no
+    /// vendor the settings page knows is "another endpoint"; "none" when there is no
+    /// model to send to.
+    pub fn chat_model_line(&self) -> String {
+        let r = self.chat().model_ref;
+        let vendor = if r.is_hosted() {
+            Some("vemry hosted".to_string())
+        } else {
+            self.providers.iter().find(|p| p.id == r.provider).map(|p| vendor_name(&p.probe()).unwrap_or_else(|| "another endpoint".into()))
+        };
+        match (vendor, r.model.trim()) {
+            (Some(v), "") => v,
+            (Some(v), m) => format!("{v} · {m}"),
+            (None, _) => "none".into(),
+        }
+    }
+
     /// The translation model, resolved; the chat's when none is chosen (or the
     /// chosen one's provider has gone).
     pub fn translation(&self) -> Resolved {
@@ -1032,6 +1051,26 @@ mod tests {
             api_key: key.into(),
             models: models.iter().map(|m| m.to_string()).collect(),
         }
+    }
+
+    /// Feedback's diagnostics name the vendor and the model, never the endpoint or
+    /// the user's own name for the provider.
+    #[test]
+    fn the_model_line_names_the_vendor_and_never_the_endpoint() {
+        let mut s = Settings {
+            providers: vec![
+                CustomProvider { name: "Work proxy".into(), ..provider("p1", "https://llm.internal.example/v1", "k", &["qwen3"]) },
+                provider("p2", "https://api.deepseek.com", "k", &["deepseek-v4-pro"]),
+            ],
+            chat_model: Some(ModelRef::new("p1", "qwen3")),
+            ..Settings::default()
+        };
+        assert_eq!(s.chat_model_line(), "another endpoint · qwen3");
+        s.chat_model = Some(ModelRef::new("p2", "deepseek-v4-pro"));
+        assert_eq!(s.chat_model_line(), "DeepSeek · deepseek-v4-pro");
+        s.providers.clear();
+        s.chat_model = None;
+        assert_eq!(s.chat_model_line(), "none");
     }
 
     /// A first start and an empty file land on the same thing: Zhipu's flagship,

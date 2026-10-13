@@ -179,7 +179,7 @@ output is in `[..](url)` or `<url>` form: a bare URL's `#fragment` would be pars
 | `translate.rs` | Translation's glue: segments the source (a private one refused whole), holds one job, relays `translate://event`, saves through `write_note` |
 | `agent_window.rs` / `capture_window.rs` / `tray.rs` | The chat window, quick capture, the resident state; each header walks through its handshakes |
 | `menu.rs` | The macOS menu bar. See "Everything is a command" |
-| `account.rs` / `inbox.rs` | The hosted account and the phone inbox — network exit 6 |
+| `account.rs` / `inbox.rs` / `feedback.rs` | The hosted account, the phone inbox and feedback — network exit 6 |
 | `settings.rs` | The preferences, in the app-config directory, never in a vault. Holds the provider list and the two model choices (`ModelRef`: a provider and one of its model ids), and resolves a choice into the `ProviderConfig` a request is built from (`chat`, `translation`) — the one builder, repaired when a provider has gone; migrates a file from before the list |
 | `pasteboard.rs`, helpers | macOS NSPasteboard (file paths, image bytes, text); `i18n.rs`, `window_geom.rs`, `imagesize.rs`, `config_store.rs`, `type_templates.rs` |
 
@@ -493,7 +493,7 @@ included, changes this list and is a design decision. There is no telemetry.
    package's minisign signature is verified against the public key compiled into the app
    (see [RELEASING.md](RELEASING.md)).
 6. **The hosted account and relay** (`api.vemry.app`, `src-tauri/src/account.rs`), taken
-   only after the user signs in. What leaves: at
+   only after the user signs in — feedback, below, is the one request that is not. What leaves: at
    sign-in, the e-mail address, the device's name, platform and app version (for the
    account's device list) and the language of the sign-in mail; while signed in, the
    entitlement snapshot's refresh (`GET /v1/me` with its ETag: before a hosted turn when
@@ -508,7 +508,16 @@ included, changes this list and is a design decision. There is no telemetry.
    (its last request, `POST /v1/auth/logout`, revokes the device); picking one of your own
    models closes the relay but not the refresh and the inbox, which follow the sign-in. A
    release build always talks to `api.vemry.app`: no environment variable can point this
-   exit, or the token it carries, anywhere else.
+   exit, or the token it carries, anywhere else. **Feedback** (`POST /v1/feedback`,
+   `src-tauri/src/feedback.rs`) needs no sign-in and goes out only when the user presses
+   Send in the feedback dialog: the kind, the text they wrote, a reply address (the
+   account's when signed in — the device token rides along — the one they typed, or none)
+   and, while the box is ticked, the four diagnostics lines the dialog lists before sending
+   (version, system, interface language, the current model's vendor and id — never an
+   endpoint or a provider's own name). Nothing from a vault is attached. The server keeps it
+   a year, deletes it with the account, and forwards it to support by mail; when the server
+   cannot be reached, the dialog offers the same text as a mail in the system's mail
+   program, which sends nothing until the user does.
 
 ## Privacy isolation
 

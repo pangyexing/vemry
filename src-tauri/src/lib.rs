@@ -6,6 +6,7 @@ mod capture_window;
 mod commands;
 mod config_store;
 mod consents;
+mod feedback;
 mod i18n;
 mod imagesize;
 mod inbox;
@@ -279,6 +280,9 @@ pub fn run() {
             account::account_logout,
             account::account_refresh,
             account::account_web_link,
+            feedback::feedback_diagnostics,
+            feedback::feedback_send,
+            feedback::feedback_mail_open,
             inbox::inbox_ack,
             inbox::inbox_failed,
             inbox::inbox_ready,

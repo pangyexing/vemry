@@ -64,6 +64,8 @@ vous, tú). A concept word is decided here, never by the translator.
 | 积分 | credits | クレジット | 크레딧 | crédits | Credits | créditos | points, yuan or ¥, dollars (a credit is $0.001 of hosted use; the interface counts credits, never money) |
 | 额度 | quota | 利用枠 | 제공량 | quota | Kontingent | cupo | 配额 (reads as rationing), allowance, limit (that is a cap) |
 | 设备令牌 | device token | デバイストークン | 기기 토큰 | jeton d'appareil | Gerätetoken | token del dispositivo | API key (it doubles as one, but the user never sees it as such), session |
+| 反馈（从应用发给开发者的一条消息） | feedback | フィードバック | 피드백 | commentaires (envoyer des commentaires) | Feedback | comentarios (enviar comentarios) | support ticket, report (a problem is one kind of feedback), survey |
+| 诊断信息（随反馈附带、发送前逐行列出的几项） | diagnostics | 診断情報 | 진단 정보 | informations de diagnostic | Diagnosedaten | datos de diagnóstico | logs, telemetry (vemry has none), crash report, system info |
 
 ## Interface elements
 

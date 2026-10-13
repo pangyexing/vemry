@@ -68,4 +68,8 @@ export async function startProbe(where: "main" | "agent") {
     const m = await import("./models");
     await (where === "main" ? m.runMain() : m.runAgent());
   }
+  if (names.includes("feedback") && where === "main") {
+    const m = await import("./feedback");
+    await m.runMain(names.includes("feedback-send") ? "yes" : names.includes("feedback-offline") ? "offline" : "no");
+  }
 }

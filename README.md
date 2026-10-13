@@ -234,13 +234,15 @@ cloud model? Draw your privacy zones first.
 gate lives in the same Rust layer that owns file access, so nothing in the interface
 can step around it.
 
-**Five network exits, each one triggered by you, and a sixth only if you sign in.**
+**Five network exits, each one triggered by you, and a sixth only if you sign in or send feedback.**
 Without an account, vemry reaches the network for the AI endpoint you configured, a
 web page you opened, images in the Reader or ones you load in a note, ad-blocking
 rules you subscribed to and an update check; with your own key, a request goes
 straight from your computer to the vendor you chose. Signing in adds the vemry
 account: its relay for hosted AI, which forwards each request unchanged and stores
-neither prompts nor answers, and the phone inbox. The exits are listed in
+neither prompts nor answers, and the phone inbox. Feedback you send from the app goes
+to the same service, signed in or not: what you wrote, and the diagnostics it lists
+only while you leave them ticked. The exits are listed in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), what the server keeps is in the
 [privacy policy](https://vemry.app/privacy), and everything else works with the
 network off.
@@ -320,7 +322,7 @@ window. The seam each one grows from is listed in
 
 | You want to… | Go to |
 |---|---|
-| Report a bug or ask a question | [Discussions](https://github.com/pangyexing/vemry/discussions) |
+| Report a bug, suggest something or ask a question | **Help › Send Feedback…** in the app (or "Send feedback…" in the command palette), or [Discussions](https://github.com/pangyexing/vemry/discussions) |
 | Ask about your account, a payment or a refund | [support@vemry.app](mailto:support@vemry.app) |
 | Report a security issue | [security@vemry.app](mailto:security@vemry.app) |
 | Work on something in vemry | Say so in Discussions first; then [CONTRIBUTING.md](CONTRIBUTING.md) |

@@ -426,6 +426,11 @@ CMD = {
         ("The licenses of the third-party software vemry is built from, in a text viewer",
          "用文本查看器打开 vemry 所用第三方软件的许可声明"),
     ),
+    "send-feedback": (
+        ("Send feedback…", "发送反馈…"),
+        ("A problem, an idea or a question, sent to the developer from here, with the diagnostics you choose",
+         "把问题、建议或疑问从这里发给开发者，附带哪些诊断信息由你决定"),
+    ),
     "clear-agent": (
         ("New AI session", "新建 AI 会话"),
         ("Archive the current conversation and start with a clean context",
@@ -592,6 +597,7 @@ add("menu.", {
     "trayQuit": ("Quit vemry", "退出 vemry"),
     "helpGithub": ("vemry Help (GitHub)", "vemry 帮助（GitHub）"),
     "licenses": ("Open-Source Licenses", "开源许可"),
+    "sendFeedback": ("Send Feedback…", "发送反馈…"),
 })
 
 # ---------------------------------------------------------------- settings: language
@@ -1747,6 +1753,44 @@ add("updater.", {
     "installFailedTitle": ("The update could not be installed", "更新未能安装"),
 })
 
+# The feedback dialog (FeedbackDialog.svelte, feedback.rs): what the user writes goes to
+# api.vemry.app with the diagnostics they leave ticked, and nothing else
+add("feedback.", {
+    "title": ("Send feedback", "发送反馈"),
+    "lede": ("It goes to the developer of vemry. Nothing from your vault is attached.",
+             "直接发给 vemry 的开发者，不附带知识库里的任何内容。"),
+    "kind": ("Kind", "类型"),
+    "kind.bug": ("Problem", "问题"),
+    "kind.idea": ("Idea", "建议"),
+    "kind.question": ("Question", "提问"),
+    "text": ("Message", "内容"),
+    "placeholder.bug": ("What happened, and what did you expect? The steps that lead to it help most.",
+                        "发生了什么？你原本期待的是什么？能复现的步骤最有用。"),
+    "placeholder.idea": ("What would you like vemry to do, and what would it help you with?",
+                         "你希望 vemry 能做什么？它能帮你解决什么？"),
+    "placeholder.question": ("What would you like to know?", "你想了解什么？"),
+    "replyTo": ("Reply to", "回复地址"),
+    "replyHint": ("Optional. Without an address there is no way to answer you.",
+                  "可以不填。不留地址，就没办法回复你。"),
+    "replySignedIn": ("Replies go to {email}, your account’s address.", "回复会发到你的账户邮箱 {email}。"),
+    "diagnostics": ("Include diagnostics", "附带诊断信息"),
+    "diagnosticsHint": ("Only the lines listed here.", "只有这里列出的几行。"),
+    "diag.version": ("Version", "版本"),
+    "diag.os": ("System", "系统"),
+    "diag.lang": ("Language", "语言"),
+    "diag.model": ("Model", "模型"),
+    "send": ("Send", "发送"),
+    "sending": ("Sending…", "发送中…"),
+    "sent": ("Feedback sent — thank you.", "反馈已发送，谢谢你。"),
+    "mailInstead": ("Send it by e-mail instead", "改用邮件发送"),
+    "mailSubject": ("vemry feedback", "vemry 反馈"),
+    "error.empty": ("Write something first", "先写点内容"),
+    "error.network": ("Could not reach vemry’s server: {error}", "连不上 vemry 的服务器：{error}"),
+    "error.rateLimited": ("That is a lot of feedback in a short time — try again in a while",
+                          "短时间内发得有点多，过一会儿再试"),
+    "error.failed": ("The server did not take the feedback: {error}", "服务器没有收下这条反馈：{error}"),
+})
+
 # ---------------------------------------------------------------- settings dialog
 # The settings dialog (SettingsModal + components/settings/). Every hint is one line
 # that says what changes for the reader, not how it is built: a mechanism worth
@@ -1881,6 +1925,10 @@ add("settings.", {
     "licensesHint": ("vemry is under FSL-1.1-ALv2; the third-party software in it keeps its own licenses.",
                      "vemry 采用 FSL-1.1-ALv2，其中的第三方软件沿用各自的许可。"),
     "licensesOpen": ("View", "查看"),
+    "feedback": ("Feedback", "反馈"),
+    "feedbackHint": ("A problem, an idea or a question goes straight to the developer.",
+                     "问题、建议或疑问，直接发给开发者。"),
+    "feedbackOpen": ("Send feedback…", "发送反馈…"),
     "adblock": ("Block ads and trackers", "拦截广告与跟踪器"),
     "adblockHint": ("Pages in the built-in browser; macOS only.", "作用于内置浏览器里的网页，仅 macOS。"),
     "adblockActive": ("Active · {n} rules", "已生效 · {n} 条规则"),

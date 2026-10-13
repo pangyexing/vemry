@@ -55,6 +55,9 @@
     <SettingSwitch id="general.autoCheck" field="updater_auto_check" />
   </SettingSection>
   <SettingSection title={t("settings.about")}>
+    <SettingRow id="general.feedback">
+      <button {@attach rowControl} class="btn small" onclick={() => void executeCommand("send-feedback")}>{t("settings.feedbackOpen")}</button>
+    </SettingRow>
     <SettingRow id="general.licenses">
       <button {@attach rowControl} class="btn small" onclick={() => void executeCommand("open-licenses")}>{t("settings.licensesOpen")}</button>
     </SettingRow>

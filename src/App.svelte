@@ -43,6 +43,8 @@
   import { contextMenu } from "$lib/stores/contextMenu.svelte";
   import ScriptGrantDialog from "$lib/components/ScriptGrantDialog.svelte";
   import UpdateDialog from "$lib/components/UpdateDialog.svelte";
+  import FeedbackDialog from "$lib/components/FeedbackDialog.svelte";
+  import { feedback } from "$lib/stores/feedback.svelte";
   import VaultDialog from "$lib/components/VaultDialog.svelte";
   import VaultManager from "$lib/components/VaultManager.svelte";
   import SettingsModal from "$lib/components/SettingsModal.svelte";
@@ -1363,6 +1365,7 @@
   // The whole flow (checking, the version found, download, restart) runs in the update dialog
   registerCommand({ id: "check-updates", group: "system", run: () => void updater.check(true) });
   registerCommand({ id: "open-licenses", group: "system", run: () => void api.licensesOpen().catch((e) => toast.push(String(e), "error")) });
+  registerCommand({ id: "send-feedback", group: "system", run: () => feedback.show() });
   registerCommand({
     // The old "clear the AI conversation" only cleared the timeline and not the model context —
     // the meaning is now a new session: the UI and Rust's history change gear together, and the
@@ -1669,6 +1672,7 @@
 <HistoryDialog />
 <ScriptGrantDialog />
 <UpdateDialog />
+<FeedbackDialog />
 <!-- The manager before the name dialog: a rename asked from it is drawn on top, and its Escape is heard first -->
 <VaultManager />
 <VaultDialog />
