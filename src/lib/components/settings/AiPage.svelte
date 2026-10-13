@@ -97,7 +97,7 @@
   const MOONSHOT_CN = "https://api.moonshot.cn/v1";
   const MOONSHOT_INTL = "https://api.moonshot.ai/v1";
   const PRESETS: Record<string, { base_url: string; models: string[] }> = {
-    zhipu: { base_url: "https://open.bigmodel.cn/api/paas/v4", models: ["glm-4.7-flash", "glm-5.3-flash", "glm-5.3"] },
+    zhipu: { base_url: "https://open.bigmodel.cn/api/paas/v4", models: ["glm-5.3-flash", "glm-5.3"] },
     deepseek: { base_url: "https://api.deepseek.com", models: ["deepseek-flash", "deepseek-v4-pro"] },
     openai: { base_url: "https://api.openai.com/v1", models: ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"] },
     anthropic: { base_url: "https://api.anthropic.com", models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"] },
@@ -117,7 +117,6 @@
   /** The model ids the presets name, for the "add a model id" suggestions, each labelled with
    *  its vendor (the two flagship lines whose ids say nothing keep a label of their own). */
   const MODEL_SUGGESTIONS: [string, MessageKey][] = [
-    ["glm-4.7-flash", "settings.modelZhipuFlash"],
     ["glm-5.3-flash", "settings.endpointZhipu"],
     ["glm-5.3", "settings.modelZhipu"],
     ["deepseek-flash", "settings.modelDeepseekFlash"],

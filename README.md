@@ -187,10 +187,10 @@ with no filesystem, no network and no processes.
    recorded AI sessions and a private folder. Its *Start Here* note is the tour.
 3. **Choose how the AI runs** (optional). Settings → AI. To bring your own key, add
    providers under *Your providers*: any OpenAI-compatible endpoint, its key, and the
-   model ids it serves. Zhipu is there from the start, and its `glm-4.7-flash` is free
-   and supports tool calls; presets add DeepSeek, OpenAI, Anthropic, xAI, Meta, Moonshot
-   and Z.ai with their current models (OpenAI, xAI, Meta and Anthropic are spoken to in
-   their own current APIs; these four, DeepSeek and Zhipu's GLM-5.3 can search the web),
+   model ids it serves. Zhipu is there from the start; presets add DeepSeek, OpenAI,
+   Anthropic, xAI, Meta, Moonshot and Z.ai with their current models (OpenAI, xAI, Meta
+   and Anthropic are spoken to in their own current APIs; these four, DeepSeek and
+   Zhipu's GLM-5.3 can search the web),
    and the *Ollama, local* preset points at a model on your own machine. For *vemry
    hosted*, sign in with your e-mail address and its models join
    the list, with no key to set up: a new account's first sign-in from the desktop app

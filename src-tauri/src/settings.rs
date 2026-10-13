@@ -480,7 +480,7 @@ fn default_rule_urls() -> Vec<String> {
 
 impl Default for Settings {
     fn default() -> Self {
-        // A first start talks to Zhipu's free model, as before the provider list
+        // A first start offers Zhipu's flagship, waiting for a key
         let zhipu = CustomProvider {
             id: "p1".into(),
             name: String::new(),
@@ -1034,7 +1034,7 @@ mod tests {
         }
     }
 
-    /// A first start and an empty file land on the same thing: Zhipu's free model,
+    /// A first start and an empty file land on the same thing: Zhipu's flagship,
     /// no key yet.
     #[test]
     fn a_fresh_file_is_the_default_zhipu_provider() {

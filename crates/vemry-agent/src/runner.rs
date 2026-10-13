@@ -1869,7 +1869,7 @@ mod tests {
         assert!(user_line.contains(&format!(r#""turn":"{event_turn}""#)), "the audit line carries the same id: {user_line}");
         // Each response names the model that gave it (the current model can change between turns)
         let assistant_line = jsonl.lines().find(|l| l.contains(r#""kind":"assistant""#)).unwrap();
-        assert!(assistant_line.contains(r#""model":"glm-4.7-flash""#), "the assistant line names its model: {assistant_line}");
+        assert!(assistant_line.contains(r#""model":"glm-5.3""#), "the assistant line names its model: {assistant_line}");
 
         // Regenerate: the glue layer cuts the assistant tail off and replays with None
         history.truncate(1);

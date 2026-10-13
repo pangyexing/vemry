@@ -1511,8 +1511,8 @@ add("chat.", {
     "sendTitle": ("Send (⏎)", "发送（⏎）"),
     "queueAria": ("Queue", "排队"),
     "sendAria": ("Send", "发送"),
-    "needsMultimodal": ("{path}\nSeeing images needs a multimodal model (switch to glm-4.6v / qwen-vl in Settings)",
-                        "{path}\n需多模态模型才能看图（设置里换 glm-4.6v / qwen-vl 等）"),
+    "needsMultimodal": ("{path}\nSeeing images needs a multimodal model (switch to deepseek-flash / glm-5.3-flash in Settings)",
+                        "{path}\n需多模态模型才能看图（设置里换 deepseek-flash / glm-5.3-flash 等）"),
     "currentNoteContext": ("The current note {note} goes in as context", "当前笔记 {note} 会作为上下文"),
     "tagCurrent": ("current", "当前"),
     "dropCurrentNote": ("Leave the current note out of this session", "本会话不带当前笔记"),
@@ -1528,9 +1528,9 @@ add("chat.", {
     "unsupportedImage": ("{name} is in the vault, but this format cannot be sent to a model "
                          "(png/jpg/gif/webp only; use the system screenshot shortcut or save as PNG)",
                          "{name} 已存入 vault，但该格式不能发给模型（仅 png/jpg/gif/webp；截图请用系统截图快捷键或另存为 PNG）"),
-    "deepseekNoImages": ("deepseek-v4-pro has no image support and will error on send; "
-                         "switch to deepseek-flash or glm-4.6v in Settings",
-                         "deepseek-v4-pro 不支持图片，发送会报错；可在设置里换 deepseek-flash 或 glm-4.6v 等多模态模型"),
+    "modelNoImages": ("{model} has no image support and will error on send; "
+                      "switch to deepseek-flash or glm-5.3-flash in Settings",
+                      "{model} 不支持图片，发送会报错；可在设置里换 deepseek-flash 或 glm-5.3-flash 等多模态模型"),
     "unreadableFile": ("{name} is in the vault, but it is not text or PDF — the model cannot read this format",
                        "{name} 已存入 vault，但不是文本/PDF，模型读不了这种格式"),
     "fileImages": ("Images", "图片"),
@@ -1813,7 +1813,6 @@ add("settings.", {
     "endpointMoonshot": ("Moonshot Kimi", "月之暗面 Kimi"),
     "endpointMeta": ("Meta Muse Spark (web search)", "Meta Muse Spark（可联网搜索）"),
     "endpointZai": ("Z.ai (Zhipu, international)", "Z.ai（智谱国际站）"),
-    "modelZhipuFlash": ("Zhipu · free, supports tool calls", "智谱 · 免费，支持工具调用"),
     "modelZhipu": ("Zhipu · flagship", "智谱 · 旗舰"),
     "modelDeepseekFlash": ("DeepSeek · flash, reads images", "DeepSeek · flash，支持图片"),
     "modelDeepseekPro": ("DeepSeek · pro, no images", "DeepSeek · pro，不支持图片"),

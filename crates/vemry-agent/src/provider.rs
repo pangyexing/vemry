@@ -17,7 +17,8 @@
 use serde::{Deserialize, Serialize};
 
 pub const ZHIPU_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
-pub const DEFAULT_MODEL: &str = "glm-4.7-flash";
+/// The model a first start offers: Zhipu's current flagship.
+pub const DEFAULT_MODEL: &str = "glm-5.3";
 /// The one DeepSeek model whose image understanding the documentation marks as
 /// unsupported (2026-09-14; `deepseek-flash` takes JPEG/PNG/GIF/WebP natively).
 pub const DEEPSEEK_PRO_MODEL: &str = "deepseek-v4-pro";

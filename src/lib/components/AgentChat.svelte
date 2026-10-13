@@ -1614,7 +1614,7 @@
   }
 
   // ---- The "+" attachment and pasting images: they land through the same path as the editor's paste, and the landed path becomes a chip ----
-  /** Warned once only: the DeepSeek endpoint is known to have no vision model, so sending an attached image errors (the user decides to send anyway). */
+  /** Warned once only: the current model is known to read no images (Rust's images_unsupported), so sending an attached image errors (the user decides to send anyway). */
   let warnedVision = false;
   /** Common binary extensions (paired with the "all files" filter): sending one as a file
    *  reference would only earn a "not UTF-8 text", so it is said plainly at attach time. */
@@ -1634,7 +1634,7 @@
         }
         if (pushRef({ kind: "image", path: rel }) && prefs.imagesUnsupported && !warnedVision) {
           warnedVision = true;
-          toast.push(t("chat.deepseekNoImages"));
+          toast.push(t("chat.modelNoImages", { model: prefs.model }));
         }
       } else if (kind !== "note" && kind !== "pdf" && BINARY_EXTS.has((rel.split(".").pop() ?? "").toLowerCase())) {
         // A known binary format is explained on the spot: sent, Rust would only answer "not UTF-8

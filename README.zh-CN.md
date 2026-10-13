@@ -151,10 +151,10 @@ vault 事件、按 cron 定时运行，跑在一个无文件系统、无网络�
    带断言与证据的研究线；一页网上剪藏和一份用来对照翻译的讲义；一个收着电脑和手机速记的
    收件箱；几天日志、三段录下的 AI 会话，以及一个隐私目录。从「Start Here」这篇开始。
 3. **选择 AI 怎么跑**（可选）。设置 → AI。自带 key 的话，在「你的提供方」里添加：任何
-   OpenAI 兼容的端点、它的 key，以及它提供的模型 ID。智谱一开始就在，它的 `glm-4.7-flash`
-   免费且支持工具调用；预设还能添加 DeepSeek、OpenAI、Anthropic、xAI、Meta、月之暗面和
-   Z.ai，带上它们当前的模型（OpenAI、xAI、Meta 和 Anthropic 走各自当前的原生 API；这四家、
-   DeepSeek 和智谱 GLM-5.3 能联网搜索）；「Ollama 本机」预设则接上你自己电脑上的模型。
+   OpenAI 兼容的端点、它的 key，以及它提供的模型 ID。智谱一开始就在；预设还能添加
+   DeepSeek、OpenAI、Anthropic、xAI、Meta、月之暗面和 Z.ai，带上它们当前的模型（OpenAI、
+   xAI、Meta 和 Anthropic 走各自当前的原生 API；这四家、DeepSeek 和智谱 GLM-5.3 能联网
+   搜索）；「Ollama 本机」预设则接上你自己电脑上的模型。
    用「vemry 托管」的话，
    用邮箱登录，它的模型就出现在列表里，不用配 key：新账户第一次在桌面应用里登录，送 600 积分
    试用，14 天内有效，不用绑卡；之后托管算力随 [Pro](#免费与-pro) 提供。当前模型在设置里选，
