@@ -1064,6 +1064,26 @@
       },
     });
   }
+  // Table commands: the cell at the cursor (Tab, Shift-Tab and Enter in a table are
+  // CodeMirror bindings in tableedit.ts)
+  for (const [id, op] of [
+    ["table-row-above", "row-above"],
+    ["table-row-below", "row-below"],
+    ["table-col-left", "col-left"],
+    ["table-col-right", "col-right"],
+    ["table-delete-row", "delete-row"],
+    ["table-delete-col", "delete-col"],
+    ["table-align-left", "align-left"],
+    ["table-align-center", "align-center"],
+    ["table-align-right", "align-right"],
+  ] as const) {
+    registerCommand({
+      id, group: "note", ...needsNote,
+      run: () => {
+        if (!vault.tableCommand?.(op)) toast.push(t("table.notHere"), "error");
+      },
+    });
+  }
   // Provenance review (the ledger is post-write review; the permission gate is pre-write consent)
   registerCommand({
     id: "toggle-provenance", group: "note", ...needsVault,

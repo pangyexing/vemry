@@ -6,7 +6,9 @@
 // with the `/query` token removed in the same change); a multi-line template
 // on a non-empty line goes below the block. Chaining items (callout, evidence,
 // link, block reference, embed) insert their opener and hand over to the next
-// completion source through the picked-completion annotation.
+// completion source through the picked-completion annotation. `/table` takes a
+// size typed onto it — `/table4x5` is four rows by five columns, the header row
+// counted among the rows.
 import { t } from "$lib/i18n/i18n.svelte";
 import type { BlockType } from "$lib/api";
 import { applyType, typeBlockText, newlinesBefore } from "./blocktype";
@@ -16,6 +18,7 @@ import { localDate } from "$lib/views/tasks";
 import { blockAt, extentTo } from "./blocks";
 import { type TurnTarget, canTurnInto, turnInto } from "./blockops";
 import { inCode } from "./livepreview";
+import { tableTemplate } from "./tableedit";
 
 /** `/query` at the start of the line's content. Groups: 1 = indentation, 2 = list /
  *  checkbox / quote markers, 3 = the query. Anchored at the line start, so `a/b` and
@@ -76,7 +79,7 @@ const ITEMS: SlashItem[] = [
   { id: "code", kind: "block", section: "blocks", text: "```\n\n```", caret: 4, turn: "code" },
   { id: "js", kind: "block", section: "blocks", text: "```js\n\n```", caret: 6 },
   { id: "query", kind: "block", section: "blocks", text: "```vemry-query\nkind: task\n```", caret: 25 },
-  { id: "table", kind: "block", section: "blocks", text: "|  |  |\n| --- | --- |\n|  |  |", caret: 2 },
+  { id: "table", kind: "block", section: "blocks", text: tableTemplate(3, 3), caret: 2 },
   { id: "hr", kind: "block", section: "blocks", text: "---" },
   { id: "date", kind: "inline", section: "refs", text: () => localDate() },
   { id: "link", kind: "inline", section: "refs", text: "[[", chain: true },
@@ -85,6 +88,14 @@ const ITEMS: SlashItem[] = [
 ];
 
 const RANK: Record<Section, number> = { basic: 0, blocks: 1, refs: 2 };
+
+/** `/table4x5` (or `/4x5`): rows × columns, the header row counted among the rows. After
+ *  `/table` a size half typed already names a table (`/table4` is four rows by the
+ *  default three columns), so the menu follows every keystroke instead of closing until
+ *  the size is whole. Groups: 1-2 after `table`, 3-4 bare. */
+const TABLE_SIZE_RE = /^(?:table(\d{1,3})(?:[x×](\d{1,2})?)?|(\d{1,3})[x×](\d{1,2}))$/i;
+const MAX_COLS = 20;
+const MAX_ROWS = 200;
 const TYPES_RANK = 3;
 
 /** A block type from the `/` menu: a line with text (or a marker to keep) is turned into
@@ -197,6 +208,22 @@ export function slashCompletions(blockTypes: () => BlockType[] = () => []): Comp
       section: { name: t(`slash.section.${item.section}`), rank: RANK[item.section] },
       apply: (view: EditorView, completion: Completion, _from: number, applyTo: number) => apply(view, item, completion, applyTo),
     }));
+    // A sized table: its label is the query itself, so it is the one exact match
+    const size = TABLE_SIZE_RE.exec(m[3]);
+    if (size) {
+      const rows = Math.min(MAX_ROWS, Math.max(1, Number(size[1] ?? size[3])));
+      const cols = Math.min(MAX_COLS, Math.max(1, Number(size[2] ?? size[4] ?? 3)));
+      const item: SlashItem = { id: "table", kind: "block", section: "blocks", text: tableTemplate(rows, cols), caret: 2 };
+      options.unshift({
+        label: m[3],
+        displayLabel: `${t("slash.table.title")} ${rows}×${cols}`,
+        detail: t("slash.tableSized.desc"),
+        type: "text",
+        boost: 99,
+        section: { name: t(`slash.section.${item.section}`), rank: RANK[item.section] },
+        apply: (view: EditorView, completion: Completion, _from: number, applyTo: number) => apply(view, item, completion, applyTo),
+      });
+    }
     // The vault's own block types, a section of their own after the built-ins
     blockTypes().forEach((type, i) => {
       options.push({
@@ -208,6 +235,7 @@ export function slashCompletions(blockTypes: () => BlockType[] = () => []): Comp
         apply: (view: EditorView, _completion: Completion, _from: number, applyTo: number) => applyTypeItem(view, type, applyTo),
       });
     });
-    return { from: slashPos + 1, options, validFor: /^[^\s/]*$/ };
+    // Asked again once a digit is typed, so a size can name the table
+    return { from: slashPos + 1, options, validFor: /^[^\s/\d]*$/ };
   };
 }

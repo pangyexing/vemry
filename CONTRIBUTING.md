@@ -109,6 +109,11 @@ its draft, its diagnostics against what a send attaches — and sends nothing. A
 the real service), or `feedback-offline`, with it pointing at a port nobody listens on, to
 check the failure path and its mail fallback.
 
+`table` drives a table in a note: `/table` and a sized `/table2x4` from the slash menu,
+Tab, Shift-Tab and Enter in its source, the rendered table's add bars, the Table entries
+of the context menu on a rendered cell, and the palette's table commands — in a scratch
+vault, going back to yours before it ends.
+
 A debug build shares the app-config directory with an installed vemry, so back up its
 `settings.json` first if you go back and forth between the two — and its `account.json`
 before pointing `VEMRY_API_BASE` anywhere: a server that does not know the device token

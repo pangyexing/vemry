@@ -12,6 +12,8 @@
   import { selectedBlocks } from "$lib/editor/blocksel";
   import { focusEditor } from "$lib/editor/clickguard";
   import { deleteBlocks, duplicateBlocks, moveBlocks } from "$lib/editor/blockops";
+  import { type TableOp, tableEditAt } from "$lib/editor/tableedit";
+  import { renderedCellPos } from "$lib/editor/table";
   import type { BlockHost } from "$lib/editor/blockhandle";
   import { startBlockDrag } from "$lib/editor/blockdrag";
   import { byteSpansToChar, byteToChar, charToByte } from "$lib/bytes";
@@ -451,6 +453,16 @@
     return true;
   }
   vault.blockCommand = blockCommand;
+  /** A table operation on the cell at the cursor (the palette's table commands). */
+  function tableCommand(op: TableOp): boolean {
+    if (!view || !docPath?.endsWith(".md") || docPath !== vault.currentPath) return false;
+    const spec = tableEditAt(view.state, view.state.selection.main.head, op);
+    if (!spec) return false;
+    view.dispatch(spec);
+    focusEditor(view);
+    return true;
+  }
+  vault.tableCommand = tableCommand;
   /** Land the cursor on a pending run (its first line) and bring it into view. */
   function landOn(v: EditorView, pos: number) {
     // annotated like every other programmatic landing: the review steps onto a run, which
@@ -983,7 +995,9 @@
     const hasSel = !view.state.selection.main.empty;
     const entries: MenuEntry[] = [];
     // The link at the point (the same linkAt policy as ⌘click and ⌘Enter: a purely positional verdict, wiki before md)
-    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+    // A rendered table answers with the cell under the pointer: posAtCoords would only
+    // reach the widget's edge
+    const pos = renderedCellPos(view, e.target) ?? view.posAtCoords({ x: e.clientX, y: e.clientY });
     const found = isNote && pos != null ? linkAt(view.state, pos) : null;
     if (found) {
       const { target } = found.hit;
@@ -1005,9 +1019,10 @@
       { separator: true },
     );
     // The block under the point: copy its link, turn it into another kind, ask the AI
-    // about it (the structural operations live on the grip and the keyboard)
+    // about it (the structural operations live on the grip and the keyboard); a table
+    // adds its row and column operations on the cell under the point
     const block = isNote && pos != null ? blockAt(view.state, pos) : null;
-    if (block) entries.push(...blockMenuEntries(view, block, blockHost, { compact: true }), { separator: true });
+    if (block) entries.push(...blockMenuEntries(view, block, blockHost, { compact: true, at: pos ?? undefined }), { separator: true });
     if (isNote) entries.push({ label: t("cmd.translate-toggle.title"), hint: k("Mod+Shift+T"), action: () => void executeCommand("translate-toggle") });
     if (isNote) entries.push({ label: t("cmd.note-history.title"), action: () => void executeCommand("note-history") });
     entries.push(
@@ -1422,6 +1437,7 @@
     if (vault.insertAtSection === insertAtSection) vault.insertAtSection = null;
     if (vault.revealPos === revealPos) vault.revealPos = null;
     vault.blockCommand = null;
+    vault.tableCommand = null;
     vault.stepPending = null;
     vault.reviewRun = null;
     vault.rejectProvenance = null;

@@ -40,6 +40,7 @@ import { foldExtension } from "./fold";
 import { blockHandle, type BlockHost } from "./blockhandle";
 import { dragSourceField } from "./blockdrag";
 import { clickGuard } from "./clickguard";
+import { tableEnter, tableNextCell, tablePrevCell } from "./tableedit";
 
 // The font and line height have to be declared in the theme layer: CM's baseTheme
 // injects monospace and a 1.4 line height at .ͼx .cm-scroller (0,2,0), which app.css's
@@ -388,6 +389,16 @@ const listKeymap = Prec.high(
   ]),
 );
 
+// In a table's source, Tab and Shift-Tab step between cells and Enter opens a row
+// (tableedit.ts); elsewhere each falls through to the list rule and the base keymap.
+// Listed before listKeymap, at the same precedence, so it is asked first.
+const tableKeymap = Prec.high(
+  keymap.of([
+    { key: "Tab", run: tableNextCell, shift: tablePrevCell },
+    { key: "Enter", run: tableEnter },
+  ]),
+);
+
 export function createEditor(opts: EditorOptions): EditorView {
   const view = new EditorView({ parent: opts.parent, state: buildState(opts) });
   return view;
@@ -407,6 +418,7 @@ function buildState(opts: EditorOptions): EditorState {
       noteFont,
       placeholder(t("editor.placeholder")),
       markdown({ base: markdownLanguage, extensions: [Highlight, TaskStates], addKeymap: false }),
+      tableKeymap,
       listKeymap,
       syntaxHighlighting(mdHighlight),
       livePreview({

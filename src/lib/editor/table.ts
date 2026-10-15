@@ -1,6 +1,9 @@
 // Live preview of a GFM table: with the selection outside the table, the whole thing
 // renders as a real <table>, and clicking a cell sends the cursor back to the
-// corresponding document position to edit.
+// corresponding document position to edit. Under the pointer two thin bars show, below
+// the table and to its right: a click adds a row or a column (tableedit.ts) and puts
+// the cursor in its first cell. A right click leaves the table rendered — the context
+// menu reads the cell under the pointer (renderedCellPos) for its table entries.
 // A block-level replace spanning lines can only come from a StateField (a ViewPlugin
 // is not allowed), the same reason as livepreview.ts's frontmatter.
 // Rows are split from the source on unescaped | (rather than the syntax tree's
@@ -18,6 +21,8 @@ import { type EditorState, StateField, type Transaction } from "@codemirror/stat
 import { selectionTouches } from "./reveal";
 import { renderMathHtml, scanInlineMath } from "$lib/math";
 import { focusEditor } from "./clickguard";
+import { tableAppend } from "./tableedit";
+import { t } from "$lib/i18n/i18n.svelte";
 
 interface Cell {
   text: string;
@@ -168,7 +173,7 @@ class TableWidget extends WidgetType {
     return other.src === this.src;
   }
   get estimatedHeight() {
-    return (this.rows.length + 1) * 34 + 10;
+    return (this.rows.length + 1) * 34 + 18;
   }
   toDOM(view: EditorView) {
     const wrap = document.createElement("div");
@@ -189,22 +194,64 @@ class TableWidget extends WidgetType {
     };
     addRow(this.header, "th");
     for (const row of this.rows) addRow(row, "td");
-    wrap.appendChild(table);
+    // The table and its two bars on one grid: the column bar spans the table's height
+    // on its right, the row bar its width below it
+    const frame = document.createElement("div");
+    frame.className = "cm-lp-table-frame";
+    frame.appendChild(table);
+    const base = (): number | null => {
+      try {
+        const at = view.posAtDOM(wrap); // the widget's current position in the document
+        return at < 0 ? null : at;
+      } catch {
+        return null;
+      }
+    };
+    for (const what of ["col", "row"] as const) {
+      const bar = document.createElement("button");
+      bar.type = "button";
+      bar.className = `cm-lp-table-add cm-lp-table-add-${what}`;
+      bar.title = t(what === "row" ? "table.addRow" : "table.addColumn");
+      bar.setAttribute("aria-label", bar.title);
+      bar.textContent = "+";
+      bar.onmousedown = (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const at = base();
+        const spec = at == null ? null : tableAppend(view.state, at, what);
+        if (!spec) return;
+        view.dispatch(spec);
+        focusEditor(view);
+      };
+      frame.appendChild(bar);
+    }
+    wrap.appendChild(frame);
     wrap.onmousedown = (e) => {
+      if (e.button !== 0) return;
       const cell = (e.target as HTMLElement).closest("[data-pos]") as HTMLElement | null;
       if (!cell) return;
       e.preventDefault();
-      let base: number;
-      try {
-        base = view.posAtDOM(wrap); // the widget's current position in the document
-      } catch {
-        return;
-      }
-      if (base < 0) return;
-      view.dispatch({ selection: { anchor: base + Number(cell.dataset.pos) } });
+      const at = base();
+      if (at == null) return;
+      view.dispatch({ selection: { anchor: at + Number(cell.dataset.pos) } });
       focusEditor(view);
     };
     return wrap;
+  }
+}
+
+/** The document position of the rendered cell an event landed on (the context menu's
+ *  pointer, which posAtCoords would only resolve to the widget's edge), or null. */
+export function renderedCellPos(view: EditorView, target: EventTarget | null): number | null {
+  if (!(target instanceof Element)) return null;
+  const cell = target.closest(".cm-lp-table [data-pos]") as HTMLElement | null;
+  const wrap = cell?.closest(".cm-lp-table") as HTMLElement | null;
+  if (!cell || !wrap) return null;
+  try {
+    const at = view.posAtDOM(wrap);
+    return at < 0 ? null : at + Number(cell.dataset.pos);
+  } catch {
+    return null;
   }
 }
 
@@ -317,8 +364,11 @@ function dirtyRegions(tr: Transaction, treeChanged: boolean): Region[] {
     if (parsedTo > parsedFrom) raw.push({ from: parsedFrom, to: parsedTo });
   }
   const clamp = (n: number) => Math.max(0, Math.min(n, doc.length));
+  // One character past each end reaches the neighbouring lines: a change that removes the
+  // line right under a table with the cursor on it (Enter on an empty last row, which ends
+  // the table) leaves the table outside every other dirty range, still shown as source
   const regions = raw
-    .map((r) => ({ from: doc.lineAt(clamp(r.from)).from, to: doc.lineAt(clamp(r.to)).to }))
+    .map((r) => ({ from: doc.lineAt(clamp(r.from - 1)).from, to: doc.lineAt(clamp(r.to + 1)).to }))
     .sort((a, b) => a.from - b.from);
   const merged: Region[] = [];
   for (const r of regions) {

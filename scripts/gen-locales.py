@@ -273,6 +273,42 @@ CMD = {
         ("Delete block", "删除块"),
         ("Delete the selected blocks, or the block at the cursor (undo with ⌘Z)", "删除选中的块（或光标所在块），可用 ⌘Z 撤销"),
     ),
+    "table-row-above": (
+        ("Insert table row above", "在上方插入表格行"),
+        ("Insert an empty row above the one at the cursor", "在光标所在行的上方插入一个空行"),
+    ),
+    "table-row-below": (
+        ("Insert table row below", "在下方插入表格行"),
+        ("Insert an empty row below the one at the cursor — Enter in a table does the same", "在光标所在行的下方插入一个空行——在表格里按回车也是这样"),
+    ),
+    "table-col-left": (
+        ("Insert table column left", "在左侧插入表格列"),
+        ("Insert an empty column left of the one at the cursor", "在光标所在列的左侧插入一个空列"),
+    ),
+    "table-col-right": (
+        ("Insert table column right", "在右侧插入表格列"),
+        ("Insert an empty column right of the one at the cursor", "在光标所在列的右侧插入一个空列"),
+    ),
+    "table-delete-row": (
+        ("Delete table row", "删除表格行"),
+        ("Delete the row at the cursor (the header row stays)", "删除光标所在的行（表头行不删）"),
+    ),
+    "table-delete-col": (
+        ("Delete table column", "删除表格列"),
+        ("Delete the column at the cursor", "删除光标所在的列"),
+    ),
+    "table-align-left": (
+        ("Align table column left", "表格列左对齐"),
+        ("Align the column at the cursor to the left; run it again to clear", "光标所在列左对齐；再执行一次取消"),
+    ),
+    "table-align-center": (
+        ("Center table column", "表格列居中"),
+        ("Center the column at the cursor; run it again to clear", "光标所在列居中；再执行一次取消"),
+    ),
+    "table-align-right": (
+        ("Align table column right", "表格列右对齐"),
+        ("Align the column at the cursor to the right; run it again to clear", "光标所在列右对齐；再执行一次取消"),
+    ),
     "toggle-provenance": (
         ("Show block origins", "显示出处"),
         ("Tint every block by who wrote it: you, the AI, a clip or a capture", "按写入者给每个块着色：你、AI、剪藏、速记"),
@@ -2480,7 +2516,8 @@ add("slash.", {
     "query.title": ("Query block", "Query block"),
     "query.desc": ("A live vemry-query over the vault's blocks", "A live vemry-query over the vault's blocks"),
     "table.title": ("Table", "Table"),
-    "table.desc": ("A 2×2 table", "A 2×2 table"),
+    "table.desc": ("A 3×3 table — /table4x5 for four rows, five columns", "A 3×3 table — /table4x5 for four rows, five columns"),
+    "tableSized.desc": ("Rows × columns, the header row counted among the rows", "Rows × columns, the header row counted among the rows"),
     "hr.title": ("Divider", "Divider"),
     "hr.desc": ("A horizontal rule", "A horizontal rule"),
     "date.title": ("Today's date", "Today's date"),
@@ -2526,6 +2563,24 @@ add("block.", {
     "kind.private": ("Private block", "私密块"),
     "makePrivate": ("Make private", "设为私密"),
     "unmakePrivate": ("Remove privacy", "取消私密"),
+})
+
+# A table's row, column and alignment operations: the block menu's "Table ›", the
+# rendered table's add bars
+add("table.", {
+    "menu": ("Table", "表格"),
+    "rowAbove": ("Insert row above", "在上方插入行"),
+    "rowBelow": ("Insert row below", "在下方插入行"),
+    "colLeft": ("Insert column left", "在左侧插入列"),
+    "colRight": ("Insert column right", "在右侧插入列"),
+    "alignLeft": ("Align column left", "列左对齐"),
+    "alignCenter": ("Center column", "列居中"),
+    "alignRight": ("Align column right", "列右对齐"),
+    "deleteRow": ("Delete row", "删除行"),
+    "deleteCol": ("Delete column", "删除列"),
+    "addRow": ("Add row", "添加行"),
+    "addColumn": ("Add column", "添加列"),
+    "notHere": ("The cursor is not in a table", "光标不在表格里"),
 })
 
 add("runBlock.", {

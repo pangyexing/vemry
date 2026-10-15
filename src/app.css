@@ -2275,20 +2275,66 @@ button:focus-visible,
   opacity: 1;
 }
 .cm-lp-table {
-  padding: 6px 0;
+  padding: 6px 0 0;
   overflow-x: auto;
 }
 /* The width rule comes from the same place as a rendered table's (.md-tablewrap table):
    without declaring a width it shrinks to the container, and since CJK can break between
    characters, min-content collapses to one character per column (set vertically) and
    overflow never fires — so it spreads to the content's width up to the cap, and
-   horizontal scrolling is left to the .cm-lp-table layer */
+   horizontal scrolling is left to the .cm-lp-table layer. The rule sits on the frame
+   that holds the table and its two add bars (the table fills the frame's first track):
+   on the table inside a shrink-to-fit grid, the percentage would have nothing definite
+   to resolve against and the cap would never hold */
+.cm-lp-table-frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  grid-template-rows: auto 16px;
+  width: max-content;
+  max-width: max(100%, 60em);
+}
 .cm-lp-table table {
   border-collapse: collapse;
   font-size: 0.95em;
   line-height: 1.5;
-  width: max-content;
-  max-width: max(100%, 60em);
+  width: 100%;
+}
+/* The add bars: out of sight until the pointer is over the table */
+.cm-lp-table-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.12s,
+    background-color 0.12s;
+}
+.cm-lp-table-add-col {
+  grid-column: 2;
+  grid-row: 1;
+  margin-left: 4px;
+}
+.cm-lp-table-add-row {
+  grid-column: 1;
+  grid-row: 2;
+  margin-top: 4px;
+}
+.cm-lp-table:hover .cm-lp-table-add,
+.cm-lp-table-add:focus-visible {
+  opacity: 1;
+}
+.cm-lp-table-add:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
 }
 .cm-lp-table th,
 .cm-lp-table td {

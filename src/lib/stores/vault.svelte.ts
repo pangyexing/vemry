@@ -16,6 +16,7 @@ import { ymd } from "$lib/views/tasks";
 import { loadBucketMap, saveBucket } from "$lib/persist";
 import type { OutlineItem } from "$lib/outline";
 import type { ReviewStep } from "$lib/editor/provenance";
+import type { TableOp } from "$lib/editor/tableedit";
 
 /** What the center pane shows: the editor or one of the projection views.
  *  "reading" is the web reading projection (v0.5 P2) — its content and page history
@@ -310,6 +311,9 @@ class VaultStore {
   /** Block commands from the palette (move / duplicate / delete the selected run or the
    *  block at the cursor); registered by the editor, null when no note is open. */
   blockCommand: ((op: "move-up" | "move-down" | "duplicate" | "delete") => boolean) | null = null;
+  /** Table commands from the palette (a row, column or alignment operation on the cell at
+   *  the cursor); registered by the editor, null when no note is open. */
+  tableCommand: ((op: TableOp) => boolean) | null = null;
   /** Under a projection view it returns to the editor before scrolling into view — the
    *  editor host needs a tick to leave display:none before CM can measure the scroll.
    *  The outline's jumps and "land back after closing a browser window" share this one
