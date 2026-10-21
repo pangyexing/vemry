@@ -118,7 +118,7 @@
   --content-width: var(--content-width-off, clamp(42em, 66%, 54em));
   /* A list marker's box, which the text of the item's later lines hangs at (livepreview.ts
      emits them in --li-mark): a bullet's, and a task's — the checkbox, 1 + 15 + 8
-     (.cm-lp-checkbox's margin and width) */
+     (.cm-lp-taskbox's padding and .cm-lp-checkbox's width) */
   --li-box-bullet: 1.2em;
   --li-box-task: 24px;
 
@@ -1802,14 +1802,20 @@ button:focus-visible,
   vertical-align: middle;
   border-top: 1px solid var(--border);
 }
-/* The task checkbox: the state glyph (chips.ts) at 15px, which is the size every other
-   surface draws it at; pulled 2px below the baseline to sit on the line's x-height */
+/* The task checkbox's box: 1 + 15 + 8, the box a task's hanging indent counts
+   (--li-box-task). Padding, not the glyph's margin: a margin lies outside the widget's
+   rect, and the cursor after the widget on an empty task would be drawn against the
+   glyph rather than where the text starts */
+.cm-lp-taskbox {
+  display: inline-block;
+  padding: 0 8px 0 1px;
+}
+/* The state glyph (chips.ts) at 15px, which is the size every other surface draws it
+   at; pulled 2px below the baseline to sit on the line's x-height */
 .cm-lp-checkbox {
   display: inline-block;
   width: 15px;
   height: 15px;
-  /* 1 + 15 + 8: the box a task's hanging indent counts (--li-box-task) */
-  margin: 0 8px 0 1px;
   vertical-align: -2px;
   cursor: pointer;
 }

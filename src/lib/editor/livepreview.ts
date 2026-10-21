@@ -170,7 +170,9 @@ interface Entry {
  *  task views' menus set). A span rather than a native input: the input was never
  *  focused (mousedown is taken over below) and only lent its :checked/:indeterminate
  *  selectors to a second, hand-styled copy of the drawing, which had drifted from the
- *  views' one. */
+ *  views' one. The glyph sits in a box that also holds the gap after it: the cursor
+ *  just past the widget is drawn at the box's edge, so on a task with no text yet it
+ *  stands where the first character will go, not against the glyph. */
 class CheckboxWidget extends WidgetType {
   constructor(readonly state: TaskState) {
     super();
@@ -179,21 +181,25 @@ class CheckboxWidget extends WidgetType {
     return other.state === this.state;
   }
   toDOM(view: EditorView) {
+    const wrap = document.createElement("span");
+    wrap.className = "cm-lp-taskbox";
     const box = document.createElement("span");
     box.className = "cm-lp-checkbox";
     box.setAttribute("role", "checkbox");
     box.setAttribute("aria-checked", this.state === "done" ? "true" : this.state === "doing" ? "mixed" : "false");
     box.innerHTML = taskStateIconSvg(this.state);
     box.title = taskToggleTitle(this.state);
+    // only the glyph toggles: a click in the gap places the cursor, as on the text
     box.onmousedown = (e) => {
       // Handled on mousedown: preventDefault keeps the editor's selection, or the
       // cursor landing inside the checkbox's range would trigger reveal and replace
       // this widget before the click arrived
       e.preventDefault();
       e.stopPropagation();
-      toggleTaskAt(view, view.posAtDOM(box), e.altKey);
+      toggleTaskAt(view, view.posAtDOM(wrap), e.altKey);
     };
-    return box;
+    wrap.appendChild(box);
+    return wrap;
   }
 }
 
