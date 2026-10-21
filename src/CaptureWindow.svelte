@@ -17,6 +17,7 @@
   // business doing four IPC round trips on every autosave of the main window).
   import { onMount, tick } from "svelte";
   import { api, onCaptureShown } from "$lib/api";
+  import { isImeKeydown } from "$lib/ime";
   import { isMac } from "$lib/shortcut";
   import { prefs } from "$lib/stores/prefs.svelte";
   import { vault } from "$lib/stores/vault.svelte";
@@ -49,6 +50,14 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    // Esc hides from anywhere in the window, not only from the text: the composer's own Esc
+    // (the text, the picker's stages) runs first and prevents the default, so what arrives
+    // here landed elsewhere — the foot, an attachment, the page itself
+    if (e.key === "Escape" && !e.defaultPrevented && !isImeKeydown(e)) {
+      e.preventDefault();
+      void api.captureWindowHide().catch(() => undefined);
+      return;
+    }
     // Off mac, ⌘W/Ctrl+W is taken here; on mac the menu's "close window" takes the key first and Rust hides the window (menu.rs)
     if (!isMac && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "w") {
       e.preventDefault();

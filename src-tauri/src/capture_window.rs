@@ -363,10 +363,15 @@ pub(crate) fn show(app: &AppHandle) {
     place(app, &w);
     // show() orders the window front and makes it key; set_focus() would also
     // activate the application, which the non-activating panel is there to avoid —
-    // off macOS it is what gives the window the keyboard
+    // off macOS it is what gives the window the keyboard. The window's focus stops at
+    // the window (Windows): the webview inside is handed the keyboard on its own, or
+    // Esc and typing reach nothing until a click lands in the page
     let _ = w.show();
     #[cfg(not(target_os = "macos"))]
-    let _ = w.set_focus();
+    {
+        let _ = w.set_focus();
+        let _ = w.as_ref().set_focus();
+    }
     let _ = app.emit_to(CAPTURE_LABEL, EV_SHOWN, ());
 }
 
