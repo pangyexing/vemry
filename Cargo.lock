@@ -5406,7 +5406,7 @@ dependencies = [
 
 [[package]]
 name = "vemry-agent"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5429,7 +5429,7 @@ dependencies = [
 
 [[package]]
 name = "vemry-app"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "adblock",
  "async-trait",
@@ -5463,7 +5463,7 @@ dependencies = [
 
 [[package]]
 name = "vemry-clip"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "chrono",
  "dom_smoothie",
@@ -5477,7 +5477,7 @@ dependencies = [
 
 [[package]]
 name = "vemry-core"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "chrono",
  "dunce",
@@ -5498,7 +5498,7 @@ dependencies = [
 
 [[package]]
 name = "vemry-script"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "chrono",
  "cron",
