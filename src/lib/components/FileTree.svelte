@@ -113,16 +113,54 @@
     if (!path) return; // or manually collapsing the current note's ancestors would be bounced straight back
     const dir = parentOf(path);
     if (dir) vault.expandFolder(dir);
-    void tick().then(() => {
-      // A linear dataset comparison rather than an attribute selector: a file name may hold
-      // quotes or backslashes, and CSS.escape is not complete for the attribute-value
-      // context; a tree is a few hundred rows at most, so the cost is negligible
-      const row =
-        treeEl &&
-        [...treeEl.querySelectorAll<HTMLElement>("[data-path]")].find((el) => el.dataset.path === path);
-      row?.scrollIntoView({ block: "nearest" });
-    });
+    void tick().then(() => rowOf(path)?.scrollIntoView({ block: "nearest" }));
   });
+
+  /** The rendered row of a path, folders included. A linear dataset comparison rather than an
+   *  attribute selector: a file name may hold quotes or backslashes, and CSS.escape is not
+   *  complete for the attribute-value context; a tree is a few hundred rows at most, so the
+   *  cost is negligible */
+  function rowOf(path: string): HTMLElement | undefined {
+    if (!treeEl) return undefined;
+    return [...treeEl.querySelectorAll<HTMLElement>("[data-path]")].find((el) => el.dataset.path === path);
+  }
+
+  /** Motion is skipped, not slowed, for someone who asked the system for less of it */
+  const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /** A created or renamed row sorts by its new name, which is rarely where that name was typed
+   *  (a new item's input stands at the top of its folder). Rather than vanishing there and
+   *  reappearing elsewhere, the row glides from the input's spot on screen to its own and keeps
+   *  a ground that fades after it lands, so the eye follows it instead of hunting for it.
+   *  fromTop is the input row's top in viewport coordinates, taken before it went away. */
+  async function land(path: string, fromTop: number | undefined) {
+    await tick();
+    const row = rowOf(path);
+    if (!row) return;
+    row.scrollIntoView({ block: "nearest" });
+    if (fromTop === undefined) return;
+    const dy = fromTop - row.getBoundingClientRect().top;
+    if (Math.abs(dy) < 2) return; // it sorted where it was typed: nothing to follow
+    const ground = getComputedStyle(row).getPropertyValue("--bg-active").trim();
+    // The last keyframe leaves the colour implicit, so the ground fades to whatever the row's
+    // own is (an opened note keeps its active ground; a folder returns to none)
+    row.animate([{ backgroundColor: ground }, { backgroundColor: ground, offset: 0.4 }, {}], {
+      duration: 900,
+      easing: "ease-out",
+    });
+    if (reducedMotion) return;
+    // Lifted above the rows it passes over (their indent guides are positioned) while it moves
+    row.style.position = "relative";
+    row.style.zIndex = "1";
+    const glide = row.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], {
+      duration: Math.min(320, 160 + Math.abs(dy) / 4),
+      easing: "cubic-bezier(0.2, 0, 0, 1)",
+    });
+    glide.onfinish = glide.oncancel = () => {
+      row.style.position = "";
+      row.style.zIndex = "";
+    };
+  }
 
   function stemOf(path: string): string {
     return (path.split("/").pop() ?? path).replace(/\.md$/, "");
@@ -405,23 +443,26 @@
   async function commitEdit() {
     const ed = editing;
     const name = editValue.trim().replace(/[/\\]/g, " ").trim();
+    // Where the name was typed, read before the input goes: the row glides from here to its place
+    const fromTop = editInput?.parentElement?.getBoundingClientRect().top;
     editing = null;
     if (!ed || !name) return;
     try {
       if (ed.mode === "create-folder") {
-        await vault.createFolder(ed.parent, name);
+        const rel = await vault.createFolder(ed.parent, name);
         if (ed.parent) vault.expandFolder(ed.parent);
+        void land(rel, fromTop);
       } else if (ed.mode === "create-note") {
         // an explicit extension (test.py, data.csv) is respected verbatim;
         // otherwise the name is a note title and gets .md
         const hasExt = /\.[A-Za-z0-9]{1,8}$/.test(name);
-        await vault.createFile(ed.parent, hasExt ? name : `${name}.md`);
+        void land(await vault.createFile(ed.parent, hasExt ? name : `${name}.md`), fromTop);
       } else if (ed.mode === "create-file") {
-        await vault.createFile(ed.parent, name);
+        void land(await vault.createFile(ed.parent, name), fromTop);
       } else if (ed.mode === "rename" && ed.target) {
         // exactly as typed — extension changes are deliberate and allowed
         const to = ed.parent ? `${ed.parent}/${name}` : name;
-        if (to !== ed.target) await vault.renamePath(ed.target, to);
+        if (to !== ed.target) void land(await vault.renamePath(ed.target, to), fromTop);
       }
     } catch (e) {
       vault.error = String(e);
@@ -519,6 +560,7 @@
         class:inherited={priv.kind === "inherited"}
         class:cut={cut?.path === child.path}
         class:drop-into={dropTarget === child.path}
+        data-path={child.path}
         data-drop={child.path}
         title={zoneHint(priv)}
         onpointerdown={(e) => pressRow(e, child.path, "folder")}

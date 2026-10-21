@@ -72,6 +72,10 @@ export async function startProbe(where: "main" | "agent") {
     const m = await import("./table");
     await m.runMain();
   }
+  if (names.includes("filetree") && where === "main") {
+    const m = await import("./filetree");
+    await m.runMain();
+  }
   if (names.includes("feedback") && where === "main") {
     const m = await import("./feedback");
     await m.runMain(names.includes("feedback-send") ? "yes" : names.includes("feedback-offline") ? "offline" : "no");

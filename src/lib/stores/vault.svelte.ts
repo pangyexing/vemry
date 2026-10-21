@@ -966,6 +966,7 @@ class VaultStore {
     const rel = await api.folderCreate(path);
     this.recordOp({ kind: "create", paths: [rel] });
     await this.refreshNotes();
+    return rel;
   }
 
   /** Explicit-extension semantics: the extension you type is what you get. */
@@ -975,6 +976,7 @@ class VaultStore {
     this.recordOp({ kind: "create", paths: [rel] });
     await this.refreshNotes();
     await this.openFile(rel, true, true); // a newly created file gets a pinned tab
+    return rel;
   }
 
   /** Move a file/folder to the OS trash and refresh.
@@ -1038,6 +1040,7 @@ class VaultStore {
     } else if (this.currentPath?.startsWith(from + "/")) {
       await this.openFile(rel + this.currentPath.slice(from.length), false);
     }
+    return rel;
   }
 
   private async handleEvent(e: VaultEvent) {
